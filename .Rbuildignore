@@ -1,0 +1,12 @@
+^CLAUDE\.md$
+^MEMORY\.md$
+^plans$
+^docs$
+^pkgdown$
+^_pkgdown\.yml$
+^\.github$
+^\.claude$
+^.*\.Rproj$
+^\.Rproj\.user$
+^artifacts$
+^tests/testthat/artifacts$
