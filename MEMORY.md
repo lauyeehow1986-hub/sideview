@@ -31,11 +31,17 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 | 18 | State | `sv_load_state(launch = TRUE)` ignores the loaded state; `sideview()` has no `state` argument | open |
 | 19 | Server | "Run in R" result is evaluated then thrown away | open |
 | 20 | Server | No `onSessionEnded → stopApp`; closing the browser tab leaves the console busy | open |
-| 21 | Gadget | Cannot launch in an external browser (user report) — needs reproducing | open |
+| 21 | Gadget | "Cannot launch in external browser": reproduced. The browser opens, but the page is broken by #12 (init crash) and #26 (card width) | open |
 | 22 | Security | Card and column names inserted unescaped into `innerHTML` and attribute selectors | open |
 | 23 | Icons | Emoji/Unicode glyph icons render inconsistently on Windows RStudio | open |
 | 24 | Packaging | No `.Rbuildignore`; `panzoom.min.js` is an in-house stub labelled 4.5.1; README zoom range ≠ code | open |
 | 25 | Tests | GUI suite uses a mock DOM, so layout is never exercised in a real browser | open |
+| 26 | Card | **Blocker:** cards have no width, so they shrink-wrap to the 10000px viewport (~9960px) and each column is ~900px; only the first column shows and numbers look empty | open |
+| 27 | Canvas | Zoom % label never updates; zoom isn't centred on the view | open |
+| 28 | Discrepancy | "undefined fuzzy": `fuzzy_matches` data.frame is serialised column-wise; fuzzy cells never highlight | open |
+| 29 | AI | LLM errors only appear as a code comment; missing model gives no toast or hint; no busy indicator | open |
+| 30 | Gadget | Closing the dialog raises Shiny's "User cancel" error → debugger under RStudio "Break on error"; no Done/Cancel | open |
+| 31 | Filter | Numeric operators offered for character columns | open |
 
 ## Backlog (future rounds, not yet scheduled)
 - Table version diff by key (data-lock comparisons between dataset versions).
@@ -46,6 +52,16 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 ---
 
 ## Log
+
+### 2026-10-24 — Phase 1: QA audit (before fixes)
+- **Change:** none to code. Added `plans/2026-10-24-ui-qa-checklist.md` (checklist + baseline results).
+- **How:** drove RStudio 2025.05.1 (R 4.5.1) with computer use in dialog and browser modes, plus a
+  DOM-level browser for the live session and the saved/embedded widget. Synthetic fixture only.
+- **Root cause of "can't launch in external browser":** the browser *does* open. The page is broken:
+  `initSideview()` crashes in strict mode (#12), and cards render ~9,960px wide (#26), so tables look
+  empty. Closing also misbehaves: the browser tab never frees the console (#20), and the dialog
+  drops into the debugger (#30).
+- **New issues:** #26–#31.
 
 ### 2026-10-24 — Phase 0: tracking and baseline
 - **Change:** added `CLAUDE.md` (project guide for Claude sessions), `MEMORY.md` (this file) and `.Rbuildignore`
