@@ -13,10 +13,12 @@
 #' @param insert_fn Function to call for editor code insertion.
 #' @param console_fn Function to call for console execution.
 #' @param gadget If `TRUE`, the app runs as a gadget: Done/Cancel and closing
-#'   the window or browser tab stop the app and return to the console.
+#'   the window or the last browser tab stop the app and return to the console.
+#' @param lifecycle Environment shared by all sessions of one app (from
+#'   `sv_new_lifecycle()`), so the app stops once and only after the last tab closes.
 #' @noRd
 sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_fn, console_fn,
-                                 gadget = FALSE) {
+                                 gadget = FALSE, lifecycle = NULL) {
   # Normalize input cards
   card_list <- if (inherits(cards, "sideview_card") || is.data.frame(cards) ||
                    inherits(cards, c("gt_tbl", "flextable", "table"))) {
@@ -61,16 +63,18 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     tryCatch(session$sendCustomMessage(type, message), error = function(e) NULL)
   }
 
-  # Gadget lifecycle. stopApp() must run once: a second call (e.g. from
-  # onSessionEnded after Done) would replace the returned code with NULL.
-  stopped <- FALSE
+  # Gadget lifecycle. stopApp() must run once per app: a second call (e.g. from
+  # onSessionEnded after Done) would replace the returned code with NULL. The
+  # state is shared by every session of the app (see sideview_server()).
+  if (!is.environment(lifecycle)) lifecycle <- sv_new_lifecycle()
   stop_gadget <- function(value = invisible(NULL)) {
-    if (stopped) return(invisible(NULL))
-    stopped <<- TRUE
+    if (isTRUE(lifecycle$stopped)) return(invisible(NULL))
+    lifecycle$stopped <- TRUE
     session$userData$sideview_result <- list(value = value)
     tryCatch(shiny::stopApp(value), error = function(e) NULL)
   }
   if (isTRUE(gadget)) {
+    lifecycle$sessions <- lifecycle$sessions + 1L
     shiny::observeEvent(input$sideview_done, {
       code <- input$sideview_done$code %||% ""
       code <- if (is.character(code) && length(code) == 1L && nzchar(trimws(code))) code else NULL
@@ -79,8 +83,17 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     # `cancel` is what RStudio sends when the dialog window is closed.
     shiny::observeEvent(input$cancel, stop_gadget(), ignoreInit = FALSE)
     shiny::observeEvent(input$sideview_cancel, stop_gadget(), ignoreInit = FALSE)
-    # Closing the browser tab (viewer = "browser") frees the console.
-    session$onSessionEnded(function() stop_gadget())
+    # Closing the last browser tab (viewer = "browser") frees the console. A
+    # short grace period lets a page reload, or a second tab, keep the app alive.
+    session$onSessionEnded(function() {
+      lifecycle$sessions <- max(0L, lifecycle$sessions - 1L)
+      if (lifecycle$sessions > 0L) return(invisible(NULL))
+      grace <- getOption("sideview.session_grace", 5)
+      if (!is.numeric(grace) || grace <= 0) return(stop_gadget())
+      later::later(function() {
+        if (lifecycle$sessions == 0L) stop_gadget()
+      }, delay = grace)
+    })
   }
 
   # 1. Column Mapped -> Join Code Generation
@@ -546,7 +559,9 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
 #' @param insert_fn Function used to insert code into active RStudio document (default `sv_insert_code`).
 #' @param console_fn Function used to send code to RStudio console (default `sv_send_to_console`).
 #' @param gadget If `TRUE`, run as a gadget: the Done and Cancel buttons, closing the
-#'   RStudio dialog, and closing the browser tab all stop the app. Leave `FALSE`
+#'   RStudio dialog, and closing the last browser tab all stop the app. After the last
+#'   tab closes the app waits `getOption("sideview.session_grace", 5)` seconds so a
+#'   page reload does not end it. Leave `FALSE`
 #'   when embedding the server in your own multi-user Shiny app.
 #'
 #' @return A Shiny server function `function(input, output, session)`.
@@ -568,8 +583,17 @@ sideview_server <- function(cards = list(),
                                 gadget = gadget))
   }
 
+  lifecycle <- sv_new_lifecycle()
   function(input, output, session) {
     sideview_server_impl(input, output, session, cards, llm_fn, insert_fn, console_fn,
-                         gadget = gadget)
+                         gadget = gadget, lifecycle = lifecycle)
   }
+}
+
+# Per-app gadget state: open session count and whether stopApp() has run.
+sv_new_lifecycle <- function() {
+  env <- new.env(parent = emptyenv())
+  env$sessions <- 0L
+  env$stopped <- FALSE
+  env
 }

@@ -704,6 +704,8 @@ html.sv-standalone body {
   stroke-width: 2.5px;
   stroke-dasharray: 4 4;
   opacity: 0.85;
+  /* The draft end follows the cursor; it must not swallow the click on the target port. */
+  pointer-events: none;
 }
 
 /* Color Highlighter Palette */

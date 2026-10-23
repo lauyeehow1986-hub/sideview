@@ -20,6 +20,7 @@ Imports:
     dplyr,
     httr2,
     jsonlite,
+    later,
     rstudioapi
 Suggests:
     testthat (>= 3.0.0),

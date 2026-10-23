@@ -131,6 +131,41 @@ test_that("click-to-connect creates exactly one join per pair (no phantom draft)
   expect_false(r$drafting)
 })
 
+test_that("real mouse clicks connect ports through the draft and existing splines", {
+  b <- sv_shared_page()
+  centre <- function(card, col) sv_js(b, sprintf("(() => {
+    const r = %s.querySelector('.sideview-col-port[data-col-name=\"%s\"]').getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  })()", sv_card_js(card), col))
+  mouse <- function(type, p) {
+    b$Input$dispatchMouseEvent(type = type, x = p$x, y = p$y, button = "left",
+                               clickCount = if (type == "mouseMoved") 0 else 1)
+  }
+  click <- function(p) { mouse("mouseMoved", p); mouse("mousePressed", p); mouse("mouseReleased", p) }
+  glide <- function(from, to) {
+    for (t in seq(0.2, 1, by = 0.2)) {
+      mouse("mouseMoved", list(x = from$x + (to$x - from$x) * t, y = from$y + (to$y - from$y) * t))
+    }
+  }
+  n_links <- function() sv_js(b, "document.querySelectorAll('.sideview-connector-path:not(.sideview-connector-draft):not(.sideview-spline-suggested)').length")
+
+  p1 <- centre("patients", "patient_id")
+  p2 <- centre("labs", "patient_id")
+  click(p1)
+  glide(p1, p2) # the draft end now sits under the cursor, on top of p2
+  click(p2)
+  Sys.sleep(0.3)
+  expect_equal(n_links(), 1)
+
+  # Clicking a port where a spline ends starts a new link instead of deleting it
+  click(p1)
+  Sys.sleep(0.2)
+  expect_equal(n_links(), 1)
+  expect_equal(sv_js(b, "window._sideviewInstance.activePort && window._sideviewInstance.activePort.colName"), "patient_id")
+  b$Input$dispatchKeyEvent(type = "keyDown", key = "Escape", code = "Escape", windowsVirtualKeyCode = 27)
+  sv_js(b, "(async () => { document.querySelector('[data-action=\"clear-operation\"]').click(); await new Promise(r => setTimeout(r, 300)); return true; })()")
+})
+
 test_that("connector endpoints sit on their ports after zoom and scroll", {
   b <- sv_shared_page()
   r <- sv_js(b, sprintf("(async () => {

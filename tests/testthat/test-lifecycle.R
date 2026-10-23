@@ -25,6 +25,44 @@ test_that("Done returns the generated code and Cancel returns NULL (gadget mode)
   })
 })
 
+test_that("browser mode stops only after the last tab closes", {
+  card <- sv_normalize(data.frame(a = 1:3), name = "t")
+  lc <- function(server) environment(server)$lifecycle
+  open_tab <- function(server) {
+    s <- shiny::MockShinySession$new()
+    shiny::withReactiveDomain(s, server(s$input, s$output, s))
+    s
+  }
+
+  # No grace: a second tab closing leaves the first alive; the last one stops the app
+  old <- options(sideview.session_grace = 0)
+  on.exit(options(old), add = TRUE)
+  server <- sideview_server(list(card), gadget = TRUE)
+  tab1 <- open_tab(server)
+  tab2 <- open_tab(server)
+  expect_equal(lc(server)$sessions, 2L)
+  tab2$close()
+  expect_equal(lc(server)$sessions, 1L)
+  expect_false(lc(server)$stopped)
+  tab1$close()
+  expect_equal(lc(server)$sessions, 0L)
+  expect_true(lc(server)$stopped)
+
+  # With a grace period, a reload (close then reopen) keeps the app running
+  options(sideview.session_grace = 0.2)
+  server <- sideview_server(list(card), gadget = TRUE)
+  open_tab(server)$close()
+  expect_false(lc(server)$stopped)
+  tab <- open_tab(server)
+  Sys.sleep(0.3)
+  later::run_now(0.1)
+  expect_false(lc(server)$stopped)
+  tab$close()
+  Sys.sleep(0.3)
+  later::run_now(0.1)
+  expect_true(lc(server)$stopped)
+})
+
 test_that("Done/Cancel are ignored outside gadget mode", {
   card <- sv_normalize(data.frame(a = 1:3), name = "t")
   shiny::testServer(sideview_server(list(card)), {

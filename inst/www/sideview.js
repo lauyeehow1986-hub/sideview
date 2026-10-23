@@ -690,6 +690,34 @@ function sendToShiny(name, value) {
     return s.replace(/["\\\]\[]/g, '\\$&');
   }
 
+  // The column port under a pointer event. The connector SVG layer sits above
+  // the cards, so a spline ending on a port can be the event target instead.
+  function portFromEvent(e) {
+    var t = e.target;
+    var port = t && t.closest ? t.closest('.sideview-col-port') : null;
+    if (port) return port;
+    if (!t || !t.closest || !t.closest('.sideview-connector-svg')) return null;
+    return portAtPoint(e.clientX, e.clientY, false);
+  }
+
+  // Port at a viewport point, looking through connector splines. With
+  // `allowHeader`, a column header under the point maps to its port.
+  function portAtPoint(x, y, allowHeader) {
+    if (typeof document === 'undefined' || !document.elementsFromPoint) return null;
+    var hits = document.elementsFromPoint(x, y) || [];
+    for (var i = 0; i < hits.length; i++) {
+      var el = hits[i];
+      if (!el.closest) continue;
+      if (el.classList.contains('sideview-col-port')) return el;
+      // The first element below the splines decides.
+      if (!el.closest('.sideview-connector-svg')) {
+        var th = allowHeader ? el.closest('th') : null;
+        return th ? th.querySelector('.sideview-col-port') : null;
+      }
+    }
+    return null;
+  }
+
   function asArray(x) {
     if (x === null || x === undefined) return [];
     return Array.isArray(x) ? x : [x];
@@ -1197,6 +1225,8 @@ function sendToShiny(name, value) {
     this.container.addEventListener('click', function (e) {
       var path = e.target.closest('.sideview-connector-path');
       if (!path) return;
+      // Splines end on port centres; a click there is meant for the port.
+      if (portFromEvent(e)) return;
       if (path.classList.contains('sideview-spline-suggested')) return;
       e.stopPropagation();
       var connId = path.dataset.connId;
@@ -1541,8 +1571,8 @@ function sendToShiny(name, value) {
     }
 
     this.container.addEventListener('click', function (e) {
-      var port = e.target.closest('.sideview-col-port');
-      var th = e.target.closest('th');
+      var port = portFromEvent(e);
+      var th = port ? port.closest('th') : e.target.closest('th');
 
       // A real mouse press already ran through the mousedown handler below;
       // handling the trailing click again would start a phantom draft.
@@ -1592,7 +1622,7 @@ function sendToShiny(name, value) {
     // Drag-to-connect support
     this.container.addEventListener('mousedown', function (e) {
       if (typeof e.button === 'number' && e.button !== 0) return;
-      var port = e.target.closest('.sideview-col-port');
+      var port = portFromEvent(e);
       if (!port) return;
       var cardEl = port.closest('.sideview-card');
       if (!cardEl) return;
@@ -1624,22 +1654,11 @@ function sendToShiny(name, value) {
         document.removeEventListener('mouseup', onPointerDragUp);
 
         if (dragged) {
-          var dropTarget = document.elementFromPoint ? document.elementFromPoint(upEvt.clientX, upEvt.clientY) : null;
-          if (dropTarget) {
-            var targetPort = dropTarget.closest('.sideview-col-port');
-            var targetTh = dropTarget.closest('th');
-            if (targetPort && targetPort !== port) {
-              var targetCard = targetPort.closest('.sideview-card');
-              if (targetCard) completeConnection(targetPort, targetCard);
-              return;
-            } else if (targetTh) {
-              var p = targetTh.querySelector('.sideview-col-port');
-              var c = targetTh.closest('.sideview-card');
-              if (p && p !== port && c) {
-                completeConnection(p, c);
-                return;
-              }
-            }
+          var targetPort = portAtPoint(upEvt.clientX, upEvt.clientY, true);
+          var targetCard = targetPort ? targetPort.closest('.sideview-card') : null;
+          if (targetPort && targetPort !== port && targetCard) {
+            completeConnection(targetPort, targetCard);
+            return;
           }
           cleanupDraft();
         }
