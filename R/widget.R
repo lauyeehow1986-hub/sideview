@@ -21,13 +21,12 @@ find_sideview_inst_dir <- function(subpath = "www") {
 
 #' HTML Dependencies for Sideview HTMLWidget
 #'
-#' Gathers dependencies for Panzoom, Sideview core CSS/JS, and htmlwidgets binding.
+#' Gathers dependencies for Panzoom and the Sideview core CSS/JS.
 #'
 #' @return A list of `htmltools::htmlDependency` objects.
 #' @noRd
 sideview_widget_dependencies <- function() {
   www_dir <- find_sideview_inst_dir("www")
-  hw_dir <- find_sideview_inst_dir("htmlwidgets")
   
   deps <- list()
   
@@ -52,16 +51,9 @@ sideview_widget_dependencies <- function() {
     )
   }
   
-  # Sideview htmlwidget binding dependency
-  if (nzchar(hw_dir) && file.exists(file.path(hw_dir, "sideview.js"))) {
-    deps[[length(deps) + 1]] <- htmltools::htmlDependency(
-      name = "sideview",
-      version = "0.1.0",
-      src = c(file = hw_dir),
-      script = "sideview.js"
-    )
-  }
-  
+  # The binding (inst/htmlwidgets/sideview.js) is attached by htmlwidgets itself;
+  # adding it here as well loaded it twice.
+
   deps
 }
 

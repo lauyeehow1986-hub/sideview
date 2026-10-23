@@ -388,9 +388,23 @@ test_that("sideview.js and sideview.css implement opaque filter popover and edge
   expect_match(css, "\\.sideview-filter-popover[^{]*\\{[^}]*background:\\s*#ffffff\\s*!important", perl = TRUE)
   expect_match(css, "\\.sideview-filter-popover[^{]*\\{[^}]*z-index:\\s*9999\\s*!important", perl = TRUE)
 
-  # Edge-to-edge canvas container sizing
-  expect_match(css, "html,\\s*body\\s*\\{[^}]*margin:\\s*0\\s*!important", perl = TRUE)
-  expect_match(css, "\\.sideview-container\\s*\\{[^}]*position:\\s*absolute\\s*!important", perl = TRUE)
+  # Edge-to-edge canvas on the gadget page only; embedded widgets keep the host page intact
+  expect_match(css, "html\\.sv-standalone,\\s*html\\.sv-standalone body\\s*\\{[^}]*margin:\\s*0", perl = TRUE)
+  expect_match(css, "\\.sideview-container\\.sv-standalone\\s*\\{[^}]*position:\\s*fixed", perl = TRUE)
+  expect_match(css, "\\.sideview-container\\s*\\{[^}]*position:\\s*relative", perl = TRUE)
+  expect_no_match(css, "(^|\\})\\s*html,\\s*body\\s*\\{", perl = TRUE)
+  expect_match(css, "\\.sideview-container\\.sv-pseudo-fullscreen\\s*\\{", perl = TRUE)
+
+  # Sticky headers must not be cancelled by a later position declaration
+  th_rule <- regmatches(css, regexpr("\\.sideview-table th\\s*\\{[^}]*\\}", css, perl = TRUE))
+  expect_match(th_rule, "position:\\s*sticky", perl = TRUE)
+  expect_no_match(th_rule, "position:\\s*relative", perl = TRUE)
+
+  # Every var(--sv-*) used is defined (fallback-less uses only)
+  used <- unique(regmatches(css, gregexpr("var\\(--sv-[a-z0-9-]+\\)", css, perl = TRUE))[[1]])
+  used <- sub("^var\\((--sv-[a-z0-9-]+)\\)$", "\\1", used)
+  defined <- unique(sub(":$", "", regmatches(css, gregexpr("--sv-[a-z0-9-]+:", css, perl = TRUE))[[1]]))
+  expect_equal(setdiff(used, defined), character(0))
 
   # Fullscreen canvas toggle action in JS
   expect_match(js, "toggle-fullscreen", info = "sideview.js must handle toggle-fullscreen action")

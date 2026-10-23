@@ -16,15 +16,24 @@ HTMLWidgets.widget({
     return {
 
       renderValue: function(x) {
-        // Clear previous container contents
+        // Tear down the previous engine (global listeners, observers, popovers)
+        // before re-rendering, e.g. when a Shiny output updates.
+        var previous = engine || el._sideviewInstance;
+        if (previous && typeof previous.destroy === 'function') {
+          try { previous.destroy(); } catch (e) {}
+        }
+        engine = null;
         el.innerHTML = '';
+        el.classList.add('sideview-container');
 
-        // Merge options
+        // Embedded mode: the widget sizes to its element and the mouse wheel
+        // scrolls the page unless Ctrl/Cmd is held.
         var options = Object.assign({
           snapThreshold: 20,
           snapToEdge: true,
           minScale: 0.15,
           maxScale: 3.5,
+          mode: 'embedded',
           cards: []
         }, x.options || {});
 
@@ -37,8 +46,6 @@ HTMLWidgets.widget({
           engine = new window.Sideview.Engine(el, options);
         } else if (typeof window.initSideview === 'function') {
           engine = window.initSideview(el, options);
-        } else if (typeof SideviewEngine === 'function') {
-          engine = new SideviewEngine(el, options);
         } else {
           console.error('Sideview engine not found. Ensure sideview.js is loaded.');
         }

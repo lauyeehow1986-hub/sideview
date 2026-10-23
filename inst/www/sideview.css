@@ -28,6 +28,7 @@
   --sv-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --sv-radius-sm: 4px;
   --sv-radius: 8px;
+  --sv-radius-md: 10px;
   --sv-radius-lg: 12px;
   --sv-shadow-card: 0 10px 25px -5px rgba(15, 23, 42, 0.1), 0 8px 10px -6px rgba(15, 23, 42, 0.08);
   --sv-shadow-card-drag: 0 25px 50px -12px rgba(15, 23, 42, 0.25);
@@ -36,23 +37,23 @@
   --sv-connector-color: #3b82f6;
 }
 
-html, body {
-  margin: 0 !important;
-  padding: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  overflow: hidden !important;
+/* Full-window page rules apply only to the gadget page (html.sv-standalone),
+   never to an R Markdown / Quarto page that embeds the widget. */
+html.sv-standalone,
+html.sv-standalone body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
-/* Base sideview container */
+/* Base sideview container: fills its parent (the htmlwidget element) */
 .sideview-container {
-  position: absolute !important;
-  top: 0 !important;
-  left: 0 !important;
-  right: 0 !important;
-  bottom: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
   overflow: hidden;
   background-color: var(--sv-canvas-bg);
   font-family: var(--sv-font);
@@ -63,6 +64,64 @@ html, body {
 
 .sideview-container * {
   box-sizing: border-box;
+}
+
+/* Gadget page: the container is the whole window */
+.sideview-container.sv-standalone {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  height: auto;
+  min-height: 0;
+}
+
+/* Fullscreen fallback when the Fullscreen API is blocked (RStudio Viewer iframe) */
+.sideview-container.sv-pseudo-fullscreen {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: auto !important;
+  height: auto !important;
+  z-index: 2147483000;
+}
+
+/* One wrapping top bar holds the toolbar and palette so they never overlap */
+.sideview-topbar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 130;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.sideview-topbar > * {
+  pointer-events: auto;
+}
+
+/* Untransformed layer above the canvas for maximized cards and popovers */
+.sideview-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 110;
+  pointer-events: none;
+}
+
+.sideview-overlay > * {
+  pointer-events: auto;
 }
 
 /* Infinite Canvas & Panzoom Viewport */
@@ -97,13 +156,12 @@ html, body {
 
 /* Floating Toolbar */
 .sideview-toolbar {
-  position: absolute;
-  top: 16px;
-  left: 16px;
-  z-index: 100;
+  position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  max-width: 100%;
   padding: 6px 10px;
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(8px);
@@ -160,8 +218,9 @@ html, body {
 /* Draggable Table Card */
 .sideview-card {
   position: absolute;
+  width: max-content;
   min-width: 320px;
-  max-width: none;
+  max-width: 640px;
   background: var(--sv-surface);
   border: 1px solid var(--sv-border);
   border-radius: var(--sv-radius);
@@ -175,24 +234,46 @@ html, body {
   overflow: hidden;
 }
 
+/* After first layout the size is frozen inline, so a user resize (resize: both)
+   drives the body height instead of being capped by max-height. */
+.sideview-card.sv-sized {
+  max-width: none;
+}
+
+.sideview-card.sv-sized .sideview-card-body {
+  max-height: none;
+}
+
+.sideview-card.is-minimized {
+  height: auto !important;
+  min-height: 0;
+  resize: none;
+}
+
+.sideview-card.is-minimized .sideview-card-body {
+  display: none;
+}
+
+/* Maximized cards live in .sideview-overlay (outside the zoom transform) */
 .sideview-card.is-maximized {
-  position: fixed !important;
-  top: 55px !important;
-  left: 20px !important;
-  right: 20px !important;
-  bottom: 30px !important;
+  position: absolute !important;
+  top: calc(var(--sv-topbar-h, 44px) + 20px) !important;
+  left: 12px !important;
+  right: 12px !important;
+  bottom: calc(var(--sv-aibar-h, 50px) + 32px) !important;
   width: auto !important;
   max-width: none !important;
   height: auto !important;
   max-height: none !important;
-  z-index: 85 !important;
+  resize: none;
+  z-index: 1 !important;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.45) !important;
 }
 
 .sideview-card.is-maximized .sideview-card-body {
   max-height: none !important;
-  height: calc(100% - 46px) !important;
-  flex: 1;
+  height: auto !important;
+  flex: 1 1 auto;
 }
 
 .sideview-card.is-dragging {
@@ -282,9 +363,10 @@ html, body {
 /* Card Body */
 .sideview-card-body {
   position: relative;
+  flex: 1 1 auto;
   overflow: auto;
   max-height: 380px;
-  min-height: 140px;
+  min-height: 0;
   background: var(--sv-surface);
   border-bottom-left-radius: var(--sv-radius);
   border-bottom-right-radius: var(--sv-radius);
@@ -312,7 +394,6 @@ html, body {
   white-space: nowrap;
   user-select: none;
   min-width: 90px;
-  position: relative;
 }
 
 /* Draggable Column Boundary Resizer */
@@ -345,8 +426,9 @@ html, body {
 
 .col-header-left {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 4px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -626,11 +708,10 @@ html, body {
 
 /* Color Highlighter Palette */
 .sideview-palette {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  z-index: 100;
+  position: relative;
+  margin-left: auto;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
@@ -688,16 +769,16 @@ html, body {
 /* Action Drawer */
 .sideview-drawer {
   position: absolute;
-  top: 60px;
-  right: 14px;
+  top: calc(var(--sv-topbar-h, 44px) + 20px);
+  right: 12px;
   width: 380px;
-  max-width: calc(100vw - 28px);
-  max-height: calc(100% - 80px);
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - var(--sv-topbar-h, 44px) - var(--sv-aibar-h, 50px) - 52px);
   background: var(--sv-surface);
   border: 1px solid var(--sv-border);
   border-radius: var(--sv-radius-lg);
   box-shadow: var(--sv-shadow-floating);
-  z-index: 90;
+  z-index: 120;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -731,11 +812,8 @@ html, body {
   border-bottom: 1px solid var(--sv-border);
   padding: 4px 6px 0 6px;
   gap: 3px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  white-space: nowrap;
-  scrollbar-width: thin;
-  -webkit-overflow-scrolling: touch;
+  flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .sideview-drawer-tab {
@@ -762,7 +840,8 @@ html, body {
   padding: 12px 14px;
   overflow-y: auto;
   font-size: 13px;
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .sideview-code-block {
@@ -796,25 +875,17 @@ html, body {
   white-space: nowrap;
 }
 
-.sideview-autoclear-wrap {
-  width: 100%;
-  margin-top: 4px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
 /* Floating Natural Language AI Prompt Bar */
 .sideview-ai-bar {
   position: absolute;
   bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 100;
+  z-index: 130;
   display: flex;
   align-items: center;
   gap: 8px;
-  width: min(90%, 640px);
+  width: min(calc(100% - 24px), 640px);
   padding: 8px 12px;
   background: rgba(255, 255, 255, 0.98);
   backdrop-filter: blur(12px);
@@ -890,11 +961,23 @@ html, body {
 
 
 /* Toast Notifications */
-.sideview-toast {
+.sideview-toast-stack {
   position: absolute;
-  bottom: 24px;
   left: 50%;
-  transform: translateX(-50%) translateY(20px);
+  bottom: calc(var(--sv-aibar-h, 50px) + 32px);
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+  width: min(calc(100% - 24px), 480px);
+}
+
+.sideview-toast {
+  position: relative;
+  transform: translateY(12px);
   background: var(--sv-card-bg);
   color: var(--sv-text);
   border: 1px solid var(--sv-border);
@@ -913,15 +996,19 @@ html, body {
 
 .sideview-toast.visible {
   opacity: 1;
-  transform: translateX(-50%) translateY(0);
+  transform: translateY(0);
 }
 
 .sideview-toast-success {
   border-left: 4px solid var(--sv-success);
 }
 
+.sideview-toast-info {
+  border-left: 4px solid var(--sv-primary);
+}
+
 .sideview-toast-warning {
-  border-left: 4px solid var(--sv-accent);
+  border-left: 4px solid var(--sv-warning);
 }
 
 .sideview-toast-danger {
@@ -957,30 +1044,6 @@ html, body {
 }
 
 /* Column Header Tools & Buttons */
-.col-header-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-}
-
-.col-header-left {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.col-header-tools {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-  margin-left: 6px;
-}
-
 .sideview-th-btn {
   background: transparent;
   border: none;
@@ -1106,8 +1169,22 @@ html, body {
   position: relative;
   overflow: auto;
   max-height: 380px;
-  min-height: 140px;
   width: 100%;
+}
+
+.sideview-card.sv-sized .sideview-table-viewport,
+.sideview-card.is-maximized .sideview-table-viewport {
+  max-height: none;
+}
+
+/* Fixed layout keeps widths stable while rows are recycled; the table grows past
+   100% when the columns need more room (CSS 2.1 17.5.2.1). */
+.sideview-table-virtual thead th {
+  width: 120px;
+}
+
+.sideview-row-loading td {
+  color: var(--sv-text-muted);
 }
 
 .sideview-table-virtual {
@@ -1333,4 +1410,23 @@ html, body {
   padding: 0 12px;
   font-size: 12px;
   border-radius: var(--sv-radius-sm);
+}
+
+/* Narrow windows: the drawer becomes a bottom sheet */
+.sideview-container.sv-narrow .sideview-drawer {
+  top: auto;
+  left: 12px;
+  right: 12px;
+  width: auto;
+  max-width: none;
+  bottom: calc(var(--sv-aibar-h, 50px) + 32px);
+  max-height: min(55%, calc(100% - var(--sv-topbar-h, 44px) - var(--sv-aibar-h, 50px) - 52px));
+}
+
+.sideview-container.sv-narrow .sideview-drawer.collapsed {
+  transform: translateY(calc(100% + 120px));
+}
+
+.sideview-container.sv-narrow .sideview-palette-label {
+  display: none;
 }

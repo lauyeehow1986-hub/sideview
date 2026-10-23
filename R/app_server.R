@@ -167,6 +167,26 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     dispatch_message('sideview_code_update', list(code = code))
   }, ignoreInit = FALSE)
 
+  # 1e. Row windows for large cards: sort/filter/scroll answered from the full data
+  row_order_caches <- new.env(parent = emptyenv())
+  shiny::observeEvent(input$sideview_rows_request, {
+    req <- input$sideview_rows_request
+    if (is.null(req) || is.null(req$card_id)) return()
+    card <- cards_by_id[[req$card_id]] %||% cards_by_name[[req$card_id]]
+    if (is.null(card) || !is.data.frame(card$data)) return()
+    cache <- row_order_caches[[req$card_id]]
+    if (is.null(cache)) {
+      cache <- new.env(parent = emptyenv())
+      row_order_caches[[req$card_id]] <- cache
+    }
+    win <- tryCatch(sv_rows_window(card$data, req, order_cache = cache), error = function(e) {
+      list(error = conditionMessage(e))
+    })
+    win$card_id <- req$card_id
+    win$version <- req$version %||% 0L
+    dispatch_message("sideview_rows", win)
+  }, ignoreInit = FALSE)
+
   # 2. Column Renamed -> Rename Code Generation
   shiny::observeEvent(input$column_renamed, {
     evt <- input$column_renamed

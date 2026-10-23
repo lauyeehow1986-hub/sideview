@@ -234,6 +234,7 @@ render_card_tag <- function(card, index = 1L) {
       
       htmltools::tags$th(
         `data-col-name` = col,
+        `data-col-type` = if (is.numeric(col_vals)) "numeric" else if (nzchar(c_type) && !is.na(c_type)) c_type else NULL,
         title = if (nzchar(c_type)) sprintf("%s (%s)", col, c_type) else col,
         htmltools::tags$div(
           class = "col-header-wrap",
@@ -302,6 +303,7 @@ render_card_tag <- function(card, index = 1L) {
     id = card_id,
     `data-card-id` = card_id,
     `data-card-name` = card_name,
+    `data-total-rows` = if (is.data.frame(card$data)) nrow(card$data) else NULL,
     style = sprintf("left: %dpx; top: %dpx;", as.integer(initial_x), as.integer(initial_y)),
     header_tag,
     body_tag
@@ -487,6 +489,7 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas") {
     (function() {
       function start() {
         if (typeof initSideview === 'function') {
+          document.documentElement.classList.add('sv-standalone');
           initSideview('.sideview-container');
           window.sideviewInitialized = true;
         }
@@ -501,10 +504,9 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas") {
   
   # Complete container
   container_tag <- htmltools::tags$div(
-    class = "sideview-container",
-    toolbar_tag,
-    palette_tag,
+    class = "sideview-container sv-standalone",
     canvas_tag,
+    htmltools::tags$div(class = "sideview-topbar", toolbar_tag, palette_tag),
     drawer_tag,
     ai_bar_tag,
     init_script

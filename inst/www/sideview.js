@@ -17,11 +17,13 @@
 function sendToShiny(name, value) {
     if (typeof global.Shiny !== 'undefined' && typeof global.Shiny.setInputValue === 'function') {
       global.Shiny.setInputValue(name, value, { priority: 'event' });
+      return true;
     } else {
       // Standalone mode / browser console fallback
       if (typeof console !== 'undefined' && console.debug) {
         console.debug('[Sideview Event]', name, value);
       }
+      return false;
     }
   }
 
@@ -170,6 +172,22 @@ function sendToShiny(name, value) {
     var numCols = this.colNames.length || this.table.querySelectorAll('thead th').length || 1;
     this.topCell.colSpan = numCols;
     this.bottomCell.colSpan = numCols;
+
+    // Column types rendered by the server (data-col-type) keep numbers right-aligned
+    // without re-parsing cell text.
+    var typeHeaders = this.table.querySelectorAll('thead th');
+    for (var t = 0; t < typeHeaders.length; t++) {
+      var thType = typeHeaders[t].dataset ? typeHeaders[t].dataset.colType : null;
+      var thName = this.colNames[t];
+      if (thType && thName && !this.colTypes[thName]) this.colTypes[thName] = thType;
+    }
+    // Names as the R session knows them; UI renames don't change the source data.
+    this.sourceColNames = this.colNames.slice();
+  };
+
+  VirtualTable.prototype.sourceColName = function (colName) {
+    var pos = this.colNames.indexOf(colName);
+    return pos >= 0 && this.sourceColNames[pos] !== undefined ? this.sourceColNames[pos] : colName;
   };
 
   VirtualTable.prototype.attachScrollListener = function () {
@@ -197,6 +215,7 @@ function sendToShiny(name, value) {
   };
 
   VirtualTable.prototype.getRowCount = function () {
+    if (this.remote && this.remote.active) return this.remote.count;
     var active = this.getActiveIndices();
     return active !== null ? active.length : this.totalRows;
   };
@@ -242,23 +261,29 @@ function sendToShiny(name, value) {
     this.bottomCell.colSpan = numCols;
 
     var active = this.getActiveIndices();
+    var remoteOn = !!(this.remote && this.remote.active);
     var frag = document.createDocumentFragment();
 
     for (var i = startIndex; i < endIndex; i++) {
-      var rawRowIndex = active !== null ? active[i] : i;
+      var remoteRow = remoteOn ? this.remoteRowAt(i) : null;
+      var rawRowIndex = remoteOn ? (remoteRow ? remoteRow.id : -1) : (active !== null ? active[i] : i);
       var tr = document.createElement('tr');
       tr.dataset.rowIndex = rawRowIndex;
       tr.dataset.virtualIndex = i;
+      if (remoteOn && !remoteRow) tr.className = 'sideview-row-loading';
 
       for (var c = 0; c < numCols; c++) {
         var colName = this.colNames[c];
         var td = document.createElement('td');
-        var val = this.getCellValue(rawRowIndex, colName, c);
+        var val = remoteOn
+          ? (remoteRow ? remoteRow.get(c) : '…')
+          : this.getCellValue(rawRowIndex, colName, c);
         td.textContent = (val === null || val === undefined) ? 'NA' : val;
 
-        var isNum = (this.colTypes && (this.colTypes[colName] === 'numeric' || this.colTypes[colName] === 'integer' || this.colTypes[colName] === 'double')) ||
+        var knownType = this.colTypes ? this.colTypes[colName] : null;
+        var isNum = (knownType === 'numeric' || knownType === 'integer' || knownType === 'double') ||
                     (typeof val === 'number') ||
-                    (!isNaN(parseFloat(val)) && isFinite(val) && val !== '' && val !== 'NA');
+                    (!knownType && !isNaN(parseFloat(val)) && isFinite(val) && val !== '' && val !== 'NA');
         if (isNum) {
           td.classList.add('is-number');
         }
@@ -295,6 +320,13 @@ function sendToShiny(name, value) {
     this.sortState = { colIndex: colIndex, colName: colName, direction: direction };
     if (!colName && this.colNames[colIndex]) {
       colName = this.colNames[colIndex];
+    }
+    // A new ordering starts from the first row, as filtering does.
+    if (this.scrollContainer) this.scrollContainer.scrollTop = 0;
+    if (this.remote) {
+      this.remote.spec.sort = direction === 'none' ? null : { col: this.sourceColName(colName), dir: direction };
+      this.resetRemote();
+      return;
     }
 
     if (direction === 'none') {
@@ -342,6 +374,12 @@ function sendToShiny(name, value) {
       colName = this.colNames[colIndex];
     }
     this.currentFilter = { colIndex: colIndex, colName: colName, operator: operator, value: value };
+    if (this.remote) {
+      this.remote.spec.filter = { col: this.sourceColName(colName), op: operator, val: String(value) };
+      if (this.scrollContainer) this.scrollContainer.scrollTop = 0;
+      this.resetRemote();
+      return null; // the matching row count arrives asynchronously (onRemoteCount)
+    }
     this.reapplyFilter();
     if (this.scrollContainer) this.scrollContainer.scrollTop = 0;
     this.render();
@@ -351,6 +389,11 @@ function sendToShiny(name, value) {
   VirtualTable.prototype.clearFilter = function () {
     this.currentFilter = null;
     this.filteredIndices = null;
+    if (this.remote) {
+      this.remote.spec.filter = null;
+      this.resetRemote();
+      return;
+    }
     this.render();
   };
 
@@ -364,7 +407,9 @@ function sendToShiny(name, value) {
     var colIndex = this.currentFilter.colIndex;
     var op = this.currentFilter.operator;
     var val = this.currentFilter.value;
-    var lowerVal = String(val || '').toLowerCase();
+    // Same semantics as the generated dplyr::filter() code: case-sensitive,
+    // fixed-string `contains`, and missing values never match.
+    var strVal = String(val === null || val === undefined ? '' : val);
     var numVal = parseFloat(val);
     var isNumFilter = !isNaN(numVal);
 
@@ -374,15 +419,16 @@ function sendToShiny(name, value) {
 
     this.filteredIndices = baseIndices.filter(function (idx) {
       var raw = self.getCellValue(idx, colName, colIndex);
-      var text = (raw === null || raw === undefined) ? '' : String(raw).trim();
+      if (raw === null || raw === undefined) return false;
+      var text = String(raw).trim();
       var numCell = parseFloat(text);
 
       if (op === 'contains') {
-        return text.toLowerCase().indexOf(lowerVal) !== -1;
+        return text.indexOf(strVal) !== -1;
       } else if (op === 'equals') {
-        return isNumFilter && !isNaN(numCell) ? numCell === numVal : text.toLowerCase() === lowerVal;
+        return isNumFilter && !isNaN(numCell) ? numCell === numVal : text === strVal;
       } else if (op === 'not_equals') {
-        return isNumFilter && !isNaN(numCell) ? numCell !== numVal : text.toLowerCase() !== lowerVal;
+        return isNumFilter && !isNaN(numCell) ? numCell !== numVal : text !== strVal;
       } else if (op === 'gt') {
         return !isNaN(numCell) && numCell > numVal;
       } else if (op === 'gte') {
@@ -449,6 +495,126 @@ function sendToShiny(name, value) {
     }
   };
 
+  // ---- remote paging -------------------------------------------------------
+  // Cards larger than the HTML preview fetch row windows from the R session
+  // (input `sideview_rows_request` -> message `sideview_rows`), so scrolling,
+  // sorting and filtering always reflect the full data.
+
+  VirtualTable.prototype.enableRemote = function (cardId, totalRows, requestFn) {
+    this.remote = {
+      cardId: cardId,
+      total: totalRows,
+      count: totalRows,
+      blockSize: 200,
+      blocks: {},
+      pending: {},
+      version: 0,
+      spec: { sort: null, filter: null },
+      request: requestFn,
+      active: totalRows > this.totalRows
+    };
+    if (this.remote.active) this.seedRemoteFromLocal();
+    this.render();
+  };
+
+  // Rows already in the preview are the first rows in natural order.
+  VirtualTable.prototype.seedRemoteFromLocal = function () {
+    var r = this.remote;
+    var full = Math.floor(this.totalRows / r.blockSize);
+    for (var b = 0; b < full; b++) {
+      var ids = [];
+      for (var k = 0; k < r.blockSize; k++) ids.push(b * r.blockSize + k);
+      r.blocks[b] = { ids: ids, local: true };
+    }
+  };
+
+  VirtualTable.prototype.resetRemote = function () {
+    var r = this.remote;
+    r.version += 1;
+    r.blocks = {};
+    r.pending = {};
+    this.activeSortIndices = null;
+    this.filteredIndices = null;
+    var specEmpty = !r.spec.sort && !r.spec.filter;
+    r.active = !specEmpty || r.total > this.totalRows;
+    if (specEmpty) {
+      r.count = r.total;
+      this.seedRemoteFromLocal();
+    } else {
+      this.requestBlock(0);
+    }
+    this.render();
+  };
+
+  VirtualTable.prototype.requestBlock = function (b) {
+    var r = this.remote;
+    if (!r || r.pending[b] || r.blocks[b] || typeof r.request !== 'function') return;
+    r.pending[b] = true;
+    var self = this;
+    var version = r.version;
+    var sent = r.request({
+      card_id: r.cardId,
+      version: r.version,
+      offset: b * r.blockSize,
+      limit: r.blockSize,
+      sort: r.spec.sort,
+      filter: r.spec.filter
+    });
+    if (sent === false) {
+      // Shiny not connected yet (requests during page load): retry shortly.
+      delete r.pending[b];
+      if (!r.retryTimer) {
+        r.retryTimer = setTimeout(function () {
+          r.retryTimer = null;
+          if (r.version === version) self.render();
+        }, 250);
+      }
+    }
+  };
+
+  VirtualTable.prototype.remoteRowAt = function (i) {
+    var r = this.remote;
+    var b = Math.floor(i / r.blockSize);
+    var block = r.blocks[b];
+    if (!block) { this.requestBlock(b); return null; }
+    var k = i - b * r.blockSize;
+    if (k >= block.ids.length) return null;
+    var self = this;
+    var id = block.ids[k];
+    if (block.local) {
+      return { id: id, get: function (c) { return self.getCellValue(id, self.colNames[c], c); } };
+    }
+    return {
+      id: id,
+      get: function (c) {
+        // Columns are keyed by source name; a UI rename keeps the position.
+        var col = block.columns[self.sourceColNames[c]] || block.columns[block.names[c]];
+        return col ? col[k] : '';
+      }
+    };
+  };
+
+  VirtualTable.prototype.receiveRows = function (msg) {
+    var r = this.remote;
+    if (!r || msg.version !== r.version) return;
+    var b = Math.floor((msg.offset || 0) / r.blockSize);
+    delete r.pending[b];
+    var ids = msg.row_ids;
+    if (ids === null || ids === undefined) ids = [];
+    if (!Array.isArray(ids)) ids = [ids];
+    var columns = {};
+    var names = Object.keys(msg.columns || {});
+    names.forEach(function (n) {
+      var v = msg.columns[n];
+      columns[n] = Array.isArray(v) ? v : [v];
+    });
+    r.blocks[b] = { ids: ids, columns: columns, names: names };
+    var countChanged = r.count !== msg.total || b === 0;
+    r.count = msg.total;
+    this.render();
+    if (countChanged && typeof this.onRemoteCount === 'function') this.onRemoteCount(msg.total, r.total);
+  };
+
   VirtualTable.prototype.destroy = function () {
     if (this.scrollContainer && typeof this.scrollContainer.removeEventListener === 'function' && this._scrollHandler) {
       this.scrollContainer.removeEventListener('scroll', this._scrollHandler);
@@ -470,8 +636,16 @@ function sendToShiny(name, value) {
       snapToEdge: true,
       minScale: 0.15,
       maxScale: 3.5,
+      // 'standalone' (gadget / full page) or 'embedded' (htmlwidget in a document)
+      mode: 'standalone',
       cards: []
     }, options);
+
+    // Global (window/document) listeners registered through listenGlobal() are
+    // removed again by destroy(), so re-rendered widgets don't leak handlers.
+    this._globalListeners = [];
+    this._rafPending = false;
+    this._portDownHandled = null;
 
     this.cards = new Map();
     this.connections = [];
@@ -496,7 +670,242 @@ function sendToShiny(name, value) {
     }
 
     this.registerShinyHandlers();
+    this.initLayoutObserver();
   }
+
+  // ---- small shared helpers -------------------------------------------------
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function cssEscape(value) {
+    var s = String(value == null ? '' : value);
+    if (global.CSS && typeof global.CSS.escape === 'function') return global.CSS.escape(s);
+    return s.replace(/["\\\]\[]/g, '\\$&');
+  }
+
+  function asArray(x) {
+    if (x === null || x === undefined) return [];
+    return Array.isArray(x) ? x : [x];
+  }
+
+  // Data frames arrive column-wise ({x: [...], y: [...]}); turn them into rows.
+  function rowsFromColumns(x) {
+    if (x === null || x === undefined) return [];
+    if (Array.isArray(x)) return x;
+    if (typeof x !== 'object') return [];
+    var keys = Object.keys(x);
+    if (!keys.length) return [];
+    var n = 0;
+    keys.forEach(function (k) { n = Math.max(n, asArray(x[k]).length); });
+    var rows = [];
+    for (var i = 0; i < n; i++) {
+      var row = {};
+      keys.forEach(function (k) { row[k] = asArray(x[k])[i]; });
+      rows.push(row);
+    }
+    return rows;
+  }
+
+  SideviewEngine.prototype.listenGlobal = function (target, type, fn, opts) {
+    target.addEventListener(type, fn, opts);
+    this._globalListeners.push([target, type, fn, opts]);
+  };
+
+  // Batch connector redraws into one per animation frame.
+  SideviewEngine.prototype.scheduleConnectorUpdate = function () {
+    var self = this;
+    if (this._rafPending) return;
+    if (typeof global.requestAnimationFrame !== 'function') {
+      this.updateConnectors();
+      return;
+    }
+    this._rafPending = true;
+    global.requestAnimationFrame(function () {
+      self._rafPending = false;
+      self.updateConnectors();
+      self.activePopoverReposition();
+    });
+  };
+
+  // Publish chrome sizes as CSS variables so the drawer and AI bar never
+  // overlap the top bar, whatever the window width.
+  SideviewEngine.prototype.initLayoutObserver = function () {
+    var self = this;
+    var topbar = this.container.querySelector('.sideview-topbar');
+    var aiBar = this.container.querySelector('.sideview-ai-bar');
+    var setVar = function (name, value) {
+      if (self.container.style && typeof self.container.style.setProperty === 'function') {
+        self.container.style.setProperty(name, value);
+      }
+    };
+    var publish = function () {
+      if (topbar) setVar('--sv-topbar-h', topbar.offsetHeight + 'px');
+      if (aiBar) setVar('--sv-aibar-h', aiBar.offsetHeight + 'px');
+      self.container.classList.toggle('sv-narrow', self.container.clientWidth < 720);
+      if (self.cards) self.freezeAllCardSizes();
+      self.scheduleConnectorUpdate();
+    };
+    publish();
+    if (typeof global.ResizeObserver === 'function') {
+      this._resizeObserver = new global.ResizeObserver(publish);
+      this._resizeObserver.observe(this.container);
+      if (topbar) this._resizeObserver.observe(topbar);
+      if (aiBar) this._resizeObserver.observe(aiBar);
+    } else {
+      this.listenGlobal(global, 'resize', publish);
+    }
+  };
+
+  SideviewEngine.prototype.destroy = function () {
+    this._globalListeners.forEach(function (l) {
+      try { l[0].removeEventListener(l[1], l[2], l[3]); } catch (e) {}
+    });
+    this._globalListeners = [];
+    if (this._resizeObserver) { this._resizeObserver.disconnect(); this._resizeObserver = null; }
+    if (this.panzoom && this.panzoom.destroy) this.panzoom.destroy();
+    this.cards.forEach(function (card) {
+      if (card.virtualTable && card.virtualTable.destroy) card.virtualTable.destroy();
+    });
+    this.closeActivePopover();
+    if (this.container._sideviewInstance === this) this.container._sideviewInstance = null;
+  };
+
+  // ---- card window controls -------------------------------------------------
+
+  // Freeze a card's natural size inline after first layout so that resizing it
+  // (CSS resize: both) grows the body rather than fighting max-height.
+  SideviewEngine.prototype.freezeCardSize = function (card) {
+    if (!card || card.classList.contains('sv-sized') || card.classList.contains('is-maximized') ||
+        card.classList.contains('is-minimized')) return;
+    var w = card.offsetWidth;
+    var h = card.offsetHeight;
+    if (!w || !h) return; // not laid out yet (hidden tab); retried on resize
+    if (!card.style.width) card.style.width = w + 'px';
+    if (!card.style.height) card.style.height = h + 'px';
+    card.classList.add('sv-sized');
+  };
+
+  SideviewEngine.prototype.freezeAllCardSizes = function () {
+    var self = this;
+    this.cards.forEach(function (meta) { self.freezeCardSize(meta.element); });
+  };
+
+  SideviewEngine.prototype.toggleMinimizeCard = function (card, btn) {
+    var minimized = !card.classList.contains('is-minimized');
+    card.classList.toggle('is-minimized', minimized);
+    if (minimized) {
+      // Remember an explicit height (from resize) so restore brings it back.
+      card._svRestoreHeight = card.style.height || '';
+      card.style.height = '';
+    } else if (card._svRestoreHeight) {
+      card.style.height = card._svRestoreHeight;
+    }
+    if (btn) {
+      btn.title = minimized ? 'Expand card' : 'Collapse card';
+      btn.setAttribute('aria-pressed', minimized ? 'true' : 'false');
+    }
+    if (!minimized && card._virtualTable && card._virtualTable.render) card._virtualTable.render();
+    this.scheduleConnectorUpdate();
+  };
+
+  // Maximize moves the card out of the transformed viewport into the overlay
+  // layer (position: fixed inside a CSS transform is relative to the transform,
+  // which made maximized cards ~10000px wide and off-screen).
+  SideviewEngine.prototype.toggleMaximizeCard = function (card, btn) {
+    var self = this;
+    var isMax = card.classList.contains('is-maximized');
+    if (!isMax) {
+      if (card.classList.contains('is-minimized')) this.toggleMinimizeCard(card, null);
+      card._svRestore = {
+        parent: card.parentNode,
+        next: card.nextSibling,
+        style: { width: card.style.width, height: card.style.height }
+      };
+      card.style.width = '';
+      card.style.height = '';
+      if (this.overlay) this.overlay.appendChild(card);
+      card.classList.add('is-maximized');
+      if (this.overlay) this.overlay.classList.add('has-maximized');
+    } else {
+      var restore = card._svRestore || {};
+      card.classList.remove('is-maximized');
+      if (restore.parent) restore.parent.insertBefore(card, restore.next && restore.next.parentNode === restore.parent ? restore.next : null);
+      if (restore.style) {
+        card.style.width = restore.style.width || '';
+        card.style.height = restore.style.height || '';
+      }
+      card._svRestore = null;
+      if (this.overlay && !this.overlay.querySelector('.is-maximized')) this.overlay.classList.remove('has-maximized');
+    }
+    if (btn) {
+      btn.title = !isMax ? 'Restore card' : 'Maximize card';
+      btn.setAttribute('aria-pressed', !isMax ? 'true' : 'false');
+    }
+    if (card._virtualTable && card._virtualTable.render) card._virtualTable.render();
+    this.scheduleConnectorUpdate();
+    setTimeout(function () { self.scheduleConnectorUpdate(); }, 50);
+  };
+
+  SideviewEngine.prototype.isNativeFullscreen = function () {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement ||
+      document.mozFullScreenElement || document.msFullscreenElement);
+  };
+
+  // Native fullscreen on the container; when the browser refuses (e.g. inside
+  // the RStudio Viewer iframe) fall back to a CSS "pseudo-fullscreen".
+  SideviewEngine.prototype.toggleFullscreen = function (btn) {
+    var self = this;
+    var container = this.container;
+    var setActive = function (on) {
+      if (btn) btn.classList.toggle('active', on);
+      self.scheduleConnectorUpdate();
+      setTimeout(function () { self.scheduleConnectorUpdate(); }, 150);
+    };
+    var pseudoOn = container.classList.contains('sv-pseudo-fullscreen');
+
+    if (pseudoOn) {
+      container.classList.remove('sv-pseudo-fullscreen');
+      setActive(false);
+      return;
+    }
+    if (this.isNativeFullscreen()) {
+      var exit = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+      if (exit) {
+        try {
+          var ep = exit.call(document);
+          if (ep && ep.catch) ep.catch(function () {});
+        } catch (err) {}
+      }
+      setActive(false);
+      return;
+    }
+
+    var fallback = function () {
+      container.classList.add('sv-pseudo-fullscreen');
+      setActive(true);
+    };
+    var req = container.requestFullscreen || container.webkitRequestFullscreen ||
+      container.mozRequestFullScreen || container.msRequestFullscreen;
+    var enabled = document.fullscreenEnabled !== false && document.webkitFullscreenEnabled !== false;
+    if (!req || !enabled) { fallback(); return; }
+    try {
+      var p = req.call(container);
+      if (p && typeof p.then === 'function') {
+        p.then(function () { setActive(true); }, fallback);
+      } else {
+        setActive(true);
+      }
+    } catch (err) {
+      fallback();
+    }
+  };
 
   SideviewEngine.prototype.initDOM = function () {
     var self = this;
@@ -562,6 +971,31 @@ function sendToShiny(name, value) {
         '<div class="sideview-swatch sideview-swatch-clear" data-color="clear" title="Clear Highlight"></div>'
       ].join('');
       this.container.appendChild(palette);
+    }
+
+    // Top bar: toolbar + palette share one wrapping flex row so they can never
+    // overlap each other (older markup placed them as two floating boxes).
+    var topbar = this.container.querySelector('.sideview-topbar');
+    if (!topbar) {
+      topbar = document.createElement('div');
+      topbar.className = 'sideview-topbar';
+      this.container.insertBefore(topbar, this.canvas.nextSibling);
+    }
+    var tb = this.container.querySelector('.sideview-toolbar');
+    var pal = this.container.querySelector('.sideview-palette');
+    if (tb && tb.parentNode !== topbar) topbar.appendChild(tb);
+    if (pal && pal.parentNode !== topbar) topbar.appendChild(pal);
+
+    // Overlay layer (not transformed by panzoom) for maximized cards and popovers
+    this.overlay = this.container.querySelector('.sideview-overlay');
+    if (!this.overlay) {
+      this.overlay = document.createElement('div');
+      this.overlay.className = 'sideview-overlay';
+      this.container.appendChild(this.overlay);
+    }
+
+    if (this.options.mode === 'embedded') {
+      this.container.classList.add('sv-embedded');
     }
 
     // Action Drawer
@@ -641,11 +1075,17 @@ function sendToShiny(name, value) {
       canvas: true,
       minScale: this.options.minScale,
       maxScale: this.options.maxScale,
-      excludeClass: 'sideview-card'
+      excludeClass: 'sideview-card',
+      wheelRequiresModifier: this.options.mode === 'embedded'
     });
 
-    this.viewport.addEventListener('panzoomchange', function () {
-      self.updateConnectors();
+    var zoomLabel = this.container.querySelector('[data-action="zoom-reset"]');
+    this.viewport.addEventListener('panzoomchange', function (e) {
+      var scale = e && e.detail && typeof e.detail.scale === 'number'
+        ? e.detail.scale
+        : (self.panzoom ? self.panzoom.getScale() : 1);
+      if (zoomLabel) zoomLabel.textContent = Math.round(scale * 100) + '%';
+      self.scheduleConnectorUpdate();
     });
   };
 
@@ -685,22 +1125,11 @@ function sendToShiny(name, value) {
       } else if (action === 'zoom-reset' && self.panzoom) {
         self.panzoom.reset();
       } else if (action === 'minimize-card') {
-        var card = btn.closest('.sideview-card');
-        if (card) {
-          var b = card.querySelector('.sideview-card-body');
-          if (b) {
-            b.style.display = b.style.display === 'none' ? '' : 'none';
-          }
-        }
+        var minCard = btn.closest('.sideview-card');
+        if (minCard) self.toggleMinimizeCard(minCard, btn);
       } else if (action === 'maximize-card') {
-        var card = btn.closest('.sideview-card');
-        if (card) {
-          card.classList.toggle('is-maximized');
-          var isMax = card.classList.contains('is-maximized');
-          btn.innerHTML = isMax ? '&#x29C9;' : '&#x26F6;';
-          btn.title = isMax ? 'Restore Card' : 'Maximize / Restore Card';
-          self.updateConnectors();
-        }
+        var maxCard = btn.closest('.sideview-card');
+        if (maxCard) self.toggleMaximizeCard(maxCard, btn);
       } else if (action === 'toggle-snap') {
         self.options.snapToEdge = !self.options.snapToEdge;
         btn.classList.toggle('active', self.options.snapToEdge);
@@ -711,28 +1140,7 @@ function sendToShiny(name, value) {
         var dr = self.container.querySelector('.sideview-drawer');
         if (dr) dr.classList.add('collapsed');
       } else if (action === 'toggle-fullscreen') {
-        var isFs = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
-        if (!isFs) {
-          var targetEl = document.documentElement || self.container;
-          var req = targetEl.requestFullscreen || targetEl.webkitRequestFullscreen || targetEl.mozRequestFullScreen || targetEl.msRequestFullscreen;
-          if (req) {
-            try {
-              var p = req.call(targetEl);
-              if (p && p.catch) p.catch(function () {});
-            } catch (err) {}
-          }
-          btn.classList.add('active');
-        } else {
-          var exit = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
-          if (exit) {
-            try {
-              var ep = exit.call(document);
-              if (ep && ep.catch) ep.catch(function () {});
-            } catch (err) {}
-          }
-          btn.classList.remove('active');
-        }
-        setTimeout(function () { self.updateConnectors(); }, 150);
+        self.toggleFullscreen(btn);
       } else if (action === 'inject-script') {
         sendToShiny('inject_script', { code: self.generatedCode });
         if (self.shouldAutoClear()) {
@@ -945,6 +1353,8 @@ function sendToShiny(name, value) {
     // Cell & Column Highlighting on Table Click
     this.container.addEventListener('click', function (e) {
       if (!self.selectedColor) return;
+      // Sort / filter / resize buttons live inside the th but must not highlight.
+      if (e.target.closest('.sideview-th-btn, .sideview-col-resizer, [data-action]')) return;
 
       var th = e.target.closest('th');
       var td = e.target.closest('td');
@@ -1120,6 +1530,17 @@ function sendToShiny(name, value) {
       var port = e.target.closest('.sideview-col-port');
       var th = e.target.closest('th');
 
+      // A real mouse press already ran through the mousedown handler below;
+      // handling the trailing click again would start a phantom draft.
+      if (port && self._portDownHandled === port) {
+        self._portDownHandled = null;
+        return;
+      }
+      self._portDownHandled = null;
+
+      // Header tool buttons (sort / filter / resize) never connect.
+      if (e.target.closest('.sideview-th-btn, .sideview-col-resizer, .sideview-rename-input')) return;
+
       if (!self.activePort) {
         if (port) {
           e.stopPropagation();
@@ -1156,11 +1577,13 @@ function sendToShiny(name, value) {
 
     // Drag-to-connect support
     this.container.addEventListener('mousedown', function (e) {
+      if (typeof e.button === 'number' && e.button !== 0) return;
       var port = e.target.closest('.sideview-col-port');
       if (!port) return;
       var cardEl = port.closest('.sideview-card');
       if (!cardEl) return;
       e.stopPropagation();
+      self._portDownHandled = port;
 
       // If already connecting, do not re-initialize on starting port
       if (self.activePort) {
@@ -1231,7 +1654,7 @@ function sendToShiny(name, value) {
         var newWidth = Math.max(65, startWidth + dx);
         th.style.width = newWidth + 'px';
         th.style.minWidth = newWidth + 'px';
-        self.updateConnectors();
+        self.scheduleConnectorUpdate();
       }
 
       function onColResizeUp() {
@@ -1245,11 +1668,19 @@ function sendToShiny(name, value) {
       document.addEventListener('mouseup', onColResizeUp);
     });
 
-    // Pressing Escape cancels draft
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && self.activePort) {
+    // Pressing Escape cancels a draft connection, closes the filter popover,
+    // or restores a maximized card (in that order).
+    this.listenGlobal(document, 'keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      if (self.activePort) {
         cleanupDraft();
         self.showToast('Cancelled column connection', 'info');
+        return;
+      }
+      if (self.closeActivePopover && self.closeActivePopover()) return;
+      var maxed = self.overlay ? self.overlay.querySelector('.sideview-card.is-maximized') : null;
+      if (maxed) {
+        self.toggleMaximizeCard(maxed, maxed.querySelector('[data-action="maximize-card"]'));
       }
     });
 
@@ -1313,19 +1744,19 @@ function sendToShiny(name, value) {
 
     // Window resize & Fullscreen change connector synchronization
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-      window.addEventListener('resize', function () {
-        self.updateConnectors();
+      this.listenGlobal(window, 'resize', function () {
+        self.scheduleConnectorUpdate();
       });
     }
     var onFullscreenChange = function () {
       var fsBtn = self.container.querySelector('[data-action="toggle-fullscreen"]');
-      var isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+      var isFs = self.isNativeFullscreen() || self.container.classList.contains('sv-pseudo-fullscreen');
       if (fsBtn) fsBtn.classList.toggle('active', isFs);
-      self.updateConnectors();
+      self.scheduleConnectorUpdate();
     };
     if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
-      document.addEventListener('fullscreenchange', onFullscreenChange);
-      document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+      this.listenGlobal(document, 'fullscreenchange', onFullscreenChange);
+      this.listenGlobal(document, 'webkitfullscreenchange', onFullscreenChange);
     }
   };
 
@@ -1354,8 +1785,8 @@ function sendToShiny(name, value) {
     var dimsText = cardData.dims ? cardData.dims[0] + ' × ' + cardData.dims[1] : '';
     header.innerHTML = [
       '<div class="sideview-card-title-group">',
-      '  <span class="sideview-card-title">' + cardName + '</span>',
-      '  <span class="sideview-badge sideview-badge-type">' + (cardData.type || 'grid') + '</span>',
+      '  <span class="sideview-card-title">' + escapeHtml(cardName) + '</span>',
+      '  <span class="sideview-badge sideview-badge-type">' + escapeHtml(cardData.type || 'grid') + '</span>',
       dimsText ? '  <span class="sideview-badge">' + dimsText + '</span>' : '',
       '</div>',
       '<div class="sideview-card-actions">',
@@ -1384,17 +1815,19 @@ function sendToShiny(name, value) {
         var th = document.createElement('th');
         th.dataset.colName = colName;
         var colType = colTypes[colName] || '';
+        if (colType) th.dataset.colType = colType;
         th.title = colType ? colName + ' (' + colType + ')' : colName;
+        var safeName = escapeHtml(colName);
         th.innerHTML = [
           '<div class="col-header-wrap">',
           '  <div class="col-header-left">',
-          '    <span class="sideview-col-name">' + colName + '</span>',
-          colType ? '    <span class="sideview-col-type">(' + colType + ')</span>' : '',
+          '    <span class="sideview-col-name">' + safeName + '</span>',
+          colType ? '    <span class="sideview-col-type">(' + escapeHtml(colType) + ')</span>' : '',
           '  </div>',
           '  <div class="col-header-tools">',
-          '    <button class="sideview-th-btn sideview-sort-btn" data-action="sort-col" data-col-name="' + colName + '" title="Sort column (Asc / Desc / Reset)">&#x21C5;</button>',
-          '    <button class="sideview-th-btn sideview-filter-btn" data-action="filter-col" data-col-name="' + colName + '" title="Filter column">&#x1F50D;</button>',
-          '    <span class="sideview-col-port" data-col-name="' + colName + '" title="Connect to map field"></span>',
+          '    <button class="sideview-th-btn sideview-sort-btn" data-action="sort-col" data-col-name="' + safeName + '" title="Sort column (Asc / Desc / Reset)">&#x21C5;</button>',
+          '    <button class="sideview-th-btn sideview-filter-btn" data-action="filter-col" data-col-name="' + safeName + '" title="Filter column">&#x1F50D;</button>',
+          '    <span class="sideview-col-port" data-col-name="' + safeName + '" title="Connect to map field"></span>',
           '  </div>',
           '</div>',
           '<span class="sideview-col-resizer" title="Drag to resize column width"></span>'
@@ -1456,7 +1889,14 @@ function sendToShiny(name, value) {
 
     function startDrag(e) {
       if (isDragging) return;
+      if (typeof e.button === 'number' && e.button !== 0) return;
       if (e.target.closest('button') || e.target.closest('input')) return;
+      if (cardEl.classList.contains('is-maximized')) return;
+      // Browsers fire pointerdown then mousedown for one press; listen to a
+      // single event family so each move is handled exactly once.
+      var usePointer = e.type === 'pointerdown';
+      var moveType = usePointer ? 'pointermove' : 'mousemove';
+      var upType = usePointer ? 'pointerup' : 'mouseup';
 
       isDragging = true;
       cardEl.classList.add('is-dragging');
@@ -1524,8 +1964,8 @@ function sendToShiny(name, value) {
         cardMeta.x = targetX;
         cardMeta.y = targetY;
 
-        // Update SVG bezier connectors during drag
-        self.updateConnectors();
+        // Update SVG bezier connectors during drag (batched per frame)
+        self.scheduleConnectorUpdate();
       }
 
       function onPointerUp(upEvent) {
@@ -1536,12 +1976,9 @@ function sendToShiny(name, value) {
           try { header.releasePointerCapture(upEvent.pointerId); } catch (err) {}
         }
 
-        header.removeEventListener('pointermove', onPointerMove);
-        header.removeEventListener('pointerup', onPointerUp);
-        document.removeEventListener('pointermove', onPointerMove);
-        document.removeEventListener('pointerup', onPointerUp);
-        document.removeEventListener('mousemove', onPointerMove);
-        document.removeEventListener('mouseup', onPointerUp);
+        document.removeEventListener(moveType, onPointerMove);
+        document.removeEventListener(upType, onPointerUp);
+        self.updateConnectors();
 
         sendToShiny('sideview_card_moved', {
           card_id: cardMeta.id,
@@ -1550,12 +1987,8 @@ function sendToShiny(name, value) {
         });
       }
 
-      header.addEventListener('pointermove', onPointerMove);
-      header.addEventListener('pointerup', onPointerUp);
-      document.addEventListener('pointermove', onPointerMove);
-      document.addEventListener('pointerup', onPointerUp);
-      document.addEventListener('mousemove', onPointerMove);
-      document.addEventListener('mouseup', onPointerUp);
+      document.addEventListener(moveType, onPointerMove);
+      document.addEventListener(upType, onPointerUp);
     }
 
     header.addEventListener('pointerdown', startDrag);
@@ -1581,6 +2014,7 @@ function sendToShiny(name, value) {
           buffer: 10
         });
         cardEl._virtualTable = table._virtualTable = vTable;
+        self.attachRemoteRows(cardEl, cardId, cardName, vTable);
       }
       var cardMeta = {
         id: cardId,
@@ -1594,6 +2028,28 @@ function sendToShiny(name, value) {
       self.cards.set(cardId, cardMeta);
       self.setupCardDrag(cardEl, cardMeta);
       self.setupScrollSync(cardMeta);
+    });
+  };
+
+  /**
+   * Page rows from the R session when the card holds more rows than the HTML
+   * preview (data-total-rows), so sort/filter/scroll cover the full data.
+   */
+  SideviewEngine.prototype.attachRemoteRows = function (cardEl, cardId, cardName, vTable) {
+    var self = this;
+    var total = parseInt(cardEl.dataset ? cardEl.dataset.totalRows : '', 10);
+    // Shiny.setInputValue only appears once the session connects, which is
+    // after this runs; requests made before then are retried.
+    var hasShiny = typeof global.Shiny !== 'undefined';
+    if (!hasShiny || isNaN(total) || total <= vTable.totalRows) return;
+    vTable.onRemoteCount = function (count, fullTotal) {
+      var f = vTable.currentFilter;
+      if (f) {
+        self.showToast('Filtered ' + f.colName + ' (' + count.toLocaleString() + '/' + fullTotal.toLocaleString() + ' rows)', 'success');
+      }
+    };
+    vTable.enableRemote(cardId, total, function (req) {
+      return sendToShiny('sideview_rows_request', req);
     });
   };
 
@@ -1619,7 +2075,7 @@ function sendToShiny(name, value) {
     }
 
     body.addEventListener('scroll', function () {
-      self.updateConnectors();
+      self.scheduleConnectorUpdate();
       if (self.isSyncingScroll || !self.syncScrollCards.has(cardMeta.id)) return;
       if (self.syncScrollCards.size < 2) return;
 
@@ -1670,10 +2126,10 @@ function sendToShiny(name, value) {
   
   SideviewEngine.prototype.findPortElement = function (tableName, colName) {
     if (!tableName || !colName) return null;
-    var card = this.container.querySelector('[data-card-name="' + tableName + '"]') ||
-               this.container.querySelector('[data-card-id="' + tableName + '"]');
+    var card = this.container.querySelector('[data-card-name="' + cssEscape(tableName) + '"]') ||
+               this.container.querySelector('[data-card-id="' + cssEscape(tableName) + '"]');
     if (!card) return null;
-    return card.querySelector('.sideview-col-port[data-col-name="' + colName + '"]');
+    return card.querySelector('.sideview-col-port[data-col-name="' + cssEscape(colName) + '"]');
   };
 
   SideviewEngine.prototype.requestSuggestedMappings = function (minConfidence) {
@@ -1804,7 +2260,8 @@ function sendToShiny(name, value) {
 
   SideviewEngine.prototype.addConnection = function (connData) {
     var self = this;
-    var connId = 'conn_' + Date.now();
+    this._connSeq = (this._connSeq || 0) + 1;
+    var connId = 'conn_' + Date.now() + '_' + this._connSeq;
 
     var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('class', 'sideview-connector-path');
@@ -1894,6 +2351,31 @@ function sendToShiny(name, value) {
   /**
    * Redraw all SVG connector splines based on current port coordinates in viewport space
    */
+  /**
+   * Screen rect a spline should attach to for a port. Falls back to the card
+   * header when the card is minimized, and clamps to the visible body when the
+   * column is scrolled out of view horizontally.
+   */
+  SideviewEngine.prototype.portAnchorRect = function (portEl) {
+    var r = portEl.getBoundingClientRect();
+    var card = portEl.closest ? portEl.closest('.sideview-card') : null;
+    if (!card) return r;
+    var header = card.querySelector('.sideview-card-header');
+    if (card.classList.contains('is-minimized') || (r.width === 0 && r.height === 0)) {
+      return header ? header.getBoundingClientRect() : card.getBoundingClientRect();
+    }
+    var body = card.querySelector('.sideview-card-body');
+    if (body) {
+      var b = body.getBoundingClientRect();
+      if (b.width > 0) {
+        var cx = Math.min(Math.max(r.left + r.width / 2, b.left), b.right);
+        var cy = Math.min(Math.max(r.top + r.height / 2, b.top), b.bottom);
+        return { left: cx - r.width / 2, top: cy - r.height / 2, width: r.width, height: r.height };
+      }
+    }
+    return r;
+  };
+
   SideviewEngine.prototype.updateConnectors = function () {
     var self = this;
     var viewportRect = this.viewport.getBoundingClientRect();
@@ -1903,8 +2385,8 @@ function sendToShiny(name, value) {
     allConns.forEach(function (conn) {
       if (!conn.fromElement || !conn.toElement || !conn.path) return;
 
-      var r1 = conn.fromElement.getBoundingClientRect();
-      var r2 = conn.toElement.getBoundingClientRect();
+      var r1 = self.portAnchorRect(conn.fromElement);
+      var r2 = self.portAnchorRect(conn.toElement);
 
       var p1 = {
         x: (r1.left + r1.width / 2 - viewportRect.left) / scale,
@@ -1925,7 +2407,13 @@ function sendToShiny(name, value) {
     var drawer = this.container.querySelector('.sideview-drawer');
     var codeText = this.container.querySelector('.sideview-code-text');
     if (codeText) codeText.textContent = code;
-    if (drawer) drawer.classList.remove('collapsed');
+    if (drawer && drawer.classList.contains('collapsed')) {
+      // Open once on the first operation; afterwards respect the user's choice.
+      if (!this._drawerAutoOpened) drawer.classList.remove('collapsed');
+    }
+    this._drawerAutoOpened = true;
+    var badge = this.container.querySelector('[data-action="toggle-drawer"]');
+    if (badge && badge.classList) badge.classList.add('has-code');
   };
 
   /**
@@ -1989,8 +2477,7 @@ function sendToShiny(name, value) {
     });
 
     // 2b. Reset all column sort indicators and row filters
-    var pop = document.querySelector('.sideview-filter-popover');
-    if (pop) pop.remove();
+    this.closeActivePopover();
     this.container.querySelectorAll('.sideview-row-filtered').forEach(function (r) {
       r.classList.remove('sideview-row-filtered');
     });
@@ -2098,7 +2585,7 @@ function sendToShiny(name, value) {
         var cardName = cardEl.dataset.cardName || 'df';
         var escCol = escapeColIdentifier(colName);
         var arrangeArg = nextState === 'desc' ? 'dplyr::desc(' + escCol + ')' : escCol;
-        var arrangeCode = cardName + ' %>\n  dplyr::arrange(' + arrangeArg + ')';
+        var arrangeCode = cardName + ' %>%\n  dplyr::arrange(' + arrangeArg + ')';
 
         self.activateDrawerTab('arrange');
         self.updateDrawerCode(arrangeCode);
@@ -2149,7 +2636,7 @@ function sendToShiny(name, value) {
         var cardNameFallback = cardEl.dataset.cardName || 'df';
         var escColFallback = escapeColIdentifier(colName);
         var arrangeArgFallback = nextState === 'desc' ? 'dplyr::desc(' + escColFallback + ')' : escColFallback;
-        var arrangeCodeFallback = cardNameFallback + ' %>\n  dplyr::arrange(' + arrangeArgFallback + ')';
+        var arrangeCodeFallback = cardNameFallback + ' %>%\n  dplyr::arrange(' + arrangeArgFallback + ')';
 
         self.activateDrawerTab('arrange');
         self.updateDrawerCode(arrangeCodeFallback);
@@ -2170,10 +2657,54 @@ function sendToShiny(name, value) {
 
   /**
    * Interactive Column Filter Popover
+   *
+   * The popover lives in the container's untransformed overlay layer and is
+   * re-anchored to its button on pan, zoom, scroll and resize. Operators follow
+   * the column type, and the generated code mirrors sv_filter_condition() in R.
    */
+  var NUMERIC_COL_TYPES = { numeric: 1, integer: 1, double: 1, dbl: 1, int: 1, num: 1 };
+  var TEXT_COL_TYPES = { character: 1, factor: 1, logical: 1, chr: 1, fct: 1, lgl: 1 };
+
+  function rStringLiteral(value) {
+    return '"' + String(value)
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n') + '"';
+  }
+
+  function filterConditionCode(colName, op, val, isNumericCol) {
+    var escCol = escapeColIdentifier(colName);
+    var numOk = isNumericCol && val !== '' && !isNaN(Number(val));
+    var lit = numOk ? String(Number(val)) : rStringLiteral(val);
+    switch (op) {
+      case 'contains': return 'grepl(' + rStringLiteral(val) + ', ' + escCol + ', fixed = TRUE)';
+      case 'equals': return escCol + ' == ' + lit;
+      case 'not_equals': return escCol + ' != ' + lit;
+      case 'gt': return escCol + ' > ' + lit;
+      case 'gte': return escCol + ' >= ' + lit;
+      case 'lt': return escCol + ' < ' + lit;
+      case 'lte': return escCol + ' <= ' + lit;
+    }
+    return 'TRUE';
+  }
+
+  SideviewEngine.prototype.closeActivePopover = function () {
+    var pop = this._activePopover;
+    if (pop && pop._closePopover) {
+      pop._closePopover();
+      return true;
+    }
+    return false;
+  };
+
+  SideviewEngine.prototype.activePopoverReposition = function () {
+    var pop = this._activePopover;
+    if (pop && pop._reposition) pop._reposition();
+  };
+
   SideviewEngine.prototype.openFilterPopover = function (cardEl, colName, colIndex, btn) {
     var self = this;
-    var existing = document.querySelector('.sideview-filter-popover');
+    var existing = this._activePopover || document.querySelector('.sideview-filter-popover');
     if (existing) {
       var isSame = existing._sourceBtn === btn;
       if (existing._closePopover) existing._closePopover();
@@ -2182,54 +2713,105 @@ function sendToShiny(name, value) {
     }
 
     var cardName = cardEl.dataset.cardName || 'df';
+    var table = cardEl.querySelector('.sideview-table');
+    var vt = table ? table._virtualTable : null;
+    var th = btn.closest ? btn.closest('th') : null;
+    var colType = (th && th.dataset && th.dataset.colType) ||
+                  (vt && vt.colTypes ? vt.colTypes[colName] : '') || '';
+    var typeKnown = colType !== '';
+    var isTextCol = !!TEXT_COL_TYPES[colType];
+    var isNumericCol = !!NUMERIC_COL_TYPES[colType];
+
     var popover = document.createElement('div');
     popover.className = 'sideview-filter-popover';
     popover._sourceBtn = btn;
-
-    function closePopover() {
-      document.removeEventListener('mousedown', onDocMouseDown, true);
-      if (popover.parentNode) popover.remove();
-    }
-    popover._closePopover = closePopover;
+    popover._sideviewOwner = this;
+    popover.setAttribute('role', 'dialog');
+    popover.setAttribute('aria-label', 'Filter ' + colName);
 
     var onDocMouseDown = function (evt) {
-      if (!popover.contains(evt.target) && evt.target !== btn && !btn.contains(evt.target)) {
-        closePopover();
-      }
+      var t = evt.target;
+      var inside = popover.contains ? popover.contains(t) : false;
+      var onBtn = t === btn || (btn.contains ? btn.contains(t) : false);
+      if (!inside && !onBtn) closePopover();
     };
-    setTimeout(function () {
+    var listenTimer = setTimeout(function () {
       document.addEventListener('mousedown', onDocMouseDown, true);
     }, 10);
 
+    function closePopover() {
+      clearTimeout(listenTimer);
+      document.removeEventListener('mousedown', onDocMouseDown, true);
+      if (popover.parentNode) popover.remove();
+      if (self._activePopover === popover) self._activePopover = null;
+    }
+    popover._closePopover = closePopover;
+
+    var ops = [
+      ['contains', 'contains'],
+      ['equals', 'equals (==)'],
+      ['not_equals', 'not equals (!=)'],
+      ['gt', 'greater than (&gt;)'],
+      ['gte', 'greater or equal (&gt;=)'],
+      ['lt', 'less than (&lt;)'],
+      ['lte', 'less or equal (&lt;=)']
+    ];
+    // Text columns only offer text comparisons; unknown types keep everything.
+    if (isTextCol) ops = ops.slice(0, 3);
+    var defaultOp = isTextCol || !typeKnown ? 'contains' : 'equals';
+
     popover.innerHTML = [
       '<div class="sideview-filter-popover-header">',
-      '  <span>Filter: ' + colName + '</span>',
-      '  <button class="sideview-icon-btn sideview-filter-close" title="Close">&times;</button>',
+      '  <span>Filter: ' + escapeHtml(colName) + (colType ? ' <small>(' + escapeHtml(colType) + ')</small>' : '') + '</span>',
+      '  <button class="sideview-icon-btn sideview-filter-close" title="Close" aria-label="Close filter">&times;</button>',
       '</div>',
-      '<select class="sideview-filter-select">',
-      '  <option value="contains">contains</option>',
-      '  <option value="equals">equals (==)</option>',
-      '  <option value="not_equals">not equals (!=)</option>',
-      '  <option value="gt">greater than (&gt;)</option>',
-      '  <option value="gte">greater or equal (&gt;=)</option>',
-      '  <option value="lt">less than (&lt;)</option>',
-      '  <option value="lte">less or equal (&lt;=)</option>',
+      '<select class="sideview-filter-select" aria-label="Operator">',
+      ops.map(function (o) {
+        return '  <option value="' + o[0] + '"' + (o[0] === defaultOp ? ' selected' : '') + '>' + o[1] + '</option>';
+      }).join(''),
       '</select>',
-      '<input type="text" class="sideview-filter-input" placeholder="Value..." />',
+      '<input type="text" class="sideview-filter-input" placeholder="Value (case-sensitive)" aria-label="Filter value" />',
       '<div class="sideview-filter-actions">',
       '  <button class="sideview-filter-clear">Clear</button>',
       '  <button class="sideview-filter-apply">Apply</button>',
       '</div>'
     ].join('');
 
-    document.body.appendChild(popover);
+    var host = this.overlay || this.container;
+    host.appendChild(popover);
+    this._activePopover = popover;
 
-    var btnRect = btn.getBoundingClientRect();
-    popover.style.left = Math.min(window.innerWidth - 240, Math.max(10, btnRect.left - 80)) + 'px';
-    popover.style.top = (btnRect.bottom + 6) + 'px';
+    function reposition() {
+      if (!popover.parentNode) return;
+      // A button scrolled or minimized out of view closes the popover.
+      var cardHidden = cardEl.classList.contains('is-minimized');
+      var btnRect = btn.getBoundingClientRect();
+      var hostRect = host.getBoundingClientRect();
+      if (cardHidden || (btnRect.width === 0 && btnRect.height === 0 && btn.offsetParent === null)) {
+        closePopover();
+        return;
+      }
+      var hostW = host.clientWidth || hostRect.width || (typeof window !== 'undefined' ? window.innerWidth : 800);
+      var hostH = host.clientHeight || hostRect.height || (typeof window !== 'undefined' ? window.innerHeight : 600);
+      var popW = popover.offsetWidth || 240;
+      var popH = popover.offsetHeight || 170;
+      var left = btnRect.left - hostRect.left - 80;
+      var top = btnRect.bottom - hostRect.top + 6;
+      if (top + popH > hostH - 8) top = btnRect.top - hostRect.top - popH - 6;
+      left = Math.max(8, Math.min(hostW - popW - 8, left));
+      top = Math.max(8, Math.min(hostH - popH - 8, top));
+      popover.style.left = left + 'px';
+      popover.style.top = top + 'px';
+    }
+    popover._reposition = reposition;
+    reposition();
 
     var select = popover.querySelector('.sideview-filter-select');
     var input = popover.querySelector('.sideview-filter-input');
+    if (vt && vt.currentFilter && vt.currentFilter.colName === colName) {
+      select.value = vt.currentFilter.operator;
+      input.value = vt.currentFilter.value;
+    }
     input.focus();
 
     popover.querySelector('.sideview-filter-close').addEventListener('click', function () {
@@ -2237,7 +2819,6 @@ function sendToShiny(name, value) {
     });
 
     popover.querySelector('.sideview-filter-clear').addEventListener('click', function () {
-      var table = cardEl.querySelector('.sideview-table');
       if (table) {
         if (table._virtualTable) {
           table._virtualTable.clearFilter();
@@ -2260,15 +2841,15 @@ function sendToShiny(name, value) {
         return;
       }
       var op = select.value;
-      var table = cardEl.querySelector('.sideview-table');
       if (!table) return;
 
       var totalRowsCount = 0;
       var matchedCount = 0;
 
       if (table._virtualTable) {
-        totalRowsCount = table._virtualTable.totalRows;
-        matchedCount = table._virtualTable.filter(colIndex, colName, op, val);
+        var tv = table._virtualTable;
+        totalRowsCount = tv.remote ? tv.remote.total : tv.totalRows;
+        matchedCount = tv.filter(colIndex, colName, op, val);
       } else {
         var rows = table.querySelectorAll('tbody tr');
         totalRowsCount = rows.length;
@@ -2282,11 +2863,11 @@ function sendToShiny(name, value) {
           var match = false;
 
           if (op === 'contains') {
-            match = text.toLowerCase().indexOf(val.toLowerCase()) !== -1;
+            match = text.indexOf(val) !== -1;
           } else if (op === 'equals') {
-            match = isNumFilter && !isNaN(numCell) ? numCell === numVal : text.toLowerCase() === val.toLowerCase();
+            match = isNumFilter && !isNaN(numCell) ? numCell === numVal : text === val;
           } else if (op === 'not_equals') {
-            match = isNumFilter && !isNaN(numCell) ? numCell !== numVal : text.toLowerCase() !== val.toLowerCase();
+            match = isNumFilter && !isNaN(numCell) ? numCell !== numVal : text !== val;
           } else if (op === 'gt') {
             match = !isNaN(numCell) && numCell > numVal;
           } else if (op === 'gte') {
@@ -2308,28 +2889,16 @@ function sendToShiny(name, value) {
 
       btn.classList.add('active');
 
-      var escCol = escapeColIdentifier(colName);
-      var condExpr = '';
-      if (op === 'contains') {
-        condExpr = 'stringr::str_detect(' + escCol + ', "' + val + '")';
-      } else if (op === 'equals') {
-        condExpr = isNumFilter ? escCol + ' == ' + val : escCol + ' == "' + val + '"';
-      } else if (op === 'not_equals') {
-        condExpr = isNumFilter ? escCol + ' != ' + val : escCol + ' != "' + val + '"';
-      } else if (op === 'gt') {
-        condExpr = escCol + ' > ' + val;
-      } else if (op === 'gte') {
-        condExpr = escCol + ' >= ' + val;
-      } else if (op === 'lt') {
-        condExpr = escCol + ' < ' + val;
-      } else if (op === 'lte') {
-        condExpr = escCol + ' <= ' + val;
-      }
+      var numericForCode = typeKnown ? isNumericCol : !isNaN(Number(val));
+      var condExpr = filterConditionCode(colName, op, val, numericForCode);
 
       var filterCode = cardName + ' %>%\n  dplyr::filter(' + condExpr + ')';
       self.activateDrawerTab('filter');
       self.updateDrawerCode(filterCode);
-      self.showToast('Filtered ' + colName + ' (' + matchedCount + '/' + totalRowsCount + ' rows)', 'success');
+      // Server-paged tables report their count when the first block arrives.
+      if (matchedCount !== null) {
+        self.showToast('Filtered ' + colName + ' (' + matchedCount + '/' + totalRowsCount + ' rows)', 'success');
+      }
 
       sendToShiny('column_filtered', {
         table: cardName,
@@ -2347,7 +2916,7 @@ function sendToShiny(name, value) {
     popover.querySelector('.sideview-filter-apply').addEventListener('click', applyFilter);
     input.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') applyFilter();
-      else if (e.key === 'Escape') closePopover();
+      else if (e.key === 'Escape') { e.stopPropagation(); closePopover(); }
     });
   };
 
@@ -2355,7 +2924,15 @@ function sendToShiny(name, value) {
     var toast = document.createElement('div');
     toast.className = 'sideview-toast ' + (type ? 'sideview-toast-' + type : '');
     toast.textContent = message;
-    this.container.appendChild(toast);
+    toast.setAttribute('role', 'status');
+    var stack = this.container.querySelector('.sideview-toast-stack');
+    if (!stack) {
+      stack = document.createElement('div');
+      stack.className = 'sideview-toast-stack';
+      stack.setAttribute('aria-live', 'polite');
+      this.container.appendChild(stack);
+    }
+    stack.appendChild(toast);
     setTimeout(function () {
       toast.classList.add('visible');
     }, 10);
@@ -2441,6 +3018,24 @@ function sendToShiny(name, value) {
       chatMessages.scrollTop = chatMessages.scrollHeight;
     });
 
+    // Row window for a large card (reply to sideview_rows_request)
+    global.Shiny.addCustomMessageHandler('sideview_rows', function (data) {
+      if (!data || data.card_id === undefined) return;
+      var meta = self.cards.get(data.card_id);
+      if (!meta) {
+        self.cards.forEach(function (m) { if (m.name === data.card_id) meta = m; });
+      }
+      var vt = meta ? (meta.virtualTable || (meta.element ? meta.element._virtualTable : null)) : null;
+      if (data.error) {
+        self.showToast('Could not load rows: ' + data.error, 'warning');
+        return;
+      }
+      if (vt && typeof vt.receiveRows === 'function') {
+        vt.receiveRows(data);
+        self.scheduleConnectorUpdate();
+      }
+    });
+
     // Suggested mappings from server
     global.Shiny.addCustomMessageHandler('sideview_suggested_mappings', function (data) {
       if (data) {
@@ -2451,6 +3046,11 @@ function sendToShiny(name, value) {
     // Discrepancy report update
     global.Shiny.addCustomMessageHandler('sideview_discrepancies', function (data) {
       if (!data) return;
+      // Shiny serialises data frames column-wise and length-1 vectors as scalars.
+      data.fuzzy_matches = rowsFromColumns(data.fuzzy_matches);
+      data.exact_matches = asArray(data.exact_matches);
+      data.only_in_x = asArray(data.only_in_x);
+      data.only_in_y = asArray(data.only_in_y);
       self.lastDiscrepancy = data;
 
       var discPane = self.container.querySelector('.sideview-discrepancy-pane') ||
@@ -2475,7 +3075,7 @@ function sendToShiny(name, value) {
         var discHtml = [
           '<div class="sideview-discrepancy-card">',
           '  <div class="sideview-discrepancy-summary">',
-          '    <span>' + (data.from_table || 'Table 1') + ' ↔ ' + (data.to_table || 'Table 2') + '</span>',
+          '    <span>' + escapeHtml(data.from_table || 'Table 1') + ' ↔ ' + escapeHtml(data.to_table || 'Table 2') + '</span>',
           '    <span>' + exactCnt + ' matched · ' + fuzzyCnt + ' fuzzy · ' + diffCnt + ' diff</span>',
           '  </div>'
         ];
@@ -2483,17 +3083,17 @@ function sendToShiny(name, value) {
           discHtml.push('  <button class="sideview-btn sideview-btn-auto-clean" data-action="apply-auto-clean">Apply Suggested Cleanups</button>');
         }
         discHtml.push('</div>');
-        discHtml.push('<pre class="sideview-code-block"><code class="sideview-code-text">' + (self.generatedCode || '# Discrepancy checked') + '</code></pre>');
+        discHtml.push('<pre class="sideview-code-block"><code class="sideview-code-text">' + escapeHtml(self.generatedCode || '# Discrepancy checked') + '</code></pre>');
         discContent.innerHTML = discHtml.join('');
       }
 
       var targetCards = [];
       if (data.from_table) {
-        var c1 = self.container.querySelector('[data-card-name="' + data.from_table + '"]');
+        var c1 = self.container.querySelector('[data-card-name="' + cssEscape(data.from_table) + '"]');
         if (c1) targetCards.push(c1);
       }
       if (data.to_table) {
-        var c2 = self.container.querySelector('[data-card-name="' + data.to_table + '"]');
+        var c2 = self.container.querySelector('[data-card-name="' + cssEscape(data.to_table) + '"]');
         if (c2) targetCards.push(c2);
       }
       var scope = targetCards.length > 0 ? targetCards : [self.container];
@@ -2507,18 +3107,19 @@ function sendToShiny(name, value) {
       });
 
       // Highlight discrepancy cells in connected tables
-      if (data.fuzzy_matches && Array.isArray(data.fuzzy_matches)) {
+      if (data.fuzzy_matches.length) {
+        var fuzzyValues = {};
         data.fuzzy_matches.forEach(function (pair) {
-          searchCells.forEach(function (c) {
-            if (c.textContent.trim() === String(pair.x) || c.textContent.trim() === String(pair.y)) {
-              c.classList.add('sideview-discrepancy-fuzzy');
-            }
-          });
+          if (pair.x !== null && pair.x !== undefined) fuzzyValues[String(pair.x)] = true;
+          if (pair.y !== null && pair.y !== undefined) fuzzyValues[String(pair.y)] = true;
+        });
+        searchCells.forEach(function (c) {
+          if (fuzzyValues[c.textContent.trim()]) c.classList.add('sideview-discrepancy-fuzzy');
         });
       }
 
-      if (data.only_in_x || data.only_in_y) {
-        var diffValues = (data.only_in_x || []).concat(data.only_in_y || []);
+      if (data.only_in_x.length || data.only_in_y.length) {
+        var diffValues = data.only_in_x.concat(data.only_in_y).map(String);
         searchCells.forEach(function (c) {
           if (diffValues.indexOf(c.textContent.trim()) !== -1) {
             c.classList.add('sideview-discrepancy-diff');
@@ -2535,7 +3136,7 @@ function sendToShiny(name, value) {
       target = document.querySelector('.sideview-container') || document.body;
     }
     var instance = new SideviewEngine(target, options);
-    target._sideviewInstance = instance;
+    instance.container._sideviewInstance = instance;
     global.sideviewInitialized = true;
     global._sideviewInstance = instance;
     if (typeof window !== 'undefined') {
