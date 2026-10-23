@@ -9,7 +9,8 @@ sideview_server(
   ...,
   llm_fn = sv_call_llm,
   insert_fn = sv_insert_code,
-  console_fn = sv_send_to_console
+  console_fn = sv_send_to_console,
+  gadget = FALSE
 )
 }
 \arguments{
@@ -23,6 +24,10 @@ or tabular objects to be normalized.}
 \item{insert_fn}{Function used to insert code into active RStudio document (default \code{sv_insert_code}).}
 
 \item{console_fn}{Function used to send code to RStudio console (default \code{sv_send_to_console}).}
+
+\item{gadget}{If \code{TRUE}, run as a gadget: the Done and Cancel buttons, closing the
+RStudio dialog, and closing the browser tab all stop the app. Leave \code{FALSE}
+when embedding the server in your own multi-user Shiny app.}
 }
 \value{
 A Shiny server function \verb{function(input, output, session)}.

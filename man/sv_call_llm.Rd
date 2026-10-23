@@ -12,6 +12,7 @@ sv_call_llm(
   api_key = NULL,
   timeout = 60,
   extract_code = FALSE,
+  resolve_model = TRUE,
   ...
 )
 }
@@ -30,7 +31,12 @@ sv_call_llm(
 
 \item{extract_code}{Logical; if TRUE, runs \code{sv_extract_code()} on the response text. Default FALSE.}
 
-\item{...}{Additional options passed to request.}
+\item{resolve_model}{Logical; for Ollama, if an untagged model such as \code{"llama3.2"} is not
+installed, retry once with an installed tag of it (e.g. \code{"llama3.2:3b"}). Default TRUE.}
+
+\item{...}{Additional options added to the request body (e.g. \code{temperature}). For Ollama,
+\code{think = FALSE} is sent unless you pass \code{think} or set \code{options(sideview.llm_think = TRUE)},
+so reasoning models answer promptly.}
 }
 \value{
 Character string containing the LLM response text (or extracted code if \code{extract_code = TRUE}).

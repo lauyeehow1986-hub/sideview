@@ -295,6 +295,8 @@ sv_extract_code <- function(response_text) {
   }
 
   text <- paste(response_text, collapse = "\n")
+  # Reasoning models (qwen3, deepseek-r1, ...) may prepend a <think> block.
+  text <- gsub("(?s)<think>.*?</think>\\s*", "", text, perl = TRUE)
 
   # First check for explicit R code fences: ```r, ```R, ```{r...}
   r_pattern <- "(?s)```(?:[rR]|\\{r[^}]*\\})\\s*\\r?\\n(.*?)\\r?\\n?```"
@@ -349,7 +351,11 @@ sv_extract_code <- function(response_text) {
 #' @param api_key API key (for OpenAI or authenticated endpoints).
 #' @param timeout Request timeout in seconds. Default 60.
 #' @param extract_code Logical; if TRUE, runs `sv_extract_code()` on the response text. Default FALSE.
-#' @param ... Additional options passed to request.
+#' @param resolve_model Logical; for Ollama, if an untagged model such as `"llama3.2"` is not
+#'   installed, retry once with an installed tag of it (e.g. `"llama3.2:3b"`). Default TRUE.
+#' @param ... Additional options added to the request body (e.g. `temperature`). For Ollama,
+#'   `think = FALSE` is sent unless you pass `think` or set `options(sideview.llm_think = TRUE)`,
+#'   so reasoning models answer promptly.
 #'
 #' @return Character string containing the LLM response text (or extracted code if `extract_code = TRUE`).
 #' @export
@@ -360,8 +366,11 @@ sv_call_llm <- function(prompt,
                         api_key = NULL,
                         timeout = 60,
                         extract_code = FALSE,
+                        resolve_model = TRUE,
                         ...) {
   backend <- match.arg(backend)
+  call_args <- list(prompt = prompt, backend = backend, endpoint = endpoint, api_key = api_key,
+                    timeout = timeout, extract_code = extract_code, ...)
 
   # Format prompt into system and user messages
   if (inherits(prompt, "sideview_prompt") || is.list(prompt)) {
@@ -412,6 +421,7 @@ sv_call_llm <- function(prompt,
 
   if (backend == "ollama") {
     payload$stream <- FALSE
+    payload$think <- isTRUE(getOption("sideview.llm_think", FALSE))
   }
 
   # Forward any additional kwargs (temperature, max_tokens, etc.)
@@ -457,11 +467,30 @@ sv_call_llm <- function(prompt,
         err_resp <- e$resp
         status <- httr2::resp_status(err_resp)
         err_msg <- extract_llm_error(err_resp)
+        if (status == 404L) return(structure(list(err_msg = err_msg), class = "sv_llm_404"))
         stop(sprintf("Sideview LLM API error (%d): %s", status, err_msg), call. = FALSE)
       }
-      stop(sprintf("Sideview LLM connection failed (%s at %s): %s", backend, endpoint, e$message), call. = FALSE)
+      # httr2 puts the useful cause (timeout, refused) in the parent condition.
+      why <- conditionMessage(e)
+      if (!is.null(e$parent)) why <- paste(why, conditionMessage(e$parent))
+      stop(sprintf("Sideview LLM connection failed (%s at %s): %s", backend, endpoint, why), call. = FALSE)
     }
   )
+
+  if (inherits(resp, "sv_llm_404")) {
+    alt <- if (isTRUE(resolve_model) && backend == "ollama" && !grepl(":", model, fixed = TRUE)) {
+      installed <- tryCatch(sv_llm_models("ollama", endpoint = endpoint), error = function(e) character())
+      utils::head(installed[startsWith(installed, paste0(model, ":"))], 1L)
+    } else {
+      character()
+    }
+    if (length(alt) == 1L) {
+      call_args$model <- alt
+      call_args$resolve_model <- FALSE
+      return(do.call(sv_call_llm, call_args))
+    }
+    stop(sprintf("Sideview LLM API error (404): %s", resp$err_msg), call. = FALSE)
+  }
 
   # Verify status
   status <- httr2::resp_status(resp)
@@ -496,4 +525,70 @@ sv_call_llm <- function(prompt,
   }
 
   content
+}
+
+#' Turn an LLM failure into a short message with a fix hint
+#'
+#' @param err Error message from `sv_call_llm()` (or a custom `llm_fn`).
+#' @param backend Backend name (`"ollama"` or `"openai"`).
+#' @param model Model name, if known.
+#' @return A single character string for display in the UI.
+#' @noRd
+sv_llm_error_message <- function(err, backend = "ollama", model = NULL) {
+  err <- paste(as.character(err), collapse = " ")
+  backend <- if (is.character(backend) && length(backend) == 1L) backend else "ollama"
+  model <- model %||% getOption("sideview.llm_model",
+    if (identical(backend, "ollama")) Sys.getenv("SIDEVIEW_OLLAMA_MODEL", "llama3.2") else "gpt-4o-mini")
+  hint <- if (grepl("not found|404", err, ignore.case = TRUE) && identical(backend, "ollama")) {
+    installed <- tryCatch(sv_llm_models("ollama", timeout = 2), error = function(e) character())
+    sprintf("Model '%s' is not installed. Run `ollama pull %s` or set options(sideview.llm_model = \"...\")%s.",
+            model, model,
+            if (length(installed)) paste0(" (installed: ", paste(utils::head(installed, 6), collapse = ", "), ")") else "")
+  } else if (grepl("connection failed|refused|couldn't connect|could not connect|timed? ?out|resolve host",
+                   err, ignore.case = TRUE)) {
+    if (identical(backend, "ollama")) {
+      "Ollama is not reachable. Start it with `ollama serve`, or set options(sideview.llm_backend = \"openai\")."
+    } else {
+      "The API endpoint is not reachable. Check options(sideview.llm_endpoint) and your network."
+    }
+  } else if (grepl("401|403|api key|unauthori", err, ignore.case = TRUE)) {
+    "The API rejected the key. Set options(sideview.llm_api_key) or the OPENAI_API_KEY variable."
+  } else {
+    NULL
+  }
+  msg <- paste0("AI request failed: ", sub("^Sideview LLM ", "", err))
+  if (!is.null(hint)) msg <- paste(msg, hint, sep = "\n")
+  msg
+}
+
+#' List the models available from an LLM backend
+#'
+#' Queries a local Ollama server (`/api/tags`) or an OpenAI-compatible server
+#' (`/models`) for the installed or available model names. Useful for choosing
+#' `options(sideview.llm_model = ...)`.
+#'
+#' @param backend `"ollama"` or `"openai"`.
+#' @param endpoint Base URL. Defaults as in [sv_call_llm()]; a chat endpoint
+#'   (`.../api/chat`, `.../chat/completions`) is also accepted.
+#' @param api_key API key for OpenAI-compatible servers.
+#' @param timeout Request timeout in seconds. Default 5.
+#' @return A character vector of model names.
+#' @export
+sv_llm_models <- function(backend = c("ollama", "openai"), endpoint = NULL, api_key = NULL, timeout = 5) {
+  backend <- match.arg(backend)
+  if (backend == "ollama") {
+    endpoint <- endpoint %||% getOption("sideview.llm_endpoint", Sys.getenv("OLLAMA_HOST", "http://localhost:11434"))
+    base <- sub("/api/chat$", "", sub("/+$", "", endpoint))
+    req <- httr2::request(paste0(base, "/api/tags"))
+  } else {
+    endpoint <- endpoint %||% getOption("sideview.llm_endpoint", Sys.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))
+    api_key <- api_key %||% getOption("sideview.llm_api_key", Sys.getenv("OPENAI_API_KEY", ""))
+    base <- sub("/chat/completions$", "", sub("/+$", "", endpoint))
+    req <- httr2::request(paste0(base, "/models"))
+    if (nzchar(api_key)) req <- httr2::req_headers(req, "Authorization" = paste("Bearer", api_key))
+  }
+  req <- httr2::req_timeout(req, timeout)
+  body <- httr2::resp_body_json(httr2::req_perform(req))
+  items <- if (backend == "ollama") body$models else body$data
+  vapply(items, function(m) as.character(m$name %||% m$id %||% NA_character_), character(1))
 }

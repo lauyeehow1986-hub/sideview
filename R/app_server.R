@@ -12,8 +12,11 @@
 #' @param llm_fn Function to call for AI completions.
 #' @param insert_fn Function to call for editor code insertion.
 #' @param console_fn Function to call for console execution.
+#' @param gadget If `TRUE`, the app runs as a gadget: Done/Cancel and closing
+#'   the window or browser tab stop the app and return to the console.
 #' @noRd
-sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_fn, console_fn) {
+sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_fn, console_fn,
+                                 gadget = FALSE) {
   # Normalize input cards
   card_list <- if (inherits(cards, "sideview_card") || is.data.frame(cards) ||
                    inherits(cards, c("gt_tbl", "flextable", "table"))) {
@@ -56,6 +59,28 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
       message = message
     )
     tryCatch(session$sendCustomMessage(type, message), error = function(e) NULL)
+  }
+
+  # Gadget lifecycle. stopApp() must run once: a second call (e.g. from
+  # onSessionEnded after Done) would replace the returned code with NULL.
+  stopped <- FALSE
+  stop_gadget <- function(value = invisible(NULL)) {
+    if (stopped) return(invisible(NULL))
+    stopped <<- TRUE
+    session$userData$sideview_result <- list(value = value)
+    tryCatch(shiny::stopApp(value), error = function(e) NULL)
+  }
+  if (isTRUE(gadget)) {
+    shiny::observeEvent(input$sideview_done, {
+      code <- input$sideview_done$code %||% ""
+      code <- if (is.character(code) && length(code) == 1L && nzchar(trimws(code))) code else NULL
+      stop_gadget(invisible(code))
+    }, ignoreInit = FALSE)
+    # `cancel` is what RStudio sends when the dialog window is closed.
+    shiny::observeEvent(input$cancel, stop_gadget(), ignoreInit = FALSE)
+    shiny::observeEvent(input$sideview_cancel, stop_gadget(), ignoreInit = FALSE)
+    # Closing the browser tab (viewer = "browser") frees the console.
+    session$onSessionEnded(function() stop_gadget())
   }
 
   # 1. Column Mapped -> Join Code Generation
@@ -317,6 +342,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     endpoint <- evt$endpoint %||% getOption("sideview.llm_endpoint", NULL)
     api_key <- evt$api_key %||% getOption("sideview.llm_api_key", NULL)
 
+    ai_err <- NULL
     ai_code <- tryCatch({
       raw_resp <- llm_fn(
         prompt = prompt_obj,
@@ -328,10 +354,25 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
       extracted <- sv_extract_code(raw_resp)
       if (nzchar(extracted)) extracted else raw_resp
     }, error = function(e) {
-      paste0("# AI generation failed: ", conditionMessage(e))
+      ai_err <<- conditionMessage(e)
+      NULL
     })
 
-    dispatch_message("sideview_code_update", list(code = ai_code))
+    if (is.null(ai_err)) {
+      dispatch_message("sideview_code_update", list(code = ai_code))
+      parses <- tryCatch({ parse(text = ai_code); TRUE }, error = function(e) FALSE)
+      dispatch_message("sideview_ai_status", list(
+        success = parses,
+        message = if (parses) "AI code ready. Review it before running." else
+          "The AI reply is not valid R code. Review and edit it, or try a larger model."
+      ))
+    } else {
+      # Keep the user's current code; explain the failure and how to fix it.
+      dispatch_message("sideview_ai_status", list(
+        success = FALSE,
+        message = sv_llm_error_message(ai_err, backend = backend, model = model)
+      ))
+    }
   }, ignoreInit = FALSE)
 
   # 4b. Send Copilot Chat -> Conversational Multi-Turn LLM Generation
@@ -374,6 +415,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     endpoint <- if (is.list(evt) && !is.null(evt$endpoint)) evt$endpoint else getOption("sideview.llm_endpoint", NULL)
     api_key <- if (is.list(evt) && !is.null(evt$api_key)) evt$api_key else getOption("sideview.llm_api_key", NULL)
 
+    chat_err <- NULL
     reply_text <- tryCatch({
       llm_fn(
         prompt = prompt_obj,
@@ -383,8 +425,15 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
         api_key = api_key
       )
     }, error = function(e) {
+      chat_err <<- conditionMessage(e)
       paste0("# Copilot request failed: ", conditionMessage(e))
     })
+    if (!is.null(chat_err)) {
+      dispatch_message("sideview_ai_status", list(
+        success = FALSE,
+        message = sv_llm_error_message(chat_err, backend = backend, model = model)
+      ))
+    }
 
     has_code_fence <- grepl("```", reply_text, fixed = TRUE)
     extracted_code <- if (has_code_fence) sv_extract_code(reply_text) else ""
@@ -443,7 +492,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     code <- if (is.list(evt)) evt$code else evt
     res <- console_fn(code)
     dispatch_message("sideview_console_result", res)
-    tryCatch(shiny::stopApp(), error = function(e) NULL)
+    stop_gadget()
   }, ignoreInit = FALSE)
 
   # 6c. Evaluate in .GlobalEnv -> executes code in active R session environment
@@ -451,15 +500,25 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     evt <- input$eval_env
     if (is.null(evt)) return()
     code <- if (is.list(evt)) evt$code else evt
+    # The value of the last expression is kept in the global environment
+    # (default `sv_result`) instead of being thrown away.
+    target <- if (is.list(evt)) evt$assign_to %||% "sv_result" else "sv_result"
+    if (!is.character(target) || length(target) != 1L || !identical(make.names(target), target)) {
+      target <- "sv_result"
+    }
     eval_res <- tryCatch({
       expr <- parse(text = code)
       out <- eval(expr, envir = .GlobalEnv)
+      if (!is.null(out)) assign(target, out, envir = .GlobalEnv)
       msg <- if (is.data.frame(out)) {
-        sprintf("Executed in R environment: %d rows x %d cols.", nrow(out), ncol(out))
+        sprintf("Executed in R environment: %d rows x %d cols, saved as `%s`.", nrow(out), ncol(out), target)
+      } else if (!is.null(out)) {
+        sprintf("Executed successfully in R environment; result saved as `%s`.", target)
       } else {
         "Executed successfully in R environment."
       }
-      list(success = TRUE, destination = "environment", message = msg)
+      list(success = TRUE, destination = "environment", message = msg,
+           assigned = if (is.null(out)) NULL else target)
     }, error = function(e) {
       list(success = FALSE, destination = "environment", message = paste0("Execution error: ", conditionMessage(e)))
     })
@@ -486,6 +545,9 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
 #' @param llm_fn Function used to execute LLM queries (default `sv_call_llm`).
 #' @param insert_fn Function used to insert code into active RStudio document (default `sv_insert_code`).
 #' @param console_fn Function used to send code to RStudio console (default `sv_send_to_console`).
+#' @param gadget If `TRUE`, run as a gadget: the Done and Cancel buttons, closing the
+#'   RStudio dialog, and closing the browser tab all stop the app. Leave `FALSE`
+#'   when embedding the server in your own multi-user Shiny app.
 #'
 #' @return A Shiny server function `function(input, output, session)`.
 #' @export
@@ -493,7 +555,8 @@ sideview_server <- function(cards = list(),
                             ...,
                             llm_fn = sv_call_llm,
                             insert_fn = sv_insert_code,
-                            console_fn = sv_send_to_console) {
+                            console_fn = sv_send_to_console,
+                            gadget = FALSE) {
   dots <- list(...)
   # If invoked directly as sideview_server(input, output, session, ...)
   if (length(dots) >= 2 && inherits(dots[[2]], c("ShinySession", "MockShinySession"))) {
@@ -501,10 +564,12 @@ sideview_server <- function(cards = list(),
     output <- dots[[1]]
     session <- dots[[2]]
     extra_cards <- if (length(dots) >= 3) dots[[3]] else list()
-    return(sideview_server_impl(input, output, session, extra_cards, llm_fn, insert_fn, console_fn))
+    return(sideview_server_impl(input, output, session, extra_cards, llm_fn, insert_fn, console_fn,
+                                gadget = gadget))
   }
 
   function(input, output, session) {
-    sideview_server_impl(input, output, session, cards, llm_fn, insert_fn, console_fn)
+    sideview_server_impl(input, output, session, cards, llm_fn, insert_fn, console_fn,
+                         gadget = gadget)
   }
 }

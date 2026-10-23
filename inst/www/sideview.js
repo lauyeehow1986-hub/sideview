@@ -1157,7 +1157,12 @@ function sendToShiny(name, value) {
         sendToShiny('send_console_and_exit', { code: self.generatedCode });
       } else if (action === 'eval-env') {
         self.showToast('Evaluating in R environment...', 'info');
-        sendToShiny('eval_env', { code: self.generatedCode });
+        sendToShiny('eval_env', { code: self.generatedCode, assign_to: 'sv_result' });
+      } else if (action === 'gadget-done') {
+        self.showToast('Returning code to R...', 'success');
+        sendToShiny('sideview_done', { code: self.generatedCode || '' });
+      } else if (action === 'gadget-cancel') {
+        sendToShiny('sideview_cancel', { at: Date.now() });
       } else if (action === 'copy-code') {
         if (navigator.clipboard && self.generatedCode) {
           navigator.clipboard.writeText(self.generatedCode);
@@ -1286,10 +1291,12 @@ function sendToShiny(name, value) {
 
       chatInput.value = '';
 
-      sendToShiny('send_copilot_chat', {
+      if (sendToShiny('send_copilot_chat', {
         message: msg,
         current_code: self.generatedCode || ''
-      });
+      })) {
+        self.setAiBusy(true);
+      }
     }
 
     this.container.addEventListener('click', function (e) {
@@ -1334,10 +1341,17 @@ function sendToShiny(name, value) {
       if (!prompt) return;
 
       var tableNames = Array.from(self.cards.values()).map(function (c) { return c.name; });
-      sendToShiny('run_ai_prompt', {
+      if (self.aiBusy) return;
+      var sent = sendToShiny('run_ai_prompt', {
         prompt: prompt,
         tables: tableNames
       });
+      if (sent) {
+        self.setAiBusy(true);
+      } else {
+        self.showToast('The AI bar needs the R session (run sideview() from R).', 'warning');
+        return;
+      }
       aiInput.value = '';
     }
 
@@ -2920,6 +2934,34 @@ function sendToShiny(name, value) {
     });
   };
 
+  // Busy state for the AI bar and Copilot while R waits on the model.
+  SideviewEngine.prototype.setAiBusy = function (busy) {
+    var self = this;
+    this.aiBusy = !!busy;
+    if (this._aiBusyTimer) { clearTimeout(this._aiBusyTimer); this._aiBusyTimer = null; }
+    var bar = this.container.querySelector('.sideview-ai-bar');
+    if (bar) {
+      bar.classList.toggle('is-busy', this.aiBusy);
+      bar.setAttribute('aria-busy', this.aiBusy ? 'true' : 'false');
+    }
+    var buttons = this.container.querySelectorAll('[data-action="send-ai"], .sideview-chat-send');
+    for (var i = 0; i < buttons.length; i++) {
+      var b = buttons[i];
+      if (this.aiBusy) {
+        if (!b.dataset.idleLabel) b.dataset.idleLabel = b.textContent;
+        b.textContent = 'Thinking...';
+        b.disabled = true;
+      } else {
+        if (b.dataset.idleLabel) b.textContent = b.dataset.idleLabel;
+        b.disabled = false;
+      }
+    }
+    // Never leave the bar stuck if a reply is lost.
+    if (this.aiBusy) {
+      this._aiBusyTimer = setTimeout(function () { self.setAiBusy(false); }, 180000);
+    }
+  };
+
   SideviewEngine.prototype.showToast = function (message, type) {
     var toast = document.createElement('div');
     toast.className = 'sideview-toast ' + (type ? 'sideview-toast-' + type : '');
@@ -2936,10 +2978,12 @@ function sendToShiny(name, value) {
     setTimeout(function () {
       toast.classList.add('visible');
     }, 10);
+    // Errors carry a fix hint, so they stay up longer.
+    var ttl = (type === 'danger' || type === 'warning') ? 9000 : 4500;
     setTimeout(function () {
       toast.classList.remove('visible');
       setTimeout(function () { toast.remove(); }, 300);
-    }, 4500);
+    }, ttl);
   };
 
   SideviewEngine.prototype.registerShinyHandlers = function () {
@@ -2973,7 +3017,15 @@ function sendToShiny(name, value) {
       }
     });
 
+    global.Shiny.addCustomMessageHandler('sideview_ai_status', function (data) {
+      self.setAiBusy(false);
+      if (data && data.message) {
+        self.showToast(data.message, data.success ? 'success' : 'danger');
+      }
+    });
+
     global.Shiny.addCustomMessageHandler('sideview_copilot_reply', function (data) {
+      self.setAiBusy(false);
       if (!data) return;
       var chatMessages = self.container.querySelector('.sideview-chat-messages');
       if (!chatMessages) return;

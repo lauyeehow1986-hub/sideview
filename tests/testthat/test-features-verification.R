@@ -241,9 +241,11 @@ test_that("Feature 5: Ollama gemma4:26b and OpenAI LLM engine synthesize privacy
     ))
     msgs <- session$userData$custom_messages
     expect_true(length(msgs) >= 1)
-    last_msg <- msgs[[length(msgs)]]
-    expect_equal(last_msg$type, "sideview_code_update")
-    expect_match(last_msg$message$code, "dplyr::left_join")
+    code_msgs <- Filter(function(m) identical(m$type, "sideview_code_update"), msgs)
+    expect_length(code_msgs, 1)
+    expect_match(code_msgs[[1]]$message$code, "dplyr::left_join")
+    # A status message (toast) follows the code update
+    expect_equal(msgs[[length(msgs)]]$type, "sideview_ai_status")
   })
 })
 

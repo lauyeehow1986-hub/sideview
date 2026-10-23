@@ -33,7 +33,8 @@ sideview(
 without launching (useful for testing or embedding). Defaults to \code{interactive()}.}
 }
 \value{
-If \code{run = TRUE}, returns the result of \code{shiny::runGadget()}.
+If \code{run = TRUE}, the generated code (invisibly) when you click
+\strong{Done}, or \code{NULL} after \strong{Cancel} or closing the window.
 If \code{run = FALSE}, returns a \code{shiny.appobj} with the normalized cards attached.
 }
 \description{

@@ -319,10 +319,11 @@ render_card_tag <- function(card, index = 1L) {
 #' @param cards A `sideview_card` object, a list of `sideview_card` objects,
 #'   or tabular objects to be normalized.
 #' @param title Display title for the application toolbar. Default is "Sideview Canvas".
+#' @param gadget If `TRUE`, add Done and Cancel buttons to the toolbar (used by `sideview()`).
 #'
 #' @return A `shiny.tag.list` UI definition.
 #' @export
-sideview_ui <- function(cards = list(), title = "Sideview Canvas") {
+sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALSE) {
   # Normalize input into a list of sideview_cards
   if (is.null(cards)) {
     card_list <- list()
@@ -368,7 +369,14 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas") {
     htmltools::tags$span(class = "sideview-toolbar-divider"),
     htmltools::tags$button(class = "sideview-btn active", `data-action` = "toggle-snap", title = "Snap to Edge", "Snap"),
     htmltools::tags$button(class = "sideview-btn", `data-action` = "toggle-drawer", title = "Toggle Drawer", "Drawer"),
-    htmltools::tags$button(class = "sideview-btn", `data-action` = "toggle-fullscreen", title = "Toggle Fullscreen Canvas", htmltools::HTML("&#x26F6; Fullscreen"))
+    htmltools::tags$button(class = "sideview-btn", `data-action` = "toggle-fullscreen", title = "Toggle Fullscreen Canvas", htmltools::HTML("&#x26F6; Fullscreen")),
+    if (isTRUE(gadget)) htmltools::tagList(
+      htmltools::tags$span(class = "sideview-toolbar-divider"),
+      htmltools::tags$button(class = "sideview-btn", `data-action` = "gadget-cancel",
+                             title = "Close without returning code", "Cancel"),
+      htmltools::tags$button(class = "sideview-btn sideview-btn-primary", `data-action` = "gadget-done",
+                             title = "Close and return the generated code to R", "Done")
+    )
   )
   
   # Swatch palette

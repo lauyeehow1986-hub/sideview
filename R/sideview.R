@@ -47,7 +47,8 @@ sv_find_tables <- function(env = parent.frame()) {
 #'   `shiny::runGadget()`. If `FALSE`, returns the `shiny.appobj` definition
 #'   without launching (useful for testing or embedding). Defaults to `interactive()`.
 #'
-#' @return If `run = TRUE`, returns the result of `shiny::runGadget()`.
+#' @return If `run = TRUE`, the generated code (invisibly) when you click
+#'   **Done**, or `NULL` after **Cancel** or closing the window.
 #'   If `run = FALSE`, returns a `shiny.appobj` with the normalized cards attached.
 #' @export
 #' @examples
@@ -115,8 +116,8 @@ sideview <- function(...,
   }
   
   # Build Shiny application object
-  ui <- sideview_ui(card_list, title = title)
-  server <- sideview_server(card_list)
+  ui <- sideview_ui(card_list, title = title, gadget = TRUE)
+  server <- sideview_server(card_list, gadget = TRUE)
   app <- shiny::shinyApp(ui = ui, server = server)
   
   # Attach cards metadata
@@ -124,7 +125,9 @@ sideview <- function(...,
   app$cards <- card_list
   
   if (isTRUE(run)) {
-    shiny::runGadget(app, viewer = viewer)
+    # Cancel and window close are handled by the server (they return NULL
+    # quietly instead of raising Shiny's "User cancel" error).
+    shiny::runGadget(app, viewer = viewer, stopOnCancel = FALSE)
   } else {
     app
   }

@@ -29,8 +29,8 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 | 16 | Pipeline | Each operation overwrites the code; nothing composes | open |
 | 17 | Data | Sort/filter run only on the ≤500-row HTML preview → wrong for big tables; numbers re-parsed from text | fixed (Phase 2.1) |
 | 18 | State | `sv_load_state(launch = TRUE)` ignores the loaded state; `sideview()` has no `state` argument | open |
-| 19 | Server | "Run in R" result is evaluated then thrown away | open |
-| 20 | Server | No `onSessionEnded → stopApp`; closing the browser tab leaves the console busy | open |
+| 19 | Server | "Run in R" result is evaluated then thrown away | fixed (Phase 2.2) |
+| 20 | Server | No `onSessionEnded → stopApp`; closing the browser tab leaves the console busy | fixed (Phase 2.2) |
 | 21 | Gadget | "Cannot launch in external browser": reproduced. The browser opens, but the page is broken by #12 (init crash) and #26 (card width) | fixed in browser harness; RStudio re-walk pending |
 | 22 | Security | Card and column names inserted unescaped into `innerHTML` and attribute selectors | fixed (Phase 2.1) |
 | 23 | Icons | Emoji/Unicode glyph icons render inconsistently on Windows RStudio | open |
@@ -39,9 +39,12 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 | 26 | Card | **Blocker:** cards have no width, so they shrink-wrap to the 10000px viewport (~9960px) and each column is ~900px; only the first column shows and numbers look empty | fixed (Phase 2.1) |
 | 27 | Canvas | Zoom % label never updates; zoom isn't centred on the view | fixed (Phase 2.1) |
 | 28 | Discrepancy | "undefined fuzzy": `fuzzy_matches` data.frame is serialised column-wise; fuzzy cells never highlight | fixed (Phase 2.1) |
-| 29 | AI | LLM errors only appear as a code comment; missing model gives no toast or hint; no busy indicator | open |
-| 30 | Gadget | Closing the dialog raises Shiny's "User cancel" error → debugger under RStudio "Break on error"; no Done/Cancel | open |
+| 29 | AI | LLM errors only appear as a code comment; missing model gives no toast or hint; no busy indicator | fixed (Phase 2.2) |
+| 30 | Gadget | Closing the dialog raises Shiny's "User cancel" error → debugger under RStudio "Break on error"; no Done/Cancel | fixed (Phase 2.2) |
 | 31 | Filter | Numeric operators offered for character columns | fixed (Phase 2.1) |
+| 32 | AI | Default model `llama3.2` 404s when only a tagged build (`llama3.2:3b`) is installed | fixed (Phase 2.2) |
+| 33 | AI | Reasoning models (qwen3) think for minutes → 180s timeout; error said only "Failed to perform HTTP request" | fixed (Phase 2.2) |
+| 34 | AI | Small models can return R that does not parse; no warning | fixed (Phase 2.2) |
 
 ## Backlog (future rounds, not yet scheduled)
 - Table version diff by key (data-lock comparisons between dataset versions).
@@ -52,6 +55,32 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 ---
 
 ## Log
+
+### 2026-10-24 — Phase 2.2: gadget lifecycle, Run in R, AI feedback, live LLM check
+- **Gadget lifecycle:**
+  - Toolbar **Done** returns the generated code (invisibly) from `sideview()`; **Cancel** returns `NULL`.
+  - `runGadget(stopOnCancel = FALSE)`, plus a server handler for `input$cancel`, means closing the RStudio dialog no longer raises "User cancel".
+  - `onSessionEnded` frees the console when the browser tab closes.
+  - All of this is opt-in through `sideview_server(gadget = TRUE)`, so a multi-user Shiny app that embeds the server isn't stopped.
+  - `stopApp` runs once, so a session end after Done keeps the returned code.
+- **Run in R** keeps the value of the last expression as `sv_result` (or `assign_to`).
+- **AI:**
+  - Busy state on the AI bar and Copilot (`is-busy`, disabled Send showing "Thinking...", 180s safety reset).
+  - `sideview_ai_status` toasts. Errors no longer overwrite the user's code; they carry a fix hint from `sv_llm_error_message()` (`ollama pull`, `ollama serve`, API key, installed models).
+  - Code that doesn't parse gets a warning.
+- **LLM client:**
+  - Sends `think = false` to Ollama by default (`options(sideview.llm_think = TRUE)` to opt in).
+  - Retries an untagged missing model with an installed tag.
+  - Reports the underlying httr2 cause (timeout or refused).
+  - Strips `<think>` blocks.
+  - New exported `sv_llm_models()` lists Ollama or OpenAI-compatible models.
+- **Live check (the user's local Ollama 0.40.10):**
+  - Native `/api/chat` and OpenAI-compatible `/v1` both produce parseable, runnable dplyr code (qwen2.5-coder:7b, llama3.2:3b, qwen3:14b).
+  - Driven end to end in headless Chrome: AI bar → busy → code → toast → Done → code returned to R.
+  - The missing-model and unreachable-server cases show the hint toasts.
+  - `qwen3:14b`: 180s timeout before, 15s after.
+  - Repeatable test: `test-lifecycle.R` "live: ..." (skipped when no local Ollama; pick a model with `SIDEVIEW_TEST_OLLAMA_MODEL`).
+- **Verification:** `devtools::test()` → **1372 expectations, 0 failed, 0 errors**. Closing the browser tab ends the R process.
 
 ### 2026-10-24 — Phase 2.1: layout, rendering and full-data sort/filter
 - **Layout (CSS):**
