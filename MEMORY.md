@@ -66,6 +66,15 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 
 ## Log
 
+### 2026-10-24 - Maintainer email fixed; site and logo workflow published as skills
+- DESCRIPTION maintainer email was `lauyeehow1986@gmail.com.sg` (typo). It is now `lauyeehow1986@gmail.com`.
+- The dicomtk-style site procedure and the AI-image-to-hex-logo script are now reusable, agent-agnostic skills in
+  https://github.com/lauyeehow1986-hub/Personal_skills (`building-r-package-sites`, `making-hex-logos-from-ai-images`).
+- **Verified:**
+  - The skill's logo script auto-detects the same hexagon that was fitted by hand for sideview, within 1 px.
+  - The script was also tested on synthetic white, checkerboard, flat-top, caption, glow and wide images.
+  - The scrub script and the CI step were tested on a seeded copy of this site's `docs/`, and both left `search.json` identical.
+
 ### 2026-10-24 — Site and README adopt the dicomtk layout
 - **What:**
   - At the user's request the GitHub Pages site now follows the sister package dicomtk (https://lauyeehow1986-hub.github.io/dicomtk/).
