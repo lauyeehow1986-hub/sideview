@@ -66,6 +66,11 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 
 ## Log
 
+### 2026-10-24 — Pushed 0.3.0 to main and rebuilt the GitHub Pages site
+- `_pkgdown.yml`: added `sv_theme` and `sv_llm_models` (`check_pkgdown()` failed without them).
+- `docs/` rebuilt with pkgdown 2.2.0 (Pages serves `main:/docs`). The generated `CLAUDE`/`MEMORY` pages were removed from the site, the sitemap and the search index.
+- **Verified:** served `docs/` locally. The home page, reference index (with the 5 new topics) and the 0.3.0 changelog all render with styles.
+
 ### 2026-10-24 — Wrap-up: 0.3.0, addin and Quarto QA, docs
 - **What:**
   - Version 0.3.0, with a NEWS.md entry covering every phase.
