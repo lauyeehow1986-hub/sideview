@@ -15,6 +15,8 @@ standalone.
   : Sideview Server Logic
 - [`sv_find_tables()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_find_tables.md)
   : Find Tabular Data Objects in an Environment
+- [`sv_theme()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_theme.md)
+  : Canvas Theme
 
 ## Standalone HTMLWidget & Export
 
@@ -56,13 +58,15 @@ canvas interactions.
 - [`sv_escape_ident()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_escape_ident.md)
   : Escape R Identifiers with Backticks If Non-Syntactic
 
-## Categorical Discrepancies & Recoding
+## Join Checks, Discrepancies & Recoding
 
-Detect fuzzy string mismatches and generate case_match, fct_recode, or
-auto-cleanup rules.
+Check join keys, detect fuzzy string mismatches, and generate case_when,
+fct_recode, or auto-cleanup rules.
 
 - [`sv_detect_discrepancies()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_detect_discrepancies.md)
   : Detect Exact Matches, Discrepancies, and Fuzzy Near-Matches
+- [`sv_join_diagnostics()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_join_diagnostics.md)
+  : Join Diagnostics
 - [`sv_code_recode()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_code_recode.md)
   : Generate tidyverse Code for Categorical Recoding and Discrepancy
   Crosswalks
@@ -70,6 +74,16 @@ auto-cleanup rules.
   [`sv_code_auto_clean()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_auto_clean_rules.md)
   : Generate tidyverse Code for Automatic Discrepancy Cleaning and
   Crosswalks
+
+## Column Profiles & Codebook
+
+Profile a column (missingness, distinct values, quartiles, common
+values, data-quality flags) and export a data dictionary.
+
+- [`sv_column_profile()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_column_profile.md)
+  : Column Profile
+- [`sv_codebook()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_codebook.md)
+  : Codebook (Data Dictionary)
 
 ## Canvas State Persistence & Cloud Sharing
 
@@ -100,6 +114,8 @@ assistance with context retention.
   : Build Structured Prompt for Tidyverse LLM Code Generation
 - [`sv_call_llm()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_call_llm.md)
   : Call Local Ollama or OpenAI-Compatible LLM Endpoint
+- [`sv_llm_models()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_llm_models.md)
+  : List the models available from an LLM backend
 - [`sv_extract_code()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_extract_code.md)
   : Extract Executable R Code from LLM Response Text
 

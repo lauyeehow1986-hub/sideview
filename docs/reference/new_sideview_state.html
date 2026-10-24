@@ -9,7 +9,7 @@ card configurations, table join connections, and pipeline script state."><meta p
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -42,7 +42,7 @@ card configurations, table join connections, and pipeline script state.</p>
     <div class="section level2">
     <h2 id="ref-usage">Usage<a class="anchor" aria-label="anchor" href="#ref-usage"></a></h2>
     <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">new_sideview_state</span><span class="op">(</span></span>
-<span>  version <span class="op">=</span> <span class="st">"0.2.0"</span>,</span>
+<span>  version <span class="op">=</span> <span class="st">"0.3.0"</span>,</span>
 <span>  canvas <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>zoom <span class="op">=</span> <span class="fl">1</span>, pan_x <span class="op">=</span> <span class="fl">0</span>, pan_y <span class="op">=</span> <span class="fl">0</span><span class="op">)</span>,</span>
 <span>  cards <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  connections <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>,</span>
@@ -55,7 +55,7 @@ card configurations, table join connections, and pipeline script state.</p>
 
 
 <dl><dt id="arg-version">version<a class="anchor" aria-label="anchor" href="#arg-version"></a></dt>
-<dd><p>Character string representing state schema version (default <code>"0.2.0"</code>).</p></dd>
+<dd><p>Character string representing state schema version (default <code>"0.3.0"</code>).</p></dd>
 
 
 <dt id="arg-canvas">canvas<a class="anchor" aria-label="anchor" href="#arg-canvas"></a></dt>
@@ -63,7 +63,9 @@ card configurations, table join connections, and pipeline script state.</p>
 
 
 <dt id="arg-cards">cards<a class="anchor" aria-label="anchor" href="#arg-cards"></a></dt>
-<dd><p>List of card state objects (each specifying <code>id</code>, <code>name</code>, <code>x</code>, <code>y</code>, <code>width</code>, <code>height</code>, <code>sorts</code>, <code>filters</code>).</p></dd>
+<dd><p>List of card state objects (each specifying <code>id</code>, <code>name</code>, <code>x</code>, <code>y</code>,
+<code>width</code>, <code>height</code>, <code>minimized</code>, <code>sorts</code> and <code>filters</code>; a sort is
+<code>list(col, dir)</code> with <code>dir</code> <code>"asc"</code> or <code>"desc"</code>, a filter is <code>list(col, op, val)</code>).</p></dd>
 
 
 <dt id="arg-connections">connections<a class="anchor" aria-label="anchor" href="#arg-connections"></a></dt>
@@ -71,19 +73,27 @@ card configurations, table join connections, and pipeline script state.</p>
 
 
 <dt id="arg-pipeline">pipeline<a class="anchor" aria-label="anchor" href="#arg-pipeline"></a></dt>
-<dd><p>Named list containing <code>code</code> (character) and <code>active_tab</code> (character).</p></dd>
+<dd><p>Named list containing <code>code</code> (character), <code>active_tab</code>
+(character) and, from version 0.3.0, the pipeline <code>steps</code> and <code>pipe</code>
+(<code>"%&gt;%"</code> or <code>"|&gt;"</code>). Without <code>steps</code>, <code>code</code> is restored as one custom step.</p></dd>
 
 </dl></div>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
     <p>An object of class <code>c("sideview_state", "list")</code>.</p>
     </div>
+    <div class="section level2">
+    <h2 id="details">Details<a class="anchor" aria-label="anchor" href="#details"></a></h2>
+    <p>The canvas writes this shape when you click <strong>Save</strong> in the toolbar, and
+<code>sideview(..., state = )</code> / <code>sideview_widget(..., state = )</code> restore it.
+Cards are matched to tables by <code>name</code>.</p>
+    </div>
 
     <div class="section level2">
     <h2 id="ref-examples">Examples<a class="anchor" aria-label="anchor" href="#ref-examples"></a></h2>
     <div class="sourceCode"><pre class="sourceCode r"><code><span class="r-in"><span><span class="va">st</span> <span class="op">&lt;-</span> <span class="fu">new_sideview_state</span><span class="op">(</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/base/print.html" class="external-link">print</a></span><span class="op">(</span><span class="va">st</span><span class="op">)</span></span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> &lt;sideview_state v0.2.0&gt;</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> &lt;sideview_state v0.3.0&gt;</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Cards:       0</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Connections: 0</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   Canvas:      zoom = 1, pan = (0, 0)</span>

@@ -11,7 +11,7 @@ sv_code_recode(
   col,
   crosswalk,
   default = NULL,
-  method = c("case_match", "fct_recode"),
+  method = c("case_when", "case_match", "fct_recode"),
   pipe = FALSE
 )
 ```
@@ -46,7 +46,9 @@ sv_code_recode(
 
 - method:
 
-  Recoding function: "case_match" (dplyr) or "fct_recode" (forcats).
+  Recoding function: "case_when" (dplyr, the default), "case_match"
+  (dplyr; deprecated in dplyr 1.2.0, kept for older pipelines) or
+  "fct_recode" (forcats).
 
 - pipe:
 

@@ -15,7 +15,7 @@ and RStudio console execution (send_console)."><meta property="og:image" content
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -55,7 +55,9 @@ and RStudio console execution (<code>send_console</code>).</p>
 <span>  <span class="va">...</span>,</span>
 <span>  llm_fn <span class="op">=</span> <span class="va">sv_call_llm</span>,</span>
 <span>  insert_fn <span class="op">=</span> <span class="va">sv_insert_code</span>,</span>
-<span>  console_fn <span class="op">=</span> <span class="va">sv_send_to_console</span></span>
+<span>  console_fn <span class="op">=</span> <span class="va">sv_send_to_console</span>,</span>
+<span>  gadget <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  run_env <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/environment.html" class="external-link">globalenv</a></span><span class="op">(</span><span class="op">)</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -82,6 +84,20 @@ or tabular objects to be normalized.</p></dd>
 
 <dt id="arg-console-fn">console_fn<a class="anchor" aria-label="anchor" href="#arg-console-fn"></a></dt>
 <dd><p>Function used to send code to RStudio console (default <code>sv_send_to_console</code>).</p></dd>
+
+
+<dt id="arg-gadget">gadget<a class="anchor" aria-label="anchor" href="#arg-gadget"></a></dt>
+<dd><p>If <code>TRUE</code>, run as a gadget: the Done and Cancel buttons, closing the
+RStudio dialog, and closing the last browser tab all stop the app. After the last
+tab closes the app waits <code>getOption("sideview.session_grace", 5)</code> seconds so a
+page reload does not end it. Leave <code>FALSE</code>
+when embedding the server in your own multi-user Shiny app.</p></dd>
+
+
+<dt id="arg-run-env">run_env<a class="anchor" aria-label="anchor" href="#arg-run-env"></a></dt>
+<dd><p>Environment where <strong>Run in R</strong> evaluates the pipeline and
+stores its result (as <code>sv_result</code> unless another name is given). Defaults
+to the global environment, so the result is there after the gadget closes.</p></dd>
 
 </dl></div>
     <div class="section level2">

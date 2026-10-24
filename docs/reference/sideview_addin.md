@@ -9,7 +9,13 @@ gadget.
 ``` r
 sideview_addin(
   env = .GlobalEnv,
-  viewer = shiny::paneViewer(minHeight = 500),
+  viewer = if (requireNamespace("rstudioapi", quietly = TRUE) &&
+    rstudioapi::isAvailable()) {
+     shiny::dialogViewer("Sideview Canvas", width =
+    1400, height = 900)
+ } else {
+     shiny::paneViewer(minHeight = 500)
+ },
   run = interactive()
 )
 ```
@@ -22,8 +28,11 @@ sideview_addin(
 
 - viewer:
 
-  Shiny viewer gadget display mode (default
-  [`shiny::paneViewer()`](https://rdrr.io/pkg/shiny/man/viewer.html)).
+  Shiny viewer gadget display mode, or character shorthand (`"browser"`,
+  `"dialog"`, or `"pane"`). Default is
+  [`shiny::dialogViewer()`](https://rdrr.io/pkg/shiny/man/viewer.html)
+  (width 1400, height 900) when RStudio is available, otherwise
+  [`shiny::paneViewer()`](https://rdrr.io/pkg/shiny/man/viewer.html).
 
 - run:
 
@@ -32,4 +41,4 @@ sideview_addin(
 
 ## Value
 
-Result of `sideview(...)`.
+Result of `sideview(...)`, invisibly when the gadget was run.

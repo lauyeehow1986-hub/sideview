@@ -35,7 +35,7 @@ active RStudio script editor.
 | Feature | `dataviewR` | `sideview` |
 |:---|:--:|:--:|
 | **Workspace Layout** | Single-table tabbed view (one table at a time) | **Infinite 2D canvas** (unlimited tables side-by-side) |
-| **Navigation** | Basic paging | **Smooth mouse-wheel zoom (25%–250%) & canvas pan** |
+| **Navigation** | Basic paging | **Smooth mouse-wheel zoom (15%–350%) & canvas pan** |
 | **Table Alignment** | ❌ None | ✅ **Magnetic snap-to-edge docking** |
 | **Synchronized Scrolling** | ❌ None | ✅ **Dual vertical (`scrollTop`) and horizontal (`scrollLeft`) sync** |
 | **100k+ Row Performance** | ❌ Browser freezing | ✅ **DOM Virtualization (`VirtualTable` ~30 rows active, 60 FPS)** |
@@ -50,7 +50,7 @@ active RStudio script editor.
 | **Multi-Key Composite Joins** | ❌ None | ✅ **Composite vector keys (`by = c("k1" = "k1", "k2" = "k2")`) & DAG chaining** |
 | **Suggested Splines Copilot** | ❌ None | ✅ **Proactive foreign key detection (`sv_suggest_mappings`) with 1-click accept** |
 | **Discrepancy Detection** | ❌ None | ✅ **Vectorized exact & fuzzy string matching with distance scoring** |
-| **Auto-Cleanup Rules** | ❌ None | ✅ **1-Click [`dplyr::case_match`](https://dplyr.tidyverse.org/reference/case_match.html) generation for casing, whitespace, & typos** |
+| **Auto-Cleanup Rules** | ❌ None | ✅ **1-Click [`dplyr::case_when`](https://dplyr.tidyverse.org/reference/case-and-replace-when.html) generation for casing, whitespace, & typos** |
 | **Conversational Copilot** | ❌ None | ✅ **Multi-turn dialogue drawer with context retention (20-turn window)** |
 | **Workspace Persistence** | ❌ None | ✅ **Serialize & restore full canvas topology (`.json` and `.rds`)** |
 | **Console & Script Execution** | ❌ None | ✅ **`Insert Script`, `Run & Exit`, `Run in R` (`.GlobalEnv`), and `Run Console`** |
@@ -109,12 +109,17 @@ flowchart TD
   **100,000+ rows** smoothly at 60 FPS by dynamically maintaining a
   sliding window of ~30 active `<tr>` elements with spacer elements.
 - **Mouse Wheel Zoom**: Smooth scaling centered on the cursor position
-  (25% to 250% zoom).
+  (15% to 350% zoom).
 - **Panning & Dragging**: Click-and-drag navigation across the infinite
   canvas, with magnetic edge-docking for table cards.
 - **Dual Synchronized Scrolling**: Locks both vertical rows
   (`scrollTop`) and horizontal columns (`scrollLeft`) across linked
   tables.
+- **Navigation**: **Fit** and **Arrange** buttons, a minimap
+  (bottom-left; click to jump, `M` to hide), `Ctrl+K` to find a card or
+  column, and double-click a card title to zoom to it.
+- **Full-data sort and filter**: Header sorts and filters run on the
+  whole table in R, not just the rows on screen.
 
 ### 2. Universal Multi-Format Normalization
 
@@ -170,10 +175,10 @@ flowchart TD
 ### 5. Canvas State Persistence & Cloud Sharing
 
 - **Workspace Serialization**: Save and restore complete canvas layouts
-  (pan/zoom, card coordinates, splines, filters, sorts, pipeline code)
-  to `.json` or `.rds`:
+  (pan/zoom, card coordinates, splines, filters, sorts, pipeline) with
+  the toolbar’s **Save** and **Open** buttons, or from R:
 
-  `# Save active canvas`` `[`sv_save_state`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_save_state.md)`(``state``, file ``=`` ``"study_canvas.json"``)`` `` ``# Load and launch`` `[`sv_load_state`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_load_state.md)`(``"study_canvas.json"``, launch ``=`` ``TRUE``)`
+  `# Reopen a saved workspace on the same tables`` `[`sideview`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)`(``patients``, ``visits``, ``labs``, state ``=`` ``"study_canvas.json"``)`` `` ``# Or let sideview find the tables by name`` `[`sv_load_state`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_load_state.md)`(``"study_canvas.json"``, launch ``=`` ``TRUE``)`
 
 ### 6. Conversational AI Copilot Drawer
 
@@ -187,11 +192,44 @@ flowchart TD
   while “Insert into Editor” pastes directly at the cursor via
   `rstudioapi`.
 
-### 7. Automated Computer Use & Headless GUI QA
+### 7. Pipeline, Builders & Join Diagnostics
 
-- Complete headless DOM test harness (`gui-test-runner.js`) simulating
-  canvas coordinates, card dragging, port connections, suggested
-  splines, and drawer actions across 1,210 automated unit tests.
+- **Composable pipeline**: every sort, filter, join, rename, recode,
+  mutate, reshape or summarise becomes a step you can toggle, reorder or
+  delete, with undo/redo and a `%>%` / `|>` choice.
+- **Builder tabs**: Join, Filter (AND/OR), Arrange, Mutate, Recode,
+  Reshape and Summarise.
+- **Join diagnostics**
+  ([`sv_join_diagnostics()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_join_diagnostics.md)):
+  match rate both ways, unmatched keys, 1:1 / 1:m / m:m relationship,
+  rows per join type, and NA / spacing / case problems in keys, shown
+  before you commit to a join.
+
+### 8. Column Inspector & Codebook
+
+- Click a column’s inspect icon for type, missingness, distinct values,
+  key check, summary statistics or top levels, and a histogram
+  ([`sv_column_profile()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_column_profile.md)).
+- **Export codebook** writes a data dictionary across all cards
+  ([`sv_codebook()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_codebook.md)).
+
+### 9. Themes & Keyboard
+
+- `theme = "auto"` follows RStudio or the browser; also `"light"`,
+  `"dark"`,
+  [`sv_theme()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_theme.md)
+  or a
+  [`bslib::bs_theme()`](https://rstudio.github.io/bslib/reference/bs_theme.html).
+- Shortcuts: `F` fit, `0` reset zoom, `+`/`-` zoom, `M` minimap, `D`
+  drawer, `T` theme, `/` AI prompt, `Ctrl+K` search, `Ctrl+Z`/`Ctrl+Y`
+  undo/redo, `?` the full list.
+
+### 10. Tested in Real Browsers
+
+- Unit tests, a headless DOM harness, and a real-browser suite
+  (`tests/testthat/test-layout-browser.R`, `NOT_CRAN=true`) that drives
+  Chrome with real mouse and keyboard input to check layout and
+  behaviour at several window sizes.
 
 ------------------------------------------------------------------------
 
@@ -243,6 +281,21 @@ sideview_widget(patients, visits, width = "100%", height = "650px")
 
 ------------------------------------------------------------------------
 
+## Options
+
+| Option | Default | Purpose |
+|:---|:---|:---|
+| `sideview.session_grace` | `5` | Seconds to wait after the last browser session closes before the gadget stops (a reload survives) |
+| `sideview.llm_backend` | `"ollama"` (or `SIDEVIEW_LLM_BACKEND`) | `"ollama"` or `"openai"` (any OpenAI-compatible server) |
+| `sideview.llm_model` | `SIDEVIEW_OLLAMA_MODEL` / `"llama3.2"`; `SIDEVIEW_OPENAI_MODEL` / `"gpt-4o-mini"` | Model name; [`sv_llm_models()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_llm_models.md) lists what is available |
+| `sideview.llm_endpoint` | `OLLAMA_HOST` / `http://localhost:11434`; `OPENAI_BASE_URL` / `https://api.openai.com/v1` | Base URL of the server |
+| `sideview.llm_api_key` | `OPENAI_API_KEY` | API key for OpenAI-compatible servers |
+| `sideview.llm_think` | `FALSE` | Let Ollama reasoning models think before answering |
+
+Only schema summaries are sent to the model, never raw rows.
+
+------------------------------------------------------------------------
+
 ## Complete Programmatic API Reference
 
 | Function | Module | Description |
@@ -251,6 +304,7 @@ sideview_widget(patients, visits, width = "100%", height = "650px")
 | [`sideview_addin()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_addin.md) | RStudio Addin | Addin entry point registered in RStudio Addins menu |
 | `sideview_widget(...)` | Widget | Create an exportable `htmlwidget` instance |
 | `save_sideview(widget, file)` | Widget Export | Export canvas to standalone self-contained HTML file |
+| `sideview_ui(...)` / `sideview_server(...)` | Shiny Integration | Build the canvas app yourself (custom `llm_fn`, embedding) |
 | `sideviewOutput(id, ...)` | Shiny Integration | Shiny UI widget container |
 | `renderSideview(expr, ...)` | Shiny Integration | Shiny server rendering function |
 | `sv_normalize(x, name, id)` | Normalization | S3 generic converting tables (data.frame, Arrow, DuckDB, gt, flextable) to cards |
@@ -266,8 +320,14 @@ sideview_widget(patients, visits, width = "100%", height = "650px")
 | `sv_code_select(...)` | Code Generation | Emits [`dplyr::select()`](https://dplyr.tidyverse.org/reference/select.html) column selections |
 | `sv_escape_ident(x)` | Code Generation | Wraps non-syntactic names and reserved words in backticks |
 | `sv_detect_discrepancies(...)` | Discrepancies | Vectorized exact & fuzzy Levenshtein discrepancy detection |
-| `sv_code_recode(...)` | Discrepancies | Emits [`dplyr::case_match()`](https://dplyr.tidyverse.org/reference/case_match.html) or [`forcats::fct_recode()`](https://forcats.tidyverse.org/reference/fct_recode.html) |
-| `sv_auto_clean_rules(...)` | Discrepancies | Generates automatic `case_match` rules for casing, whitespace, and typos |
+| `sv_code_recode(...)` | Discrepancies | Emits [`dplyr::case_when()`](https://dplyr.tidyverse.org/reference/case-and-replace-when.html) (or legacy [`case_match()`](https://dplyr.tidyverse.org/reference/case_match.html)) or [`forcats::fct_recode()`](https://forcats.tidyverse.org/reference/fct_recode.html) |
+| `sv_auto_clean_rules(...)` | Discrepancies | Generates automatic `case_when` rules for casing, whitespace, and typos |
+| `sv_code_auto_clean(...)` | Discrepancies | Emits the `mutate(case_when(...))` code for auto-clean rules |
+| `sv_join_diagnostics(x, y, by)` | Diagnostics | Match rates, unmatched keys, cardinality and join row counts before joining |
+| `sv_column_profile(x)` | Inspector | Type, missingness, distinct values and summary of one column |
+| `sv_codebook(..., file)` | Inspector | Data dictionary across tables, optionally written to CSV or XLSX |
+| `sv_theme(mode, ...)` | Theme | Light/dark mode and colour, font and radius overrides |
+| `sv_llm_models(backend)` | LLM Engine | Lists models available from Ollama or an OpenAI-compatible server |
 | `sv_suggest_mappings(...)` | Copilot | Heuristic foreign key candidate detection across tables |
 | `sv_build_chat_prompt(...)` | LLM Engine | Synthesizes multi-turn conversational chat prompt with context retention |
 | `sv_build_schema_context(...)` | LLM Engine | Privacy-safe metadata synthesis for LLM prompt |

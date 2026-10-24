@@ -11,7 +11,7 @@ discrepancy recoding, and LLM-assisted tidyverse code generation."><meta propert
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -50,10 +50,12 @@ discrepancy recoding, and LLM-assisted tidyverse code generation.</p>
 <span>  viewer <span class="op">=</span> <span class="kw">if</span> <span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/ns-load.html" class="external-link">requireNamespace</a></span><span class="op">(</span><span class="st">"rstudioapi"</span>, quietly <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span> <span class="op">&amp;&amp;</span></span>
 <span>    <span class="fu">rstudioapi</span><span class="fu">::</span><span class="fu"><a href="https://rstudio.github.io/rstudioapi/reference/isAvailable.html" class="external-link">isAvailable</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span> <span class="op">{</span></span>
 <span>     <span class="fu">shiny</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">dialogViewer</a></span><span class="op">(</span><span class="st">"Sideview Canvas"</span>, width <span class="op">=</span></span>
-<span>    <span class="fl">1150</span>, height <span class="op">=</span> <span class="fl">750</span><span class="op">)</span></span>
+<span>    <span class="fl">1400</span>, height <span class="op">=</span> <span class="fl">900</span><span class="op">)</span></span>
 <span> <span class="op">}</span> <span class="kw">else</span> <span class="op">{</span></span>
 <span>     <span class="fu">shiny</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">paneViewer</a></span><span class="op">(</span>minHeight <span class="op">=</span> <span class="fl">500</span><span class="op">)</span></span>
 <span> <span class="op">}</span>,</span>
+<span>  theme <span class="op">=</span> <span class="st">"auto"</span>,</span>
+<span>  state <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  run <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/interactive.html" class="external-link">interactive</a></span><span class="op">(</span><span class="op">)</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
@@ -73,7 +75,22 @@ discrepancy recoding, and LLM-assisted tidyverse code generation.</p>
 
 <dt id="arg-viewer">viewer<a class="anchor" aria-label="anchor" href="#arg-viewer"></a></dt>
 <dd><p>Shiny viewer gadget display mode (e.g. <code><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">shiny::paneViewer()</a></code>,
-<code><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">shiny::dialogViewer()</a></code>, or <code><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">shiny::browserViewer()</a></code>).</p></dd>
+<code><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">shiny::dialogViewer()</a></code>, <code><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">shiny::browserViewer()</a></code>), or a character shorthand
+(<code>"browser"</code>, <code>"dialog"</code>, or <code>"pane"</code>). Default is <code><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">shiny::dialogViewer()</a></code>
+(width 1400, height 900) when RStudio is available, otherwise <code><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">shiny::paneViewer()</a></code>.</p></dd>
+
+
+<dt id="arg-theme">theme<a class="anchor" aria-label="anchor" href="#arg-theme"></a></dt>
+<dd><p>Canvas theme: <code>"auto"</code> (default; follows the RStudio editor
+theme), <code>"light"</code>, <code>"dark"</code>, an <code><a href="sv_theme.html">sv_theme()</a></code> or a <code><a href="https://rstudio.github.io/bslib/reference/bs_theme.html" class="external-link">bslib::bs_theme()</a></code>.</p></dd>
+
+
+<dt id="arg-state">state<a class="anchor" aria-label="anchor" href="#arg-state"></a></dt>
+<dd><p>A saved workspace to restore: a <code>sideview_state</code> (see
+<code><a href="new_sideview_state.html">new_sideview_state()</a></code>) or the path to a file written by the toolbar's
+<strong>Save</strong> button or <code><a href="sv_save_state.html">sv_save_state()</a></code>. Card positions and sizes, zoom and
+pan, sorts, filters, joins and the pipeline come back; cards are matched
+to tables by name.</p></dd>
 
 
 <dt id="arg-run">run<a class="anchor" aria-label="anchor" href="#arg-run"></a></dt>
@@ -84,8 +101,57 @@ without launching (useful for testing or embedding). Defaults to <code><a href="
 </dl></div>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
-    <p>If <code>run = TRUE</code>, returns the result of <code><a href="https://rdrr.io/pkg/shiny/man/runGadget.html" class="external-link">shiny::runGadget()</a></code>.
+    <p>If <code>run = TRUE</code>, the generated code (invisibly) when you click
+<strong>Done</strong>, or <code>NULL</code> after <strong>Cancel</strong> or closing the window.
 If <code>run = FALSE</code>, returns a <code>shiny.appobj</code> with the normalized cards attached.</p>
+    </div>
+    <div class="section level2">
+    <h2 id="keyboard-and-navigation">Keyboard and navigation<a class="anchor" aria-label="anchor" href="#keyboard-and-navigation"></a></h2>
+
+
+<p>Single-key shortcuts work when the canvas has the keyboard and you are not
+typing: <code>F</code> fit all cards, <code>0</code> reset zoom, <code>+</code>/<code>-</code> zoom, <code>M</code> show or hide
+the minimap, <code>D</code> the drawer, <code>T</code> light/dark, <code>/</code> the AI prompt and <code>?</code> the
+full list. <code>Ctrl+K</code> finds a card or column, <code>Ctrl+Z</code>/<code>Ctrl+Y</code> undo and
+redo a pipeline step, and <code>Esc</code> cancels a connection or closes a popover.
+Double-click a card title, a minimap rectangle or a search result to zoom
+to that card.</p>
+    </div>
+    <div class="section level2">
+    <h2 id="options">Options<a class="anchor" aria-label="anchor" href="#options"></a></h2>
+
+
+<dl><dt><code>sideview.session_grace</code></dt>
+<dd><p>Seconds the gadget waits after its last
+browser session closes before stopping (default <code>5</code>), so reloading the
+page does not end the app.</p></dd>
+
+<dt><code>sideview.llm_backend</code></dt>
+<dd><p><code>"ollama"</code> (default, or the
+<code>SIDEVIEW_LLM_BACKEND</code> variable) or <code>"openai"</code> for any
+OpenAI-compatible server.</p></dd>
+
+<dt><code>sideview.llm_model</code></dt>
+<dd><p>Model name. Defaults to <code>SIDEVIEW_OLLAMA_MODEL</code>
+or <code>"llama3.2"</code> for Ollama, and <code>SIDEVIEW_OPENAI_MODEL</code> or
+<code>"gpt-4o-mini"</code> otherwise. <code><a href="sv_llm_models.html">sv_llm_models()</a></code> lists what is available.</p></dd>
+
+<dt><code>sideview.llm_endpoint</code></dt>
+<dd><p>Base URL. Defaults to <code>OLLAMA_HOST</code> or
+<code>http://localhost:11434</code>, and <code>OPENAI_BASE_URL</code> or
+<code>https://api.openai.com/v1</code>.</p></dd>
+
+<dt><code>sideview.llm_api_key</code></dt>
+<dd><p>API key for OpenAI-compatible servers
+(default: the <code>OPENAI_API_KEY</code> variable).</p></dd>
+
+<dt><code>sideview.llm_think</code></dt>
+<dd><p><code>TRUE</code> lets Ollama reasoning models "think"
+before answering. Default <code>FALSE</code>, so they answer promptly.</p></dd>
+
+
+</dl><p>Only schema summaries (column names, types and simple profiles) are sent to
+the model, never raw rows.</p>
     </div>
 
     <div class="section level2">

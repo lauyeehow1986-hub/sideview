@@ -16,6 +16,7 @@ sv_call_llm(
   api_key = NULL,
   timeout = 60,
   extract_code = FALSE,
+  resolve_model = TRUE,
   ...
 )
 ```
@@ -52,9 +53,18 @@ sv_call_llm(
   [`sv_extract_code()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_extract_code.md)
   on the response text. Default FALSE.
 
+- resolve_model:
+
+  Logical; for Ollama, if an untagged model such as `"llama3.2"` is not
+  installed, retry once with an installed tag of it (e.g.
+  `"llama3.2:3b"`). Default TRUE.
+
 - ...:
 
-  Additional options passed to request.
+  Additional options added to the request body (e.g. `temperature`). For
+  Ollama, `think = FALSE` is sent unless you pass `think` or set
+  `options(sideview.llm_think = TRUE)`, so reasoning models answer
+  promptly.
 
 ## Value
 

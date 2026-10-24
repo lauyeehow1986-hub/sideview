@@ -3,7 +3,7 @@
 Inspects discrepancy detection output or pairwise column discrepancies
 (exact matches, fuzzy near-matches, and missing levels), automatically
 synthesizing clean recoding rules using
-[`dplyr::case_match()`](https://dplyr.tidyverse.org/reference/case_match.html).
+[`dplyr::case_when()`](https://dplyr.tidyverse.org/reference/case-and-replace-when.html).
 Handles casing differences, leading/trailing whitespace discrepancies,
 and fuzzy string distance variations (Levenshtein distance \<= 2).
 
@@ -67,5 +67,5 @@ require cleaning.
 ``` r
 disc <- sv_detect_discrepancies(c("male", "Female"), c("Male", "Female"))
 sv_auto_clean_rules(disc, df_name = "patients", col = "gender")
-#> [1] "dplyr::mutate(patients, gender = dplyr::case_match(\n    gender,\n    \"male\" ~ \"Male\",\n    .default = gender\n  ))"
+#> [1] "dplyr::mutate(patients, gender = dplyr::case_when(\n    gender == \"male\" ~ \"Male\",\n    .default = gender\n  ))"
 ```

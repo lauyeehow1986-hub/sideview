@@ -11,7 +11,7 @@ and clean error reporting for network or HTTP status failures."><meta property="
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -52,6 +52,7 @@ and clean error reporting for network or HTTP status failures.</p>
 <span>  api_key <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  timeout <span class="op">=</span> <span class="fl">60</span>,</span>
 <span>  extract_code <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  resolve_model <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  <span class="va">...</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
@@ -88,8 +89,15 @@ and clean error reporting for network or HTTP status failures.</p>
 <dd><p>Logical; if TRUE, runs <code><a href="sv_extract_code.html">sv_extract_code()</a></code> on the response text. Default FALSE.</p></dd>
 
 
+<dt id="arg-resolve-model">resolve_model<a class="anchor" aria-label="anchor" href="#arg-resolve-model"></a></dt>
+<dd><p>Logical; for Ollama, if an untagged model such as <code>"llama3.2"</code> is not
+installed, retry once with an installed tag of it (e.g. <code>"llama3.2:3b"</code>). Default TRUE.</p></dd>
+
+
 <dt id="arg--">...<a class="anchor" aria-label="anchor" href="#arg--"></a></dt>
-<dd><p>Additional options passed to request.</p></dd>
+<dd><p>Additional options added to the request body (e.g. <code>temperature</code>). For Ollama,
+<code>think = FALSE</code> is sent unless you pass <code>think</code> or set <code>options(sideview.llm_think = TRUE)</code>,
+so reasoning models answer promptly.</p></dd>
 
 </dl></div>
     <div class="section level2">

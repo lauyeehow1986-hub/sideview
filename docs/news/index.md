@@ -1,5 +1,93 @@
 # Changelog
 
+## sideview 0.3.0
+
+A full pass over the user interface, tested in a real browser and in
+RStudio (dialog, Viewer pane, external browser, the addin, a saved HTML
+file and a Quarto page), plus new features for clinical data work.
+
+### New features
+
+- **Pipeline with history.** Each sort, filter, join, rename, recode,
+  mutate, reshape or summarise is a step in the drawer’s Pipeline tab.
+  Steps can be turned off, reordered or deleted, with undo/redo
+  (`Ctrl+Z` / `Ctrl+Y`) and a choice of `%>%` or `|>`. The drawer has
+  real builder tabs: Join, Filter (several conditions, AND/OR), Arrange,
+  Mutate, Recode, Reshape and Summarise.
+- **Join diagnostics before you join.** Connecting two columns shows the
+  match rate in each direction, unmatched keys with examples, the key
+  relationship (1:1, 1:m, m:m warning), rows produced by each join type,
+  and NA, spacing or case problems in the keys. Also available as
+  [`sv_join_diagnostics()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_join_diagnostics.md).
+- **Column inspector and codebook.** Click a column’s inspect icon for
+  type, missingness, distinct values, a key check, summary statistics or
+  top levels and a histogram. **Export codebook** writes a data
+  dictionary for every card;
+  [`sv_column_profile()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_column_profile.md)
+  and
+  [`sv_codebook()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_codebook.md)
+  do the same from R.
+- **Save and open the workspace** from the toolbar.
+  `sideview(..., state =)` and `sideview_widget(..., state =)` restore
+  card positions, zoom, sorts, filters, joins and the pipeline, and
+  `sv_load_state(launch = TRUE)` now really launches.
+- **Canvas navigation.** A minimap (bottom-left; `M` hides it), `Ctrl+K`
+  to find a card or column, and double-click a card title to zoom to it.
+  **Fit** and **Arrange** buttons, and a tidy grid layout at launch.
+- **Themes.** `theme = "auto"` (follows RStudio or the browser),
+  `"light"`, `"dark"`,
+  [`sv_theme()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_theme.md)
+  or a
+  [`bslib::bs_theme()`](https://rstudio.github.io/bslib/reference/bs_theme.html).
+  Every text colour meets WCAG AA contrast.
+- **Keyboard and accessibility.** Shortcuts (`?` lists them), real
+  buttons with labels and visible focus rings, and the OS “reduce
+  motion” setting is respected.
+- [`sv_llm_models()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_llm_models.md)
+  lists the models an Ollama or OpenAI-compatible server offers. AI
+  errors now say how to fix them, and `options(sideview.llm_think)`
+  controls Ollama reasoning models. See
+  [`?sideview`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)
+  for all options.
+
+### Bug fixes
+
+- `viewer = "browser"` works again. Closing or reloading the tab no
+  longer leaves the console busy or kills the app
+  (`options(sideview.session_grace)`).
+- Sort and filter now run on the full data, not just the first 500 rows
+  shown. Sort code used `%>` instead of `%>%`.
+- Column headers stay put while a table scrolls, so splines stay
+  attached. Maximize, minimize, fullscreen (including in the Viewer
+  pane) and card resize now behave; the toolbar, palette, drawer and AI
+  bar no longer overlap at any window size.
+- Click-to-connect no longer starts a stray second connection;
+  sort/filter clicks no longer also connect columns; drawer tabs show
+  their own content.
+- **Done** returns the generated code and **Cancel** returns `NULL`;
+  “Run in R” keeps its result in a named object (`sv_result` by
+  default).
+- Card and column names are escaped everywhere, so odd names cannot
+  break the page.
+- Recode and auto-clean emit
+  [`dplyr::case_when()`](https://dplyr.tidyverse.org/reference/case-and-replace-when.html)
+  ([`case_match()`](https://dplyr.tidyverse.org/reference/case_match.html)
+  is deprecated in dplyr 1.2).
+- A saved or embedded widget hides buttons that need an R session.
+- A widget in Quarto or R Markdown no longer stops the page from
+  scrolling or restyles the host page.
+- Emoji icons are replaced by inline SVG icons that render the same
+  everywhere.
+
+### Internal
+
+- One `sideview-core` HTML dependency with a content-based version, so
+  browsers never use stale JavaScript or CSS. The bundled pan/zoom code
+  is now honestly named `sv-panzoom.js`.
+- New real-browser test suite (`tests/testthat/test-layout-browser.R`,
+  run with `NOT_CRAN=true`) checks layout and behaviour with real mouse
+  and keyboard input.
+
 ## sideview 0.2.0
 
 #### Pillar 1: Big Data Scalability & CRAN Readiness

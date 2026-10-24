@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -31,6 +31,49 @@
       <small>Source: <a href="https://github.com/lauyeehow1986-hub/sideview/blob/HEAD/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.3.0" id="sideview-030">sideview 0.3.0<a class="anchor" aria-label="anchor" href="#sideview-030"></a></h2>
+<p>A full pass over the user interface, tested in a real browser and in RStudio (dialog, Viewer pane, external browser, the addin, a saved HTML file and a Quarto page), plus new features for clinical data work.</p>
+<div class="section level3">
+<h3 id="new-features-0-3-0">New features<a class="anchor" aria-label="anchor" href="#new-features-0-3-0"></a></h3>
+<ul><li>
+<strong>Pipeline with history.</strong> Each sort, filter, join, rename, recode, mutate, reshape or summarise is a step in the drawer’s Pipeline tab. Steps can be turned off, reordered or deleted, with undo/redo (<code>Ctrl+Z</code> / <code>Ctrl+Y</code>) and a choice of <code>%&gt;%</code> or <code>|&gt;</code>. The drawer has real builder tabs: Join, Filter (several conditions, AND/OR), Arrange, Mutate, Recode, Reshape and Summarise.</li>
+<li>
+<strong>Join diagnostics before you join.</strong> Connecting two columns shows the match rate in each direction, unmatched keys with examples, the key relationship (1:1, 1:m, m:m warning), rows produced by each join type, and NA, spacing or case problems in the keys. Also available as <code><a href="../reference/sv_join_diagnostics.html">sv_join_diagnostics()</a></code>.</li>
+<li>
+<strong>Column inspector and codebook.</strong> Click a column’s inspect icon for type, missingness, distinct values, a key check, summary statistics or top levels and a histogram. <strong>Export codebook</strong> writes a data dictionary for every card; <code><a href="../reference/sv_column_profile.html">sv_column_profile()</a></code> and <code><a href="../reference/sv_codebook.html">sv_codebook()</a></code> do the same from R.</li>
+<li>
+<strong>Save and open the workspace</strong> from the toolbar. <code>sideview(..., state =)</code> and <code>sideview_widget(..., state =)</code> restore card positions, zoom, sorts, filters, joins and the pipeline, and <code>sv_load_state(launch = TRUE)</code> now really launches.</li>
+<li>
+<strong>Canvas navigation.</strong> A minimap (bottom-left; <code>M</code> hides it), <code>Ctrl+K</code> to find a card or column, and double-click a card title to zoom to it. <strong>Fit</strong> and <strong>Arrange</strong> buttons, and a tidy grid layout at launch.</li>
+<li>
+<strong>Themes.</strong> <code>theme = "auto"</code> (follows RStudio or the browser), <code>"light"</code>, <code>"dark"</code>, <code><a href="../reference/sv_theme.html">sv_theme()</a></code> or a <code><a href="https://rstudio.github.io/bslib/reference/bs_theme.html" class="external-link">bslib::bs_theme()</a></code>. Every text colour meets WCAG AA contrast.</li>
+<li>
+<strong>Keyboard and accessibility.</strong> Shortcuts (<code>?</code> lists them), real buttons with labels and visible focus rings, and the OS “reduce motion” setting is respected.</li>
+<li>
+<code><a href="../reference/sv_llm_models.html">sv_llm_models()</a></code> lists the models an Ollama or OpenAI-compatible server offers. AI errors now say how to fix them, and <code>options(sideview.llm_think)</code> controls Ollama reasoning models. See <code><a href="../reference/sideview.html">?sideview</a></code> for all options.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="bug-fixes-0-3-0">Bug fixes<a class="anchor" aria-label="anchor" href="#bug-fixes-0-3-0"></a></h3>
+<ul><li>
+<code>viewer = "browser"</code> works again. Closing or reloading the tab no longer leaves the console busy or kills the app (<code>options(sideview.session_grace)</code>).</li>
+<li>Sort and filter now run on the full data, not just the first 500 rows shown. Sort code used <code>%&gt;</code> instead of <code>%&gt;%</code>.</li>
+<li>Column headers stay put while a table scrolls, so splines stay attached. Maximize, minimize, fullscreen (including in the Viewer pane) and card resize now behave; the toolbar, palette, drawer and AI bar no longer overlap at any window size.</li>
+<li>Click-to-connect no longer starts a stray second connection; sort/filter clicks no longer also connect columns; drawer tabs show their own content.</li>
+<li>
+<strong>Done</strong> returns the generated code and <strong>Cancel</strong> returns <code>NULL</code>; “Run in R” keeps its result in a named object (<code>sv_result</code> by default).</li>
+<li>Card and column names are escaped everywhere, so odd names cannot break the page.</li>
+<li>Recode and auto-clean emit <code><a href="https://dplyr.tidyverse.org/reference/case-and-replace-when.html" class="external-link">dplyr::case_when()</a></code> (<code><a href="https://dplyr.tidyverse.org/reference/case_match.html" class="external-link">case_match()</a></code> is deprecated in dplyr 1.2).</li>
+<li>A saved or embedded widget hides buttons that need an R session.</li>
+<li>A widget in Quarto or R Markdown no longer stops the page from scrolling or restyles the host page.</li>
+<li>Emoji icons are replaced by inline SVG icons that render the same everywhere.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="internal-0-3-0">Internal<a class="anchor" aria-label="anchor" href="#internal-0-3-0"></a></h3>
+<ul><li>One <code>sideview-core</code> HTML dependency with a content-based version, so browsers never use stale JavaScript or CSS. The bundled pan/zoom code is now honestly named <code>sv-panzoom.js</code>.</li>
+<li>New real-browser test suite (<code>tests/testthat/test-layout-browser.R</code>, run with <code>NOT_CRAN=true</code>) checks layout and behaviour with real mouse and keyboard input.</li>
+</ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.2.0" id="sideview-020">sideview 0.2.0<a class="anchor" aria-label="anchor" href="#sideview-020"></a></h2>
 <div class="section level4">

@@ -21,6 +21,7 @@
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_build_prompt.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_build_schema_context.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_call_llm.html</loc></url>
+<url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_codebook.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_code_arrange.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_code_filter.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_code_group_summarize.html</loc></url>
@@ -31,16 +32,20 @@
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_code_recode.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_code_rename.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_code_select.html</loc></url>
+<url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_column_profile.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_detect_discrepancies.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_escape_ident.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_extract_code.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_find_tables.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_insert_code.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_is_rstudio_available.html</loc></url>
+<url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_join_diagnostics.html</loc></url>
+<url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_llm_models.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_load_state.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_normalize.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_save_state.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_send_to_console.html</loc></url>
 <url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_suggest_mappings.html</loc></url>
+<url><loc>https://lauyeehow1986-hub.github.io/sideview/reference/sv_theme.html</loc></url>
 </urlset>
 

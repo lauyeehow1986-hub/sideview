@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -74,6 +74,13 @@
 
         </dt>
         <dd>Find Tabular Data Objects in an Environment</dd>
+
+        <dt>
+
+          <code><a href="sv_theme.html">sv_theme()</a></code>
+
+        </dt>
+        <dd>Canvas Theme</dd>
       </dl></div><div class="section level2">
       <h2 id="standalone-htmlwidget-export">Standalone HTMLWidget &amp; Export<a class="anchor" aria-label="anchor" href="#standalone-htmlwidget-export"></a></h2>
 
@@ -191,9 +198,9 @@
         </dt>
         <dd>Escape R Identifiers with Backticks If Non-Syntactic</dd>
       </dl></div><div class="section level2">
-      <h2 id="categorical-discrepancies-recoding">Categorical Discrepancies &amp; Recoding<a class="anchor" aria-label="anchor" href="#categorical-discrepancies-recoding"></a></h2>
+      <h2 id="join-checks-discrepancies-recoding">Join Checks, Discrepancies &amp; Recoding<a class="anchor" aria-label="anchor" href="#join-checks-discrepancies-recoding"></a></h2>
 
-      <div class="section-desc"><p>Detect fuzzy string mismatches and generate case_match, fct_recode, or auto-cleanup rules.</p></div>
+      <div class="section-desc"><p>Check join keys, detect fuzzy string mismatches, and generate case_when, fct_recode, or auto-cleanup rules.</p></div>
 
       <dl></dl></div><div class="section level2">
 
@@ -209,6 +216,13 @@
 
         <dt>
 
+          <code><a href="sv_join_diagnostics.html">sv_join_diagnostics()</a></code>
+
+        </dt>
+        <dd>Join Diagnostics</dd>
+
+        <dt>
+
           <code><a href="sv_code_recode.html">sv_code_recode()</a></code>
 
         </dt>
@@ -220,6 +234,29 @@
 
         </dt>
         <dd>Generate tidyverse Code for Automatic Discrepancy Cleaning and Crosswalks</dd>
+      </dl></div><div class="section level2">
+      <h2 id="column-profiles-codebook">Column Profiles &amp; Codebook<a class="anchor" aria-label="anchor" href="#column-profiles-codebook"></a></h2>
+
+      <div class="section-desc"><p>Profile a column (missingness, distinct values, quartiles, common values, data-quality flags) and export a data dictionary.</p></div>
+
+      <dl></dl></div><div class="section level2">
+
+
+
+
+      <dl><dt>
+
+          <code><a href="sv_column_profile.html">sv_column_profile()</a></code>
+
+        </dt>
+        <dd>Column Profile</dd>
+
+        <dt>
+
+          <code><a href="sv_codebook.html">sv_codebook()</a></code>
+
+        </dt>
+        <dd>Codebook (Data Dictionary)</dd>
       </dl></div><div class="section level2">
       <h2 id="canvas-state-persistence-cloud-sharing">Canvas State Persistence &amp; Cloud Sharing<a class="anchor" aria-label="anchor" href="#canvas-state-persistence-cloud-sharing"></a></h2>
 
@@ -301,6 +338,13 @@
 
         </dt>
         <dd>Call Local Ollama or OpenAI-Compatible LLM Endpoint</dd>
+
+        <dt>
+
+          <code><a href="sv_llm_models.html">sv_llm_models()</a></code>
+
+        </dt>
+        <dd>List the models available from an LLM backend</dd>
 
         <dt>
 

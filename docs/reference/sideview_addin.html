@@ -9,7 +9,7 @@ and launches the Sideview interactive multi-table canvas gadget."><meta property
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -46,7 +46,7 @@ and launches the Sideview interactive multi-table canvas gadget.</p>
 <span>  viewer <span class="op">=</span> <span class="kw">if</span> <span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/ns-load.html" class="external-link">requireNamespace</a></span><span class="op">(</span><span class="st">"rstudioapi"</span>, quietly <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span> <span class="op">&amp;&amp;</span></span>
 <span>    <span class="fu">rstudioapi</span><span class="fu">::</span><span class="fu"><a href="https://rstudio.github.io/rstudioapi/reference/isAvailable.html" class="external-link">isAvailable</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span> <span class="op">{</span></span>
 <span>     <span class="fu">shiny</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">dialogViewer</a></span><span class="op">(</span><span class="st">"Sideview Canvas"</span>, width <span class="op">=</span></span>
-<span>    <span class="fl">1150</span>, height <span class="op">=</span> <span class="fl">750</span><span class="op">)</span></span>
+<span>    <span class="fl">1400</span>, height <span class="op">=</span> <span class="fl">900</span><span class="op">)</span></span>
 <span> <span class="op">}</span> <span class="kw">else</span> <span class="op">{</span></span>
 <span>     <span class="fu">shiny</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">paneViewer</a></span><span class="op">(</span>minHeight <span class="op">=</span> <span class="fl">500</span><span class="op">)</span></span>
 <span> <span class="op">}</span>,</span>
@@ -63,7 +63,9 @@ and launches the Sideview interactive multi-table canvas gadget.</p>
 
 
 <dt id="arg-viewer">viewer<a class="anchor" aria-label="anchor" href="#arg-viewer"></a></dt>
-<dd><p>Shiny viewer gadget display mode (default <code><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">shiny::paneViewer()</a></code>).</p></dd>
+<dd><p>Shiny viewer gadget display mode, or character shorthand
+(<code>"browser"</code>, <code>"dialog"</code>, or <code>"pane"</code>). Default is <code><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">shiny::dialogViewer()</a></code>
+(width 1400, height 900) when RStudio is available, otherwise <code><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">shiny::paneViewer()</a></code>.</p></dd>
 
 
 <dt id="arg-run">run<a class="anchor" aria-label="anchor" href="#arg-run"></a></dt>
@@ -72,7 +74,7 @@ and launches the Sideview interactive multi-table canvas gadget.</p>
 </dl></div>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
-    <p>Result of <code>sideview(...)</code>.</p>
+    <p>Result of <code>sideview(...)</code>, invisibly when the gadget was run.</p>
     </div>
 
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>

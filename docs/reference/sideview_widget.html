@@ -13,7 +13,7 @@ exporting via save_sideview()."><meta property="og:image" content="https://lauye
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -52,7 +52,9 @@ exporting via <code><a href="save_sideview.html">save_sideview()</a></code>.</p>
 <span>  width <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  height <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  elementId <span class="op">=</span> <span class="cn">NULL</span>,</span>
-<span>  options <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span></span>
+<span>  options <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>,</span>
+<span>  theme <span class="op">=</span> <span class="st">"auto"</span>,</span>
+<span>  state <span class="op">=</span> <span class="cn">NULL</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -80,6 +82,17 @@ exporting via <code><a href="save_sideview.html">save_sideview()</a></code>.</p>
 <dt id="arg-options">options<a class="anchor" aria-label="anchor" href="#arg-options"></a></dt>
 <dd><p>Named list of canvas options (e.g. <code>snapToEdge</code>,
 <code>snapThreshold</code>, <code>minScale</code>, <code>maxScale</code>).</p></dd>
+
+
+<dt id="arg-theme">theme<a class="anchor" aria-label="anchor" href="#arg-theme"></a></dt>
+<dd><p>Canvas theme: <code>"auto"</code> (default; follows the reader's
+<code>prefers-color-scheme</code>), <code>"light"</code>, <code>"dark"</code>, an <code><a href="sv_theme.html">sv_theme()</a></code> or a
+<code><a href="https://rstudio.github.io/bslib/reference/bs_theme.html" class="external-link">bslib::bs_theme()</a></code>.</p></dd>
+
+
+<dt id="arg-state">state<a class="anchor" aria-label="anchor" href="#arg-state"></a></dt>
+<dd><p>A saved workspace to restore (see <code><a href="sideview.html">sideview()</a></code>): a
+<code>sideview_state</code> or the path to a saved state file.</p></dd>
 
 </dl></div>
     <div class="section level2">

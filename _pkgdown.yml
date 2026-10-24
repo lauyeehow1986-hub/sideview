@@ -38,6 +38,7 @@ reference:
       - sideview_ui
       - sideview_server
       - sv_find_tables
+      - sv_theme
 
   - title: "Standalone HTMLWidget & Export"
     desc: "Export interactive canvases to self-contained, portable HTML reports or embed in Shiny."
@@ -91,6 +92,7 @@ reference:
       - sv_build_schema_context
       - sv_build_prompt
       - sv_call_llm
+      - sv_llm_models
       - sv_extract_code
 
   - title: "RStudio API & Environment Bridge"
