@@ -472,6 +472,10 @@ function runAllScenarios() {
       id: 'card_000001',
       name: 'patients',
       type: 'grid',
+      // Fixed positions: these scenarios check drag/dock arithmetic. Automatic
+      // launch layout is covered by the real-browser tests.
+      x: 40,
+      y: 60,
       dims: [4, 3],
       data: {
         patient_id: ['P1', 'P2', 'P3', 'P4'],
@@ -484,6 +488,8 @@ function runAllScenarios() {
       id: 'card_000002',
       name: 'visits',
       type: 'grid',
+      x: 400,
+      y: 110,
       dims: [4, 3],
       data: {
         patient_id: ['P1', 'P2', 'P3', 'P5'],

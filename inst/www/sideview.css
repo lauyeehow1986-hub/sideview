@@ -876,6 +876,10 @@ html.sv-standalone body {
   line-height: 1.5;
   overflow-x: auto;
   margin: 10px 0;
+  text-align: left;
+  /* The drawer is narrow: wrap long pipeline lines instead of hiding them. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .sideview-drawer-actions {

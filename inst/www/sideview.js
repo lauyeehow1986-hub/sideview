@@ -819,8 +819,14 @@ function sendToShiny(name, value) {
       if (aiBar) setVar('--sv-aibar-h', aiBar.offsetHeight + 'px');
       self.container.classList.toggle('sv-narrow', self.container.clientWidth < 720);
       if (self.cards) self.freezeAllCardSizes();
+      // First layout with a real size (a widget can start hidden in a tab).
+      if (self._needsInitialLayout && self.container.clientWidth > 0) {
+        self._needsInitialLayout = false;
+        if (self.arrangeCards(true)) self.fitAll({ maxScale: 1, minScale: READABLE_SCALE });
+      }
       self.scheduleConnectorUpdate();
     };
+    this._needsInitialLayout = true;
     publish();
     if (typeof global.ResizeObserver === 'function') {
       this._resizeObserver = new global.ResizeObserver(publish);
@@ -830,6 +836,127 @@ function sendToShiny(name, value) {
     } else {
       this.listenGlobal(global, 'resize', publish);
     }
+  };
+
+  // ---- canvas layout ---------------------------------------------------------
+
+  // Automatic layout never zooms out further than this, so table text stays
+  // readable; anything beyond is reached by panning.
+  var READABLE_SCALE = 0.5;
+
+  // Bottom of the floating top chrome (toolbar, palette), in container pixels.
+  SideviewEngine.prototype.chromeTop = function () {
+    var cRect = this.container.getBoundingClientRect();
+    var bottom = 0;
+    var els = this.container.querySelectorAll('.sideview-topbar, .sideview-toolbar, .sideview-palette');
+    for (var i = 0; i < els.length; i++) {
+      var r = els[i].getBoundingClientRect();
+      if (!r.width || !r.height || r.top - cRect.top > cRect.height / 3) continue;
+      bottom = Math.max(bottom, r.bottom - cRect.top);
+    }
+    return bottom;
+  };
+
+  // Space kept clear at the bottom for the AI bar, in container pixels.
+  SideviewEngine.prototype.chromeBottom = function () {
+    var ai = this.container.querySelector('.sideview-ai-bar');
+    if (!ai || !ai.offsetHeight) return 16;
+    var cRect = this.container.getBoundingClientRect();
+    return Math.max(16, cRect.bottom - ai.getBoundingClientRect().top + 12);
+  };
+
+  // Lay cards out in rows below the top chrome. Every column count is tried and
+  // the one that fits the window at the largest zoom wins (ties go to more
+  // columns, so tables stay side by side). With `onlyAuto`, only cards without
+  // a saved position move, placed under the others. Returns true if any moved.
+  SideviewEngine.prototype.arrangeCards = function (onlyAuto) {
+    var gap = 32;
+    var left = 24;
+    var moving = [];
+    var fixedBottom = null;
+    this.cards.forEach(function (card) {
+      var el = card.element;
+      if (!el || el.classList.contains('is-maximized')) return;
+      if (!onlyAuto || el.dataset.autoPlace === 'true') {
+        moving.push(card);
+      } else {
+        var b = (parseFloat(el.style.top) || 0) + el.offsetHeight;
+        fixedBottom = fixedBottom === null ? b : Math.max(fixedBottom, b);
+      }
+    });
+    if (!moving.length) return false;
+
+    var top = fixedBottom === null ? this.chromeTop() + 16 : fixedBottom + gap;
+    var sizes = moving.map(function (card) {
+      return { w: card.element.offsetWidth, h: card.element.offsetHeight };
+    });
+    var layout = function (cols) {
+      var pos = [], x = left, y = top, rowH = 0, maxX = left;
+      sizes.forEach(function (sz, i) {
+        if (i > 0 && i % cols === 0) { x = left; y += rowH + gap; rowH = 0; }
+        pos.push({ x: x, y: y });
+        x += sz.w + gap;
+        maxX = Math.max(maxX, x - gap);
+        rowH = Math.max(rowH, sz.h);
+      });
+      return { pos: pos, w: maxX - left, h: y + rowH - top };
+    };
+    var availW = Math.max(this.container.clientWidth - 2 * left, 1);
+    var availH = Math.max(this.container.clientHeight - (this.chromeTop() + 16) - this.chromeBottom(), 1);
+    // Below READABLE_SCALE the view stops shrinking and the user pans; then a
+    // layout whose width still fits wins, so panning is vertical only.
+    var best = null;
+    for (var cols = 1; cols <= sizes.length; cols++) {
+      var l = layout(cols);
+      var fit = Math.min(1, availW / Math.max(l.w, 1), availH / Math.max(l.h, 1));
+      var widthOk = l.w * Math.max(fit, READABLE_SCALE) <= availW + 1;
+      var better = !best || (widthOk && !best.widthOk) ||
+        (widthOk === best.widthOk && fit >= best.fit - 1e-6);
+      if (better) best = { fit: fit, widthOk: widthOk, pos: l.pos };
+    }
+    moving.forEach(function (card, i) {
+      var el = card.element;
+      var p = best.pos[i];
+      el.style.left = p.x + 'px';
+      el.style.top = p.y + 'px';
+      card.x = p.x;
+      card.y = p.y;
+      delete el.dataset.autoPlace;
+    });
+    this.scheduleConnectorUpdate();
+    return true;
+  };
+
+  // Zoom and pan so every card is visible between the top chrome and the AI
+  // bar. `maxScale` stops small layouts being blown up; `minScale` keeps text
+  // readable (the rest stays reachable by panning).
+  SideviewEngine.prototype.fitAll = function (opts) {
+    opts = opts || {};
+    var pz = this.panzoom;
+    if (!pz || typeof pz.zoom !== 'function' || typeof pz.pan !== 'function' || !this.cards.size) return;
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    this.cards.forEach(function (card) {
+      var el = card.element;
+      if (!el || el.classList.contains('is-maximized')) return;
+      var l = parseFloat(el.style.left) || 0;
+      var t = parseFloat(el.style.top) || 0;
+      minX = Math.min(minX, l);
+      minY = Math.min(minY, t);
+      maxX = Math.max(maxX, l + el.offsetWidth);
+      maxY = Math.max(maxY, t + el.offsetHeight);
+    });
+    if (!isFinite(minX)) return;
+    var margin = 24;
+    var top = this.chromeTop() + 16;
+    var availW = this.container.clientWidth - 2 * margin;
+    var availH = this.container.clientHeight - top - this.chromeBottom();
+    if (availW <= 0 || availH <= 0) return;
+    var s = Math.min(availW / Math.max(maxX - minX, 1), availH / Math.max(maxY - minY, 1));
+    var lo = Math.max(opts.minScale || 0, this.options.minScale);
+    var hi = Math.min(opts.maxScale || this.options.maxScale, this.options.maxScale);
+    s = Math.min(Math.max(s, lo), hi);
+    pz.zoom(s);
+    pz.pan(margin - minX * s, top - minY * s);
   };
 
   SideviewEngine.prototype.destroy = function () {
@@ -1027,6 +1154,8 @@ function sendToShiny(name, value) {
         '<button class="sideview-btn" data-action="zoom-in" title="Zoom In">+</button>',
         '<button class="sideview-btn" data-action="zoom-out" title="Zoom Out">-</button>',
         '<button class="sideview-btn" data-action="zoom-reset" title="Reset View">100%</button>',
+        '<button class="sideview-btn" data-action="fit-all" title="Fit all cards in view">Fit</button>',
+        '<button class="sideview-btn" data-action="arrange-cards" title="Arrange cards in a grid">Arrange</button>',
         '<span class="sideview-toolbar-divider"></span>',
         '<button class="sideview-btn active" data-action="toggle-snap" title="Snap to Edge">Snap</button>',
         '<button class="sideview-btn" data-action="suggest-mappings" title="Suggest Mappings across tables">Auto Map</button>',
@@ -1203,6 +1332,11 @@ function sendToShiny(name, value) {
         self.panzoom.zoomToPoint(self.panzoom.getScale() * 0.8, centerPoint);
       } else if (action === 'zoom-reset' && self.panzoom) {
         self.panzoom.reset();
+      } else if (action === 'fit-all') {
+        self.fitAll();
+      } else if (action === 'arrange-cards') {
+        self.arrangeCards(false);
+        self.fitAll({ maxScale: 1, minScale: READABLE_SCALE });
       } else if (action === 'minimize-card') {
         var minCard = btn.closest('.sideview-card');
         if (minCard) self.toggleMinimizeCard(minCard, btn);
@@ -1859,10 +1993,13 @@ function sendToShiny(name, value) {
     cardEl.dataset.cardName = cardName;
 
     // Positioning
-    var initialX = cardData.x !== undefined ? cardData.x : 40 + (index * 360);
-    var initialY = cardData.y !== undefined ? cardData.y : 60 + ((index % 2) * 50);
+    var hasPos = cardData.x != null || cardData.y != null;
+    var initialX = cardData.x != null ? cardData.x : 40 + (index * 360);
+    var initialY = cardData.y != null ? cardData.y : 60 + ((index % 2) * 50);
     cardEl.style.left = initialX + 'px';
     cardEl.style.top = initialY + 'px';
+    // No saved position: flowed into a grid by arrangeCards() on first layout.
+    if (!hasPos) cardEl.dataset.autoPlace = 'true';
 
     // Build Card Header
     var header = document.createElement('div');

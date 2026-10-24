@@ -324,6 +324,8 @@ render_card_tag <- function(card, index = 1L) {
     `data-card-id` = card_id,
     `data-card-name` = card_name,
     `data-total-rows` = if (is.data.frame(card$data)) nrow(card$data) else NULL,
+    # No saved position: the engine flows these cards into a grid on load.
+    `data-auto-place` = if (is.null(card$x) && is.null(card$y)) "true" else NULL,
     style = sprintf("left: %dpx; top: %dpx;", as.integer(initial_x), as.integer(initial_y)),
     header_tag,
     body_tag
@@ -386,6 +388,8 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
     htmltools::tags$button(class = "sideview-btn", `data-action` = "zoom-in", title = "Zoom In", "+"),
     htmltools::tags$button(class = "sideview-btn", `data-action` = "zoom-out", title = "Zoom Out", "-"),
     htmltools::tags$button(class = "sideview-btn", `data-action` = "zoom-reset", title = "Reset View", "100%"),
+    htmltools::tags$button(class = "sideview-btn", `data-action` = "fit-all", title = "Fit all cards in view", "Fit"),
+    htmltools::tags$button(class = "sideview-btn", `data-action` = "arrange-cards", title = "Arrange cards in a grid", "Arrange"),
     htmltools::tags$span(class = "sideview-toolbar-divider"),
     htmltools::tags$button(class = "sideview-btn active", `data-action` = "toggle-snap", title = "Snap to Edge", "Snap"),
     htmltools::tags$button(class = "sideview-btn", `data-action` = "toggle-drawer", title = "Toggle Drawer", "Drawer"),
@@ -449,7 +453,12 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
         class = "sideview-tab-pane sideview-pipeline-pane",
         `data-pane` = "pipeline",
         htmltools::tags$p(class = "sideview-drawer-desc", "Connect columns to generate join or mutation pipelines."),
-        htmltools::tags$pre(class = "sideview-code-block", htmltools::tags$code(class = "sideview-code-text", "# Connect two columns to generate pipeline code"))
+        # No whitespace inside <pre>: htmltools' indentation would show as code.
+        htmltools::tags$pre(
+          class = "sideview-code-block",
+          .noWS = c("after-begin", "before-end"),
+          htmltools::tags$code(class = "sideview-code-text", "# Connect two columns to generate pipeline code")
+        )
       ),
       htmltools::tags$div(
         class = "sideview-tab-pane sideview-discrepancy-pane",

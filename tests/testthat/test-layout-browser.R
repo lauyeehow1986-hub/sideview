@@ -44,6 +44,74 @@ test_that("cards have a sensible width and show several columns", {
   expect_gte(info$visible, 3)
 })
 
+sv_launch_layout <- function(b) {
+  sv_js(b, "(() => {
+    const c = document.querySelector('.sideview-container').getBoundingClientRect();
+    const box = s => [...document.querySelectorAll(s)].map(e => e.getBoundingClientRect())
+      .filter(r => r.width && r.height && r.top - c.top < c.height / 3).map(r => r.bottom);
+    const chrome = Math.max(0, ...box('.sideview-toolbar'), ...box('.sideview-palette'));
+    const cards = [...document.querySelectorAll('.sideview-card')].map(e => e.getBoundingClientRect().toJSON());
+    const code = document.querySelector('.sideview-code-text').closest('pre').textContent;
+    return { chrome: chrome, cards: cards, code: code, vw: innerWidth,
+             scale: window._sideviewInstance.panzoom.getScale(),
+             auto: document.querySelectorAll('[data-auto-place]').length };
+  })()")
+}
+
+sv_expect_tidy_launch <- function(r, label) {
+  n <- length(r$cards)
+  expect_gte(n, 3)
+  for (i in seq_len(n - 1)) for (j in (i + 1):n) {
+    expect_false(rect_overlap(r$cards[[i]], r$cards[[j]]), info = paste(label, "cards", i, j))
+  }
+  for (cd in r$cards) {
+    expect_gte(cd$top, r$chrome, label = paste(label, "card top below chrome"))
+    # Overflow is vertical only: no sideways panning needed to see a card.
+    expect_lte(cd$right, r$vw + 1, label = paste(label, "card right edge inside window"))
+  }
+  expect_gte(r$scale, 0.5 - 1e-6)
+  expect_lte(r$scale, 1 + 1e-6)
+  expect_equal(r$auto, 0)
+  # htmltools must not indent the server-rendered placeholder inside <pre>.
+  expect_identical(r$code, "# Connect two columns to generate pipeline code")
+}
+
+test_that("cards are laid out without overlap below the chrome on launch", {
+  b <- sv_shared_page()
+  sv_expect_tidy_launch(sv_launch_layout(b), "1400x900")
+
+  # A narrow window, as in the RStudio Viewer pane: the toolbar wraps.
+  nb <- sv_open_page(.sv_browser$app$url, 420, 700)
+  on.exit(try(nb$close(), silent = TRUE), add = TRUE)
+  expect_true(attr(nb, "sv_ready"))
+  sv_expect_tidy_launch(sv_launch_layout(nb), "420x700")
+})
+
+test_that("Fit and Arrange keep every card visible and apart", {
+  b <- sv_shared_page()
+  r <- sv_js(b, "(async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const cards = [...document.querySelectorAll('.sideview-card')];
+    const saved = cards.map(c => [c.style.left, c.style.top]);
+    const pz = window._sideviewInstance.panzoom;
+    const savedPz = [pz.getScale(), pz.getPan()];
+    cards[1].style.left = '3000px'; cards[1].style.top = '2000px';
+    document.querySelector('[data-action=\"fit-all\"]').click(); await sleep(200);
+    const inView = () => cards.every(c => { const r = c.getBoundingClientRect(); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1; });
+    const fit = inView();
+    document.querySelector('[data-action=\"arrange-cards\"]').click(); await sleep(200);
+    const rects = cards.map(c => c.getBoundingClientRect().toJSON());
+    cards.forEach((c, i) => { c.style.left = saved[i][0]; c.style.top = saved[i][1]; });
+    pz.zoom(savedPz[0]); pz.pan(savedPz[1].x, savedPz[1].y);
+    return { fit: fit, rects: rects };
+  })()")
+  expect_true(r$fit)
+  n <- length(r$rects)
+  for (i in seq_len(n - 1)) for (j in (i + 1):n) {
+    expect_false(rect_overlap(r$rects[[i]], r$rects[[j]]), info = paste("arranged", i, j))
+  }
+})
+
 test_that("chrome elements do not overlap at common window sizes", {
   b <- sv_shared_page()
   for (sz in list(c(1400, 900), c(1024, 700), c(560, 520))) {

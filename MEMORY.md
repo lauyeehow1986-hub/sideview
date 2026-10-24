@@ -50,9 +50,9 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 | 37 | JS | Splines (z 25, above cards) swallow clicks on table cells/headers under them; a click on a spline over a card deleted the join | fixed (84bb482) |
 | 38 | Assets | Dependency version was fixed at 0.2.0, so browsers served stale cached JS/CSS after an update | fixed (84bb482) |
 | 39 | Gadget | Done with no operations returned the placeholder `# Connect two columns ...` as code | fixed (84bb482) |
-| 40 | Layout | Initial cards are 640px wide but spaced 360px apart → they overlap on launch in every mode | open |
-| 41 | Drawer | Code preview text is centred and truncated | open |
-| 42 | Pane | In the narrow Viewer pane the toolbar covers card headers and the palette overlaps cards | open |
+| 40 | Layout | Initial cards are 640px wide but spaced 360px apart → they overlap on launch in every mode | fixed (Phase 2.4) |
+| 41 | Drawer | Code preview text is centred and truncated | fixed (Phase 2.4) |
+| 42 | Pane | In the narrow Viewer pane the toolbar covers card headers and the palette overlaps cards | fixed (Phase 2.4) |
 
 ## Backlog (future rounds, not yet scheduled)
 - Table version diff by key (data-lock comparisons between dataset versions).
@@ -63,6 +63,18 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 ---
 
 ## Log
+
+### 2026-10-24 — Phase 2.4: launch layout, Fit/Arrange, code preview
+- **Launch layout (#40, #42):**
+  - Cards with no saved position (`data-auto-place`, from R or `addCard`) are laid out on first real layout by `arrangeCards()`.
+  - Layout runs once the container has a size, so a widget hidden in a tab still works.
+  - It tries every column count and keeps the one that fits largest. Below `READABLE_SCALE` (0.5) it prefers a layout whose width fits, so panning is vertical only.
+  - Cards start under the measured toolbar and palette (`chromeTop()`), and `fitAll()` zooms between 0.5 and 1.
+- **Toolbar:** new **Fit** (`fit-all`) and **Arrange** (`arrange-cards`) buttons in both the gadget and widget toolbars.
+- **Code preview (#41):** htmltools indented the server-rendered `<pre>`, so the placeholder showed leading spaces and looked centred; fixed with `.noWS`. Long lines now wrap (`pre-wrap`) instead of being clipped in the narrow drawer.
+- **Mock-DOM suite:** cards pinned to fixed positions, since its drag/dock arithmetic assumes them.
+- **Tests:** browser tests "cards are laid out without overlap below the chrome on launch" (1400×900 and 420×700) and "Fit and Arrange keep every card visible and apart". `devtools::test()` → **1430 expectations, 0 failed, 0 errors**.
+- **Verified in RStudio Viewer pane (~400px):** the toolbar wraps; cards sit below the toolbar and palette in one column at 50% with no sideways overflow; the drawer is a bottom sheet with a left-aligned placeholder; Cancel → `NULL`; Done with no code → `NULL`.
 
 ### 2026-10-24 — Phase 2.3: bugs only a real browser found (RStudio browser mode + Claude in Chrome)
 - **How:** launched `sideview(patients, visits, labs, viewer = "browser")` from the user's RStudio
