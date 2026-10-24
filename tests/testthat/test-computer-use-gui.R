@@ -218,7 +218,7 @@ test_that("Computer Use GUI: Scenario 5 - Header sort cycling and filter popover
   res <- run_gui_test_scenarios()
   s5 <- res$scenario5
 
-  # Header sort cycle: none -> asc (▲) -> desc (▼) -> none (⇅)
+  # Header sort cycle: none -> asc (sortAsc icon) -> desc (sortDesc) -> none (sort)
   expect_true(isTRUE(s5$sort_cycle_asc))
   expect_true(isTRUE(s5$sort_cycle_desc))
   expect_true(isTRUE(s5$sort_cycle_none))

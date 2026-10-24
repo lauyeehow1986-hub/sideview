@@ -650,15 +650,15 @@ function runAllScenarios() {
 
   sortBtnAge.click(); // asc
   const s5_sort1_state = thAge.dataset.sortState;
-  const s5_sort1_text = sortBtnAge.textContent;
+  const s5_sort1_text = sortBtnAge.dataset.svIcon;
 
   sortBtnAge.click(); // desc
   const s5_sort2_state = thAge.dataset.sortState;
-  const s5_sort2_text = sortBtnAge.textContent;
+  const s5_sort2_text = sortBtnAge.dataset.svIcon;
 
   sortBtnAge.click(); // none
   const s5_sort3_state = thAge.dataset.sortState;
-  const s5_sort3_text = sortBtnAge.textContent;
+  const s5_sort3_text = sortBtnAge.dataset.svIcon;
 
   const filterBtnAge = card1.querySelector('.sideview-filter-btn[data-col-name="age"]');
   filterBtnAge.click();
@@ -674,9 +674,9 @@ function runAllScenarios() {
   const s5_filter_active = filterBtnAge.classList.contains('active');
 
   results.scenario5 = {
-    sort_cycle_asc: s5_sort1_state === 'asc' && s5_sort1_text === '▲',
-    sort_cycle_desc: s5_sort2_state === 'desc' && s5_sort2_text === '▼',
-    sort_cycle_none: s5_sort3_state === 'none' && s5_sort3_text === '⇅',
+    sort_cycle_asc: s5_sort1_state === 'asc' && s5_sort1_text === 'sortAsc',
+    sort_cycle_desc: s5_sort2_state === 'desc' && s5_sort2_text === 'sortDesc',
+    sort_cycle_none: s5_sort3_state === 'none' && s5_sort3_text === 'sort',
     popover_rendered: s5_popover_open,
     filter_active: s5_filter_active
   };

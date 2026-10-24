@@ -221,20 +221,23 @@ render_card_tag <- function(card, index = 1L) {
       htmltools::tags$button(
         class = "sideview-icon-btn",
         `data-action` = "maximize-card",
-        title = "Maximize / Restore Card",
-        htmltools::HTML("&#x26F6;")
+        title = "Maximize card",
+        `aria-label` = "Maximize card",
+        `data-sv-icon` = "maximize"
       ),
       htmltools::tags$button(
         class = "sideview-icon-btn",
         `data-action` = "sync-scroll",
         title = "Synchronize vertical & horizontal scrolling",
-        htmltools::HTML("&#128279;")
+        `aria-label` = "Synchronize scrolling",
+        `data-sv-icon` = "link"
       ),
       htmltools::tags$button(
         class = "sideview-icon-btn",
         `data-action` = "minimize-card",
-        title = "Minimize",
-        htmltools::HTML("&minus;")
+        title = "Collapse card",
+        `aria-label` = "Collapse card",
+        `data-sv-icon` = "minus"
       )
     )
   )
@@ -267,8 +270,8 @@ render_card_tag <- function(card, index = 1L) {
           ),
           htmltools::tags$div(
             class = "col-header-tools",
-            htmltools::tags$button(class = "sideview-th-btn sideview-sort-btn", `data-action` = "sort-col", `data-col-name` = col, title = "Sort column (Asc / Desc / Reset)", htmltools::HTML("&#x21C5;")),
-            htmltools::tags$button(class = "sideview-th-btn sideview-filter-btn", `data-action` = "filter-col", `data-col-name` = col, title = "Filter column", htmltools::HTML("&#x1F50D;")),
+            htmltools::tags$button(class = "sideview-th-btn sideview-sort-btn", `data-action` = "sort-col", `data-col-name` = col, title = "Sort column (Asc / Desc / Reset)", `aria-label` = paste("Sort", col), `data-sv-icon` = "sort"),
+            htmltools::tags$button(class = "sideview-th-btn sideview-filter-btn", `data-action` = "filter-col", `data-col-name` = col, title = "Filter column", `aria-label` = paste("Filter", col), `data-sv-icon` = "filter"),
             htmltools::tags$span(class = "sideview-col-port", `data-col-name` = col, title = "Connect to map field")
           ),
           profile_summary
@@ -393,7 +396,7 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
     htmltools::tags$span(class = "sideview-toolbar-divider"),
     htmltools::tags$button(class = "sideview-btn active", `data-action` = "toggle-snap", title = "Snap to Edge", "Snap"),
     htmltools::tags$button(class = "sideview-btn", `data-action` = "toggle-drawer", title = "Toggle Drawer", "Drawer"),
-    htmltools::tags$button(class = "sideview-btn", `data-action` = "toggle-fullscreen", title = "Toggle Fullscreen Canvas", htmltools::HTML("&#x26F6; Fullscreen")),
+    htmltools::tags$button(class = "sideview-btn", `data-action` = "toggle-fullscreen", title = "Toggle Fullscreen Canvas", `aria-label` = "Toggle fullscreen canvas", sv_icon_slot("fullscreen"), " Fullscreen"),
     if (isTRUE(gadget)) htmltools::tagList(
       htmltools::tags$span(class = "sideview-toolbar-divider"),
       htmltools::tags$button(class = "sideview-btn", `data-action` = "gadget-cancel",
@@ -412,7 +415,7 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
     htmltools::tags$div(class = "sideview-swatch sideview-swatch-amber", `data-color` = "amber", title = "Amber"),
     htmltools::tags$div(class = "sideview-swatch sideview-swatch-rose", `data-color` = "rose", title = "Rose"),
     htmltools::tags$div(class = "sideview-swatch sideview-swatch-purple", `data-color` = "purple", title = "Purple"),
-    htmltools::tags$div(class = "sideview-swatch sideview-swatch-clear", `data-color` = "clear", title = "Clear Highlight")
+    htmltools::tags$div(class = "sideview-swatch sideview-swatch-clear", `data-color` = "clear", title = "Clear Highlight", `aria-label` = "Clear highlight", `data-sv-icon` = "close")
   )
   
   # Canvas & Viewport with SVG overlay
@@ -435,7 +438,7 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
     htmltools::tags$div(
       class = "sideview-drawer-header",
       htmltools::tags$span(class = "sideview-drawer-title", "Tidyverse Operations"),
-      htmltools::tags$button(class = "sideview-icon-btn", `data-action` = "close-drawer", htmltools::HTML("&times;"))
+      htmltools::tags$button(class = "sideview-icon-btn", `data-action` = "close-drawer", title = "Close drawer", `aria-label` = "Close drawer", `data-sv-icon` = "close")
     ),
     htmltools::tags$div(
       class = "sideview-drawer-tabs",
@@ -516,7 +519,7 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
   # Floating AI bar
   ai_bar_tag <- htmltools::tags$div(
     class = "sideview-ai-bar",
-    htmltools::tags$span(class = "sideview-ai-icon", htmltools::HTML("&#10024;")),
+    htmltools::tags$span(class = "sideview-ai-icon", `aria-hidden` = "true", `data-sv-icon` = "sparkles"),
     htmltools::tags$input(type = "text", class = "sideview-ai-input", placeholder = "Ask AI: e.g., join patients and labs on ID, impute missing values..."),
     htmltools::tags$button(class = "sideview-ai-send", `data-action` = "send-ai", "Send")
   )
@@ -553,4 +556,11 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
     sideview_html_dependency(),
     container_tag
   )
+}
+
+# Placeholder for an inline SVG icon. The engine (sideview.js icon()/
+# hydrateIcons()) fills every empty [data-sv-icon] element on start-up, so the
+# icon set lives in one place and no emoji/Unicode glyphs reach the page.
+sv_icon_slot <- function(name) {
+  htmltools::tags$span(class = "sv-icon-slot", `aria-hidden` = "true", `data-sv-icon` = name)
 }

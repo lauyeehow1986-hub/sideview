@@ -676,18 +676,40 @@ test_that("send_copilot_chat caps session copilot_history at sliding window limi
   })
 })
 
-test_that("render_card_tag encodes sort and filter icons as safe ASCII HTML entities", {
+test_that("render_card_tag uses SVG icon placeholders, never emoji or glyphs", {
   df <- data.frame(patient_id = 1:5, heart_rate = c(72, 80, 68, 90, 75))
   card <- sv_normalize(df, name = "vitals")
   rendered <- as.character(render_card_tag(card))
-  
-  # Assert safe ASCII HTML entities
-  expect_match(rendered, "&#x21C5;", fixed = TRUE)
-  expect_match(rendered, "&#x1F50D;", fixed = TRUE)
-  
-  # Assert complete absence of Windows codepage UTF-8 hex escape explosions
-  expect_false(grepl("<e2><87><85>", rendered, fixed = TRUE))
-  expect_false(grepl("<f0><9f><94><8d>", rendered, fixed = TRUE))
+
+  # Icons are data-sv-icon placeholders that sideview.js fills with inline SVG
+  expect_match(rendered, "data-sv-icon=\"sort\"", fixed = TRUE)
+  expect_match(rendered, "data-sv-icon=\"filter\"", fixed = TRUE)
+  expect_match(rendered, "aria-label=\"Sort heart_rate\"", fixed = TRUE)
+
+  # No glyph entities and no raw non-ASCII characters inside any button
+  expect_false(grepl("&#x21C5;|&#x1F50D;|&#x26F6;|&#128279;", rendered))
+  buttons <- regmatches(rendered, gregexpr("<button[^>]*>.*?</button>", rendered, perl = TRUE))[[1]]
+  expect_true(length(buttons) >= 5)
+  expect_false(any(grepl("[^\x01-\x7F]", buttons, perl = TRUE)))
+})
+
+test_that("sideview_ui chrome carries no emoji or glyph icons", {
+  rendered <- as.character(sideview_ui())
+  expect_false(grepl("&#x26F6;|&#10024;|&#128279;|&#x1F50D;|&#x21C5;|&times;|&minus;", rendered))
+  expect_match(rendered, "data-sv-icon=\"fullscreen\"", fixed = TRUE)
+  expect_match(rendered, "data-sv-icon=\"sparkles\"", fixed = TRUE)
+  expect_match(rendered, "data-sv-icon=\"close\"", fixed = TRUE)
+})
+
+test_that("every data-sv-icon name used by the R UI exists in the JS icon set", {
+  js <- paste(readLines(system.file("www", "sideview.js", package = "sideview"), warn = FALSE), collapse = "
+")
+  card <- sv_normalize(data.frame(a = 1), name = "x")
+  html <- paste(as.character(sideview_ui()), as.character(render_card_tag(card)))
+  used <- unique(regmatches(html, gregexpr("(?<=data-sv-icon=\")[A-Za-z]+", html, perl = TRUE))[[1]])
+  expect_true(length(used) >= 7)
+  for (nm in used) expect_match(js, paste0("
+    ", nm, ": '<"), fixed = TRUE, info = nm)
 })
 
 test_that("sideview viewer defaults adapt to RStudio environment", {
@@ -719,7 +741,7 @@ test_that("render_card_tag renders maximize button and column resizers", {
 
   # Assert maximize button
   expect_match(rendered, "data-action=\"maximize-card\"", fixed = TRUE)
-  expect_match(rendered, "&#x26F6;", fixed = TRUE)
+  expect_match(rendered, "data-sv-icon=\"maximize\"", fixed = TRUE)
 
   # Assert column boundary resizer
   expect_match(rendered, "sideview-col-resizer", fixed = TRUE)
@@ -733,7 +755,8 @@ test_that("sideview toolbar renders Fullscreen button and accepts shorthand view
   ui <- sideview_ui()
   rendered_ui <- as.character(ui)
   expect_match(rendered_ui, "data-action=\"toggle-fullscreen\"", fixed = TRUE)
-  expect_match(rendered_ui, "&#x26F6; Fullscreen", fixed = TRUE)
+  expect_match(rendered_ui, "data-sv-icon=\"fullscreen\"", fixed = TRUE)
+  expect_match(rendered_ui, "Fullscreen", fixed = TRUE)
 
   # Shorthand viewer strings in sideview
   app_browser <- sideview(mtcars, viewer = "browser", run = FALSE)

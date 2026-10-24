@@ -659,6 +659,7 @@ function sendToShiny(name, value) {
     this.lastDiscrepancy = null;
 
     this.initDOM();
+    hydrateIcons(this.container);
     this.initPanzoom();
     this.initEventListeners();
     this.initExistingCards();
@@ -671,6 +672,49 @@ function sendToShiny(name, value) {
 
     this.registerShinyHandlers();
     this.initLayoutObserver();
+  }
+
+  // ---- icons ----------------------------------------------------------------
+  // Inline SVG icons (paths after Lucide, ISC/MIT licensed). Emoji and Unicode
+  // glyphs render inconsistently in the Windows RStudio Viewer, so every icon
+  // goes through icon(). Server-rendered markup carries data-sv-icon
+  // placeholders that hydrateIcons() fills in.
+  var ICONS = {
+    maximize: '<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>',
+    restore: '<polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/>',
+    link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+    minus: '<line x1="5" y1="12" x2="19" y2="12"/>',
+    plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+    filter: '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
+    sort: '<path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/>',
+    sortAsc: '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
+    sortDesc: '<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>',
+    fullscreen: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
+    sparkles: '<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/>',
+    close: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
+  };
+
+  function icon(name) {
+    var body = ICONS[name];
+    if (!body) return '';
+    return '<svg class="sv-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" ' +
+      'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' +
+      body + '</svg>';
+  }
+
+  // Swap the icon shown inside an element (e.g. sort state changes).
+  function setIcon(el, name) {
+    if (!el) return;
+    el.innerHTML = icon(name);
+    el.dataset.svIcon = name;
+  }
+
+  // Fill empty [data-sv-icon] placeholders emitted by the R-side UI.
+  function hydrateIcons(root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll('[data-sv-icon]').forEach(function (el) {
+      if (!el.firstElementChild && ICONS[el.dataset.svIcon]) el.innerHTML = icon(el.dataset.svIcon);
+    });
   }
 
   // ---- small shared helpers -------------------------------------------------
@@ -1005,7 +1049,9 @@ function sendToShiny(name, value) {
     }
     if (btn) {
       btn.title = minimized ? 'Expand card' : 'Collapse card';
+      btn.setAttribute('aria-label', btn.title);
       btn.setAttribute('aria-pressed', minimized ? 'true' : 'false');
+      setIcon(btn, minimized ? 'plus' : 'minus');
     }
     if (!minimized && card._virtualTable && card._virtualTable.render) card._virtualTable.render();
     this.scheduleConnectorUpdate();
@@ -1042,7 +1088,9 @@ function sendToShiny(name, value) {
     }
     if (btn) {
       btn.title = !isMax ? 'Restore card' : 'Maximize card';
+      btn.setAttribute('aria-label', btn.title);
       btn.setAttribute('aria-pressed', !isMax ? 'true' : 'false');
+      setIcon(btn, !isMax ? 'restore' : 'maximize');
     }
     if (card._virtualTable && card._virtualTable.render) card._virtualTable.render();
     this.scheduleConnectorUpdate();
@@ -1160,7 +1208,7 @@ function sendToShiny(name, value) {
         '<button class="sideview-btn active" data-action="toggle-snap" title="Snap to Edge">Snap</button>',
         '<button class="sideview-btn" data-action="suggest-mappings" title="Suggest Mappings across tables">Auto Map</button>',
         '<button class="sideview-btn" data-action="toggle-drawer" title="Toggle Drawer">Drawer</button>',
-        '<button class="sideview-btn" data-action="toggle-fullscreen" title="Toggle Fullscreen Canvas">&#x26F6; Fullscreen</button>'
+        '<button class="sideview-btn" data-action="toggle-fullscreen" title="Toggle Fullscreen Canvas" aria-label="Toggle fullscreen canvas">' + icon('fullscreen') + ' Fullscreen</button>'
       ].join('');
       this.container.appendChild(toolbar);
     }
@@ -1176,7 +1224,7 @@ function sendToShiny(name, value) {
         '<div class="sideview-swatch sideview-swatch-amber" data-color="amber" title="Amber"></div>',
         '<div class="sideview-swatch sideview-swatch-rose" data-color="rose" title="Rose"></div>',
         '<div class="sideview-swatch sideview-swatch-purple" data-color="purple" title="Purple"></div>',
-        '<div class="sideview-swatch sideview-swatch-clear" data-color="clear" title="Clear Highlight"></div>'
+        '<div class="sideview-swatch sideview-swatch-clear" data-color="clear" title="Clear Highlight" aria-label="Clear highlight">' + icon('close') + '</div>'
       ].join('');
       this.container.appendChild(palette);
     }
@@ -1213,7 +1261,7 @@ function sendToShiny(name, value) {
       drawer.innerHTML = [
         '<div class="sideview-drawer-header">',
         '  <span class="sideview-drawer-title">Tidyverse Operations</span>',
-        '  <button class="sideview-icon-btn" data-action="close-drawer">&times;</button>',
+        '  <button class="sideview-icon-btn" data-action="close-drawer" title="Close drawer" aria-label="Close drawer">' + icon('close') + '</button>',
         '</div>',
         '<div class="sideview-drawer-tabs">',
         '  <button class="sideview-drawer-tab active" data-tab="join">Join</button>',
@@ -1264,7 +1312,7 @@ function sendToShiny(name, value) {
       var aiBar = document.createElement('div');
       aiBar.className = 'sideview-ai-bar';
       aiBar.innerHTML = [
-        '<span class="sideview-ai-icon">&#10024;</span>',
+        '<span class="sideview-ai-icon" aria-hidden="true">' + icon('sparkles') + '</span>',
         '<input type="text" class="sideview-ai-input" placeholder="Ask AI: e.g., join patients and labs on ID, impute missing values..." />',
         '<button class="sideview-ai-send" data-action="send-ai">Send</button>'
       ].join('');
@@ -2012,9 +2060,9 @@ function sendToShiny(name, value) {
       dimsText ? '  <span class="sideview-badge">' + dimsText + '</span>' : '',
       '</div>',
       '<div class="sideview-card-actions">',
-      '  <button class="sideview-icon-btn" data-action="maximize-card" title="Maximize / Restore Card">&#x26F6;</button>',
-      '  <button class="sideview-icon-btn" data-action="sync-scroll" title="Synchronize vertical & horizontal scrolling">&#128279;</button>',
-      '  <button class="sideview-icon-btn" data-action="minimize-card" title="Minimize">&minus;</button>',
+      '  <button class="sideview-icon-btn" data-action="maximize-card" title="Maximize card" aria-label="Maximize card" data-sv-icon="maximize">' + icon('maximize') + '</button>',
+      '  <button class="sideview-icon-btn" data-action="sync-scroll" title="Synchronize vertical &amp; horizontal scrolling" aria-label="Synchronize scrolling" data-sv-icon="link">' + icon('link') + '</button>',
+      '  <button class="sideview-icon-btn" data-action="minimize-card" title="Collapse card" aria-label="Collapse card" data-sv-icon="minus">' + icon('minus') + '</button>',
       '</div>'
     ].join('');
     cardEl.appendChild(header);
@@ -2047,8 +2095,8 @@ function sendToShiny(name, value) {
           colType ? '    <span class="sideview-col-type">(' + escapeHtml(colType) + ')</span>' : '',
           '  </div>',
           '  <div class="col-header-tools">',
-          '    <button class="sideview-th-btn sideview-sort-btn" data-action="sort-col" data-col-name="' + safeName + '" title="Sort column (Asc / Desc / Reset)">&#x21C5;</button>',
-          '    <button class="sideview-th-btn sideview-filter-btn" data-action="filter-col" data-col-name="' + safeName + '" title="Filter column">&#x1F50D;</button>',
+          '    <button class="sideview-th-btn sideview-sort-btn" data-action="sort-col" data-col-name="' + safeName + '" title="Sort column (Asc / Desc / Reset)" aria-label="Sort ' + safeName + '" data-sv-icon="sort">' + icon('sort') + '</button>',
+          '    <button class="sideview-th-btn sideview-filter-btn" data-action="filter-col" data-col-name="' + safeName + '" title="Filter column" aria-label="Filter ' + safeName + '" data-sv-icon="filter">' + icon('filter') + '</button>',
           '    <span class="sideview-col-port" data-col-name="' + safeName + '" title="Connect to map field"></span>',
           '  </div>',
           '</div>',
@@ -2717,7 +2765,7 @@ function sendToShiny(name, value) {
       r.classList.remove('sideview-row-filtered');
     });
     this.container.querySelectorAll('.sideview-sort-btn').forEach(function (b) {
-      b.textContent = '⇅';
+      setIcon(b, 'sort');
       b.classList.remove('active');
     });
     this.container.querySelectorAll('.sideview-filter-btn').forEach(function (b) {
@@ -2796,7 +2844,7 @@ function sendToShiny(name, value) {
       otherTh.dataset.sortState = 'none';
       var sBtn = otherTh.querySelector('.sideview-sort-btn');
       if (sBtn) {
-        sBtn.textContent = '⇅';
+        setIcon(sBtn, 'sort');
         sBtn.classList.remove('active');
       }
     });
@@ -2806,12 +2854,12 @@ function sendToShiny(name, value) {
     if (table._virtualTable) {
       table._virtualTable.sort(colIndex, colName, nextState);
       if (nextState === 'none') {
-        btn.textContent = '⇅';
+        setIcon(btn, 'sort');
         btn.classList.remove('active');
         self.showToast('Reset column sort order on ' + colName, 'info');
       } else {
         btn.classList.add('active');
-        btn.textContent = nextState === 'asc' ? '▲' : '▼';
+        setIcon(btn, nextState === 'asc' ? 'sortAsc' : 'sortDesc');
 
         var cardName = cardEl.dataset.cardName || 'df';
         var escCol = escapeColIdentifier(colName);
@@ -2840,12 +2888,12 @@ function sendToShiny(name, value) {
         rows.sort(function (a, b) {
           return parseInt(a.dataset.rowIndex, 10) - parseInt(b.dataset.rowIndex, 10);
         });
-        btn.textContent = '⇅';
+        setIcon(btn, 'sort');
         btn.classList.remove('active');
         self.showToast('Reset column sort order on ' + colName, 'info');
       } else {
         btn.classList.add('active');
-        btn.textContent = nextState === 'asc' ? '▲' : '▼';
+        setIcon(btn, nextState === 'asc' ? 'sortAsc' : 'sortDesc');
 
         rows.sort(function (a, b) {
           var cellA = a.cells[colIndex] ? a.cells[colIndex].textContent.trim() : '';
@@ -2994,7 +3042,7 @@ function sendToShiny(name, value) {
     popover.innerHTML = [
       '<div class="sideview-filter-popover-header">',
       '  <span>Filter: ' + escapeHtml(colName) + (colType ? ' <small>(' + escapeHtml(colType) + ')</small>' : '') + '</span>',
-      '  <button class="sideview-icon-btn sideview-filter-close" title="Close" aria-label="Close filter">&times;</button>',
+      '  <button class="sideview-icon-btn sideview-filter-close" title="Close" aria-label="Close filter">' + icon('close') + '</button>',
       '</div>',
       '<select class="sideview-filter-select" aria-label="Operator">',
       ops.map(function (o) {

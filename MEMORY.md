@@ -33,7 +33,7 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 | 20 | Server | No `onSessionEnded → stopApp`; closing the browser tab leaves the console busy | fixed (Phase 2.2) |
 | 21 | Gadget | "Cannot launch in external browser": reproduced. The browser opens, but the page is broken by #12 (init crash) and #26 (card width) | fixed (Phase 2.1–2.3; verified live in RStudio browser mode) |
 | 22 | Security | Card and column names inserted unescaped into `innerHTML` and attribute selectors | fixed (Phase 2.1) |
-| 23 | Icons | Emoji/Unicode glyph icons render inconsistently on Windows RStudio | open |
+| 23 | Icons | Emoji/Unicode glyph icons render inconsistently on Windows RStudio | fixed (Phase 2.5) |
 | 24 | Packaging | No `.Rbuildignore`; `panzoom.min.js` is an in-house stub labelled 4.5.1; README zoom range ≠ code | open |
 | 25 | Tests | GUI suite uses a mock DOM, so layout is never exercised in a real browser | fixed (Phase 2.1) |
 | 26 | Card | **Blocker:** cards have no width, so they shrink-wrap to the 10000px viewport (~9960px) and each column is ~900px; only the first column shows and numbers look empty | fixed (Phase 2.1) |
@@ -63,6 +63,23 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 ---
 
 ## Log
+
+### 2026-10-24 — Phase 2.5: inline SVG icons (#23)
+- **What:** every emoji or Unicode glyph icon (maximize, sync-scroll link, collapse, sort, filter, fullscreen, AI sparkles, close, highlight-clear) is now an inline SVG.
+- **How:** one icon set in `sideview.js`: `ICONS`, `icon(name)`, `setIcon(el, name)` and `hydrateIcons(root)`. Paths follow Lucide (ISC/MIT) and are bundled, with no network.
+  - The R UI emits empty `data-sv-icon="name"` placeholders (`sv_icon_slot()` for icon + label buttons), and the engine fills them on start-up.
+  - JS-built cards and chrome call `icon()` directly.
+  - Sort state swaps `sort` → `sortAsc` → `sortDesc`; collapse swaps `minus`/`plus`; maximize swaps `maximize`/`restore`.
+  - The current icon name is kept in `data-sv-icon`, which the tests read.
+- **Accessibility:** every icon button now has an `aria-label` (and toggles update it), and SVGs are `aria-hidden`. The CSS `::after "×"` on the clear swatch is gone.
+- **CSS:** `.sv-icon` uses the new tokens `--sv-icon-size` and `--sv-icon-size-sm`.
+- **Tests:**
+  - R: no glyph entities or non-ASCII characters in buttons, and every `data-sv-icon` name exists in `ICONS`.
+  - Browser: every placeholder holds an SVG, no glyph text, no unlabelled icon button, and sort/collapse swap icons.
+  - Mock: sort cycle checks `data-sv-icon`.
+  - Result: **1453 expectations, 0 failed**.
+- **Verified in RStudio Viewer pane:** the card header, column sort/filter, fullscreen, AI sparkles, palette clear and drawer/filter close icons all render as crisp SVG. Sort-ascending shows the blue up-arrow. Collapse and expand work. Cancel → `NULL`.
+- **Seen again:** a sort auto-opens the drawer bottom sheet over the card in the narrow pane. That is #15, next up.
 
 ### 2026-10-24 — Phase 2.4: launch layout, Fit/Arrange, code preview
 - **Launch layout (#40, #42):**

@@ -27,6 +27,8 @@
   --sv-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --sv-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --sv-radius-sm: 4px;
+  --sv-icon-size: 14px;
+  --sv-icon-size-sm: 12px;
   --sv-radius: 8px;
   --sv-radius-md: 10px;
   --sv-radius-lg: 12px;
@@ -348,6 +350,36 @@ html.sv-standalone body {
   justify-content: center;
   font-size: 14px;
   line-height: 1;
+}
+
+/* Inline SVG icons (see icon() in sideview.js) */
+.sv-icon {
+  width: var(--sv-icon-size);
+  height: var(--sv-icon-size);
+  flex-shrink: 0;
+  display: block;
+  pointer-events: none;
+}
+
+.sv-icon-slot {
+  display: inline-flex;
+  vertical-align: -2px;
+}
+
+.sideview-btn .sv-icon-slot,
+.sideview-btn > .sv-icon {
+  display: inline-flex;
+  margin-right: 2px;
+}
+
+.sideview-th-btn .sv-icon {
+  width: var(--sv-icon-size-sm);
+  height: var(--sv-icon-size-sm);
+}
+
+.sideview-ai-icon .sv-icon {
+  width: 18px;
+  height: 18px;
 }
 
 .sideview-icon-btn:hover {
@@ -777,15 +809,14 @@ html.sv-standalone body {
 .sideview-swatch-purple { background: #8b5cf6; }
 .sideview-swatch-clear {
   background: #f1f5f9;
-  position: relative;
-}
-.sideview-swatch-clear::after {
-  content: "×";
-  position: absolute;
-  top: -2px;
-  left: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--sv-text-muted);
-  font-size: 14px;
+}
+.sideview-swatch-clear .sv-icon {
+  width: var(--sv-icon-size-sm);
+  height: var(--sv-icon-size-sm);
 }
 
 /* Action Drawer */
@@ -1095,6 +1126,9 @@ html.sv-standalone body {
 
 /* Column Header Tools & Buttons */
 .sideview-th-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
   color: var(--sv-text-muted);

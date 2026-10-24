@@ -112,6 +112,42 @@ test_that("Fit and Arrange keep every card visible and apart", {
   }
 })
 
+test_that("icons render as inline SVG with no emoji or glyph text", {
+  b <- sv_shared_page()
+  r <- sv_js(b, "(() => {
+    const root = document.querySelector('.sideview-container');
+    const slots = [...root.querySelectorAll('[data-sv-icon]')];
+    const empty = slots.filter(el => !el.querySelector('svg.sv-icon')).map(el => el.dataset.svIcon);
+    const btns = [...root.querySelectorAll('button, .sideview-ai-icon')];
+    const glyphs = btns.map(el => el.textContent).filter(t => /[^\\x00-\\x7F]/.test(t));
+    const unlabeled = [...root.querySelectorAll('.sideview-icon-btn, .sideview-th-btn')]
+      .filter(el => !el.getAttribute('aria-label')).length;
+    const svg = root.querySelector('.sideview-th-btn svg.sv-icon').getBoundingClientRect();
+    return { slots: slots.length, empty: empty, glyphs: glyphs, unlabeled: unlabeled, w: svg.width };
+  })()")
+  expect_gt(r$slots, 10)
+  expect_length(r$empty, 0)
+  expect_length(r$glyphs, 0)
+  expect_equal(r$unlabeled, 0)
+  expect_gt(r$w, 6)
+})
+
+test_that("sort and card toggles swap their SVG icon", {
+  b <- sv_shared_page()
+  r <- sv_js(b, sprintf("(async () => {
+    const c = %s;
+    const sb = c.querySelector('[data-action=\"sort-col\"][data-col-name=\"value\"]');
+    sb.click(); await new Promise(r => setTimeout(r, 400)); const a = sb.dataset.svIcon;
+    sb.click(); await new Promise(r => setTimeout(r, 400)); const d = sb.dataset.svIcon;
+    sb.click(); await new Promise(r => setTimeout(r, 400)); const n = sb.dataset.svIcon;
+    const mb = c.querySelector('[data-action=\"minimize-card\"]');
+    mb.click(); const m1 = mb.dataset.svIcon; mb.click(); const m2 = mb.dataset.svIcon;
+    return [a, d, n, m1, m2, !!sb.querySelector('svg'), !!mb.querySelector('svg')];
+  })()", sv_card_js("labs")))
+  expect_equal(unlist(r[1:5]), c("sortAsc", "sortDesc", "sort", "plus", "minus"))
+  expect_true(isTRUE(r[[6]]) && isTRUE(r[[7]]))
+})
+
 test_that("chrome elements do not overlap at common window sizes", {
   b <- sv_shared_page()
   for (sz in list(c(1400, 900), c(1024, 700), c(560, 520))) {
