@@ -348,10 +348,12 @@ render_card_tag <- function(card, index = 1L) {
 #'   or tabular objects to be normalized.
 #' @param title Display title for the application toolbar. Default is "Sideview Canvas".
 #' @param gadget If `TRUE`, add Done and Cancel buttons to the toolbar (used by `sideview()`).
+#' @param theme `"auto"`, `"light"`, `"dark"`, an [sv_theme()] or a
+#'   `bslib::bs_theme()`. See [sv_theme()].
 #'
 #' @return A `shiny.tag.list` UI definition.
 #' @export
-sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALSE) {
+sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALSE, theme = "auto") {
   # Normalize input into a list of sideview_cards
   if (is.null(cards)) {
     card_list <- list()
@@ -391,14 +393,14 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
     class = "sideview-toolbar",
     htmltools::tags$span(class = "sideview-brand", title),
     htmltools::tags$span(class = "sideview-toolbar-divider"),
-    htmltools::tags$button(class = "sideview-btn", `data-action` = "zoom-in", title = "Zoom In", "+"),
-    htmltools::tags$button(class = "sideview-btn", `data-action` = "zoom-out", title = "Zoom Out", "-"),
-    htmltools::tags$button(class = "sideview-btn", `data-action` = "zoom-reset", title = "Reset View", "100%"),
-    htmltools::tags$button(class = "sideview-btn", `data-action` = "fit-all", title = "Fit all cards in view", "Fit"),
+    htmltools::tags$button(class = "sideview-btn", `data-action` = "zoom-in", title = "Zoom in (+)", `aria-label` = "Zoom in", "+"),
+    htmltools::tags$button(class = "sideview-btn", `data-action` = "zoom-out", title = "Zoom out (-)", `aria-label` = "Zoom out", "-"),
+    htmltools::tags$button(class = "sideview-btn", `data-action` = "zoom-reset", title = "Reset view to 100% (0)", `aria-label` = "Reset zoom", "100%"),
+    htmltools::tags$button(class = "sideview-btn", `data-action` = "fit-all", title = "Fit all cards in view (F)", "Fit"),
     htmltools::tags$button(class = "sideview-btn", `data-action` = "arrange-cards", title = "Arrange cards in a grid", "Arrange"),
     htmltools::tags$span(class = "sideview-toolbar-divider"),
     htmltools::tags$button(class = "sideview-btn active", `data-action` = "toggle-snap", title = "Snap to Edge", "Snap"),
-    htmltools::tags$button(class = "sideview-btn", `data-action` = "toggle-drawer", title = "Toggle Drawer", "Drawer"),
+    htmltools::tags$button(class = "sideview-btn", `data-action` = "toggle-drawer", title = "Show or hide the drawer (D)", "Drawer"),
     htmltools::tags$button(class = "sideview-btn", `data-action` = "toggle-fullscreen", title = "Toggle Fullscreen Canvas", `aria-label` = "Toggle fullscreen canvas", sv_icon_slot("fullscreen"), " Fullscreen"),
     if (isTRUE(gadget)) htmltools::tagList(
       htmltools::tags$span(class = "sideview-toolbar-divider"),
@@ -412,13 +414,17 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
   # Swatch palette
   palette_tag <- htmltools::tags$div(
     class = "sideview-palette",
+    role = "group",
+    `aria-label` = "Highlight colour",
     htmltools::tags$span(class = "sideview-palette-label", "Highlight:"),
-    htmltools::tags$div(class = "sideview-swatch sideview-swatch-blue", `data-color` = "blue", title = "Blue"),
-    htmltools::tags$div(class = "sideview-swatch sideview-swatch-green", `data-color` = "green", title = "Green"),
-    htmltools::tags$div(class = "sideview-swatch sideview-swatch-amber", `data-color` = "amber", title = "Amber"),
-    htmltools::tags$div(class = "sideview-swatch sideview-swatch-rose", `data-color` = "rose", title = "Rose"),
-    htmltools::tags$div(class = "sideview-swatch sideview-swatch-purple", `data-color` = "purple", title = "Purple"),
-    htmltools::tags$div(class = "sideview-swatch sideview-swatch-clear", `data-color` = "clear", title = "Clear Highlight", `aria-label` = "Clear highlight", `data-sv-icon` = "close")
+    lapply(c("blue", "green", "amber", "rose", "purple"), function(col) {
+      label <- paste("Highlight", col)
+      htmltools::tags$button(type = "button", class = paste0("sideview-swatch sideview-swatch-", col),
+                             `data-color` = col, title = label, `aria-label` = label, `aria-pressed` = "false")
+    }),
+    htmltools::tags$button(type = "button", class = "sideview-swatch sideview-swatch-clear", `data-color` = "clear",
+                           title = "Clear highlight", `aria-label` = "Clear highlight", `aria-pressed` = "false",
+                           `data-sv-icon` = "close")
   )
   
   # Canvas & Viewport with SVG overlay
@@ -558,8 +564,11 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
   "))
   
   # Complete container
+  theme <- sv_resolve_theme(theme)
   container_tag <- htmltools::tags$div(
-    class = "sideview-container sv-standalone",
+    class = paste0("sideview-container sv-standalone sv-theme-", theme$mode),
+    `data-sv-theme` = theme$mode,
+    style = sv_theme_style(theme),
     canvas_tag,
     htmltools::tags$div(class = "sideview-topbar", toolbar_tag, palette_tag),
     drawer_tag,

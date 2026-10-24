@@ -2,6 +2,7 @@
 
 S3method(print,sideview_card)
 S3method(print,sideview_state)
+S3method(print,sv_theme)
 S3method(sv_normalize,ArrowTabular)
 S3method(sv_normalize,Dataset)
 S3method(sv_normalize,FileSystemDataset)
@@ -53,3 +54,4 @@ export(sv_normalize)
 export(sv_save_state)
 export(sv_send_to_console)
 export(sv_suggest_mappings)
+export(sv_theme)

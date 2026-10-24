@@ -43,6 +43,8 @@ sv_find_tables <- function(env = parent.frame()) {
 #'   `shiny::dialogViewer()`, `shiny::browserViewer()`), or a character shorthand
 #'   (`"browser"`, `"dialog"`, or `"pane"`). Default is `shiny::dialogViewer()`
 #'   (width 1400, height 900) when RStudio is available, otherwise `shiny::paneViewer()`.
+#' @param theme Canvas theme: `"auto"` (default; follows the RStudio editor
+#'   theme), `"light"`, `"dark"`, an [sv_theme()] or a `bslib::bs_theme()`.
 #' @param run Logical; if `TRUE`, launches the interactive gadget via
 #'   `shiny::runGadget()`. If `FALSE`, returns the `shiny.appobj` definition
 #'   without launching (useful for testing or embedding). Defaults to `interactive()`.
@@ -62,6 +64,7 @@ sideview <- function(...,
                      } else {
                        shiny::paneViewer(minHeight = 500)
                      },
+                     theme = "auto",
                      run = interactive()) {
   # Normalize character shorthand for viewer ("browser", "dialog", "pane")
   if (is.character(viewer) && length(viewer) == 1L) {
@@ -116,7 +119,8 @@ sideview <- function(...,
   }
   
   # Build Shiny application object
-  ui <- sideview_ui(card_list, title = title, gadget = TRUE)
+  ui <- sideview_ui(card_list, title = title, gadget = TRUE,
+                    theme = sv_resolve_theme(theme, rstudio = TRUE))
   server <- sideview_server(card_list, gadget = TRUE)
   app <- shiny::shinyApp(ui = ui, server = server)
   

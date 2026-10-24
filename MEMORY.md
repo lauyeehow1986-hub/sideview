@@ -65,6 +65,57 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 
 ## Log
 
+### 2026-10-24 — Phase 3: light/dark theme, keyboard shortcuts, accessible controls
+- **Theme API (new `R/theme.R`):**
+  - `sv_theme(mode, primary, font, font_mono, radius, ...)` builds token overrides. Names and values are validated, so no `;{}<>` can reach the inline style.
+  - `theme =` on `sideview()`, `sideview_widget()` and `sideview_ui()` accepts `"auto"`/`"light"`/`"dark"`, an `sv_theme()` or a `bslib::bs_theme()`. A `_brand.yml` theme works through bslib. The bslib theme supplies primary, body-bg (which picks the mode) and the fonts.
+  - In the gadget, `"auto"` follows `rstudioapi::getThemeInfo()$dark`. In the widget, or outside RStudio, it follows `prefers-color-scheme`.
+- **One custom `primary` drives all the derived tokens:**
+  - hover, tint, focus ring and splines
+  - `text-inverse`: white or near-black, whichever contrasts more
+  - `primary-text-light` / `primary-text-dark`: darkened or lightened until ≥ 4.5:1 on that mode's surfaces and tints
+- **CSS:**
+  - A full dark token set (in `.sv-theme-dark` and the auto media query).
+  - `color-scheme`, a 2px `:focus-visible` ring and `prefers-reduced-motion`.
+  - Seven rules that used `--sv-primary` as a text colour now use `--sv-primary-text`.
+- **JS:**
+  - Theme toggle (moon/sun) and shortcuts (keyboard) toolbar buttons.
+  - Shortcuts: `T` theme, `F` fit, `0` reset, `+`/`-` zoom, `D` drawer, `/` AI box, `?` shortcut dialog (`role=dialog`, `aria-modal`, closed by Esc or the scrim).
+  - Ctrl+Enter submits a drawer builder.
+  - Shortcuts are ignored while typing, with Ctrl/Meta held, or when an embedded widget doesn't have focus.
+- **Accessibility:**
+  - Palette swatches are real `<button>`s with `aria-label` and `aria-pressed` inside a `role=group`.
+  - Every visible button has an accessible name.
+  - Toolbar titles show their shortcut.
+- **Found only in RStudio, then fixed:**
+  - **Problem 1:** with `primary = "#f59e0b"` (amber), "Done" had white text on amber (about 2:1).
+    - **Fix:** `text-inverse` is now picked by contrast, and the hover shade moves away from the label.
+  - **Problem 2:** "Snap" (active) was amber text on white (about 2:1).
+    - **Fix:** the new mode-aware `--sv-primary-text`.
+- **Found in the browser tests:**
+  - `.sideview-btn { transition: all }` animates the focus outline from `medium` (3px), so the test waits 0.4s before reading it. The ring itself is 2px.
+- **Tests:**
+  - New `test-theme.R` (123 expectations):
+    - every token used is defined, and dark equals auto-dark
+    - no hard-coded colours in declarations
+    - WCAG ≥ 4.5 for 20 text/background pairs in light and dark
+    - `sv_theme` validation, and the derived contrast for 6 custom primaries
+    - `sv_resolve_theme` (with RStudio mocked, and bslib)
+    - the UI and widget carry the theme
+  - Browser (5 new tests):
+    - the toggle and `T`
+    - shortcuts, including the typing, Ctrl and embedded cases
+    - the `?` dialog
+    - swatch buttons and `aria-pressed`, no unnamed buttons, and a 2px ring after a real Tab
+    - Ctrl+Enter
+  - `layout-browser|assets|theme`: 408 expectations, 0 failed.
+- **Verified in the RStudio Viewer pane (R 4.5.1), with real clicks and keys:**
+  - The default gadget opens in light/auto with the new buttons. The toggle switches to dark and the icon becomes a sun.
+  - `0` resets to 100%. `?` opens the dialog with 10 rows, and Esc closes it. `f` fits (47%). `t` switches back to light.
+  - `sv_theme('dark', primary = '#f59e0b')` launches dark with amber accents.
+  - `sv_theme('light', primary = '#f59e0b')`: "Done" has dark text and "Snap" is dark amber, both legible. After `t`, "Snap" is bright amber on dark.
+  - Note for computer-use QA: the first click into the Viewer iframe can be swallowed while it takes focus, so click Cancel again if the gadget stays open.
+
 ### 2026-10-24 — Phase 4.1b: R recode generators move off deprecated `case_match()` (#43)
 - **Change:** `sv_code_recode()` now defaults to `method = "case_when"`. It emits one `case_when()` arm per target, so several sources that map to one target become `col %in% c(...)` and an NA source becomes `is.na(col)`. The default becomes `.default = ...`. With no default, unmatched values become NA, the same as `case_match()`. `sv_auto_clean_rules()` uses the same method. `method = "case_match"` is still accepted for older pipelines. README and roxygen/`man/` are updated; `man/sideview_server.Rd` also picks up the `sideview.session_grace` doc from Phase 2.2 that had not been regenerated.
 - **Why:** dplyr 1.2.0 deprecated `case_match()`, so every Auto-Clean and recode script printed a lifecycle warning when run. That would also break once the function is removed.

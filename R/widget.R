@@ -46,6 +46,9 @@ sideview_widget_dependencies <- function() {
 #' @param elementId Optional HTML element identifier.
 #' @param options Named list of canvas options (e.g. \code{snapToEdge},
 #'   \code{snapThreshold}, \code{minScale}, \code{maxScale}).
+#' @param theme Canvas theme: `"auto"` (default; follows the reader's
+#'   `prefers-color-scheme`), `"light"`, `"dark"`, an [sv_theme()] or a
+#'   `bslib::bs_theme()`.
 #'
 #' @return An S3 object of class \code{c("sideview", "htmlwidget")}.
 #' @export
@@ -57,7 +60,8 @@ sideview_widget <- function(...,
                             width = NULL,
                             height = NULL,
                             elementId = NULL,
-                            options = list()) {
+                            options = list(),
+                            theme = "auto") {
   dots_exprs <- as.list(substitute(list(...))[-1])
   dots_vals <- list(...)
   
@@ -108,6 +112,11 @@ sideview_widget <- function(...,
   }
   
   # Forward options using x payload
+  theme <- sv_resolve_theme(theme)
+  if (is.null(options$theme)) options$theme <- theme$mode
+  if (length(theme$vars)) {
+    options$themeVars <- stats::setNames(theme$vars, paste0("--sv-", names(theme$vars)))
+  }
   x <- list(
     cards = card_list,
     options = options

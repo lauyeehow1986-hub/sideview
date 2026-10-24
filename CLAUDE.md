@@ -45,6 +45,18 @@ rstudio bridge: R/rstudio.R
 - **Splines:** visible paths (`.sideview-connector-svg`, z 25) are `pointer-events: none`. Clicks go to invisible
   hit paths in `.sideview-connector-hitlayer` (z 5, below the cards at z 10). Create a hit path for every new
   connector (`attachHitPath`) and prune it on removal (`pruneHitPaths`).
+- **Theme:** `theme =` on `sideview()`/`sideview_widget()`/`sideview_ui()` takes `"auto"|"light"|"dark"`,
+  `sv_theme()` or a `bslib::bs_theme()` (R/theme.R → `sv_resolve_theme()`). The gadget carries it as the
+  container class `sv-theme-<mode>` plus inline `--sv-*` overrides; the widget passes `options.theme` /
+  `options.themeVars` to `Engine.applyTheme()` / `applyThemeVars()`. Dark tokens live in
+  `.sv-theme-dark` and in `@media (prefers-color-scheme: dark) .sv-theme-auto` — keep the two blocks equal
+  (test-theme.R checks it, plus WCAG ≥ 4.5:1 for every text/background pair).
+- **Mode-aware overrides:** a custom colour that must differ by mode uses `-light`/`-dark` variables:
+  the base block has `--sv-primary-text: var(--sv-primary-text-light, #...)`, the dark blocks use
+  `var(--sv-primary-text-dark, #...)`. Use `--sv-primary-text` (not `--sv-primary`) for primary-coloured *text*.
+- **Keyboard:** single-key shortcuts (F, 0, +/-, T, D, /, ?) only fire when the canvas owns the keyboard
+  (`ownsKeyboard()`: standalone, or focus inside an embedded widget) and never while typing.
+  Ctrl+Enter submits a drawer builder. Add new shortcuts to the `?` dialog list too.
 - **Assets:** dependency versions come from `sv_asset_version()` (package version + content fingerprint),
   so browsers never serve stale JS/CSS. Don't hard-code a version for `sideview.js`/`sideview.css`.
 

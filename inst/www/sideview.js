@@ -668,6 +668,11 @@ function sendToShiny(name, value) {
     });
 
     this.initDOM();
+    // Focusable (not in the tab order) so clicks give it keyboard focus.
+    if (!this.container.hasAttribute('tabindex')) this.container.setAttribute('tabindex', '-1');
+    this.ensureToolbarExtras();
+    this.applyThemeVars(this.options.themeVars);
+    this.applyTheme(this.options.theme || this.container.getAttribute('data-sv-theme') || 'auto');
     this.ensureDrawer();
     hydrateIcons(this.container);
     this.initPanzoom();
@@ -712,7 +717,10 @@ function sendToShiny(name, value) {
     redo: '<path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/>',
     chevronUp: '<path d="m18 15-6-6-6 6"/>',
     chevronDown: '<path d="m6 9 6 6 6-6"/>',
-    trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'
+    trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+    moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+    keyboard: '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/>'
   };
 
   function icon(name) {
@@ -1035,9 +1043,152 @@ function sendToShiny(name, value) {
       if (card.virtualTable && card.virtualTable.destroy) card.virtualTable.destroy();
     });
     this.closeActivePopover();
+    var scrim = this.container.querySelector('.sideview-shortcuts-scrim');
+    if (scrim && scrim.parentNode) scrim.parentNode.removeChild(scrim);
     if (lastActiveEngine === this) lastActiveEngine = null;
     if (this.container._sideviewInstance === this) this.container._sideviewInstance = null;
   };
+
+  // ---- theme ------------------------------------------------------------------
+  // 'auto' follows prefers-color-scheme in CSS; 'light'/'dark' are explicit.
+  // The R side may resolve 'auto' from the RStudio editor theme first.
+  var THEMES = ['auto', 'light', 'dark'];
+
+  SideviewEngine.prototype.applyTheme = function (mode) {
+    if (THEMES.indexOf(mode) < 0) mode = 'auto';
+    var cl = this.container.classList;
+    THEMES.forEach(function (t) { cl.remove('sv-theme-' + t); });
+    cl.add('sv-theme-' + mode);
+    this.theme = mode;
+    var btn = this.container.querySelector('[data-action="toggle-theme"]');
+    if (btn) {
+      var dark = this.isDarkTheme();
+      setIcon(btn, dark ? 'sun' : 'moon');
+      btn.title = dark ? 'Switch to light theme (T)' : 'Switch to dark theme (T)';
+      btn.setAttribute('aria-label', btn.title);
+    }
+    return mode;
+  };
+
+  SideviewEngine.prototype.isDarkTheme = function () {
+    if (this.theme === 'dark') return true;
+    if (this.theme === 'light') return false;
+    return !!(global.matchMedia && global.matchMedia('(prefers-color-scheme: dark)').matches);
+  };
+
+  SideviewEngine.prototype.toggleTheme = function () {
+    return this.applyTheme(this.isDarkTheme() ? 'light' : 'dark');
+  };
+
+  // Token overrides, e.g. {primary: '#0d6efd'} -> --sv-primary. Only --sv-*
+  // names are accepted, so options can never set arbitrary inline styles.
+  SideviewEngine.prototype.applyThemeVars = function (vars) {
+    if (!vars || typeof vars !== 'object') return;
+    var style = this.container.style;
+    Object.keys(vars).forEach(function (key) {
+      var name = key.indexOf('--sv-') === 0 ? key : '--sv-' + key;
+      var val = vars[key];
+      if (/^--sv-[a-z0-9-]+$/.test(name) && typeof val === 'string' && !/[;{}<>]/.test(val)) {
+        style.setProperty(name, val);
+      }
+    });
+  };
+
+  // Theme and keyboard-help buttons are added here (not in the R/JS toolbar
+  // markup) so the gadget and the widget always get the same controls.
+  SideviewEngine.prototype.ensureToolbarExtras = function () {
+    var tb = this.container.querySelector('.sideview-toolbar');
+    if (!tb) return;
+    var after = tb.querySelector('[data-action="toggle-fullscreen"]');
+    var add = function (action, name, label) {
+      var b = tb.querySelector('[data-action="' + action + '"]');
+      if (!b) {
+        b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'sideview-btn sideview-btn-icon';
+        b.dataset.action = action;
+        b.title = label;
+        b.setAttribute('aria-label', label);
+        b.innerHTML = icon(name);
+        if (after && after.parentNode === tb) tb.insertBefore(b, after.nextSibling);
+        else tb.appendChild(b);
+      }
+      after = b;
+    };
+    add('toggle-theme', 'moon', 'Switch to dark theme (T)');
+    add('show-shortcuts', 'keyboard', 'Keyboard shortcuts (?)');
+  };
+
+  // Keys in the shortcut list. Kept in sync with the keydown handlers.
+  var SHORTCUTS = [
+    [['F'], 'Fit all cards in view'],
+    [['0'], 'Reset zoom to 100%'],
+    [['+', '-'], 'Zoom in / out'],
+    [['D'], 'Show or hide the drawer'],
+    [['T'], 'Switch light / dark theme'],
+    [['/'], 'Type an AI prompt'],
+    [['Ctrl+Z', 'Ctrl+Y'], 'Undo / redo a pipeline step'],
+    [['Ctrl+Enter'], 'Add the step in a builder tab'],
+    [['Esc'], 'Cancel a connection, close a popover, or restore a card'],
+    [['?'], 'Show or hide this list']
+  ];
+
+  var shortcutsSeq = 0;
+
+  SideviewEngine.prototype.toggleShortcuts = function (show) {
+    var self = this;
+    var existing = this.container.querySelector('.sideview-shortcuts-scrim');
+    if (show === undefined) show = !existing;
+    if (!show) {
+      if (existing) {
+        existing.parentNode.removeChild(existing);
+        var back = this._shortcutsReturnFocus;
+        this._shortcutsReturnFocus = null;
+        if (back && back.focus && this.container.contains(back)) back.focus();
+        else { try { this.container.focus({ preventScroll: true }); } catch (e) {} }
+      }
+      return false;
+    }
+    if (existing) return true;
+    this._shortcutsReturnFocus = document.activeElement;
+    var id = 'sv-shortcuts-title-' + (++shortcutsSeq);
+    var rows = SHORTCUTS.map(function (row) {
+      return '<dt>' + row[0].map(function (k) { return '<kbd>' + escapeHtml(k) + '</kbd>'; }).join(' / ') +
+        '</dt><dd>' + escapeHtml(row[1]) + '</dd>';
+    }).join('');
+    var scrim = document.createElement('div');
+    scrim.className = 'sideview-shortcuts-scrim';
+    scrim.innerHTML =
+      '<div class="sideview-shortcuts" role="dialog" aria-modal="true" aria-labelledby="' + id + '" tabindex="-1">' +
+      '<div class="sideview-shortcuts-head"><span id="' + id + '">Keyboard shortcuts</span>' +
+      '<button type="button" class="sideview-icon-btn" data-action="close-shortcuts" aria-label="Close shortcuts">' +
+      icon('close') + '</button></div><dl>' + rows + '</dl></div>';
+    scrim.addEventListener('click', function (e) {
+      if (e.target === scrim) self.toggleShortcuts(false);
+    });
+    this.container.appendChild(scrim);
+    var dialog = scrim.querySelector('.sideview-shortcuts');
+    try { dialog.focus({ preventScroll: true }); } catch (e) { dialog.focus(); }
+    return true;
+  };
+
+  // The engine reacts to single keys when focus is inside its container, or,
+  // for the full-page gadget, when nothing else on the page has focus.
+  SideviewEngine.prototype.ownsKeyboard = function () {
+    var active = document.activeElement;
+    if (active && active !== document.body && this.container.contains(active)) return true;
+    if (this.options.mode === 'embedded') return false;
+    return !active || active === document.body || active === document.documentElement;
+  };
+
+  function isTypingTarget(el) {
+    if (!el || !el.tagName) return false;
+    var tag = el.tagName.toLowerCase();
+    if (tag === 'textarea' || tag === 'select' || el.isContentEditable) return true;
+    if (tag !== 'input') return false;
+    var type = String(el.type || 'text').toLowerCase();
+    return ['button', 'checkbox', 'radio', 'range', 'color', 'submit', 'reset'].indexOf(type) < 0;
+  }
 
   // ---- card window controls -------------------------------------------------
 
@@ -1221,15 +1372,15 @@ function sendToShiny(name, value) {
       var toolbar = document.createElement('div');
       toolbar.className = 'sideview-toolbar';
       toolbar.innerHTML = [
-        '<button class="sideview-btn" data-action="zoom-in" title="Zoom In">+</button>',
-        '<button class="sideview-btn" data-action="zoom-out" title="Zoom Out">-</button>',
-        '<button class="sideview-btn" data-action="zoom-reset" title="Reset View">100%</button>',
-        '<button class="sideview-btn" data-action="fit-all" title="Fit all cards in view">Fit</button>',
+        '<button class="sideview-btn" data-action="zoom-in" title="Zoom in (+)" aria-label="Zoom in">+</button>',
+        '<button class="sideview-btn" data-action="zoom-out" title="Zoom out (-)" aria-label="Zoom out">-</button>',
+        '<button class="sideview-btn" data-action="zoom-reset" title="Reset view to 100% (0)" aria-label="Reset zoom">100%</button>',
+        '<button class="sideview-btn" data-action="fit-all" title="Fit all cards in view (F)">Fit</button>',
         '<button class="sideview-btn" data-action="arrange-cards" title="Arrange cards in a grid">Arrange</button>',
         '<span class="sideview-toolbar-divider"></span>',
         '<button class="sideview-btn active" data-action="toggle-snap" title="Snap to Edge">Snap</button>',
         '<button class="sideview-btn" data-action="suggest-mappings" title="Suggest Mappings across tables">Auto Map</button>',
-        '<button class="sideview-btn" data-action="toggle-drawer" title="Toggle Drawer">Drawer</button>',
+        '<button class="sideview-btn" data-action="toggle-drawer" title="Show or hide the drawer (D)">Drawer</button>',
         '<button class="sideview-btn" data-action="toggle-fullscreen" title="Toggle Fullscreen Canvas" aria-label="Toggle fullscreen canvas">' + icon('fullscreen') + ' Fullscreen</button>'
       ].join('');
       this.container.appendChild(toolbar);
@@ -1239,14 +1390,20 @@ function sendToShiny(name, value) {
     if (!this.container.querySelector('.sideview-palette')) {
       var palette = document.createElement('div');
       palette.className = 'sideview-palette';
+      palette.setAttribute('role', 'group');
+      palette.setAttribute('aria-label', 'Highlight colour');
+      var swatch = function (color, label, inner) {
+        return '<button type="button" class="sideview-swatch sideview-swatch-' + color + '" data-color="' + color +
+          '" title="' + label + '" aria-label="' + label + '" aria-pressed="false">' + (inner || '') + '</button>';
+      };
       palette.innerHTML = [
         '<span class="sideview-palette-label">Highlight:</span>',
-        '<div class="sideview-swatch sideview-swatch-blue" data-color="blue" title="Blue"></div>',
-        '<div class="sideview-swatch sideview-swatch-green" data-color="green" title="Green"></div>',
-        '<div class="sideview-swatch sideview-swatch-amber" data-color="amber" title="Amber"></div>',
-        '<div class="sideview-swatch sideview-swatch-rose" data-color="rose" title="Rose"></div>',
-        '<div class="sideview-swatch sideview-swatch-purple" data-color="purple" title="Purple"></div>',
-        '<div class="sideview-swatch sideview-swatch-clear" data-color="clear" title="Clear Highlight" aria-label="Clear highlight">' + icon('close') + '</div>'
+        swatch('blue', 'Highlight blue'),
+        swatch('green', 'Highlight green'),
+        swatch('amber', 'Highlight amber'),
+        swatch('rose', 'Highlight rose'),
+        swatch('purple', 'Highlight purple'),
+        swatch('clear', 'Clear highlight', icon('close'))
       ].join('');
       this.container.appendChild(palette);
     }
@@ -1367,13 +1524,17 @@ function sendToShiny(name, value) {
       if (swatch) {
         var color = swatch.dataset.color;
         var swatches = self.container.querySelectorAll('.sideview-swatch');
-        swatches.forEach(function (s) { s.classList.remove('active'); });
+        swatches.forEach(function (s) {
+          s.classList.remove('active');
+          if (s.hasAttribute('aria-pressed')) s.setAttribute('aria-pressed', 'false');
+        });
 
         if (self.selectedColor === color) {
           self.selectedColor = null;
         } else {
           self.selectedColor = color;
           swatch.classList.add('active');
+          swatch.setAttribute('aria-pressed', 'true');
         }
       }
     });
@@ -1415,6 +1576,12 @@ function sendToShiny(name, value) {
         if (dr) dr.classList.add('collapsed');
       } else if (action === 'toggle-fullscreen') {
         self.toggleFullscreen(btn);
+      } else if (action === 'toggle-theme') {
+        self.toggleTheme();
+      } else if (action === 'show-shortcuts') {
+        self.toggleShortcuts(true);
+      } else if (action === 'close-shortcuts') {
+        self.toggleShortcuts(false);
       } else if (action === 'inject-script') {
         sendToShiny('inject_script', { code: self.generatedCode });
         if (self.shouldAutoClear()) {
@@ -1939,6 +2106,10 @@ function sendToShiny(name, value) {
     // or restores a maximized card (in that order).
     this.listenGlobal(document, 'keydown', function (e) {
       if (e.key !== 'Escape') return;
+      if (self.toggleShortcuts && self.container.querySelector('.sideview-shortcuts-scrim')) {
+        if (self.ownsKeyboard()) self.toggleShortcuts(false);
+        return;
+      }
       if (self.activePort) {
         cleanupDraft();
         self.showToast('Cancelled column connection', 'info');
@@ -1949,6 +2120,39 @@ function sendToShiny(name, value) {
       if (maxed) {
         self.toggleMaximizeCard(maxed, maxed.querySelector('[data-action="maximize-card"]'));
       }
+    });
+
+    // Single-key canvas shortcuts (listed by "?"). They never fire while the
+    // user types in a field, and an embedded widget only reacts once it has
+    // focus, so keys typed elsewhere on a Quarto/R Markdown page are left alone.
+    this.container.addEventListener('pointerdown', function (e) {
+      if (!self.container.contains(document.activeElement) && !isTypingTarget(e.target)) {
+        try { self.container.focus({ preventScroll: true }); } catch (err) { self.container.focus(); }
+      }
+    });
+    this.listenGlobal(document, 'keydown', function (e) {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+      if (isTypingTarget(e.target) || !self.ownsKeyboard()) return;
+      var k = e.key;
+      var open = !!self.container.querySelector('.sideview-shortcuts-scrim');
+      var rect = self.container.getBoundingClientRect();
+      var centre = { clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+      var handled = true;
+      if (k === '?') self.toggleShortcuts();
+      else if (open) handled = false;
+      else if (k === 'f' || k === 'F') self.fitAll();
+      else if (k === '0' && self.panzoom) self.panzoom.reset();
+      else if ((k === '+' || k === '=') && self.panzoom) self.panzoom.zoomToPoint(self.panzoom.getScale() * 1.25, centre);
+      else if ((k === '-' || k === '_') && self.panzoom) self.panzoom.zoomToPoint(self.panzoom.getScale() * 0.8, centre);
+      else if (k === 't' || k === 'T') self.toggleTheme();
+      else if (k === 'd' || k === 'D') {
+        var drawerEl = self.container.querySelector('.sideview-drawer');
+        if (drawerEl) drawerEl.classList.toggle('collapsed');
+      } else if (k === '/') {
+        var ai = self.container.querySelector('.sideview-ai-input');
+        if (ai) ai.focus(); else handled = false;
+      } else handled = false;
+      if (handled) e.preventDefault();
     });
 
     // Inline Column Renaming via Double Click on column name
@@ -3134,6 +3338,15 @@ function sendToShiny(name, value) {
     var self = this;
     this.container.addEventListener('mousedown', function () { lastActiveEngine = self; });
     this.container.addEventListener('focusin', function () { lastActiveEngine = self; });
+    // Ctrl/Cmd+Enter inside a builder tab adds its step.
+    this.container.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' || !(e.ctrlKey || e.metaKey)) return;
+      var builder = e.target && e.target.closest ? e.target.closest('.sideview-builder') : null;
+      var submit = builder ? builder.querySelector('[data-builder-action="submit"]') : null;
+      if (!submit) return;
+      e.preventDefault();
+      submit.click();
+    });
     this.container.addEventListener('click', function (e) {
       var stepBtn = e.target.closest('[data-step-action]');
       if (stepBtn) {

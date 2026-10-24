@@ -4,7 +4,12 @@
 \alias{sideview_ui}
 \title{Sideview User Interface}
 \usage{
-sideview_ui(cards = list(), title = "Sideview Canvas", gadget = FALSE)
+sideview_ui(
+  cards = list(),
+  title = "Sideview Canvas",
+  gadget = FALSE,
+  theme = "auto"
+)
 }
 \arguments{
 \item{cards}{A \code{sideview_card} object, a list of \code{sideview_card} objects,
@@ -13,6 +18,9 @@ or tabular objects to be normalized.}
 \item{title}{Display title for the application toolbar. Default is "Sideview Canvas".}
 
 \item{gadget}{If \code{TRUE}, add Done and Cancel buttons to the toolbar (used by \code{sideview()}).}
+
+\item{theme}{\code{"auto"}, \code{"light"}, \code{"dark"}, an \code{\link[=sv_theme]{sv_theme()}} or a
+\code{bslib::bs_theme()}. See \code{\link[=sv_theme]{sv_theme()}}.}
 }
 \value{
 A \code{shiny.tag.list} UI definition.

@@ -384,8 +384,9 @@ test_that("sideview.js and sideview.css implement opaque filter popover and edge
   js <- read_asset("sideview.js")
   css <- read_asset("sideview.css")
 
-  # Popover opacity and z-index
-  expect_match(css, "\\.sideview-filter-popover[^{]*\\{[^}]*background:\\s*#ffffff\\s*!important", perl = TRUE)
+  # Popover opacity (an opaque surface token, so it follows the theme) and z-index
+  expect_match(css, "\\.sideview-filter-popover[^{]*\\{[^}]*background:\\s*var\\(--sv-surface\\)\\s*!important", perl = TRUE)
+  expect_match(css, "--sv-surface:\\s*#ffffff;")
   expect_match(css, "\\.sideview-filter-popover[^{]*\\{[^}]*z-index:\\s*9999\\s*!important", perl = TRUE)
 
   # Edge-to-edge canvas on the gadget page only; embedded widgets keep the host page intact

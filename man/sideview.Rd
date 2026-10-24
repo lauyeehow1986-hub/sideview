@@ -14,6 +14,7 @@ sideview(
  } else {
      shiny::paneViewer(minHeight = 500)
  },
+  theme = "auto",
   run = interactive()
 )
 }
@@ -27,6 +28,9 @@ sideview(
 \code{shiny::dialogViewer()}, \code{shiny::browserViewer()}), or a character shorthand
 (\code{"browser"}, \code{"dialog"}, or \code{"pane"}). Default is \code{shiny::dialogViewer()}
 (width 1400, height 900) when RStudio is available, otherwise \code{shiny::paneViewer()}.}
+
+\item{theme}{Canvas theme: \code{"auto"} (default; follows the RStudio editor
+theme), \code{"light"}, \code{"dark"}, an \code{\link[=sv_theme]{sv_theme()}} or a \code{bslib::bs_theme()}.}
 
 \item{run}{Logical; if \code{TRUE}, launches the interactive gadget via
 \code{shiny::runGadget()}. If \code{FALSE}, returns the \code{shiny.appobj} definition

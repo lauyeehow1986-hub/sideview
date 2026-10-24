@@ -9,7 +9,8 @@ sideview_widget(
   width = NULL,
   height = NULL,
   elementId = NULL,
-  options = list()
+  options = list(),
+  theme = "auto"
 )
 }
 \arguments{
@@ -24,6 +25,10 @@ sideview_widget(
 
 \item{options}{Named list of canvas options (e.g. \code{snapToEdge},
 \code{snapThreshold}, \code{minScale}, \code{maxScale}).}
+
+\item{theme}{Canvas theme: \code{"auto"} (default; follows the reader's
+\code{prefers-color-scheme}), \code{"light"}, \code{"dark"}, an \code{\link[=sv_theme]{sv_theme()}} or a
+\code{bslib::bs_theme()}.}
 }
 \value{
 An S3 object of class \code{c("sideview", "htmlwidget")}.

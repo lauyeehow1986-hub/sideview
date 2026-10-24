@@ -577,3 +577,163 @@ test_that("narrow bottom-sheet drawer keeps undo/redo still as steps change", {
   expect_true(r$narrow)
   expect_lt(abs(r$after - r$before), 1)
 })
+
+sv_key_js <- "
+  const key = (k, opts, el) => (el || document).dispatchEvent(new KeyboardEvent('keydown',
+    Object.assign({key: k, bubbles: true, cancelable: true}, opts || {})));
+"
+
+test_that("theme toggle swaps to dark tokens and T flips it back", {
+  b <- sv_shared_page()
+  r <- sv_js(b, paste0("(async () => {", sv_pipeline_helpers_js, sv_key_js, "
+    const root = q('.sideview-container');
+    const tok = n => getComputedStyle(root).getPropertyValue(n).trim();
+    const cardBg = () => getComputedStyle(q('.sideview-card')).backgroundColor;
+    const btn = q('[data-action=\"toggle-theme\"]');
+    const start = { cls: root.className, attr: root.getAttribute('data-sv-theme'),
+                    canvas: tok('--sv-canvas-bg'), card: cardBg(), label: btn.getAttribute('aria-label') };
+    btn.click(); await sleep(50);
+    const dark = { dark: root.classList.contains('sv-theme-dark'), canvas: tok('--sv-canvas-bg'),
+                   card: cardBg(), label: btn.getAttribute('aria-label'),
+                   scheme: getComputedStyle(root).colorScheme };
+    document.activeElement && document.activeElement.blur();
+    key('t'); await sleep(50);
+    const back = { light: root.classList.contains('sv-theme-light'), canvas: tok('--sv-canvas-bg') };
+    sv.applyTheme('auto');
+    return { start: start, dark: dark, back: back, auto: root.classList.contains('sv-theme-auto') };
+  })()"))
+  expect_match(r$start$cls, "sv-theme-auto", fixed = TRUE)
+  expect_identical(r$start$attr, "auto")
+  expect_identical(r$start$canvas, "#f8fafc")
+  expect_identical(r$start$card, "rgb(255, 255, 255)")
+  expect_true(r$dark$dark)
+  expect_identical(r$dark$canvas, "#0b1220")
+  expect_identical(r$dark$card, "rgb(23, 32, 51)")
+  expect_identical(r$dark$scheme, "dark")
+  expect_false(identical(r$start$label, r$dark$label))
+  expect_true(r$back$light)
+  expect_identical(r$back$canvas, "#f8fafc")
+  expect_true(r$auto)
+})
+
+test_that("single-key shortcuts drive zoom, fit and drawer but not while typing", {
+  b <- sv_shared_page()
+  r <- sv_js(b, paste0("(async () => {", sv_pipeline_helpers_js, sv_key_js, "
+    const pz = sv.panzoom; const s = () => Math.round(pz.getScale() * 1000) / 1000;
+    const drawer = q('.sideview-drawer'); const collapsed = () => drawer.classList.contains('collapsed');
+    document.activeElement && document.activeElement.blur();
+    key('0'); await sleep(30); const reset = s();
+    key('+'); await sleep(30); const zin = s();
+    key('-'); await sleep(30); const zout = s();
+    key('0', {ctrlKey: true}); key('+', {ctrlKey: true}); await sleep(30); const ctrlIgnored = s();
+    const d0 = collapsed(); key('d'); await sleep(30); const d1 = collapsed(); key('d'); await sleep(30);
+    key('f'); await sleep(60);
+    const c = q('.sideview-container').getBoundingClientRect();
+    const inView = [...document.querySelectorAll('.sideview-card')].every(e => {
+      const r = e.getBoundingClientRect();
+      return r.left >= c.left - 1 && r.right <= c.right + 1 && r.top >= c.top - 1 && r.bottom <= c.bottom + 1; });
+    key('0'); await sleep(30);
+    const ai = q('.sideview-ai-input');
+    key('/'); await sleep(30); const slashFocus = document.activeElement === ai;
+    key('+', {}, ai); key('d', {}, ai); await sleep(30);
+    const typing = { scale: s(), drawer: collapsed() };
+    ai.blur();
+    sv.options.mode = 'embedded'; key('+'); await sleep(30); const embedded = s(); sv.options.mode = 'standalone';
+    return { reset: reset, zin: zin, zout: zout, ctrlIgnored: ctrlIgnored, d0: d0, d1: d1, inView: inView,
+             slashFocus: slashFocus, typing: typing, embedded: embedded, d2: collapsed() };
+  })()"))
+  expect_equal(r$reset, 1)
+  expect_equal(r$zin, 1.25)
+  expect_equal(r$zout, 1)
+  expect_equal(r$ctrlIgnored, 1)
+  expect_false(identical(r$d0, r$d1))
+  expect_identical(r$d2, r$d0)
+  expect_true(r$inView)
+  expect_true(r$slashFocus)
+  expect_equal(r$typing$scale, 1)
+  expect_identical(r$typing$drawer, r$d0)
+  expect_equal(r$embedded, 1)
+})
+
+test_that("? opens an accessible shortcut list that Esc and the scrim close", {
+  b <- sv_shared_page()
+  r <- sv_js(b, paste0("(async () => {", sv_pipeline_helpers_js, sv_key_js, "
+    document.activeElement && document.activeElement.blur();
+    key('?'); await sleep(30);
+    const dlg = q('.sideview-shortcuts');
+    const open = { role: dlg && dlg.getAttribute('role'), modal: dlg && dlg.getAttribute('aria-modal'),
+      title: dlg && document.getElementById(dlg.getAttribute('aria-labelledby')).textContent,
+      focused: document.activeElement === dlg, rows: dlg ? dlg.querySelectorAll('dt').length : 0 };
+    const scale = sv.panzoom.getScale(); key('+'); await sleep(30);
+    const blocked = sv.panzoom.getScale() === scale;
+    key('Escape'); await sleep(30); const escClosed = !q('.sideview-shortcuts-scrim');
+    q('[data-action=\"show-shortcuts\"]').click(); await sleep(30);
+    const viaButton = !!q('.sideview-shortcuts-scrim');
+    q('.sideview-shortcuts-scrim').click(); await sleep(30);
+    return { open: open, blocked: blocked, escClosed: escClosed, viaButton: viaButton,
+             scrimClosed: !q('.sideview-shortcuts-scrim') };
+  })()"))
+  expect_identical(r$open$role, "dialog")
+  expect_identical(r$open$modal, "true")
+  expect_identical(r$open$title, "Keyboard shortcuts")
+  expect_true(r$open$focused)
+  expect_gte(r$open$rows, 8)
+  expect_true(r$blocked)
+  expect_true(r$escClosed)
+  expect_true(r$viaButton)
+  expect_true(r$scrimClosed)
+})
+
+test_that("swatches are buttons with pressed state and controls show a focus ring", {
+  b <- sv_shared_page()
+  r <- sv_js(b, paste0("(async () => {", sv_pipeline_helpers_js, "
+    const sw = [...document.querySelectorAll('.sideview-palette .sideview-swatch')];
+    const tags = [...new Set(sw.map(e => e.tagName))];
+    const named = sw.every(e => (e.getAttribute('aria-label') || '').length > 0);
+    q('.sideview-swatch-green').click(); await sleep(30);
+    const pressed = sw.filter(e => e.getAttribute('aria-pressed') === 'true').map(e => e.dataset.color);
+    q('.sideview-swatch-clear').click(); await sleep(30);
+    const unnamed = [...document.querySelectorAll('.sideview-container button')]
+      .filter(e => e.offsetParent && !(e.getAttribute('aria-label') || e.textContent.trim() || e.title))
+      .map(e => e.className);
+    return { tags: tags, named: named, pressed: pressed, unnamed: unnamed,
+             palette: q('.sideview-palette').getAttribute('role') };
+  })()"))
+  expect_identical(unlist(r$tags), "BUTTON")
+  expect_true(r$named)
+  expect_identical(unlist(r$pressed), "green")
+  expect_length(r$unnamed, 0)
+  expect_identical(r$palette, "group")
+
+  # :focus-visible applies to keyboard focus, so Tab onto a toolbar button.
+  sv_js(b, "(() => { document.activeElement && document.activeElement.blur();
+    document.querySelector('[data-action=\"zoom-in\"]').focus(); return true; })()")
+  b$Input$dispatchKeyEvent(type = "keyDown", key = "Tab", code = "Tab", windowsVirtualKeyCode = 9)
+  b$Input$dispatchKeyEvent(type = "keyUp", key = "Tab", code = "Tab", windowsVirtualKeyCode = 9)
+  Sys.sleep(0.4) # .sideview-btn transitions all properties, the outline included
+  ring <- sv_js(b, "(() => { const e = document.activeElement; const s = getComputedStyle(e);
+    return { tag: e.tagName, style: s.outlineStyle, width: s.outlineWidth }; })()")
+  expect_identical(ring$tag, "BUTTON")
+  expect_identical(ring$style, "solid")
+  expect_identical(ring$width, "2px")
+  sv_js(b, "(() => { document.activeElement && document.activeElement.blur(); return true; })()")
+})
+
+test_that("Ctrl+Enter in a builder adds the step", {
+  b <- sv_shared_page()
+  r <- sv_js(b, paste0("(async () => {", sv_pipeline_helpers_js, sv_key_js, "
+    tab('mutate'); await sleep(50);
+    const pane = q('[data-pane=\"mutate\"]');
+    setVal(pane.querySelector('[data-field=\"table\"]'), 'patients'); await sleep(30);
+    setVal(pane.querySelector('[data-field=\"name\"]'), 'k');
+    const expr = pane.querySelector('[data-field=\"expr\"]');
+    setVal(expr, 'age * 2'); expr.focus();
+    const before = steps();
+    key('Enter', {ctrlKey: true}, expr); await sleep(60);
+    const after = steps();
+    q('[data-action=\"clear-operation\"]').click(); await sleep(300);
+    tab('pipeline'); expr.blur();
+    return { before: before, after: after };
+  })()"))
+  expect_equal(r$after, r$before + 1)
+})
