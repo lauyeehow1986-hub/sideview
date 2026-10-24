@@ -28,15 +28,28 @@ rstudio bridge: R/rstudio.R
 - Shiny inputs (client → R): `column_mapped`, `column_disconnected`, `column_sorted`, `column_filtered`,
   `column_renamed`, `clear_operations`, `discrepancy_check`, `request_suggested_mappings`,
   `apply_auto_clean`, `run_ai_prompt`, `send_copilot_chat`, `inject_script`, `send_console`,
-  `send_console_and_exit`, `eval_env`, `sideview_card_moved`, `sideview_highlight_changed`.
+  `send_console_and_exit`, `eval_env`, `sideview_card_moved`, `sideview_highlight_changed`,
+  `sideview_rows_request`, `sideview_done`, `sideview_cancel`, `cancel` (miniUI dialog close).
 - Custom messages (R → client): `sideview_code_update`, `sideview_discrepancies`,
   `sideview_suggested_mappings`, `sideview_copilot_reply`, `sideview_inject_result`,
-  `sideview_console_result`, `sideview_eval_result`.
+  `sideview_console_result`, `sideview_eval_result`, `sideview_rows`, `sideview_ai_status`.
 - Keep this list in sync when adding inputs/messages.
+- **"No code"** is `""` on the wire. The drawer placeholder (`# Connect two columns ...`) is display text only;
+  test with `sv_is_no_code()` (R) / `isNoCode()` (JS). Done with no code returns `NULL`.
+- **Gadget lifecycle:** `sv_new_lifecycle()` counts sessions; the app stops only after
+  `getOption("sideview.session_grace", 5)` seconds with no session, so a browser reload survives.
+- **Splines:** visible paths (`.sideview-connector-svg`, z 25) are `pointer-events: none`. Clicks go to invisible
+  hit paths in `.sideview-connector-hitlayer` (z 5, below the cards at z 10). Create a hit path for every new
+  connector (`attachHitPath`) and prune it on removal (`pruneHitPaths`).
+- **Assets:** dependency versions come from `sv_asset_version()` (package version + content fingerprint),
+  so browsers never serve stale JS/CSS. Don't hard-code a version for `sideview.js`/`sideview.css`.
 
 ## Build, test, run (Windows, R 4.5.2)
 - R: `& "C:\Program Files\R\R-4.5.2\bin\Rscript.exe"`
-- Tests: `Rscript -e "devtools::test()"`; full check: `Rscript -e "devtools::check()"`
+- Tests: `Rscript -e "devtools::test()"`; full check: `Rscript -e "devtools::check()"`.
+  Real-browser tests are skipped "on CRAN": set `NOT_CRAN=true` to run them.
+- Prefer real input (`b$Input$dispatchMouseEvent` via chromote) over `dispatchEvent` in browser tests —
+  synthetic events skip hit-testing, which is how overlay bugs slipped through.
 - JS syntax: `node --check inst/www/sideview.js`
 - Docs: `Rscript -e "devtools::document()"` (roxygen → `man/`, `NAMESPACE`); site: `pkgdown::build_site()`
 - Try it: `devtools::load_all(); sideview(mtcars, iris, viewer = "browser")` (also `"dialog"`, `"pane"`)

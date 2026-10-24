@@ -31,7 +31,7 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 | 18 | State | `sv_load_state(launch = TRUE)` ignores the loaded state; `sideview()` has no `state` argument | open |
 | 19 | Server | "Run in R" result is evaluated then thrown away | fixed (Phase 2.2) |
 | 20 | Server | No `onSessionEnded → stopApp`; closing the browser tab leaves the console busy | fixed (Phase 2.2) |
-| 21 | Gadget | "Cannot launch in external browser": reproduced. The browser opens, but the page is broken by #12 (init crash) and #26 (card width) | fixed in browser harness; RStudio re-walk pending |
+| 21 | Gadget | "Cannot launch in external browser": reproduced. The browser opens, but the page is broken by #12 (init crash) and #26 (card width) | fixed (Phase 2.1–2.3; verified live in RStudio browser mode) |
 | 22 | Security | Card and column names inserted unescaped into `innerHTML` and attribute selectors | fixed (Phase 2.1) |
 | 23 | Icons | Emoji/Unicode glyph icons render inconsistently on Windows RStudio | open |
 | 24 | Packaging | No `.Rbuildignore`; `panzoom.min.js` is an in-house stub labelled 4.5.1; README zoom range ≠ code | open |
@@ -45,6 +45,14 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 | 32 | AI | Default model `llama3.2` 404s when only a tagged build (`llama3.2:3b`) is installed | fixed (Phase 2.2) |
 | 33 | AI | Reasoning models (qwen3) think for minutes → 180s timeout; error said only "Failed to perform HTTP request" | fixed (Phase 2.2) |
 | 34 | AI | Small models can return R that does not parse; no warning | fixed (Phase 2.2) |
+| 35 | Gadget | Browser mode: a page reload ends the only session → `stopApp` → the reloaded page can't reconnect | fixed (b8d2d8e) |
+| 36 | JS | Real mouse clicks on a port while a draft spline is showing hit the draft SVG, not the port → connect fails (synthetic `dispatchEvent` tests passed) | fixed (b8d2d8e) |
+| 37 | JS | Splines (z 25, above cards) swallow clicks on table cells/headers under them; a click on a spline over a card deleted the join | fixed (84bb482) |
+| 38 | Assets | Dependency version was fixed at 0.2.0, so browsers served stale cached JS/CSS after an update | fixed (84bb482) |
+| 39 | Gadget | Done with no operations returned the placeholder `# Connect two columns ...` as code | fixed (84bb482) |
+| 40 | Layout | Initial cards are 640px wide but spaced 360px apart → they overlap on launch in every mode | open |
+| 41 | Drawer | Code preview text is centred and truncated | open |
+| 42 | Pane | In the narrow Viewer pane the toolbar covers card headers and the palette overlaps cards | open |
 
 ## Backlog (future rounds, not yet scheduled)
 - Table version diff by key (data-lock comparisons between dataset versions).
@@ -55,6 +63,33 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 ---
 
 ## Log
+
+### 2026-10-24 — Phase 2.3: bugs only a real browser found (RStudio browser mode + Claude in Chrome)
+- **How:** launched `sideview(patients, visits, labs, viewer = "browser")` from the user's RStudio
+  (R 4.5.1) and drove the page with real mouse input through Claude in Chrome. Five bugs had passed
+  the mock-DOM and synthetic-event tests (#35–#39).
+- **Reload (#35):** a per-app `sv_new_lifecycle()` counts sessions; `onSessionEnded` stops the app only
+  after `getOption("sideview.session_grace", 5)` seconds with no session (via `later::later`), so a reload
+  reconnects. `stop_gadget` runs once.
+- **Connect (#36):** `portFromEvent()` / `portAtPoint()` look through the connector layer, and the draft
+  spline has `pointer-events: none`.
+- **Spline hit layer (#37):** visible splines are `pointer-events: none`. Invisible 14px hit paths live in
+  `.sideview-connector-hitlayer` (z 5, *below* the cards at z 10), so splines are clickable over the canvas
+  but never over a card. Hit paths forward hover (`is-hover`), click and context menu; `pruneHitPaths()` keeps
+  them in step with connections.
+- **Cache busting (#38):** `sv_asset_version()` = package version + md5 fingerprint of the JS/CSS
+  (e.g. `0.2.0.6030027`), used by both the gadget and the widget dependency.
+- **No-code (#39):** the placeholder is display text only. `sv_is_no_code()` (R) / `isNoCode()` (JS);
+  Done returns `NULL`, and disconnect/clear send `""`.
+- **Tests:** new real-mouse browser test (CDP `Input.dispatchMouseEvent`: connect, re-click, 59 points sampled
+  along a spline over a card hit the card, canvas click disconnects); lifecycle multi-tab test;
+  asset-version test. `devtools::test()` (with `NOT_CRAN=true`) → **1397 expectations, 0 failed, 0 errors**.
+- **Verified live in RStudio browser mode:** reload keeps the app alive; click-to-connect; the filter popover
+  opens under a spline without breaking the join; filter → Done returned `patients %>% dplyr::filter(age == 65)`;
+  join → Done returned the join code; join → Clear → Done returned `NULL`; assets load from the versioned URL.
+  Dialog and pane modes were checked in Phase 2.2.
+- **Still open from this walk:** #40 card overlap on launch, #41 code preview alignment, #42 pane-mode overlap,
+  and filter code replacing join code (#16, pipeline).
 
 ### 2026-10-24 — Phase 2.2: gadget lifecycle, Run in R, AI feedback, live LLM check
 - **Gadget lifecycle:**
