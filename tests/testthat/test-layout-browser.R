@@ -163,6 +163,50 @@ test_that("real mouse clicks connect ports through the draft and existing spline
   expect_equal(n_links(), 1)
   expect_equal(sv_js(b, "window._sideviewInstance.activePort && window._sideviewInstance.activePort.colName"), "patient_id")
   b$Input$dispatchKeyEvent(type = "keyDown", key = "Escape", code = "Escape", windowsVirtualKeyCode = 27)
+
+  # Where the spline crosses a card, the card gets the click; over empty canvas
+  # the spline is clickable and disconnects. Move visits out of the way and
+  # labs right so the spline spans empty canvas too.
+  saved <- sv_js(b, "(() => {
+    const eng = window._sideviewInstance, card = n => document.querySelector('.sideview-card[data-card-name=\"' + n + '\"]');
+    const saved = ['visits', 'labs'].map(n => ({ n, left: card(n).style.left, top: card(n).style.top }));
+    card('visits').style.top = '600px';
+    card('labs').style.left = (parseFloat(card('labs').style.left) + 150) + 'px';
+    eng.updateConnectors();
+    return saved;
+  })()")
+  on.exit(sv_js(b, sprintf("(() => { const s = %s;
+    s.forEach(x => { const c = document.querySelector('.sideview-card[data-card-name=\"' + x.n + '\"]');
+      c.style.left = x.left; c.style.top = x.top; });
+    window._sideviewInstance.updateConnectors(); return true; })()", jsonlite::toJSON(saved, auto_unbox = TRUE))), add = TRUE)
+  pts <- sv_js(b, "(() => {
+    const path = document.querySelector('.sideview-connector-path:not(.sideview-connector-draft)');
+    const m = path.getScreenCTM(), len = path.getTotalLength(), out = { card: [], canvas: [] };
+    for (let i = 1; i < 60; i++) {
+      const sp = path.getPointAtLength(len * i / 60), p = new DOMPoint(sp.x, sp.y).matrixTransform(m);
+      const below = document.elementsFromPoint(p.x, p.y).find(el => !el.closest('svg'));
+      if (!below) continue;
+      const top = document.elementFromPoint(p.x, p.y);
+      const pt = { x: p.x, y: p.y, top_in_card: !!top.closest('.sideview-card') };
+      if (below.closest('.sideview-card')) {
+        if (!below.closest('button, [data-action], .sideview-col-port, .sideview-col-resizer')) out.card.push(pt);
+      } else if (below.closest('.sideview-canvas')) out.canvas.push(pt);
+    }
+    return out;
+  })()")
+  expect_gt(length(pts$card), 0)
+  expect_true(all(vapply(pts$card, function(p) isTRUE(p$top_in_card), TRUE)))
+  click(pts$card[[ceiling(length(pts$card) / 2)]])
+  Sys.sleep(0.2)
+  expect_equal(n_links(), 1)
+  expect_gt(length(pts$canvas), 0)
+  click(pts$canvas[[ceiling(length(pts$canvas) / 2)]])
+  Sys.sleep(0.2)
+  expect_equal(n_links(), 0)
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-connector-hit').length"), 0)
+  # With nothing connected there is no code: the placeholder is display text only
+  Sys.sleep(0.3)
+  expect_identical(sv_js(b, "window._sideviewInstance.generatedCode"), "")
   sv_js(b, "(async () => { document.querySelector('[data-action=\"clear-operation\"]').click(); await new Promise(r => setTimeout(r, 300)); return true; })()")
 })
 

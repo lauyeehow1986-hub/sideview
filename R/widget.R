@@ -44,7 +44,7 @@ sideview_widget_dependencies <- function() {
   if (nzchar(www_dir) && file.exists(file.path(www_dir, "sideview.js"))) {
     deps[[length(deps) + 1]] <- htmltools::htmlDependency(
       name = "sideview-assets",
-      version = "0.1.0",
+      version = sv_asset_version(www_dir),
       src = c(file = www_dir),
       stylesheet = "sideview.css",
       script = "sideview.js"

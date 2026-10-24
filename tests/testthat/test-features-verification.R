@@ -147,14 +147,14 @@ test_that("Feature 3: Interactive Spline Disconnection and Clear Operations upda
     msgs2 <- session$userData$custom_messages
     last_msg2 <- msgs2[[length(msgs2)]]
     expect_equal(last_msg2$type, "sideview_code_update")
-    expect_match(last_msg2$message$code, "Connect two columns")
+    expect_identical(last_msg2$message$code, "")
 
     # 3. Clear operations event
     session$setInputs(clear_operations = list(timestamp = as.numeric(Sys.time())))
     msgs3 <- session$userData$custom_messages
     last_msg3 <- msgs3[[length(msgs3)]]
     expect_equal(last_msg3$type, "sideview_code_update")
-    expect_match(last_msg3$message$code, "Connect two columns")
+    expect_identical(last_msg3$message$code, "")
   })
 })
 

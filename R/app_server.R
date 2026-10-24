@@ -76,8 +76,8 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
   if (isTRUE(gadget)) {
     lifecycle$sessions <- lifecycle$sessions + 1L
     shiny::observeEvent(input$sideview_done, {
-      code <- input$sideview_done$code %||% ""
-      code <- if (is.character(code) && length(code) == 1L && nzchar(trimws(code))) code else NULL
+      code <- input$sideview_done$code
+      code <- if (sv_is_no_code(code)) NULL else code
       stop_gadget(invisible(code))
     }, ignoreInit = FALSE)
     # `cancel` is what RStudio sends when the dialog window is closed.
@@ -158,11 +158,8 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
   shiny::observeEvent(input$column_disconnected, {
     evt <- input$column_disconnected
     if (is.null(evt)) return()
-    code <- if (!is.null(evt$code) && nzchar(evt$code)) {
-      evt$code
-    } else {
-      "# Connect two columns to generate pipeline code"
-    }
+    # "" means no code; the client shows its placeholder for that.
+    code <- if (sv_is_no_code(evt$code)) "" else evt$code
     dispatch_message("sideview_code_update", list(code = code))
   }, ignoreInit = FALSE)
 
@@ -170,7 +167,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
   shiny::observeEvent(input$clear_operations, {
     evt <- input$clear_operations
     if (is.null(evt)) return()
-    dispatch_message("sideview_code_update", list(code = "# Connect two columns to generate pipeline code"))
+    dispatch_message("sideview_code_update", list(code = ""))
   }, ignoreInit = FALSE)
 
   # 1c. Column Sorted -> Arrange Code Generation
@@ -596,4 +593,12 @@ sv_new_lifecycle <- function() {
   env$sessions <- 0L
   env$stopped <- FALSE
   env
+}
+
+# TRUE when `code` holds nothing to run: NULL, blank, or the code panel's
+# placeholder comment.
+sv_is_no_code <- function(code) {
+  if (!is.character(code) || length(code) != 1L || is.na(code)) return(TRUE)
+  code <- trimws(code)
+  !nzchar(code) || identical(code, "# Connect two columns to generate pipeline code")
 }

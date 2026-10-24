@@ -718,6 +718,47 @@ function sendToShiny(name, value) {
     return null;
   }
 
+  // Pair a visible spline with its click target in the hit layer. The visible
+  // path ignores the pointer; the hit path forwards hover and click to it.
+  function attachHitPath(engine, path) {
+    if (!engine.hitSvg) return null;
+    var hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    hit.setAttribute('class', 'sideview-connector-hit');
+    if (path.dataset.connId) hit.dataset.connId = path.dataset.connId;
+    var title = path.querySelector('title');
+    if (title) hit.appendChild(title);
+    hit.addEventListener('mouseenter', function () { path.classList.add('is-hover'); });
+    hit.addEventListener('mouseleave', function () { path.classList.remove('is-hover'); });
+    if (path.dataset.suggested) {
+      hit.addEventListener('click', function (e) {
+        e.stopPropagation();
+        path.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      });
+    }
+    hit._svVisible = path;
+    path._svHit = hit;
+    engine.hitSvg.appendChild(hit);
+    return hit;
+  }
+
+  function pruneHitPaths(engine) {
+    if (!engine.hitSvg) return;
+    var hits = engine.hitSvg.querySelectorAll('.sideview-connector-hit');
+    for (var i = 0; i < hits.length; i++) {
+      var v = hits[i]._svVisible;
+      if (!v || !v.parentNode) hits[i].parentNode.removeChild(hits[i]);
+    }
+  }
+
+  // Shown in the code panel when there is nothing to run. It is display text
+  // only and must never become the generated code.
+  var CODE_PLACEHOLDER = '# Connect two columns to generate pipeline code';
+  function isNoCode(code) {
+    if (code === null || code === undefined) return true;
+    var t = String(code).trim();
+    return t === '' || t === CODE_PLACEHOLDER;
+  }
+
   function asArray(x) {
     if (x === null || x === undefined) return [];
     return Array.isArray(x) ? x : [x];
@@ -967,6 +1008,16 @@ function sendToShiny(name, value) {
       this.svg.setAttribute('height', '100%');
       this.viewport.appendChild(this.svg);
     }
+    // Invisible, wider copies of the splines sit below the cards so a spline
+    // crossing a card never steals clicks from the card's own controls.
+    this.hitSvg = this.viewport.querySelector('.sideview-connector-hitlayer');
+    if (!this.hitSvg) {
+      this.hitSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      this.hitSvg.setAttribute('class', 'sideview-connector-hitlayer');
+      this.hitSvg.setAttribute('width', '100%');
+      this.hitSvg.setAttribute('height', '100%');
+      this.viewport.insertBefore(this.hitSvg, this.viewport.firstChild);
+    }
 
     // Toolbar
     if (!this.container.querySelector('.sideview-toolbar')) {
@@ -1047,7 +1098,7 @@ function sendToShiny(name, value) {
         '<div class="sideview-drawer-content">',
         '  <div class="sideview-tab-pane sideview-pipeline-pane" data-pane="pipeline">',
         '    <p class="sideview-drawer-desc">Connect columns to generate join or mutation pipelines.</p>',
-        '    <pre class="sideview-code-block"><code class="sideview-code-text"># Connect two columns to generate pipeline code</code></pre>',
+        '    <pre class="sideview-code-block"><code class="sideview-code-text">' + CODE_PLACEHOLDER + '</code></pre>',
         '  </div>',
         '  <div class="sideview-tab-pane sideview-discrepancy-pane" data-pane="discrepancy" style="display: none;">',
         '    <div class="sideview-discrepancy-content">',
@@ -1188,7 +1239,7 @@ function sendToShiny(name, value) {
         sendToShiny('eval_env', { code: self.generatedCode, assign_to: 'sv_result' });
       } else if (action === 'gadget-done') {
         self.showToast('Returning code to R...', 'success');
-        sendToShiny('sideview_done', { code: self.generatedCode || '' });
+        sendToShiny('sideview_done', { code: isNoCode(self.generatedCode) ? '' : self.generatedCode });
       } else if (action === 'gadget-cancel') {
         sendToShiny('sideview_cancel', { at: Date.now() });
       } else if (action === 'copy-code') {
@@ -1223,11 +1274,12 @@ function sendToShiny(name, value) {
 
     // Click directly on an SVG connector spline to disconnect it
     this.container.addEventListener('click', function (e) {
-      var path = e.target.closest('.sideview-connector-path');
+      var path = e.target.closest('.sideview-connector-path, .sideview-connector-hit');
       if (!path) return;
       // Splines end on port centres; a click there is meant for the port.
       if (portFromEvent(e)) return;
-      if (path.classList.contains('sideview-spline-suggested')) return;
+      if (path.classList.contains('sideview-spline-suggested') || path.dataset.suggested) return;
+      if (path._svVisible && path._svVisible.dataset.suggested) return;
       e.stopPropagation();
       var connId = path.dataset.connId;
       if (connId) {
@@ -1237,7 +1289,7 @@ function sendToShiny(name, value) {
 
     // Right-click contextmenu on SVG spline or port to disconnect
     this.container.addEventListener('contextmenu', function (e) {
-      var path = e.target.closest('.sideview-connector-path');
+      var path = e.target.closest('.sideview-connector-path, .sideview-connector-hit');
       if (path) {
         e.preventDefault();
         e.stopPropagation();
@@ -2186,6 +2238,7 @@ function sendToShiny(name, value) {
         if (oldSuggested[i].parentNode) oldSuggested[i].parentNode.removeChild(oldSuggested[i]);
       }
     }
+    pruneHitPaths(this);
   };
 
   SideviewEngine.prototype.renderSuggestedSplines = function (suggestions) {
@@ -2274,6 +2327,7 @@ function sendToShiny(name, value) {
       });
 
       self.svg.appendChild(path);
+      attachHitPath(self, path);
 
       self.suggestedConnections.push({
         path: path,
@@ -2305,6 +2359,7 @@ function sendToShiny(name, value) {
     path.appendChild(titleEl);
 
     this.svg.appendChild(path);
+    attachHitPath(this, path);
 
     var connection = Object.assign({ id: connId, path: path }, connData);
     this.connections.push(connection);
@@ -2347,6 +2402,7 @@ function sendToShiny(name, value) {
       conn.path.parentNode.removeChild(conn.path);
     }
     this.connections.splice(index, 1);
+    pruneHitPaths(this);
 
     // Recompute code based on remaining connections
     if (this.connections.length > 0) {
@@ -2355,11 +2411,7 @@ function sendToShiny(name, value) {
         lastConn.toTable + ', by = c("' + lastConn.fromCol + '" = "' + lastConn.toCol + '"))';
       this.updateDrawerCode(joinCode);
     } else {
-      this.generatedCode = '';
-      var codeText = this.container.querySelector('.sideview-code-text');
-      if (codeText) {
-        codeText.textContent = '# Connect two columns to generate pipeline code';
-      }
+      this.resetDrawerCode();
     }
 
     this.showToast('Disconnected ' + conn.fromCol + ' ↔ ' + conn.toCol, 'info');
@@ -2370,7 +2422,7 @@ function sendToShiny(name, value) {
       to_table: conn.toTable,
       to_col: conn.toCol,
       remaining_count: this.connections.length,
-      code: this.generatedCode || '# Connect two columns to generate pipeline code'
+      code: this.generatedCode || ''
     });
   };
 
@@ -2431,11 +2483,23 @@ function sendToShiny(name, value) {
         y: (r2.top + r2.height / 2 - viewportRect.top) / scale
       };
 
-      conn.path.setAttribute('d', self.getBezierPath(p1, p2));
+      var d = self.getBezierPath(p1, p2);
+      conn.path.setAttribute('d', d);
+      if (conn.path._svHit) conn.path._svHit.setAttribute('d', d);
     });
+    pruneHitPaths(this);
+  };
+
+  SideviewEngine.prototype.resetDrawerCode = function () {
+    this.generatedCode = '';
+    var codeText = this.container.querySelector('.sideview-code-text');
+    if (codeText) codeText.textContent = CODE_PLACEHOLDER;
+    var badge = this.container.querySelector('[data-action="toggle-drawer"]');
+    if (badge && badge.classList) badge.classList.remove('has-code');
   };
 
   SideviewEngine.prototype.updateDrawerCode = function (code) {
+    if (isNoCode(code)) return this.resetDrawerCode();
     this.generatedCode = code;
     var drawer = this.container.querySelector('.sideview-drawer');
     var codeText = this.container.querySelector('.sideview-code-text');
@@ -2484,6 +2548,7 @@ function sendToShiny(name, value) {
       var extraPaths = this.svg.querySelectorAll('.sideview-connector-path');
       extraPaths.forEach(function (p) { p.remove(); });
     }
+    pruneHitPaths(this);
 
     // 2. Clear port selections
     if (this.activePort) {
@@ -2532,11 +2597,7 @@ function sendToShiny(name, value) {
     });
 
     // 4. Reset generated code and drawer UI
-    this.generatedCode = '';
-    var codeText = this.container.querySelector('.sideview-code-text');
-    if (codeText) {
-      codeText.textContent = '# Connect two columns to generate pipeline code';
-    }
+    this.resetDrawerCode();
 
     // 5. Notify user if not silent
     if (!silent) {
@@ -3031,9 +3092,7 @@ function sendToShiny(name, value) {
     });
 
     global.Shiny.addCustomMessageHandler('sideview_code_update', function (data) {
-      if (data && data.code) {
-        self.updateDrawerCode(data.code);
-      }
+      if (data) self.updateDrawerCode(data.code);
     });
 
     global.Shiny.addCustomMessageHandler('sideview_ai_status', function (data) {

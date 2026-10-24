@@ -23,6 +23,27 @@ test_that("Done returns the generated code and Cancel returns NULL (gadget mode)
     session$setInputs(sideview_done = list(code = "   "))
     expect_null(session$userData$sideview_result$value)
   })
+
+  # The code panel's placeholder is not code
+  shiny::testServer(sideview_server(list(card), gadget = TRUE), {
+    session$setInputs(sideview_done = list(code = "# Connect two columns to generate pipeline code"))
+    expect_true(is.list(session$userData$sideview_result))
+    expect_null(session$userData$sideview_result$value)
+  })
+})
+
+test_that("asset version changes with the file contents", {
+  dir <- tempfile("svassets")
+  dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  writeLines("var a = 1;", file.path(dir, "sideview.js"))
+  v1 <- sv_asset_version(dir)
+  expect_identical(v1, sv_asset_version(dir))
+  expect_true(startsWith(v1, paste0(as.character(utils::packageVersion("sideview")), ".")))
+  expect_s3_class(package_version(v1), "package_version")
+  writeLines("var a = 2;", file.path(dir, "sideview.js"))
+  expect_false(identical(v1, sv_asset_version(dir)))
+  expect_identical(sideview_html_dependency()$version, sv_asset_version(find_sideview_www()))
 })
 
 test_that("browser mode stops only after the last tab closes", {

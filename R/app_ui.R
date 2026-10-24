@@ -18,6 +18,26 @@ find_sideview_www <- function() {
   system.file("www", package = "sideview")
 }
 
+#' Version String for the Bundled Web Assets
+#'
+#' The dependency version is part of the asset URL, so it must change whenever
+#' the files do; otherwise browsers keep serving cached JS/CSS after an
+#' upgrade. Package version plus a short fingerprint of the file contents.
+#'
+#' @param www_dir Directory holding the assets.
+#' @param files Asset file names.
+#' @return A version string such as `"0.2.0.1234567"`.
+#' @noRd
+sv_asset_version <- function(www_dir, files = c("sideview.js", "sideview.css", "panzoom.min.js")) {
+  pkg <- tryCatch(as.character(utils::packageVersion("sideview")), error = function(e) "0.0.0")
+  paths <- file.path(www_dir, files)
+  paths <- paths[file.exists(paths)]
+  if (!length(paths)) return(pkg)
+  sums <- unname(tools::md5sum(paths))
+  fp <- sum(strtoi(substr(sums, 1, 6), 16L)) %% 1e7
+  paste0(pkg, ".", format(fp, scientific = FALSE))
+}
+
 #' HTML Dependency for Sideview Assets
 #'
 #' @return An `htmltools::htmlDependency` object.
@@ -26,7 +46,7 @@ sideview_html_dependency <- function() {
   www_dir <- find_sideview_www()
   htmltools::htmlDependency(
     name = "sideview",
-    version = "0.1.0",
+    version = sv_asset_version(www_dir),
     src = c(file = www_dir),
     stylesheet = "sideview.css",
     script = c("panzoom.min.js", "sideview.js")
