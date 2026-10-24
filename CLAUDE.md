@@ -92,10 +92,12 @@ rstudio bridge: R/rstudio.R
   synthetic events skip hit-testing, which is how overlay bugs slipped through.
 - JS syntax: `node --check inst/www/sideview.js`
 - Docs: `Rscript -e "devtools::document()"` (roxygen → `man/`, `NAMESPACE`); site: `pkgdown::build_site()`
-  (set `RSTUDIO_PANDOC` to RStudio's `resources/app/bin/quarto/bin/tools`). GitHub Pages serves the committed
-  `docs/` folder on `main` (legacy mode), so rebuild and commit `docs/` to update the site. Run
+  (set `RSTUDIO_PANDOC` to RStudio's `resources/app/bin/quarto/bin/tools`). Every push to `main` deploys the site twice:
+  Pages' legacy build serves the committed `docs/` folder, and `.github/workflows/pkgdown.yaml` rebuilds it in CI
+  and deploys that (usually last). Keep the committed `docs/` current too. Run
   `pkgdown::check_pkgdown()` first: every export must be in the `_pkgdown.yml` reference index. pkgdown renders
-  every root `.md`, so delete `docs/CLAUDE.*` / `docs/MEMORY.*` and their `sitemap.xml` / `search.json` entries.
+  every root `.md`, so delete `docs/CLAUDE.*` / `docs/MEMORY.*` and their `sitemap.xml` / `search.json` entries
+  (the workflow does this in CI with its "Drop dev notes" step).
 - Try it: `devtools::load_all(); sideview(mtcars, iris, viewer = "browser")` (also `"dialog"`, `"pane"`)
 
 ## Conventions
