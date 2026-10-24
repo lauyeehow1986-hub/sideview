@@ -2,7 +2,7 @@ Package: sideview
 Title: Multi-Table 2D Infinite Canvas for R
 Version: 0.3.0
 Authors@R: c(
-    person("Yee How", "Lau", email = "lauyeehow1986@gmail.com.sg", role = c("aut", "cre", "cph")),
+    person("Yee How", "Lau", email = "lauyeehow1986@gmail.com", role = c("aut", "cre", "cph")),
     person("sideview", "contributors", role = "ctb")
   )
 Description: An interactive 2D infinite canvas for multi-table exploration,
