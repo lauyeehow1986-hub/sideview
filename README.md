@@ -34,7 +34,7 @@ sideview(patients, visits, lab_results, gt_summary)
 | Feature | `dataviewR` | `sideview` |
 | :--- | :---: | :---: |
 | **Workspace Layout** | Single-table tabbed view (one table at a time) | **Infinite 2D canvas** (unlimited tables side-by-side) |
-| **Navigation** | Basic paging | **Smooth mouse-wheel zoom (25%–250%) & canvas pan** |
+| **Navigation** | Basic paging | **Smooth mouse-wheel zoom (15%–350%) & canvas pan** |
 | **Table Alignment** | ❌ None | ✅ **Magnetic snap-to-edge docking** |
 | **Synchronized Scrolling** | ❌ None | ✅ **Dual vertical (`scrollTop`) and horizontal (`scrollLeft`) sync** |
 | **100k+ Row Performance** | ❌ Browser freezing | ✅ **DOM Virtualization (`VirtualTable` ~30 rows active, 60 FPS)** |
@@ -104,7 +104,7 @@ flowchart TD
 
 ### 1. High-Performance Infinite 2D Panzoom Canvas & Virtualization
 - **DOM Virtualization (`VirtualTable`)**: Renders datasets containing **100,000+ rows** smoothly at 60 FPS by dynamically maintaining a sliding window of ~30 active `<tr>` elements with spacer elements.
-- **Mouse Wheel Zoom**: Smooth scaling centered on the cursor position (25% to 250% zoom).
+- **Mouse Wheel Zoom**: Smooth scaling centered on the cursor position (15% to 350% zoom).
 - **Panning & Dragging**: Click-and-drag navigation across the infinite canvas, with magnetic edge-docking for table cards.
 - **Dual Synchronized Scrolling**: Locks both vertical rows (`scrollTop`) and horizontal columns (`scrollLeft`) across linked tables.
 

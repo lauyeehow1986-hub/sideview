@@ -27,7 +27,7 @@ read_asset <- function(filename) {
 }
 
 test_that("all required web asset files exist and are non-empty", {
-  required_files <- c("panzoom.min.js", "sideview.css", "sideview.js")
+  required_files <- c("sv-panzoom.js", "sideview.css", "sideview.js")
   for (f in required_files) {
     path <- find_asset(f)
     expect_true(file.exists(path), info = paste("Asset missing:", f, "at", path))
@@ -137,11 +137,11 @@ test_that("sideview.js contains required functions, event handlers, and Shiny in
   }
 })
 
-test_that("panzoom.min.js contains a valid Panzoom library implementation", {
-  pz <- read_asset("panzoom.min.js")
-  expect_gt(nchar(pz), 200, label = "panzoom.min.js length")
+test_that("sv-panzoom.js contains a valid Panzoom library implementation", {
+  pz <- read_asset("sv-panzoom.js")
+  expect_gt(nchar(pz), 200, label = "sv-panzoom.js length")
   expect_match(pz, "panzoom|Panzoom|transform|matrix|zoom", 
-               info = "panzoom.min.js must contain Panzoom library functionality")
+               info = "sv-panzoom.js must contain Panzoom library functionality")
 })
 
 test_that("sideview.js resets activePort in clearOperations and escapes column names", {

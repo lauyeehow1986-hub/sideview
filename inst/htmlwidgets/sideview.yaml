@@ -1,10 +1,4 @@
-dependencies:
-  - name: panzoom
-    version: 4.5.1
-    src: "www"
-    script: panzoom.min.js
-  - name: sideview-assets
-    version: 0.2.0
-    src: "www"
-    stylesheet: sideview.css
-    script: sideview.js
+# Dependencies are attached from R (sideview_widget_dependencies()) as the
+# single "sideview-core" dependency shared with the gadget, versioned by a
+# fingerprint of the asset files so browsers never serve a stale copy.
+dependencies: []

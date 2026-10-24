@@ -21,7 +21,7 @@ sv_normalize() (R/normalize.R)  ->  sideview_card objects
   |-- widget:  sideview_widget() (R/widget.R)  ->  JSON cards  ->  inst/htmlwidgets/sideview.js
                                                                    -> new Sideview.Engine(el, opts)
 codegen: R/codegen.R (sv_code_* generators)    engine: SideviewEngine + VirtualTable (sideview.js)
-llm/copilot: R/llm.R, R/copilot.R              pan/zoom: inst/www/panzoom.min.js (small in-house impl)
+llm/copilot: R/llm.R, R/copilot.R              pan/zoom: inst/www/sv-panzoom.js (small in-house impl)
 state: R/state.R (sv_save_state/sv_load_state) styles: inst/www/sideview.css (--sv-* tokens)
 rstudio bridge: R/rstudio.R
 ```

@@ -28,7 +28,7 @@ find_sideview_www <- function() {
 #' @param files Asset file names.
 #' @return A version string such as `"0.2.0.1234567"`.
 #' @noRd
-sv_asset_version <- function(www_dir, files = c("sideview.js", "sideview.css", "panzoom.min.js")) {
+sv_asset_version <- function(www_dir, files = c("sideview.js", "sideview.css", "sv-panzoom.js")) {
   pkg <- tryCatch(as.character(utils::packageVersion("sideview")), error = function(e) "0.0.0")
   paths <- file.path(www_dir, files)
   paths <- paths[file.exists(paths)]
@@ -40,16 +40,19 @@ sv_asset_version <- function(www_dir, files = c("sideview.js", "sideview.css", "
 
 #' HTML Dependency for Sideview Assets
 #'
+#' The single `sideview-core` dependency (pan/zoom helper, engine, styles) is
+#' shared by the gadget and the htmlwidget so a page never loads two copies.
+#'
+#' @param www_dir Directory holding the assets.
 #' @return An `htmltools::htmlDependency` object.
 #' @noRd
-sideview_html_dependency <- function() {
-  www_dir <- find_sideview_www()
+sideview_html_dependency <- function(www_dir = find_sideview_www()) {
   htmltools::htmlDependency(
-    name = "sideview",
+    name = "sideview-core",
     version = sv_asset_version(www_dir),
     src = c(file = www_dir),
     stylesheet = "sideview.css",
-    script = c("panzoom.min.js", "sideview.js")
+    script = c("sv-panzoom.js", "sideview.js")
   )
 }
 

@@ -1,6 +1,8 @@
 /**
- * Panzoom - A lightweight, high-performance vanilla JavaScript library for panning and zooming elements using CSS transforms.
- * Supports mouse, wheel, touch, and pointer events with hardware-accelerated matrix transforms.
+ * sv-panzoom.js - sideview's own small pan/zoom helper (CSS matrix transforms).
+ * Written for sideview; it is NOT the @panzoom/panzoom package, although it
+ * exposes a similar API (pan, zoom, zoomToPoint, reset, getScale, getPan) on
+ * window.Panzoom. Scale limits are set by the engine (15%-350%).
  */
 (function (global, factory) {
   typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory() :

@@ -34,7 +34,7 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 | 21 | Gadget | "Cannot launch in external browser": reproduced. The browser opens, but the page is broken by #12 (init crash) and #26 (card width) | fixed (Phase 2.1–2.3; verified live in RStudio browser mode) |
 | 22 | Security | Card and column names inserted unescaped into `innerHTML` and attribute selectors | fixed (Phase 2.1) |
 | 23 | Icons | Emoji/Unicode glyph icons render inconsistently on Windows RStudio | fixed (Phase 2.5) |
-| 24 | Packaging | No `.Rbuildignore`; `panzoom.min.js` is an in-house stub labelled 4.5.1; README zoom range ≠ code | open |
+| 24 | Packaging | No `.Rbuildignore`; `panzoom.min.js` is an in-house stub labelled 4.5.1; README zoom range ≠ code | fixed (Phase 2.6) |
 | 25 | Tests | GUI suite uses a mock DOM, so layout is never exercised in a real browser | fixed (Phase 2.1) |
 | 26 | Card | **Blocker:** cards have no width, so they shrink-wrap to the 10000px viewport (~9960px) and each column is ~900px; only the first column shows and numbers look empty | fixed (Phase 2.1) |
 | 27 | Canvas | Zoom % label never updates; zoom isn't centred on the view | fixed (Phase 2.1) |
@@ -63,6 +63,16 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 ---
 
 ## Log
+
+### 2026-10-24 — Phase 2.6: packaging (#24)
+- **Pan/zoom helper:** `panzoom.min.js` is renamed `sv-panzoom.js`. Its header now says it is sideview's own helper and not the `@panzoom/panzoom` 4.5.1 package.
+- **One shared dependency:** the gadget and the widget both load a single `sideview-core` dependency (`sideview_html_dependency()`), holding the CSS, `sv-panzoom.js` and `sideview.js`.
+  - Its version is the package version plus an asset fingerprint.
+  - `inst/htmlwidgets/sideview.yaml` no longer lists its own stale `panzoom` 4.5.1 and `sideview-assets` 0.2.0 dependencies (`dependencies: []`).
+- **README:** the zoom range now matches the code (15%–350%).
+- **Verified:**
+  - `save_sideview()` output in headless Chrome: 2 cards, 42 SVG icons, no empty icon slots, `window.Panzoom` present, 0 console errors.
+  - Full suite: 1453 expectations, 0 failed.
 
 ### 2026-10-24 — Phase 2.5: inline SVG icons (#23)
 - **What:** every emoji or Unicode glyph icon (maximize, sync-scroll link, collapse, sort, filter, fullscreen, AI sparkles, close, highlight-clear) is now an inline SVG.
