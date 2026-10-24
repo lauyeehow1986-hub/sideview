@@ -488,6 +488,7 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
         class = "sideview-tab-pane sideview-discrepancy-pane",
         `data-pane` = "discrepancy",
         style = "display: none;",
+        htmltools::tags$div(class = "sideview-joincheck", `aria-live` = "polite"),
         htmltools::tags$div(
           class = "sideview-discrepancy-content",
           htmltools::tags$p(class = "sideview-drawer-desc", "Connect columns between two tables to inspect discrepancies.")

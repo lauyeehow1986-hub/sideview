@@ -657,6 +657,10 @@ function sendToShiny(name, value) {
     this.generatedCode = '';
     this.suggestedConnections = [];
     this.lastDiscrepancy = null;
+    // Join diagnostics by join signature (tables + keys); see joinDiagFor().
+    this.joinDiag = {};
+    this.joinDiagPending = {};
+    this.joinCheckStepId = null;
 
     // The composable pipeline is the single source of the generated code.
     if (!global.SideviewPipeline) {
@@ -720,6 +724,8 @@ function sendToShiny(name, value) {
     trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
     moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+    check: '<path d="M20 6 9 17l-5-5"/>',
+    alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
     keyboard: '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/>'
   };
 
@@ -1448,6 +1454,7 @@ function sendToShiny(name, value) {
         '    <pre class="sideview-code-block"><code class="sideview-code-text">' + CODE_PLACEHOLDER + '</code></pre>',
         '  </div>',
         '  <div class="sideview-tab-pane sideview-discrepancy-pane" data-pane="discrepancy" style="display: none;">',
+        '    <div class="sideview-joincheck" aria-live="polite"></div>',
         '    <div class="sideview-discrepancy-content">',
         '      <p class="sideview-drawer-desc">Connect columns between two tables to inspect discrepancies.</p>',
         '    </div>',
@@ -1688,6 +1695,7 @@ function sendToShiny(name, value) {
       var tabName = tab.dataset.tab;
       self.activateDrawerTab(tabName);
 
+      if (tabName === 'discrepancy') self.renderJoinCheck();
       if (tabName === 'discrepancy' && self.connections.length > 0) {
         var lastConn = self.connections[self.connections.length - 1];
         sendToShiny('discrepancy_check', {
@@ -2756,7 +2764,9 @@ function sendToShiny(name, value) {
 
     this.updateConnectors();
 
-    // Connections between the same two tables merge into one multi-key join.
+    // Connections between the same two tables merge into one multi-key join,
+    // and the join check then shows the newest join.
+    this.joinCheckStepId = null;
     this.pipeline.addJoinKey(connData.fromTable, connData.toTable,
       connData.fromCol, connData.toCol, connData.type || 'left_join');
 
@@ -3071,6 +3081,7 @@ function sendToShiny(name, value) {
   };
 
   SideviewEngine.prototype.renderPipeline = function () {
+    var self = this;
     var P = global.SideviewPipeline;
     var p = this.pipeline;
     var code = p.compose();
@@ -3090,13 +3101,16 @@ function sendToShiny(name, value) {
           var label = P.describe(s);
           var title = s.kind === 'custom' ? String(s.code || '').split('\n')[0] : label;
           var join = '';
+          var diag = '';
           if (s.kind === 'join') {
             join = '<select class="sideview-step-jointype" aria-label="Join type">' +
               P.JOIN_TYPES.map(function (j) {
                 return '<option value="' + j + '"' + (j === s.type ? ' selected' : '') + '>' + j.replace('_join', '') + '</option>';
               }).join('') + '</select>';
+            diag = self.joinDiagLine(s);
           }
-          return '<li class="sideview-step' + (on ? '' : ' is-disabled') + '" data-step-id="' + escapeHtml(s.id) + '">' +
+          return '<li class="sideview-step' + (on ? '' : ' is-disabled') + (diag ? ' has-diag' : '') +
+            '" data-step-id="' + escapeHtml(s.id) + '">' +
             '<input type="checkbox" class="sideview-step-toggle"' + (on ? ' checked' : '') +
             ' aria-label="Include step ' + (i + 1) + '" />' +
             '<span class="sideview-step-text" title="' + escapeHtml(title) + '">' +
@@ -3107,7 +3121,7 @@ function sendToShiny(name, value) {
             '<button type="button" class="sideview-icon-btn" data-step-action="down" aria-label="Move step down"' +
             (i === n - 1 ? ' disabled' : '') + '>' + icon('chevronDown') + '</button>' +
             '<button type="button" class="sideview-icon-btn" data-step-action="delete" aria-label="Delete step">' +
-            icon('trash') + '</button></li>';
+            icon('trash') + '</button>' + diag + '</li>';
         }).join('');
       }
     }
@@ -3119,6 +3133,7 @@ function sendToShiny(name, value) {
     if (redo) redo.disabled = !p.canRedo();
     var pipeSel = this.container.querySelector('.sideview-pipe-select');
     if (pipeSel) pipeSel.value = p.pipe;
+    if (this.activeDrawerTab === 'discrepancy') this.renderJoinCheck();
 
     // The drawer no longer pops open; the Drawer button shows the step count.
     var btn = this.container.querySelector('[data-action="toggle-drawer"]');
@@ -3136,6 +3151,183 @@ function sendToShiny(name, value) {
   };
 
   // Tables and columns currently on the canvas, for the builder selects.
+  // ---- join diagnostics ------------------------------------------------------
+  // Every join step gets a key check. The gadget asks R, which has the full
+  // data (input `join_diagnostics_request` -> message `sideview_join_diagnostics`);
+  // the htmlwidget holds the full data and computes it in the browser.
+
+  SideviewEngine.prototype.joinDiagSig = function (s) {
+    return JSON.stringify([s.table, s.right, (s.by || []).map(function (p) { return [p.left, p.right]; })]);
+  };
+
+  SideviewEngine.prototype.joinDiagFor = function (s) {
+    var sig = this.joinDiagSig(s);
+    if (this.joinDiag[sig]) return this.joinDiag[sig];
+    if (this.joinDiagPending[sig]) return null;
+    var req = {
+      id: sig, left: s.table, right: s.right,
+      by: (s.by || []).map(function (p) { return { left: p.left, right: p.right }; })
+    };
+    if (this.options.mode !== 'embedded' && typeof global.Shiny !== 'undefined') {
+      this.joinDiagPending[sig] = true;
+      this.requestJoinDiag(req, 0);
+      return null;
+    }
+    var d = this.localJoinDiagnostics(req);
+    d.id = sig;
+    this.joinDiag[sig] = d;
+    this.announceJoinDiag(d, s);
+    return d;
+  };
+
+  // Shiny.setInputValue appears only once the session connects; retry until then.
+  SideviewEngine.prototype.requestJoinDiag = function (req, attempt) {
+    var self = this;
+    if (sendToShiny('join_diagnostics_request', req)) return;
+    if (attempt >= 40 || !this.container.isConnected) {
+      delete this.joinDiagPending[req.id];
+      this.joinDiag[req.id] = { id: req.id, error: 'The R session did not answer.' };
+      this.renderPipeline();
+      return;
+    }
+    setTimeout(function () { self.requestJoinDiag(req, attempt + 1); }, 250);
+  };
+
+  // Key columns of a card as arrays (the widget has every row in the browser).
+  SideviewEngine.prototype.cardColumns = function (name, cols) {
+    var el = this.container.querySelector('.sideview-card[data-card-name="' + cssEscape(name) + '"]');
+    var vt = el && el._virtualTable;
+    if (!vt) return { error: 'Table ' + name + ' is not on the canvas.' };
+    var out = {};
+    for (var k = 0; k < cols.length; k++) {
+      var c = cols[k];
+      var idx = vt.colNames.indexOf(c);
+      if (idx < 0) return { error: 'Column ' + c + ' is not in ' + name + '.' };
+      var vals = new Array(vt.totalRows);
+      for (var i = 0; i < vt.totalRows; i++) vals[i] = vt.getCellValue(i, c, idx);
+      out[c] = vals;
+    }
+    return { cols: out, types: vt.colTypes || {} };
+  };
+
+  SideviewEngine.prototype.localJoinDiagnostics = function (req) {
+    var x = this.cardColumns(req.left, req.by.map(function (p) { return p.left; }));
+    var y = this.cardColumns(req.right, req.by.map(function (p) { return p.right; }));
+    if (x.error || y.error) return { error: x.error || y.error };
+    return global.SideviewPipeline.joinDiagnostics(x.cols, y.cols, req.by, {
+      xName: req.left, yName: req.right, xTypes: x.types, yTypes: y.types
+    });
+  };
+
+  SideviewEngine.prototype.onJoinDiagnostics = function (data) {
+    if (!data || !data.id) return;
+    delete this.joinDiagPending[data.id];
+    ['by', 'unmatched_x', 'unmatched_y', 'type_issues', 'warnings', 'hints'].forEach(function (k) {
+      data[k] = asArray(data[k]);
+    });
+    this.joinDiag[data.id] = data;
+    var step = this.pipeline.steps.filter(function (s) { return s.kind === 'join'; })
+      .filter(function (s) { return this.joinDiagSig(s) === data.id; }, this)[0];
+    this.announceJoinDiag(data, step);
+    this.renderPipeline();
+    this.renderJoinCheck();
+  };
+
+  // A toast for a risky join, once per set of keys.
+  SideviewEngine.prototype.announceJoinDiag = function (d, step) {
+    if (!d || d.error || d.status === 'ok') return;
+    var msg = (d.type_issues && d.type_issues[0]) || (d.warnings && d.warnings[0]);
+    if (!msg) return;
+    var pair = step ? step.table + ' → ' + step.right + ': ' : '';
+    this.showToast(pair + msg, d.status === 'error' ? 'danger' : 'warning');
+  };
+
+  SideviewEngine.prototype.joinDiagLine = function (s) {
+    var d = this.joinDiagFor(s);
+    if (!d) return '<span class="sideview-step-diag is-pending">Checking keys…</span>';
+    if (d.error) {
+      return '<span class="sideview-step-diag is-pending" title="' + escapeHtml(d.error) + '">Key check unavailable</span>';
+    }
+    var text = global.SideviewPipeline.describeDiagnostics(d, s.type, s.table);
+    if (d.status === 'error') text = 'Key types differ · ' + text;
+    return '<button type="button" class="sideview-step-diag is-' + d.status + '" data-step-action="diag"' +
+      ' title="Show the join check">' + icon(d.status === 'ok' ? 'check' : 'alert') +
+      '<span>' + escapeHtml(text) + '</span></button>';
+  };
+
+  SideviewEngine.prototype.showJoinCheck = function (stepId) {
+    this.joinCheckStepId = stepId;
+    this.activateDrawerTab('discrepancy');
+    this.renderJoinCheck();
+    var s = this.pipeline.find(stepId);
+    if (s && s.by && s.by.length) {
+      sendToShiny('discrepancy_check', {
+        table1: s.table, col1: s.by[0].left, table2: s.right, col2: s.by[0].right
+      });
+    }
+  };
+
+  /** Full join report at the top of the Discrepancy tab (selected or last join). */
+  SideviewEngine.prototype.renderJoinCheck = function () {
+    var box = this.container.querySelector('.sideview-joincheck');
+    if (!box) return;
+    var self = this;
+    var joins = this.pipeline.steps.filter(function (s) { return s.kind === 'join'; });
+    var s = joins.filter(function (j) { return j.id === self.joinCheckStepId; })[0] || joins[joins.length - 1];
+    box.className = 'sideview-joincheck';
+    if (!s) { box.innerHTML = ''; return; }
+    var d = this.joinDiagFor(s);
+    var esc = escapeHtml;
+    if (!d) {
+      box.innerHTML = '<p class="sideview-joincheck-title">Checking keys for ' + esc(s.table) + ' and ' + esc(s.right) + '…</p>';
+      return;
+    }
+    if (d.error) {
+      box.innerHTML = '<p class="sideview-joincheck-title">Join check unavailable</p><p>' + esc(d.error) + '</p>';
+      return;
+    }
+    box.classList.add('is-' + d.status);
+    var fmt = function (n) { return Number(n).toLocaleString('en-US'); };
+    var pct = function (p) { return (100 * p).toFixed(1) + '%'; };
+    var by = d.by.map(function (p) { return p.left === p.right ? p.left : p.left + ' = ' + p.right; }).join(', ');
+    var list = function (items, cls) {
+      return items.length ? '<ul class="sideview-joincheck-list ' + cls + '">' +
+        items.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>' : '';
+    };
+    var keys = function (vals) {
+      return vals.map(function (v) { return '<code>' + esc(v) + '</code>'; }).join(', ');
+    };
+    var hints = d.hints.map(function (h) {
+      var gain = [];
+      if (h.extra_x > 0) gain.push(fmt(h.extra_x) + ' more ' + s.table + ' rows');
+      if (h.extra_y > 0) gain.push(fmt(h.extra_y) + ' more ' + s.right + ' rows');
+      return h.label + ' would match ' + gain.join(' and ') + '.';
+    });
+    var html = [
+      '<p class="sideview-joincheck-title">Join check: <code>' + esc(s.table) + '</code> → <code>' +
+        esc(s.right) + '</code> by <code>' + esc(by) + '</code></p>',
+      list(d.type_issues, 'sideview-joincheck-errors'),
+      list(d.warnings, 'sideview-joincheck-warnings'),
+      '<dl class="sideview-joincheck-stats">',
+      '<dt>Relationship</dt><dd>' + esc(d.relationship) + '</dd>',
+      '<dt>' + esc(s.table) + ' rows matched</dt><dd>' + fmt(d.matched_x) + ' of ' + fmt(d.n_x) + ' (' + pct(d.match_rate_x) + ')</dd>',
+      '<dt>' + esc(s.right) + ' rows matched</dt><dd>' + fmt(d.matched_y) + ' of ' + fmt(d.n_y) + ' (' + pct(d.match_rate_y) + ')</dd>',
+      '<dt>Distinct keys</dt><dd>' + fmt(d.distinct_x) + ' / ' + fmt(d.distinct_y) + ' (' + fmt(d.distinct_matched) + ' shared)</dd>',
+      '<dt>Repeated keys</dt><dd>' + fmt(d.dup_keys_x) + ' / ' + fmt(d.dup_keys_y) + '</dd>',
+      '<dt>Missing keys</dt><dd>' + fmt(d.na_x) + ' / ' + fmt(d.na_y) + ' rows</dd>',
+      '</dl>',
+      '<table class="sideview-joincheck-rows"><thead><tr><th scope="col">Join type</th><th scope="col">Rows</th></tr></thead><tbody>',
+      global.SideviewPipeline.JOIN_TYPES.map(function (j) {
+        return '<tr' + (j === s.type ? ' class="is-current"' : '') + '><td>' + j + '</td><td>' + fmt(d.rows[j]) + '</td></tr>';
+      }).join(''),
+      '</tbody></table>',
+      d.unmatched_x.length ? '<p>Not in ' + esc(s.right) + ': ' + keys(d.unmatched_x) + '</p>' : '',
+      d.unmatched_y.length ? '<p>Not in ' + esc(s.table) + ': ' + keys(d.unmatched_y) + '</p>' : '',
+      hints.length ? '<p>Possible fixes:</p>' + list(hints, 'sideview-joincheck-hints') : ''
+    ];
+    box.innerHTML = html.join('');
+  };
+
   SideviewEngine.prototype.tableSchemas = function () {
     var out = [];
     this.cards.forEach(function (card) {
@@ -3356,6 +3548,7 @@ function sendToShiny(name, value) {
         if (id && act === 'up') self.pipeline.move(id, -1);
         else if (id && act === 'down') self.pipeline.move(id, 1);
         else if (id && act === 'delete') self.pipeline.remove(id);
+        else if (id && act === 'diag') self.showJoinCheck(id);
         return;
       }
       var bBtn = e.target.closest('[data-builder-action]');
@@ -3965,6 +4158,11 @@ function sendToShiny(name, value) {
       if (data) {
         self.renderSuggestedSplines(data);
       }
+    });
+
+    // Join diagnostics computed in R on the full data (reply to join_diagnostics_request)
+    global.Shiny.addCustomMessageHandler('sideview_join_diagnostics', function (data) {
+      self.onJoinDiagnostics(data);
     });
 
     // Discrepancy report update

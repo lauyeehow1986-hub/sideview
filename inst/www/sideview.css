@@ -37,6 +37,9 @@
   --sv-danger-text: #dc2626;
   --sv-danger-subtle: rgba(239, 68, 68, 0.08);
   --sv-danger-border: rgba(239, 68, 68, 0.3);
+  --sv-warning-text: #b45309;
+  --sv-warning-subtle: rgba(245, 158, 11, 0.1);
+  --sv-success-text: #047857;
   --sv-success-btn-bg: #047857;
   --sv-success-btn-hover: #065f46;
   --sv-success-btn-text: #ffffff;
@@ -127,6 +130,9 @@
   --sv-danger-text: #f87171;
   --sv-danger-subtle: rgba(248, 113, 113, 0.12);
   --sv-danger-border: rgba(248, 113, 113, 0.4);
+  --sv-warning-text: #fbbf24;
+  --sv-warning-subtle: rgba(251, 191, 36, 0.12);
+  --sv-success-text: #34d399;
   --sv-success-btn-bg: #34d399;
   --sv-success-btn-hover: #6ee7b7;
   --sv-success-btn-text: #052e1f;
@@ -201,6 +207,9 @@
     --sv-danger-text: #f87171;
     --sv-danger-subtle: rgba(248, 113, 113, 0.12);
     --sv-danger-border: rgba(248, 113, 113, 0.4);
+    --sv-warning-text: #fbbf24;
+    --sv-warning-subtle: rgba(251, 191, 36, 0.12);
+    --sv-success-text: #34d399;
     --sv-success-btn-bg: #34d399;
     --sv-success-btn-hover: #6ee7b7;
     --sv-success-btn-text: #052e1f;
@@ -1242,6 +1251,143 @@ html.sv-standalone body {
   border-radius: var(--sv-radius-sm);
   background: var(--sv-surface);
   color: var(--sv-text);
+}
+
+/* Join diagnostics: one line under a join step, full report in the Discrepancy tab */
+.sideview-container .sideview-step.has-diag {
+  flex-wrap: wrap;
+}
+
+.sideview-container .sideview-step-diag {
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--sv-radius-sm);
+  background: transparent;
+  color: var(--sv-text-muted);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sideview-container .sideview-step-diag:hover {
+  background: var(--sv-hover-overlay);
+}
+
+.sideview-container .sideview-step-diag svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+}
+
+.sideview-container .sideview-step-diag.is-ok {
+  color: var(--sv-success-text);
+}
+
+.sideview-container .sideview-step-diag.is-warn {
+  color: var(--sv-warning-text);
+  background: var(--sv-warning-subtle);
+}
+
+.sideview-container .sideview-step-diag.is-error {
+  color: var(--sv-danger-text);
+  background: var(--sv-danger-subtle);
+}
+
+.sideview-container .sideview-step-diag.is-pending {
+  cursor: default;
+}
+
+.sideview-container .sideview-joincheck {
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid var(--sv-border-light);
+  border-left: 3px solid var(--sv-success-text);
+  border-radius: var(--sv-radius-sm);
+  background: var(--sv-surface);
+  font-size: 12px;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-joincheck:empty {
+  display: none;
+}
+
+.sideview-container .sideview-joincheck.is-warn {
+  border-left-color: var(--sv-warning);
+}
+
+.sideview-container .sideview-joincheck.is-error {
+  border-left-color: var(--sv-danger);
+}
+
+.sideview-container .sideview-joincheck-title {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sideview-container .sideview-joincheck code {
+  font-family: var(--sv-font-mono);
+  font-size: 11px;
+}
+
+.sideview-container .sideview-joincheck-stats {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 10px;
+  margin: 0 0 8px;
+}
+
+.sideview-container .sideview-joincheck-stats dt {
+  color: var(--sv-text-muted);
+}
+
+.sideview-container .sideview-joincheck-stats dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.sideview-container .sideview-joincheck-rows {
+  width: 100%;
+  margin-bottom: 8px;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.sideview-container .sideview-joincheck-rows th,
+.sideview-container .sideview-joincheck-rows td {
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--sv-border-light);
+  text-align: left;
+  font-weight: 400;
+}
+
+.sideview-container .sideview-joincheck-rows td:last-child {
+  text-align: right;
+}
+
+.sideview-container .sideview-joincheck-rows tr.is-current td {
+  font-weight: 600;
+  background: var(--sv-primary-subtle);
+}
+
+.sideview-container .sideview-joincheck-list {
+  margin: 0 0 6px;
+  padding-left: 16px;
+}
+
+.sideview-container .sideview-joincheck-warnings li {
+  color: var(--sv-warning-text);
+}
+
+.sideview-container .sideview-joincheck-errors li {
+  color: var(--sv-danger-text);
 }
 
 /* Builder tabs (Filter, Arrange, Mutate, Recode, Summarise) */

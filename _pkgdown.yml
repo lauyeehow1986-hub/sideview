@@ -61,10 +61,11 @@ reference:
       - sv_code_select
       - sv_escape_ident
 
-  - title: "Categorical Discrepancies & Recoding"
-    desc: "Detect fuzzy string mismatches and generate case_match, fct_recode, or auto-cleanup rules."
+  - title: "Join Checks, Discrepancies & Recoding"
+    desc: "Check join keys, detect fuzzy string mismatches, and generate case_when, fct_recode, or auto-cleanup rules."
     contents:
       - sv_detect_discrepancies
+      - sv_join_diagnostics
       - sv_code_recode
       - sv_auto_clean_rules
 

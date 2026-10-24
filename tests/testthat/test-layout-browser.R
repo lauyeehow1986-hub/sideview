@@ -737,3 +737,109 @@ test_that("Ctrl+Enter in a builder adds the step", {
   })()"))
   expect_equal(r$after, r$before + 1)
 })
+
+test_that("a new join shows R's key check, and the Discrepancy tab explains it", {
+  b <- sv_shared_page()
+  env <- new.env()
+  eval(parse(text = sv_fixture_code), envir = env)
+  want <- sv_join_diagnostics(env$patients, env$visits, c(patient_id = "pid"))
+  mm <- sv_join_diagnostics(env$visits, env$labs, c(pid = "patient_id"), x_name = "visits", y_name = "labs")
+
+  r <- sv_js(b, sprintf(paste0("(async () => {", sv_pipeline_helpers_js, "
+    const pat = %s, vis = %s, labs = %s;
+    const until = async (f, ms) => { for (let t = 0; t < ms; t += 50) { if (f()) return true; await sleep(50); } return false; };
+    q('[data-action=\"clear-operation\"]').click(); await sleep(300);
+    document.querySelectorAll('.sideview-toast').forEach(t => t.remove());
+    fire(pat.querySelector('.sideview-col-port[data-col-name=\"patient_id\"]')); await sleep(150);
+    fire(vis.querySelector('.sideview-col-port[data-col-name=\"pid\"]')); await sleep(100);
+    const out = {};
+    out.resolved = await until(() => q('.sideview-step-diag.is-ok, .sideview-step-diag.is-warn, .sideview-step-diag.is-error'), 8000);
+    const diag = q('.sideview-step-diag');
+    out.diagClass = diag.className; out.diagText = diag.textContent;
+    out.toastsAfterOk = document.querySelectorAll('.sideview-toast-warning, .sideview-toast-danger').length;
+    diag.click(); await sleep(200);
+    out.tab = (q('.sideview-drawer-tabs [aria-selected=\"true\"]') || {}).dataset.tab;
+    const box = q('.sideview-joincheck');
+    out.boxVisible = box.offsetParent !== null && box.getBoundingClientRect().height > 40;
+    out.title = box.querySelector('.sideview-joincheck-title').textContent;
+    out.rows = Object.fromEntries([...box.querySelectorAll('.sideview-joincheck-rows tbody tr')]
+      .map(tr => [tr.cells[0].textContent, tr.cells[1].textContent]));
+    out.current = (box.querySelector('tr.is-current td') || {}).textContent;
+    out.text = box.textContent;
+    fire(vis.querySelector('.sideview-col-port[data-col-name=\"pid\"]')); await sleep(150);
+    fire(labs.querySelector('.sideview-col-port[data-col-name=\"patient_id\"]')); await sleep(100);
+    out.mmResolved = await until(() => document.querySelectorAll('.sideview-step-diag.is-warn').length > 0, 8000);
+    out.toasts = [...document.querySelectorAll('.sideview-toast')].map(t => ({ text: t.textContent, cls: t.className }));
+    out.mmBox = q('.sideview-joincheck').className;
+    out.mmWarn = (q('.sideview-joincheck-warnings li') || {}).textContent;
+    const bw = q('.sideview-drawer').getBoundingClientRect(), jb = q('.sideview-joincheck').getBoundingClientRect();
+    out.fits = jb.left >= bw.left - 1 && jb.right <= bw.right + 1;
+    q('[data-action=\"clear-operation\"]').click(); await sleep(300);
+    tab('pipeline');
+    return out;
+  })()"), sv_card_js("patients"), sv_card_js("visits"), sv_card_js("labs")))
+
+  expect_true(r$resolved)
+  expect_match(r$diagClass, paste0("is-", want$status))
+  expect_match(r$diagText, "1:m", fixed = TRUE)
+  expect_match(r$diagText, sprintf("%.0f%% of patients matched", 100 * want$match_rate_x), fixed = TRUE)
+  expect_equal(r$toastsAfterOk, if (want$status == "ok") 0 else 1)
+  expect_identical(r$tab, "discrepancy")
+  expect_true(r$boxVisible)
+  expect_match(r$title, "Join check: patients → visits by patient_id = pid", fixed = TRUE)
+  fmt <- function(n) formatC(n, big.mark = ",", format = "d")
+  expect_identical(unlist(r$rows), vapply(want$rows, function(n) fmt(n), character(1)))
+  expect_identical(r$current, "left_join")
+  # The fixture's " P00001" and "p00002" are the kind of near-miss keys the hints catch.
+  expect_match(r$text, "Not in patients:", fixed = TRUE)
+  expect_match(r$text, "trimming whitespace would match 6 more visits rows.", fixed = TRUE)
+  expect_false(grepl("would match 0 ", r$text, fixed = TRUE))
+  expect_match(r$text, "ignoring case would match", fixed = TRUE)
+
+  expect_identical(mm$relationship, "many-to-many")
+  expect_true(r$mmResolved)
+  toast <- Filter(function(t) grepl("visits → labs", t$text, fixed = TRUE), r$toasts)
+  expect_length(toast, 1)
+  expect_match(toast[[1]]$cls, "sideview-toast-warning")
+  expect_match(toast[[1]]$text, "Many-to-many", fixed = TRUE)
+  expect_match(r$mmBox, "is-warn")
+  expect_identical(r$mmWarn, mm$warnings[1])
+  expect_true(r$fits)
+})
+
+test_that("the saved widget checks join keys in the browser without R", {
+  skip_if_no_browser()
+  env <- new.env()
+  eval(parse(text = sv_fixture_code), envir = env)
+  dir <- withr::local_tempdir()
+  file <- file.path(dir, "joins.html")
+  w <- local(sideview_widget(patients, visits), envir = env)
+  suppressMessages(save_sideview(w, file, selfcontained = FALSE))
+  url <- paste0("file:///", gsub("\\\\", "/", normalizePath(file)))
+  b <- sv_open_page(url, wait_for = "!!document.querySelector('.sideview-card .sideview-col-port')")
+  withr::defer(try(b$close(), silent = TRUE))
+  expect_true(attr(b, "sv_ready"))
+  want <- sv_join_diagnostics(env$patients, env$visits, c(patient_id = "pid"))
+
+  r <- sv_js(b, sprintf(paste0("(async () => {", sv_pipeline_helpers_js, "
+    const eng = document.querySelector('.sideview-container')._sideviewInstance;
+    const pat = %s, vis = %s;
+    fire(pat.querySelector('.sideview-col-port[data-col-name=\"patient_id\"]')); await sleep(150);
+    fire(vis.querySelector('.sideview-col-port[data-col-name=\"pid\"]')); await sleep(300);
+    const s = eng.pipeline.steps.filter(x => x.kind === 'join')[0];
+    const d = s && eng.joinDiag[eng.joinDiagSig(s)];
+    const diag = q('.sideview-step-diag');
+    return { mode: eng.options.mode, steps: eng.pipeline.steps.length, d: d || null,
+             diag: diag ? diag.textContent : null };
+  })()"), sv_card_js("patients"), sv_card_js("visits")))
+
+  expect_identical(r$mode, "embedded")
+  expect_equal(r$steps, 1)
+  for (f in c("n_x", "n_y", "matched_x", "matched_y", "distinct_matched", "dup_keys_y")) {
+    expect_equal(r$d[[f]], want[[f]], info = f)
+  }
+  expect_identical(r$d$relationship, want$relationship)
+  expect_equal(unlist(r$d$rows), unlist(want$rows))
+  expect_match(r$diag, "1:m", fixed = TRUE)
+  expect_length(attr(b, "sv_errors")(), 0)
+})

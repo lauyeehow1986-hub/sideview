@@ -451,8 +451,195 @@
     if (obj.pipe) this.setPipe(obj.pipe);
   };
 
+  // ---- join diagnostics ------------------------------------------------------
+  // Mirrors sv_join_diagnostics() in R/diagnostics.R for the htmlwidget, which
+  // has the full data but no R session. Keys compare like dplyr (NA matches NA).
+
+  var NA_KEY = '\u0001NA';
+  var KEY_SEP = '\u001f';
+
+  function isMissing(v) {
+    return v === null || v === undefined || (typeof v === 'number' && isNaN(v));
+  }
+
+  function keyKind(type) {
+    var t = String(type || '').toLowerCase();
+    if (t === 'character' || t === 'factor' || t === 'string' || t === 'chr' || t === 'fct') return 'character';
+    if (t === 'date') return 'Date';
+    if (t === 'posixct' || t === 'posixt' || t === 'datetime' || t === 'dttm') return 'date-time';
+    if (t === 'logical' || t === 'lgl') return 'logical';
+    if (NUMERIC_TYPES[t]) return 'numeric';
+    return t || 'unknown';
+  }
+
+  function joinKeys(cols, names, kinds, fn) {
+    var n = names.length ? (cols[names[0]] || []).length : 0;
+    var out = new Array(n);
+    for (var i = 0; i < n; i++) {
+      var parts = [];
+      for (var j = 0; j < names.length; j++) {
+        var v = cols[names[j]][i];
+        if (isMissing(v)) { parts.push(NA_KEY); continue; }
+        var s = String(v);
+        if (fn && kinds[j] === 'character') s = fn(s);
+        parts.push(s);
+      }
+      out[i] = parts.join(KEY_SEP);
+    }
+    return out;
+  }
+
+  function tally(keys) {
+    var m = new Map();
+    for (var i = 0; i < keys.length; i++) m.set(keys[i], (m.get(keys[i]) || 0) + 1);
+    return m;
+  }
+
+  function joinCounts(kx, ky) {
+    var cx = tally(kx), cy = tally(ky);
+    var inner = 0, matchedX = 0, matchedY = 0, distinctMatched = 0;
+    var manyX = false, manyY = false, dupX = 0, dupY = 0;
+    var unmatchedX = [], unmatchedY = [];
+    cx.forEach(function (nx, k) {
+      if (nx > 1) dupX++;
+      var ny = cy.get(k);
+      if (ny) {
+        inner += nx * ny; matchedX += nx; distinctMatched++;
+        if (nx > 1) manyX = true;
+        if (ny > 1) manyY = true;
+      } else {
+        unmatchedX.push(k);
+      }
+    });
+    cy.forEach(function (ny, k) {
+      if (ny > 1) dupY++;
+      if (cx.has(k)) matchedY += ny; else unmatchedY.push(k);
+    });
+    var rel = !distinctMatched ? 'no matches' : manyX && manyY ? 'many-to-many' :
+      manyY ? 'one-to-many' : manyX ? 'many-to-one' : 'one-to-one';
+    var nX = kx.length, nY = ky.length;
+    return {
+      distinct_x: cx.size, distinct_y: cy.size, distinct_matched: distinctMatched,
+      matched_x: matchedX, matched_y: matchedY, dup_keys_x: dupX, dup_keys_y: dupY,
+      relationship: rel,
+      rows: {
+        left_join: inner + (nX - matchedX), inner_join: inner,
+        full_join: inner + (nX - matchedX) + (nY - matchedY), right_join: inner + (nY - matchedY),
+        semi_join: matchedX, anti_join: nX - matchedX
+      },
+      unmatched_x: unmatchedX, unmatched_y: unmatchedY
+    };
+  }
+
+  function decodeKey(k) {
+    return k.split(NA_KEY).join('NA').split(KEY_SEP).join(', ');
+  }
+
+  function fmtN(n) {
+    return Number(n).toLocaleString('en-US');
+  }
+
+  /**
+   * Diagnose a join before running it.
+   * @param xCols,yCols column arrays keyed by name ({ id: [...], ... })
+   * @param by [{ left, right }] key pairs
+   * @param opts { sampleN, xName, yName, xTypes, yTypes } (types are R class names)
+   */
+  function joinDiagnostics(xCols, yCols, by, opts) {
+    opts = opts || {};
+    var xName = opts.xName || 'x', yName = opts.yName || 'y';
+    var sampleN = opts.sampleN === undefined ? 5 : opts.sampleN;
+    var byX = by.map(function (p) { return p.left; });
+    var byY = by.map(function (p) { return p.right; });
+    var kindsX = byX.map(function (c) { return keyKind((opts.xTypes || {})[c] || guessKind(xCols[c])); });
+    var kindsY = byY.map(function (c) { return keyKind((opts.yTypes || {})[c] || guessKind(yCols[c])); });
+    var kx = joinKeys(xCols, byX, kindsX), ky = joinKeys(yCols, byY, kindsY);
+    var core = joinCounts(kx, ky);
+    var nX = kx.length, nY = ky.length;
+    var anyNa = function (cols, names) {
+      var n = 0;
+      for (var i = 0; i < (names.length ? cols[names[0]].length : 0); i++) {
+        if (names.some(function (c) { return isMissing(cols[c][i]); })) n++;
+      }
+      return n;
+    };
+    var d = {
+      by: by.map(function (p) { return { left: p.left, right: p.right }; }),
+      n_x: nX, n_y: nY,
+      distinct_x: core.distinct_x, distinct_y: core.distinct_y, distinct_matched: core.distinct_matched,
+      matched_x: core.matched_x, matched_y: core.matched_y,
+      match_rate_x: nX ? core.matched_x / nX : 0, match_rate_y: nY ? core.matched_y / nY : 0,
+      na_x: anyNa(xCols, byX), na_y: anyNa(yCols, byY),
+      dup_keys_x: core.dup_keys_x, dup_keys_y: core.dup_keys_y,
+      relationship: core.relationship, rows: core.rows,
+      unmatched_x: core.unmatched_x.slice(0, sampleN).map(decodeKey),
+      unmatched_y: core.unmatched_y.slice(0, sampleN).map(decodeKey),
+      type_issues: [], hints: []
+    };
+    byX.forEach(function (c, i) {
+      if (kindsX[i] !== kindsY[i]) {
+        var col = c === byY[i] ? c : c + ' / ' + byY[i];
+        d.type_issues.push(col + ' is ' + kindsX[i] + ' in ' + xName + ' but ' + kindsY[i] + ' in ' + yName +
+          ': dplyr will refuse this join until both sides have the same type.');
+      }
+    });
+    if (core.matched_x < nX || core.matched_y < nY) {
+      var fixes = [
+        { fix: 'trim', label: 'trimming whitespace', fn: function (s) { return s.trim(); } },
+        { fix: 'case', label: 'ignoring case', fn: function (s) { return s.toLowerCase(); } },
+        { fix: 'zeros', label: 'dropping leading zeros', fn: function (s) { return s.replace(/^0+(?=[0-9])/, ''); } }
+      ];
+      fixes.forEach(function (f) {
+        var alt = joinCounts(joinKeys(xCols, byX, kindsX, f.fn), joinKeys(yCols, byY, kindsY, f.fn));
+        var ex = alt.matched_x - core.matched_x, ey = alt.matched_y - core.matched_y;
+        if (ex > 0 || ey > 0) d.hints.push({ fix: f.fix, label: f.label, extra_x: ex, extra_y: ey });
+      });
+    }
+    var w = [];
+    if (d.relationship === 'many-to-many') {
+      w.push('Many-to-many: keys repeat in both tables, so a left join gives ' + fmtN(d.rows.left_join) +
+        ' rows from ' + fmtN(nX) + ' ' + xName + ' rows.');
+    }
+    if (d.relationship === 'no matches' && nX && nY) {
+      w.push('No ' + xName + ' key matches any ' + yName + ' key.');
+    } else if (nX && d.match_rate_x < 0.5) {
+      w.push('Only ' + Math.round(100 * d.match_rate_x) + '% of ' + xName + ' rows have a match in ' + yName + '.');
+    }
+    if (d.na_x || d.na_y) {
+      w.push('Missing keys (' + fmtN(d.na_x) + ' in ' + xName + ', ' + fmtN(d.na_y) + ' in ' + yName +
+        '): dplyr matches NA to NA by default (na_matches = "na").');
+    }
+    d.warnings = w;
+    d.status = d.type_issues.length ? 'error' : w.length ? 'warn' : 'ok';
+    return d;
+  }
+
+  // Column kind from the values when the card has no R types.
+  function guessKind(values) {
+    if (!values) return 'unknown';
+    for (var i = 0; i < values.length; i++) {
+      var v = values[i];
+      if (isMissing(v)) continue;
+      if (typeof v === 'number') return 'numeric';
+      if (typeof v === 'boolean') return 'logical';
+      return 'character';
+    }
+    return 'logical';
+  }
+
+  /** One-line summary of a diagnostics result for a join step. */
+  function describeDiagnostics(d, type, xName) {
+    var rows = d.rows[type || 'left_join'];
+    var rel = { 'one-to-one': '1:1', 'one-to-many': '1:m', 'many-to-one': 'm:1', 'many-to-many': 'm:m' }[d.relationship] ||
+      d.relationship;
+    return rel + ' · ' + Math.round(100 * d.match_rate_x) + '% of ' + (xName || 'x') + ' matched · ' +
+      (rows === undefined ? '' : fmtN(rows) + ' rows');
+  }
+
   var api = {
     Pipeline: Pipeline,
+    joinDiagnostics: joinDiagnostics,
+    describeDiagnostics: describeDiagnostics,
     ident: ident,
     str: str,
     literal: literal,

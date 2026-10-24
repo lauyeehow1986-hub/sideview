@@ -222,6 +222,31 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     dispatch_message("sideview_rows", win)
   }, ignoreInit = FALSE)
 
+  # 1c. Join diagnostics on the full data for a join step (pipeline join keys)
+  shiny::observeEvent(input$join_diagnostics_request, {
+    req <- input$join_diagnostics_request
+    if (is.null(req) || is.null(req$left) || is.null(req$right) || !length(req$by)) return()
+    by <- req$by
+    if (is.data.frame(by)) by <- lapply(seq_len(nrow(by)), function(i) as.list(by[i, , drop = FALSE]))
+    left_cols <- vapply(by, function(p) as.character(p$left), character(1))
+    right_cols <- vapply(by, function(p) as.character(p$right), character(1))
+    cx <- cards_by_name[[req$left]] %||% cards_by_id[[req$left]]
+    cy <- cards_by_name[[req$right]] %||% cards_by_id[[req$right]]
+    result <- tryCatch({
+      if (is.null(cx) || !is.data.frame(cx$data) || is.null(cy) || !is.data.frame(cy$data)) {
+        stop("Join diagnostics need both tables as data frames.", call. = FALSE)
+      }
+      sv_join_diagnostics_json(sv_join_diagnostics(
+        cx$data, cy$data, by = stats::setNames(right_cols, left_cols),
+        x_name = req$left, y_name = req$right
+      ))
+    }, error = function(e) list(error = conditionMessage(e)))
+    result$id <- req$id
+    result$left <- req$left
+    result$right <- req$right
+    dispatch_message("sideview_join_diagnostics", result)
+  }, ignoreInit = FALSE)
+
   # 2. Column Renamed -> Rename Code Generation
   shiny::observeEvent(input$column_renamed, {
     evt <- input$column_renamed

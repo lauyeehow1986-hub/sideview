@@ -65,6 +65,35 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 
 ## Log
 
+### 2026-10-24 — Phase 4.3: join diagnostics before you join
+- **Why:** in clinical data the costly join mistakes are silent: duplicated visit rows, IDs with stray spaces or case, keys of different types. A spline used to give code with no hint of what the join would do.
+- **R API (new `R/diagnostics.R`):** exported `sv_join_diagnostics(x, y, by, sample_n, x_name, y_name)`. `by` works as in dplyr. It returns:
+  - row counts for every join type, equal to dplyr (NA matches NA, `na_matches = "na"`); 1e6 and "1000000" compare equal
+  - match rate both ways, distinct/repeated/missing keys
+  - relationship (1:1, 1:m, m:1, m:m, no matches), on matched keys only
+  - samples of unmatched keys
+  - hints: trimming, ignoring case or dropping leading zeros, each measured on its own, shown only when it gains rows
+  - type issues (status `error`, since dplyr refuses the join); warnings for m:m, no matches, under 50% matched, missing keys
+  - a `print()` method
+- **JS twin:** `SideviewPipeline.joinDiagnostics()` and `describeDiagnostics()` in sv-pipeline.js, with the same fields. The widget has every row in the browser, so it computes locally. The gadget sends `join_diagnostics_request` and R answers `sideview_join_diagnostics` from the full data frame, not the 500-row preview.
+- **UI:**
+  - Each join step in the Pipeline tab gets a status line, e.g. "1:m · 96% of patients matched · 590 rows" (green ok, amber warn, red error).
+  - A warning or error also raises one toast per set of keys.
+  - Clicking the line opens the Discrepancy tab with the join check: relationship, matched rows on each side, distinct/repeated/missing keys, a rows-per-join-type table with the current type marked, unmatched samples and possible fixes.
+  - A new join becomes the one shown.
+- **Found only in a real browser, then fixed:** the gadget's drawer is rendered by R (`R/app_ui.R`), not by the JS template, so it had no `.sideview-joincheck` box. The panel stayed empty in the gadget while the widget worked.
+- **Found in RStudio, then fixed:** hints read "would match 0 more patients rows and 6 more visits rows". Zero sides are now left out, in both JS and `print()`.
+- **Tests:**
+  - New `test-diagnostics.R` (145+ expectations): dplyr row-count parity over random seeds (single and multi-key), relationships, fields, samples, warnings, print, hints, type errors, input errors, JS/R parity, and the server observer through `testServer`.
+  - `helper-node.R` now holds `run_pipeline_js()`, shared with test-pipeline.
+  - Browser (2 new tests):
+    - gadget: real clicks on ports, the line resolves from R, the panel's rows table matches R, no warning toast for an ok join, an m:m join raises a warning toast and an amber panel, and the panel fits the drawer
+    - saved widget (`save_sideview`, file://): the local diagnostics equal R's
+  - `layout-browser`: 235 expectations, 0 failed. Full suite: 1910, 0 failed.
+- **Verified in the RStudio Viewer pane (R 4.5.1), with real clicks:**
+  - light mode, patients→visits: green "1:m · 96% of patients matched · 590 rows". The panel shows 590/582/608/600/192/8 rows, "Not in patients: P00001, P99999, p00002", and trim/case hints.
+  - dark mode, then visits→labs: amber toast "Many-to-many … gives 14,604 rows from 600 visits rows". The m:m line and panel are legible on dark. The composed code builds `visits_prep` first.
+
 ### 2026-10-24 — Phase 3: light/dark theme, keyboard shortcuts, accessible controls
 - **Theme API (new `R/theme.R`):**
   - `sv_theme(mode, primary, font, font_mono, radius, ...)` builds token overrides. Names and values are validated, so no `;{}<>` can reach the inline style.
