@@ -660,6 +660,8 @@ function sendToShiny(name, value) {
     // Join diagnostics by join signature (tables + keys); see joinDiagFor().
     this.joinDiag = {};
     this.joinDiagPending = {};
+    this.colProfiles = {};
+    this.colProfilePending = {};
     this.joinCheckStepId = null;
 
     // The composable pipeline is the single source of the generated code.
@@ -725,6 +727,8 @@ function sendToShiny(name, value) {
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
     moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
     check: '<path d="M20 6 9 17l-5-5"/>',
+    inspect: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
+    download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
     alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
     keyboard: '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/>'
   };
@@ -1578,6 +1582,8 @@ function sendToShiny(name, value) {
       } else if (action === 'toggle-drawer') {
         var drawer = self.container.querySelector('.sideview-drawer');
         if (drawer) drawer.classList.toggle('collapsed');
+      } else if (action === 'export-codebook') {
+        self.exportCodebook();
       } else if (action === 'close-drawer') {
         var dr = self.container.querySelector('.sideview-drawer');
         if (dr) dr.classList.add('collapsed');
@@ -1878,6 +1884,17 @@ function sendToShiny(name, value) {
       if (!cardEl || !th) return;
       var colName = sortBtn.dataset.colName || th.dataset.colName;
       self.sortColumn(cardEl, colName, th.cellIndex, sortBtn);
+    });
+
+    // Inspect Column Click -> Inspect tab
+    this.container.addEventListener('click', function (e) {
+      var inspectBtn = e.target.closest('[data-action="inspect-col"]');
+      if (!inspectBtn) return;
+      e.stopPropagation();
+      var cardEl = inspectBtn.closest('.sideview-card');
+      var th = inspectBtn.closest('th');
+      if (!cardEl || !th) return;
+      self.inspectColumn(cardEl.dataset.cardName, inspectBtn.dataset.colName || th.dataset.colName);
     });
 
     // Filter Column Click
@@ -2310,6 +2327,7 @@ function sendToShiny(name, value) {
           '  <div class="col-header-tools">',
           '    <button class="sideview-th-btn sideview-sort-btn" data-action="sort-col" data-col-name="' + safeName + '" title="Sort column (Asc / Desc / Reset)" aria-label="Sort ' + safeName + '" data-sv-icon="sort">' + icon('sort') + '</button>',
           '    <button class="sideview-th-btn sideview-filter-btn" data-action="filter-col" data-col-name="' + safeName + '" title="Filter column" aria-label="Filter ' + safeName + '" data-sv-icon="filter">' + icon('filter') + '</button>',
+          '    <button class="sideview-th-btn sideview-inspect-btn" data-action="inspect-col" data-col-name="' + safeName + '" title="Inspect column" aria-label="Inspect ' + safeName + '" data-sv-icon="inspect">' + icon('inspect') + '</button>',
           '    <span class="sideview-col-port" data-col-name="' + safeName + '" title="Connect to map field"></span>',
           '  </div>',
           '</div>',
@@ -2345,7 +2363,8 @@ function sendToShiny(name, value) {
       element: cardEl,
       body: body,
       x: initialX,
-      y: initialY
+      y: initialY,
+      colLabels: cardData.col_labels || null
     };
     this.cards.set(cardId, cardMeta);
 
@@ -2994,6 +3013,7 @@ function sendToShiny(name, value) {
     { id: 'mutate', label: 'Mutate' },
     { id: 'recode', label: 'Recode' },
     { id: 'summarise', label: 'Summarise' },
+    { id: 'inspect', label: 'Inspect' },
     { id: 'discrepancy', label: 'Discrepancy' },
     { id: 'chat', label: 'Copilot' }
   ];
@@ -3058,6 +3078,7 @@ function sendToShiny(name, value) {
       p.style.display = on ? (tabName === 'chat' ? 'flex' : '') : 'none';
     });
     if (BUILDER_TABS[tabName]) this.renderBuilder(tabName);
+    if (tabName === 'inspect') this.renderInspector();
   };
 
   SideviewEngine.prototype.recordSort = function (table, col, direction) {
@@ -3392,6 +3413,210 @@ function sendToShiny(name, value) {
     return '';
   };
 
+  // ---- column inspector ------------------------------------------------------
+  // The Inspect tab profiles one column. The gadget asks R, which has the full
+  // data (input `column_profile_request` -> message `sideview_column_profile`);
+  // the htmlwidget computes it in the browser with SideviewPipeline.columnProfile().
+
+  SideviewEngine.prototype.inspectColumn = function (table, column) {
+    this.inspectTarget = { table: table, column: column };
+    var drawer = this.container.querySelector('.sideview-drawer');
+    if (drawer) drawer.classList.remove('collapsed');
+    this.activateDrawerTab('inspect');
+  };
+
+  SideviewEngine.prototype.isGadget = function () {
+    return this.options.mode !== 'embedded' && typeof global.Shiny !== 'undefined';
+  };
+
+  SideviewEngine.prototype.columnProfileFor = function (table, column) {
+    var sig = JSON.stringify([table, column]);
+    if (this.colProfiles[sig]) return this.colProfiles[sig];
+    if (this.colProfilePending[sig]) return null;
+    if (this.isGadget()) {
+      this.colProfilePending[sig] = true;
+      this.requestColumnProfile({ id: sig, table: table, column: column }, 0);
+      return null;
+    }
+    var x = this.cardColumns(table, [column]);
+    var p = x.error ? { error: x.error } :
+      global.SideviewPipeline.columnProfile(x.cols[column], x.types[column], { label: this.columnLabel(table, column) });
+    this.colProfiles[sig] = p;
+    return p;
+  };
+
+  SideviewEngine.prototype.requestColumnProfile = function (req, attempt) {
+    var self = this;
+    if (sendToShiny('column_profile_request', req)) return;
+    if (attempt >= 40 || !this.container.isConnected) {
+      delete this.colProfilePending[req.id];
+      this.colProfiles[req.id] = { error: 'The R session did not answer.' };
+      this.renderInspector();
+      return;
+    }
+    setTimeout(function () { self.requestColumnProfile(req, attempt + 1); }, 250);
+  };
+
+  SideviewEngine.prototype.onColumnProfile = function (data) {
+    if (!data || !data.id) return;
+    delete this.colProfilePending[data.id];
+    data.top = asArray(data.top);
+    data.issues = asArray(data.issues);
+    if (data.histogram) {
+      data.histogram.counts = asArray(data.histogram.counts);
+      data.histogram.breaks = asArray(data.histogram.breaks);
+    }
+    this.colProfiles[data.id] = data;
+    var t = this.inspectTarget;
+    if (t && JSON.stringify([t.table, t.column]) === data.id) this.renderInspector();
+  };
+
+  // Variable label from R (haven/labelled `label` attribute), sent with widget cards.
+  SideviewEngine.prototype.columnLabel = function (table, column) {
+    var labels = null;
+    this.cards.forEach(function (c) { if (c.name === table) labels = c.colLabels; });
+    return labels && labels[column] ? String(labels[column]) : null;
+  };
+
+  SideviewEngine.prototype.renderInspector = function () {
+    var pane = this.container.querySelector('.sideview-drawer-content > [data-pane="inspect"]');
+    if (!pane) return;
+    var schemas = this.tableSchemas().filter(function (t) { return t.columns.length; });
+    if (!schemas.length) {
+      pane.innerHTML = '<p class="sideview-drawer-desc">Add a table to the canvas to inspect its columns.</p>';
+      return;
+    }
+    var t = this.inspectTarget || {};
+    var schema = schemas.filter(function (s) { return s.name === t.table; })[0] || schemas[0];
+    var names = schema.columns.map(function (c) { return c.name; });
+    var column = names.indexOf(t.column) >= 0 ? t.column : names[0];
+    this.inspectTarget = { table: schema.name, column: column };
+    var p = this.columnProfileFor(schema.name, column);
+    var body;
+    if (!p) body = '<p class="sideview-drawer-desc">Profiling ' + escapeHtml(column) + '…</p>';
+    else if (p.error) body = '<p class="sideview-drawer-desc">' + escapeHtml(p.error) + '</p>';
+    else body = this.profileHtml(column, p);
+    pane.innerHTML = '<div class="sideview-inspector">' +
+      '<div class="sideview-inspect-pick">' +
+      '<label class="sideview-builder-field">Table <select data-inspect="table">' +
+      optionList(schemas.map(function (s) { return s.name; }), schema.name) + '</select></label>' +
+      '<label class="sideview-builder-field">Column <select data-inspect="column">' +
+      optionList(names, column) + '</select></label></div>' +
+      '<div class="sideview-inspect-body" aria-live="polite">' + body + '</div>' +
+      '<div class="sideview-builder-actions">' +
+      '<button type="button" class="sideview-btn" data-action="export-codebook" title="One row per column of every table, as CSV">' +
+      icon('download') + ' Export codebook</button></div></div>';
+  };
+
+  function fmtNum(v) {
+    if (v === null || v === undefined || v === '') return '–';
+    if (typeof v !== 'number') return String(v);
+    if (!isFinite(v)) return String(v);
+    var a = Math.abs(v);
+    if (a !== 0 && (a >= 1e9 || a < 1e-3)) return v.toPrecision(4);
+    return Number(v.toPrecision(6)).toLocaleString('en-US', { maximumFractionDigits: 6 });
+  }
+
+  SideviewEngine.prototype.profileHtml = function (column, p) {
+    var esc = escapeHtml;
+    var fmt = function (n) { return Number(n).toLocaleString('en-US'); };
+    var rows = [
+      ['Rows', fmt(p.n)],
+      ['Missing', fmt(p.n_missing) + ' (' + (100 * p.pct_missing).toFixed(1) + '%)'],
+      ['Distinct', fmt(p.n_distinct)],
+      ['Unique key', p.unique_key ? 'Yes' : 'No']
+    ];
+    var st = p.stats;
+    if (st) {
+      if (p.kind === 'numeric') {
+        rows.push(['Min', fmtNum(st.min)], ['Q1', fmtNum(st.q1)], ['Median', fmtNum(st.median)],
+          ['Q3', fmtNum(st.q3)], ['Max', fmtNum(st.max)], ['IQR', fmtNum(st.q3 - st.q1)],
+          ['Mean', fmtNum(st.mean)], ['SD', fmtNum(st.sd)]);
+      } else {
+        rows.push(['Earliest', esc(st.min)], ['Median', esc(st.median)], ['Latest', esc(st.max)]);
+      }
+    }
+    var html = '<div class="sideview-inspect-head"><span class="sideview-inspect-name">' + esc(column) + '</span>' +
+      '<span class="sideview-inspect-kind">' + esc(p['class'] || p.kind) + '</span></div>';
+    if (p.label) html += '<p class="sideview-inspect-label">' + esc(p.label) + '</p>';
+    html += '<dl class="sideview-inspect-stats">' + rows.map(function (r) {
+      return '<div><dt>' + r[0] + '</dt><dd>' + r[1] + '</dd></div>';
+    }).join('') + '</dl>';
+    if (p.histogram && p.histogram.counts.length) html += this.histogramSvg(p.histogram);
+    if (p.top && p.top.length) {
+      var max = Math.max.apply(null, p.top.map(function (t) { return t.n; }));
+      html += '<p class="sideview-inspect-section">Most common values</p><ul class="sideview-inspect-top">' +
+        p.top.map(function (t) {
+          var shown = t.value === '' ? '<em>(empty string)</em>' : esc(t.value);
+          var pct = p.n ? (100 * t.n / p.n).toFixed(1) + '%' : '';
+          return '<li><span class="sideview-inspect-value">' + shown + '</span>' +
+            '<span class="sideview-inspect-track"><span class="sideview-inspect-fill" style="width:' +
+            (100 * t.n / max).toFixed(1) + '%"></span></span>' +
+            '<span class="sideview-inspect-n">' + fmt(t.n) + ' <span class="sideview-inspect-pct">' + pct + '</span></span></li>';
+        }).join('') + '</ul>';
+      if (p.n_other > 0) html += '<p class="sideview-builder-hint">and ' + fmt(p.n_other) + ' more distinct values</p>';
+    }
+    var issues = p.issues || [];
+    html += '<p class="sideview-inspect-section">Checks</p>';
+    html += issues.length ?
+      '<ul class="sideview-inspect-issues">' + issues.map(function (i) {
+        return '<li>' + icon('alert') + '<span>' + esc(i) + '</span></li>';
+      }).join('') + '</ul>' :
+      '<p class="sideview-inspect-ok">' + icon('check') + '<span>No problems found.</span></p>';
+    return html;
+  };
+
+  SideviewEngine.prototype.histogramSvg = function (h) {
+    var W = 300, H = 72, counts = h.counts, n = counts.length;
+    var max = Math.max.apply(null, counts) || 1;
+    var bw = W / n, bars = '';
+    for (var i = 0; i < n; i++) {
+      var bh = counts[i] ? Math.max(1, Math.round(H * counts[i] / max)) : 0;
+      var lo = h.breaks[i], hi = h.breaks[Math.min(i + 1, h.breaks.length - 1)];
+      bars += '<rect class="sideview-inspect-bar" x="' + (i * bw + 0.5).toFixed(2) + '" y="' + (H - bh) +
+        '" width="' + Math.max(1, bw - 1).toFixed(2) + '" height="' + bh + '"><title>' +
+        escapeHtml(fmtNum(lo) + ' to ' + fmtNum(hi) + ': ' + counts[i]) + '</title></rect>';
+    }
+    return '<figure class="sideview-inspect-hist">' +
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="Histogram of ' +
+      n + ' bins">' + bars + '</svg>' +
+      '<figcaption><span>' + escapeHtml(fmtNum(h.breaks[0])) + '</span><span>' +
+      escapeHtml(fmtNum(h.breaks[h.breaks.length - 1])) + '</span></figcaption></figure>';
+  };
+
+  /** Export codebook: R writes the file in the gadget; the widget downloads a CSV. */
+  SideviewEngine.prototype.exportCodebook = function () {
+    if (this.isGadget()) {
+      if (!sendToShiny('codebook_export', Date.now())) this.showToast('The R session is not connected.', 'warning');
+      return;
+    }
+    var P = global.SideviewPipeline, self = this, rows = [];
+    this.tableSchemas().forEach(function (s) {
+      var x = self.cardColumns(s.name, s.columns.map(function (c) { return c.name; }));
+      if (x.error) return;
+      s.columns.forEach(function (c, j) {
+        rows.push(P.codebookRow(s.name, c.name, j + 1, x.cols[c.name], x.types[c.name] || c.type,
+          { label: self.columnLabel(s.name, c.name) }));
+      });
+    });
+    if (!rows.length) { this.showToast('No tables to describe.', 'warning'); return; }
+    var csv = P.codebookCsv(rows);
+    this.lastCodebookCsv = csv;
+    try {
+      var url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'codebook.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      this.showToast('Codebook downloaded (' + rows.length + ' columns).', 'success');
+    } catch (err) {
+      this.showToast('Download blocked: ' + err.message, 'danger');
+    }
+  };
+
   SideviewEngine.prototype.renderBuilder = function (kind, keepTable) {
     var pane = this.container.querySelector('.sideview-drawer-content > [data-pane="' + kind + '"]');
     if (!pane) return;
@@ -3589,6 +3814,13 @@ function sendToShiny(name, value) {
         self.pipeline.update(li.dataset.stepId, { type: t.value });
       } else if (t.classList.contains('sideview-pipe-select')) {
         self.pipeline.setPipe(t.value);
+      } else if (t.dataset && t.dataset.inspect) {
+        var pick = t.closest('.sideview-inspector');
+        var tSel = pick && pick.querySelector('[data-inspect="table"]');
+        var cSel = pick && pick.querySelector('[data-inspect="column"]');
+        if (t.dataset.inspect === 'table') self.inspectTarget = { table: t.value, column: null };
+        else self.inspectTarget = { table: tSel ? tSel.value : '', column: cSel ? cSel.value : '' };
+        self.renderInspector();
       } else if (t.dataset && t.dataset.field === 'table') {
         var builder = t.closest('.sideview-builder');
         if (builder) self.renderBuilder(builder.dataset.builder, t.value);
@@ -4158,6 +4390,18 @@ function sendToShiny(name, value) {
       if (data) {
         self.renderSuggestedSplines(data);
       }
+    });
+
+    // Column profile computed in R on the full data (reply to column_profile_request)
+    global.Shiny.addCustomMessageHandler('sideview_column_profile', function (data) {
+      self.onColumnProfile(data);
+    });
+
+    // Codebook written by R (reply to codebook_export)
+    global.Shiny.addCustomMessageHandler('sideview_codebook_saved', function (data) {
+      if (!data || data.cancelled) return;
+      if (data.error) self.showToast('Codebook not saved: ' + data.error, 'danger');
+      else self.showToast('Codebook saved to ' + data.path, 'success');
     });
 
     // Join diagnostics computed in R on the full data (reply to join_diagnostics_request)

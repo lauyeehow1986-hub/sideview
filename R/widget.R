@@ -104,6 +104,11 @@ sideview_widget <- function(...,
         card$html_content <- as.character(htmltools::as.tags(card$widget))
         card$widget <- NULL
       }
+      if (is.data.frame(card$data)) {
+        labels <- lapply(card$data, function(col) attr(col, "label", exact = TRUE))
+        labels <- Filter(function(l) is.character(l) && length(l) == 1L, labels)
+        if (length(labels)) card$col_labels <- labels
+      }
       if (!is.null(card$col_types) && is.character(card$col_types)) {
         card$col_types <- as.list(card$col_types)
       }

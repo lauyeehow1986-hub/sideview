@@ -54,6 +54,7 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 | 41 | Drawer | Code preview text is centred and truncated | fixed (Phase 2.4) |
 | 42 | Pane | In the narrow Viewer pane the toolbar covers card headers and the palette overlaps cards | fixed (Phase 2.4) |
 | 43 | Codegen | R-side `sv_code_recode()` and `sv_auto_clean_rules()` emit `dplyr::case_match()`, deprecated in dplyr 1.2.0 (installed: 1.2.1). The new JS pipeline already uses `case_when(..., .default = col)` | fixed (Phase 4.1b) |
+| 44 | Widget | A saved/embedded widget shows the R-only buttons (Insert Script, Run & Exit, Run in R, Run Console); Insert Script toasts "Code inserted" though nothing happened | open |
 
 ## Backlog (future rounds, not yet scheduled)
 - Table version diff by key (data-lock comparisons between dataset versions).
@@ -64,6 +65,40 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 ---
 
 ## Log
+
+### 2026-10-24 — Phase 4.4: column inspector and `sv_codebook()` data dictionary
+- **Why:** before analysis a biostatistician wants each variable's type, missingness, distinct count, key check, quartiles and messy-text problems, plus a codebook to file with the analysis plan. Previously you had to leave the canvas and run `summary()` / `table()` by hand.
+- **R API (new `R/codebook.R`):**
+  - `sv_column_profile(x, top_n, bins)`: kind, class, label (haven/labelled `label` attribute), n, missing, distinct, unique key, type-7 quartiles, mean, SD (or earliest/median/latest for dates), a 20-bin equal-width histogram, top values with `n_other`, and plain-language checks:
+    - all missing; only one distinct value
+    - leading/trailing spaces; empty strings that aren't NA
+    - values that differ only in case or spacing
+    - numbers stored as text
+    - values beyond 3 IQR of the quartiles
+  - `sv_codebook(..., top_n, file)`: one row per column of every table. It writes `.csv`, or `.xlsx` through writexl (Suggests).
+- **JS twin:** `SideviewPipeline.columnProfile()`, `codebookRow()` and `codebookCsv()` in sv-pipeline.js. The widget profiles in the browser and downloads `codebook.csv`. The gadget asks R (`column_profile_request` → `sideview_column_profile`, using the full data, not the 500-row preview) and writes the file through `sv_choose_codebook_path()`, which uses RStudio's save dialog (`codebook_export` → `sideview_codebook_saved`).
+- **UI:**
+  - A new header button (bar-chart icon) opens a new **Inspect** drawer tab with Table/Column pickers, a stats grid, an SVG histogram, a top-values bar list, Checks, and **Export codebook**.
+  - Variable labels show under the name in the widget.
+  - Profiles are cached per table/column.
+- **Bugs found while building, then fixed:**
+  - `observeEvent(ignoreInit = TRUE)` dropped the first `codebook_export` in testServer, so it now uses `ignoreInit = FALSE`.
+  - Wording such as "1 values have": a plural helper now handles counts.
+  - Variant groups were ordered by locale, so R and JS disagreed; both now sort by radix.
+  - `format()` on a whole numeric vector padded digits; values are now formatted one at a time.
+- **Tests:**
+  - New `test-codebook.R` (204 expectations): numeric, text and date profiles; codebook columns; CSV/xlsx/errors; JS/R parity over 10 column types; the JS CSV is byte-equal to `write.csv(sv_codebook())`; and a server test of the full-data profile, export and cancel.
+  - Browser (2 new tests):
+    - gadget: a real click on the labs `value` inspect button shows "5,000" rows, and the quartiles and histogram equal R
+    - saved widget: the label shows, the profile equals R, and the downloaded CSV equals R's codebook
+  - `layout-browser`: 270 expectations, 0 failed. Full suite: 2122, 0 failed.
+- **Verified in the RStudio Viewer pane (R 4.5.1), with real clicks:**
+  - The header with four buttons is not cramped, and the nine drawer tabs wrap onto two clean rows.
+  - `age` shows the stats, a histogram and "No problems found". `sex` shows 39 missing (19.5%), top values Male/Female/F/male, and the case-variant check.
+  - Export codebook opened RStudio's native Save dialog from inside the running gadget. Saving `rstudio_codebook.xlsx` toasted the path, and the file reads back as 10 rows × 19 columns.
+  - Dark mode: the inspector, selects and histogram are legible.
+  - Saved widget (`save_sideview` → `rstudioapi::viewer`): the visits `sbp` profile (median 132) matches R's xlsx.
+- **Found in RStudio, not fixed in this step:** the saved widget still shows Insert Script / Run & Exit / Run in R / Run Console, and Insert Script toasts success with no R session (#44).
 
 ### 2026-10-24 — Phase 4.3: join diagnostics before you join
 - **Why:** in clinical data the costly join mistakes are silent: duplicated visit rows, IDs with stray spaces or case, keys of different types. A spline used to give code with no hint of what the join would do.

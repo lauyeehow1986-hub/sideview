@@ -69,6 +69,12 @@ reference:
       - sv_code_recode
       - sv_auto_clean_rules
 
+  - title: "Column Profiles & Codebook"
+    desc: "Profile a column (missingness, distinct values, quartiles, common values, data-quality flags) and export a data dictionary."
+    contents:
+      - sv_column_profile
+      - sv_codebook
+
   - title: "Canvas State Persistence & Cloud Sharing"
     desc: "Serialize complete canvas topologies, card positions, splines, and pipelines to JSON or RDS."
     contents:

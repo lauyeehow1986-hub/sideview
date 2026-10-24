@@ -31,5 +31,7 @@ Suggests:
     gt,
     flextable,
     knitr,
-    rmarkdown
+    rmarkdown,
+    writexl,
+    withr
 Config/testthat/edition: 3

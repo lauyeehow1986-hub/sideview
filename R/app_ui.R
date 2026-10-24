@@ -275,6 +275,7 @@ render_card_tag <- function(card, index = 1L) {
             class = "col-header-tools",
             htmltools::tags$button(class = "sideview-th-btn sideview-sort-btn", `data-action` = "sort-col", `data-col-name` = col, title = "Sort column (Asc / Desc / Reset)", `aria-label` = paste("Sort", col), `data-sv-icon` = "sort"),
             htmltools::tags$button(class = "sideview-th-btn sideview-filter-btn", `data-action` = "filter-col", `data-col-name` = col, title = "Filter column", `aria-label` = paste("Filter", col), `data-sv-icon` = "filter"),
+            htmltools::tags$button(class = "sideview-th-btn sideview-inspect-btn", `data-action` = "inspect-col", `data-col-name` = col, title = "Inspect column", `aria-label` = paste("Inspect", col), `data-sv-icon` = "inspect"),
             htmltools::tags$span(class = "sideview-col-port", `data-col-name` = col, title = "Connect to map field")
           ),
           profile_summary
@@ -598,6 +599,7 @@ sv_drawer_tabs <- c(
   mutate = "Mutate",
   recode = "Recode",
   summarise = "Summarise",
+  inspect = "Inspect",
   discrepancy = "Discrepancy",
   chat = "Copilot"
 )

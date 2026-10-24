@@ -33,8 +33,8 @@ of \code{fix}, \code{label}, \code{extra_x}, \code{extra_y}), \code{warnings} an
 Checks a join before you run it: how many rows match in each direction, the
 key relationship (one-to-one, one-to-many, many-to-many), how many rows each
 join type returns, missing and duplicated keys, a sample of unmatched keys,
-and fixes that would match more rows (trimming whitespace, ignoring case,
-dropping leading zeros). Keys are compared the way \code{dplyr} joins compare
+and fixes that would match more rows, each measured on its own (trimming
+whitespace, ignoring case, dropping leading zeros). Keys are compared the way \code{dplyr} joins compare
 them by default, so \code{NA} matches \code{NA}.
 }
 \details{

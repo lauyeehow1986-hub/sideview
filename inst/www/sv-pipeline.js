@@ -636,10 +636,225 @@
       (rows === undefined ? '' : fmtN(rows) + ' rows');
   }
 
+  // ---- Column profile and codebook -----------------------------------------
+  // Mirrors sv_column_profile() / sv_codebook() in R/codebook.R so the saved
+  // widget can inspect columns without R. Change both together.
+
+  function profileKind(type, values) {
+    var t = String(type || '').toLowerCase();
+    if (!t) t = guessKind(values);
+    if (t === 'date') return 'date';
+    if (t === 'posixct' || t === 'posixt' || t === 'posixlt' || t === 'datetime' || t === 'dttm') return 'datetime';
+    if (t === 'character' || t === 'factor' || t === 'ordered' || t === 'string' || t === 'chr' || t === 'fct') return 'character';
+    if (t === 'logical' || t === 'lgl') return 'logical';
+    if (NUMERIC_TYPES[t]) return 'numeric';
+    return 'other';
+  }
+
+  // R's format_key() for one number: up to 15 significant digits, no exponent.
+  function numKey(v) {
+    var n = parseFloat(Number(v).toPrecision(15));
+    var s = String(n);
+    if (/e/i.test(s)) {
+      s = Math.abs(n) >= 1 ? n.toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 0 }) :
+        n.toFixed(20).replace(/\.?0+$/, '');
+    }
+    return s;
+  }
+
+  function rTrim(s) { return s.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, ''); }
+
+  function nOf(n, one, many) { return fmtN(n) + ' ' + (n === 1 ? one : many); }
+
+  function codeCompare(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+
+  function quantile7(sorted, p) {
+    var h = (sorted.length - 1) * p, lo = Math.floor(h);
+    if (lo + 1 >= sorted.length) return sorted[sorted.length - 1];
+    return sorted[lo] + (h - lo) * (sorted[lo + 1] - sorted[lo]);
+  }
+
+  function histogram(v, bins) {
+    var lo = Infinity, hi = -Infinity;
+    for (var i = 0; i < v.length; i++) { if (v[i] < lo) lo = v[i]; if (v[i] > hi) hi = v[i]; }
+    if (lo === hi) return { breaks: [lo, hi], counts: [v.length] };
+    var width = (hi - lo) / bins, counts = new Array(bins).fill(0), breaks = [];
+    for (var j = 0; j < v.length; j++) counts[Math.min(Math.floor((v[j] - lo) / width), bins - 1)]++;
+    for (var k = 0; k <= bins; k++) breaks.push(lo + width * k);
+    return { breaks: breaks, counts: counts };
+  }
+
+  /**
+   * Profile one column for the inspector.
+   * @param values column values (null for NA)
+   * @param type R class name of the column (optional; guessed from values)
+   * @param opts { topN = 10, bins = 20, label }
+   */
+  function columnProfile(values, type, opts) {
+    opts = opts || {};
+    var topN = opts.topN === undefined ? 10 : opts.topN;
+    var bins = opts.bins === undefined ? 20 : opts.bins;
+    values = values || [];
+    var kind = profileKind(type, values);
+    var n = values.length, vals = [];
+    for (var i = 0; i < n; i++) if (!isMissing(values[i])) vals.push(values[i]);
+    var nMissing = n - vals.length;
+
+    var counts = new Map();
+    vals.forEach(function (v) {
+      var k = kind === 'numeric' ? Number(v) :
+        kind === 'logical' ? (v === true || v === 'TRUE' ? 'TRUE' : 'FALSE') : String(v);
+      counts.set(k, (counts.get(k) || 0) + 1);
+    });
+    var nDistinct = counts.size;
+    var out = {
+      kind: kind, 'class': type || kind, label: opts.label || null,
+      n: n, n_missing: nMissing, pct_missing: n ? nMissing / n : 0,
+      n_distinct: nDistinct, unique_key: n > 0 && nMissing === 0 && nDistinct === n,
+      stats: null, histogram: null, top: [], n_other: 0, issues: []
+    };
+
+    if (kind === 'numeric') {
+      var v = vals.map(Number).filter(function (x) { return isFinite(x); })
+        .sort(function (a, b) { return a - b; });
+      if (v.length) {
+        var sum = 0;
+        v.forEach(function (x) { sum += x; });
+        var mean = sum / v.length, ss = 0;
+        v.forEach(function (x) { ss += (x - mean) * (x - mean); });
+        out.stats = {
+          min: v[0], q1: quantile7(v, 0.25), median: quantile7(v, 0.5), q3: quantile7(v, 0.75),
+          max: v[v.length - 1], mean: mean, sd: v.length > 1 ? Math.sqrt(ss / (v.length - 1)) : null
+        };
+        out.histogram = histogram(v, bins);
+      }
+    } else if ((kind === 'date' || kind === 'datetime') && vals.length) {
+      var s = vals.map(String).sort(codeCompare);
+      var pick = function (p) { return s[Math.max(1, Math.ceil(s.length * p)) - 1]; };
+      out.stats = { min: s[0], q1: pick(0.25), median: pick(0.5), q3: pick(0.75), max: s[s.length - 1] };
+    }
+
+    var showTop = kind === 'character' || kind === 'logical' || kind === 'other' ||
+      (kind === 'numeric' && nDistinct <= topN);
+    if (showTop && nDistinct && !out.unique_key) {
+      var entries = Array.from(counts.entries()).sort(function (a, b) {
+        return b[1] - a[1] || (kind === 'numeric' ? a[0] - b[0] : codeCompare(a[0], b[0]));
+      });
+      out.top = entries.slice(0, topN).map(function (e) {
+        return { value: kind === 'numeric' ? numKey(e[0]) : e[0], n: e[1] };
+      });
+      out.n_other = nDistinct - out.top.length;
+    }
+
+    out.issues = profileIssues(kind, vals, out);
+    return out;
+  }
+
+  function profileIssues(kind, vals, p) {
+    var out = [];
+    if (p.n > 0 && p.n_missing === p.n) return ['All values are missing.'];
+    if (p.n_distinct === 1 && p.n > 1) out.push('Only one distinct value.');
+    if (kind === 'character') {
+      var s = vals.map(String);
+      var spaced = s.filter(function (x) { return x !== rTrim(x); }).length;
+      if (spaced) out.push(nOf(spaced, 'value has', 'values have') + ' leading or trailing spaces.');
+      var empty = s.filter(function (x) { return x === ''; }).length;
+      if (empty) out.push(nOf(empty, 'empty string', 'empty strings') + ', not NA.');
+      var groups = new Map();
+      Array.from(new Set(s)).forEach(function (x) {
+        var f = rTrim(x).toLowerCase();
+        if (!groups.has(f)) groups.set(f, []);
+        groups.get(f).push(x);
+      });
+      var variants = Array.from(groups.entries())
+        .filter(function (g) { return g[1].length > 1; })
+        .sort(function (a, b) { return codeCompare(a[0], b[0]); });
+      if (variants.length) {
+        var eg = variants[0][1].slice().sort(codeCompare).slice(0, 3)
+          .map(function (x) { return '"' + x + '"'; }).join(' / ');
+        out.push(nOf(variants.length, 'value differs', 'values differ') +
+          ' only in case or spacing (e.g. ' + eg + ').');
+      }
+      var nonblank = s.filter(function (x) { return rTrim(x) !== ''; }).map(rTrim);
+      var numRe = /^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$/;
+      if (nonblank.length && nonblank.every(function (x) { return numRe.test(x); })) {
+        out.push('All values are numbers stored as text.');
+      }
+    }
+    if (kind === 'numeric' && p.stats) {
+      var iqr = p.stats.q3 - p.stats.q1;
+      if (isFinite(iqr) && iqr > 0) {
+        var lo = p.stats.q1 - 3 * iqr, hi = p.stats.q3 + 3 * iqr;
+        var far = vals.map(Number).filter(function (x) { return isFinite(x) && (x < lo || x > hi); });
+        if (far.length) {
+          var ex = Array.from(new Set(far)).sort(function (a, b) { return b - a; }).slice(0, 3).map(numKey);
+          out.push(nOf(far.length, 'value lies', 'values lie') +
+            ' beyond 3 IQR of the quartiles (e.g. ' + ex.join(', ') + ').');
+        }
+      }
+    }
+    return out;
+  }
+
+  function signif6(v) { return parseFloat(Number(v).toPrecision(6)); }
+
+  /** One codebook row; mirrors sv_codebook_row() in R. */
+  function codebookRow(table, column, position, values, type, opts) {
+    opts = opts || {};
+    var p = columnProfile(values, type, { topN: opts.topN === undefined ? 5 : opts.topN, label: opts.label });
+    var st = p.stats || {};
+    var stat = function (k) {
+      var v = st[k];
+      if (v === undefined || v === null || (typeof v === 'number' && !isFinite(v))) return null;
+      return typeof v === 'number' ? numKey(signif6(v)) : String(v);
+    };
+    var num = function (k) {
+      var v = st[k];
+      return typeof v === 'number' && isFinite(v) ? signif6(v) : null;
+    };
+    var top = null;
+    if (p.top.length) {
+      top = p.top.map(function (t) { return t.value + ' (' + t.n + ')'; }).join('; ');
+      if (p.n_other > 0) top += '; +' + p.n_other + ' more';
+    }
+    return {
+      table: table, column: column, position: position, 'class': p['class'], label: p.label,
+      n: p.n, n_missing: p.n_missing, pct_missing: Math.round(10000 * p.pct_missing) / 100,
+      n_distinct: p.n_distinct, unique_key: p.unique_key,
+      min: stat('min'), q1: stat('q1'), median: stat('median'), q3: stat('q3'), max: stat('max'),
+      mean: num('mean'), sd: num('sd'), top_values: top,
+      issues: p.issues.length ? p.issues.join(' ') : null
+    };
+  }
+
+  var CODEBOOK_FIELDS = ['table', 'column', 'position', 'class', 'label', 'n', 'n_missing', 'pct_missing',
+    'n_distinct', 'unique_key', 'min', 'q1', 'median', 'q3', 'max', 'mean', 'sd', 'top_values', 'issues'];
+  var CODEBOOK_TEXT = { table: 1, column: 1, 'class': 1, label: 1, min: 1, q1: 1, median: 1, q3: 1, max: 1,
+    top_values: 1, issues: 1 };
+
+  /** Codebook rows as CSV, laid out like utils::write.csv(row.names = FALSE, na = ""). */
+  function codebookCsv(rows) {
+    var q = function (s) { return '"' + String(s).replace(/"/g, '""') + '"'; };
+    var lines = [CODEBOOK_FIELDS.map(q).join(',')];
+    rows.forEach(function (r) {
+      lines.push(CODEBOOK_FIELDS.map(function (f) {
+        var v = r[f];
+        if (v === null || v === undefined) return '';
+        if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+        return CODEBOOK_TEXT[f] ? q(v) : String(v);
+      }).join(','));
+    });
+    return lines.join('\n') + '\n';
+  }
+
   var api = {
     Pipeline: Pipeline,
     joinDiagnostics: joinDiagnostics,
     describeDiagnostics: describeDiagnostics,
+    columnProfile: columnProfile,
+    codebookRow: codebookRow,
+    codebookCsv: codebookCsv,
+    CODEBOOK_FIELDS: CODEBOOK_FIELDS,
     ident: ident,
     str: str,
     literal: literal,

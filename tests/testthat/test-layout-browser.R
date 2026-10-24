@@ -423,7 +423,7 @@ test_that("each drawer tab shows only its own pane and builders render forms", {
     return { tabs: tabs, panes: out };
   })()"))
   expect_setequal(unlist(r$tabs), c("pipeline", "filter", "arrange", "mutate", "recode",
-                                    "summarise", "discrepancy", "chat"))
+                                    "summarise", "inspect", "discrepancy", "chat"))
   for (t in unlist(r$tabs)) {
     p <- r$panes[[t]]
     expect_length(p$shown, 1)
@@ -841,5 +841,129 @@ test_that("the saved widget checks join keys in the browser without R", {
   expect_identical(r$d$relationship, want$relationship)
   expect_equal(unlist(r$d$rows), unlist(want$rows))
   expect_match(r$diag, "1:m", fixed = TRUE)
+  expect_length(attr(b, "sv_errors")(), 0)
+})
+
+test_that("the header inspect button profiles the full column in R", {
+  b <- sv_shared_page()
+  env <- new.env()
+  eval(parse(text = sv_fixture_code), envir = env)
+  want <- sv_column_profile(env$labs$value)
+  want_test <- sv_column_profile(env$labs$test)
+  want_sex <- sv_column_profile(env$patients$sex)
+
+  # A real click on the button, so overlays and the header's own handlers are exercised.
+  p <- sv_js(b, sprintf("(() => {
+    const card = %s;
+    const btn = card.querySelector('th[data-col-name=\"value\"] [data-action=\"inspect-col\"]');
+    btn.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const r = btn.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width,
+             hit: document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === btn ||
+                  btn.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) };
+  })()", sv_card_js("labs")))
+  expect_gt(p$w, 8)
+  expect_true(p$hit)
+  steps_before <- sv_js(b, "window._sideviewInstance.pipeline.steps.length")
+  for (type in c("mouseMoved", "mousePressed", "mouseReleased")) {
+    b$Input$dispatchMouseEvent(type = type, x = p$x, y = p$y, button = "left",
+                               clickCount = if (type == "mouseMoved") 0 else 1)
+  }
+
+  r <- sv_js(b, paste0("(async () => {", sv_pipeline_helpers_js, "
+    const until = async (f, ms) => { for (let t = 0; t < ms; t += 50) { if (f()) return true; await sleep(50); } return false; };
+    const out = {};
+    out.open = !q('.sideview-drawer').classList.contains('collapsed');
+    out.tab = (q('.sideview-drawer-tabs [aria-selected=\"true\"]') || {}).dataset.tab;
+    out.resolved = await until(() => q('.sideview-inspect-stats'), 8000);
+    const pane = q('[data-pane=\"inspect\"]');
+    out.stats = Object.fromEntries([...pane.querySelectorAll('.sideview-inspect-stats > div')]
+      .map(d => [d.querySelector('dt').textContent, d.querySelector('dd').textContent]));
+    out.prof = sv.colProfiles[JSON.stringify(['labs', 'value'])];
+    out.bars = pane.querySelectorAll('.sideview-inspect-bar').length;
+    out.drafting = !!document.querySelector('.sideview-connector-draft[d]:not([d=\"\"])');
+    out.steps = sv.pipeline.steps.length;
+    out.overflow = pane.scrollWidth - pane.clientWidth;
+    const bw = q('.sideview-drawer').getBoundingClientRect(), ib = q('.sideview-inspect-body').getBoundingClientRect();
+    out.fits = ib.left >= bw.left - 1 && ib.right <= bw.right + 1;
+    setVal(pane.querySelector('[data-inspect=\"column\"]'), 'test');
+    out.testResolved = await until(() => q('[data-pane=\"inspect\"] .sideview-inspect-top'), 8000);
+    out.top = [...q('[data-pane=\"inspect\"]').querySelectorAll('.sideview-inspect-top li')].map(li => ({
+      value: li.querySelector('.sideview-inspect-value').textContent,
+      n: li.querySelector('.sideview-inspect-n').textContent }));
+    setVal(q('[data-pane=\"inspect\"] [data-inspect=\"table\"]'), 'patients');
+    await sleep(50);
+    setVal(q('[data-pane=\"inspect\"] [data-inspect=\"column\"]'), 'sex');
+    out.sexResolved = await until(() => q('[data-pane=\"inspect\"] .sideview-inspect-issues'), 8000);
+    out.issues = [...q('[data-pane=\"inspect\"]').querySelectorAll('.sideview-inspect-issues li')].map(li => li.textContent);
+    out.exportBtn = !!q('[data-pane=\"inspect\"] [data-action=\"export-codebook\"]');
+    tab('pipeline');
+    return out;
+  })()"))
+
+  expect_true(r$open)
+  expect_identical(r$tab, "inspect")
+  expect_true(r$resolved)
+  expect_identical(r$stats$Rows, "5,000")                 # the full table, not the 500-row preview
+  expect_equal(r$prof$n, 5000)
+  expect_equal(r$prof$stats$median, want$stats$median)
+  expect_equal(r$prof$stats$q3, want$stats$q3)
+  expect_equal(unlist(r$prof$histogram$counts), want$histogram$counts)
+  expect_equal(r$bars, 20)
+  expect_false(r$drafting)                              # the click did not start a connection
+  expect_equal(r$steps, steps_before)
+  expect_lte(r$overflow, 1)
+  expect_true(r$fits)
+  expect_true(r$testResolved)
+  expect_identical(vapply(r$top, `[[`, "", "value"), want_test$top$value)
+  expect_identical(sub(" .*", "", vapply(r$top, `[[`, "", "n")), formatC(want_test$top$n, big.mark = ",", format = "d"))
+  expect_true(r$sexResolved)
+  expect_identical(unlist(r$issues), want_sex$issues)
+  expect_true(r$exportBtn)
+})
+
+test_that("the saved widget inspects columns and exports the codebook without R", {
+  skip_if_no_browser()
+  env <- new.env()
+  eval(parse(text = sv_fixture_code), envir = env)
+  attr(env$patients$age, "label") <- "Age at enrolment (years)"
+  dir <- withr::local_tempdir()
+  file <- file.path(dir, "inspect.html")
+  w <- local(sideview_widget(patients, visits), envir = env)
+  suppressMessages(save_sideview(w, file, selfcontained = FALSE))
+  url <- paste0("file:///", gsub("\\\\", "/", normalizePath(file)))
+  b <- sv_open_page(url, wait_for = "!!document.querySelector('.sideview-card .sideview-col-port')")
+  withr::defer(try(b$close(), silent = TRUE))
+  expect_true(attr(b, "sv_ready"))
+  want <- sv_column_profile(env$patients$age)
+  cb <- sv_codebook(list(patients = env$patients, visits = env$visits))
+  f <- tempfile(fileext = ".csv")
+  utils::write.csv(cb, f, row.names = FALSE, na = "")
+  want_csv <- paste0(paste(readLines(f), collapse = "\n"), "\n")
+
+  r <- sv_js(b, sprintf(paste0("(async () => {", sv_pipeline_helpers_js, "
+    const eng = document.querySelector('.sideview-container')._sideviewInstance;
+    const pat = %s;
+    pat.querySelector('th[data-col-name=\"age\"] [data-action=\"inspect-col\"]').click();
+    await sleep(100);
+    const pane = q('[data-pane=\"inspect\"]');
+    const out = { prof: eng.colProfiles[JSON.stringify(['patients', 'age'])] || null,
+                  label: (pane.querySelector('.sideview-inspect-label') || {}).textContent || null,
+                  bars: pane.querySelectorAll('.sideview-inspect-bar').length };
+    pane.querySelector('[data-action=\"export-codebook\"]').click();
+    await sleep(100);
+    out.csv = eng.lastCodebookCsv || null;
+    out.toast = [...document.querySelectorAll('.sideview-toast')].map(t => t.textContent).join(' | ');
+    return out;
+  })()"), sv_card_js("patients")))
+
+  expect_equal(r$prof$n, 200)
+  expect_equal(r$prof$stats$median, want$stats$median)
+  expect_equal(r$prof$stats$sd, want$stats$sd)
+  expect_identical(unlist(r$prof$issues) %||% character(0), want$issues)
+  expect_identical(r$label, "Age at enrolment (years)")
+  expect_equal(r$bars, 20)
+  expect_identical(r$csv, want_csv)
+  expect_match(r$toast, "Codebook downloaded (7 columns)", fixed = TRUE)
   expect_length(attr(b, "sv_errors")(), 0)
 })

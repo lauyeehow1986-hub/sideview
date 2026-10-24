@@ -31,12 +31,13 @@ rstudio bridge: R/rstudio.R
   `column_renamed`, `clear_operations`, `discrepancy_check`, `request_suggested_mappings`,
   `apply_auto_clean`, `run_ai_prompt`, `send_copilot_chat`, `inject_script`, `send_console`,
   `send_console_and_exit`, `eval_env`, `sideview_card_moved`, `sideview_highlight_changed`,
-  `sideview_rows_request`, `join_diagnostics_request`, `sideview_done`, `sideview_cancel`,
+  `sideview_rows_request`, `join_diagnostics_request`, `column_profile_request`, `codebook_export`,
+  `sideview_done`, `sideview_cancel`,
   `cancel` (miniUI dialog close).
 - Custom messages (R → client): `sideview_code_update`, `sideview_discrepancies`,
   `sideview_suggested_mappings`, `sideview_copilot_reply`, `sideview_inject_result`,
   `sideview_console_result`, `sideview_eval_result`, `sideview_rows`, `sideview_ai_status`,
-  `sideview_join_diagnostics`.
+  `sideview_join_diagnostics`, `sideview_column_profile`, `sideview_codebook_saved`.
 - `sideview_code_update` carries `source`: `event` (echo of a client step; ignored), `auto_clean`
   (appended as a custom step), `copilot` (offered in the chat bubble only), `ai`/absent (replaces the pipeline).
 - Keep this list in sync when adding inputs/messages.
@@ -44,6 +45,11 @@ rstudio bridge: R/rstudio.R
   (sv-pipeline.js) are twins with the same snake_case fields; `test-diagnostics.R` checks parity and that row
   counts equal dplyr (NA matches NA, as `na_matches = "na"`). The gadget asks R (`join_diagnostics_request`,
   full data); the widget computes in the browser. Change both together.
+- **Column inspector / codebook:** same twin rule. `sv_column_profile()` / `sv_codebook()` (R/codebook.R) and
+  `SideviewPipeline.columnProfile()` / `codebookRow()` / `codebookCsv()` (sv-pipeline.js); `test-codebook.R`
+  checks the fields, the issue texts and that the JS CSV is byte-equal to `write.csv(sv_codebook(...))`.
+  The gadget profiles in R (`column_profile_request`) and writes the codebook via `sv_choose_codebook_path()`
+  (RStudio save dialog, else a new `codebook*.csv` in `getwd()`); the widget downloads a CSV Blob.
 - **"No code"** is `""` on the wire. The drawer placeholder (`# Connect two columns ...`) is display text only;
   test with `sv_is_no_code()` (R) / `isNoCode()` (JS). Done with no code returns `NULL`.
 - **Gadget lifecycle:** `sv_new_lifecycle()` counts sessions; the app stops only after

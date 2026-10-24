@@ -247,6 +247,42 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     dispatch_message("sideview_join_diagnostics", result)
   }, ignoreInit = FALSE)
 
+  # Column inspector: profile one column on the full data (the browser has a preview only).
+  shiny::observeEvent(input$column_profile_request, {
+    req <- input$column_profile_request
+    if (is.null(req) || is.null(req$table) || is.null(req$column)) return()
+    card <- cards_by_name[[req$table]] %||% cards_by_id[[req$table]]
+    result <- tryCatch({
+      if (is.null(card) || !is.data.frame(card$data)) {
+        stop("The inspector needs this table as a data frame in memory.", call. = FALSE)
+      }
+      if (!req$column %in% names(card$data)) {
+        stop(sprintf("No column %s in %s.", req$column, req$table), call. = FALSE)
+      }
+      sv_column_profile_json(sv_column_profile(card$data[[req$column]]))
+    }, error = function(e) list(error = conditionMessage(e)))
+    result$id <- req$id
+    result$table <- req$table
+    result$column <- req$column
+    dispatch_message("sideview_column_profile", result)
+  }, ignoreInit = FALSE)
+
+  # Export codebook: one row per column of every data-frame card.
+  shiny::observeEvent(input$codebook_export, {
+    tables <- Filter(function(c) is.data.frame(c$data), cards_by_name)
+    result <- tryCatch({
+      if (!length(tables)) stop("No tables to describe.", call. = FALSE)
+      path <- sv_choose_codebook_path()
+      if (is.null(path)) {
+        list(cancelled = TRUE)
+      } else {
+        sv_codebook(lapply(tables, `[[`, "data"), file = path)
+        list(path = normalizePath(path, winslash = "/", mustWork = FALSE), n_tables = length(tables))
+      }
+    }, error = function(e) list(error = conditionMessage(e)))
+    dispatch_message("sideview_codebook_saved", result)
+  }, ignoreInit = FALSE)
+
   # 2. Column Renamed -> Rename Code Generation
   shiny::observeEvent(input$column_renamed, {
     evt <- input$column_renamed
