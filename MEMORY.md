@@ -66,6 +66,28 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 
 ## Log
 
+### 2026-10-24 — Wrap-up: 0.3.0, addin and Quarto QA, docs
+- **What:**
+  - Version 0.3.0, with a NEWS.md entry covering every phase.
+  - README: navigation, pipeline/builders/join diagnostics, inspector/codebook, themes/keyboard, real-browser testing, a new **Options** table, and API rows for the 8 exports it was missing.
+  - `?sideview` gained "Keyboard and navigation" and "Options" sections (all `sideview.*` options and their environment-variable fallbacks).
+  - `sideview_addin()` returns invisibly when run, so Cancel no longer prints `NULL` in the console.
+- **Verified:**
+  - **RStudio addin:** Addins menu, then "Sideview Canvas". It opened as a dialog with the four global tables (labs, patients, sv_result, visits) in a grid. Ctrl+K `visit_d` + Enter zoomed to `visits` and flashed `visit_date`. Cancel closed it (before the fix it printed `NULL`).
+  - **Quarto:** Rendered a `.qmd` with RStudio's bundled Quarto (R 4.5.2) and checked it in headless Chrome:
+    - `html`/`body` overflow stays `visible`, and a wheel over the page text scrolls the page (scrollY 400).
+    - Ctrl+K does nothing until the widget has focus, then opens the search.
+    - Both cards and both minimap rectangles render, and the minimap stays inside the 799px widget, lifted above the AI bar (`sv-compact`).
+  - `devtools::check()`: 0 errors, 0 warnings, 1 note (the environmental 'NULL' folder below).
+- **Check fixes (found only by `devtools::check()`, which sets `NOT_CRAN=true` and runs the browser tests from the installed package):**
+  - `helper-browser.R`: `sv_pkg_root()` returns "" unless it finds `DESCRIPTION` and `inst/`. The callr child then runs `library(sideview)` instead of `pkgload::load_all()`.
+  - `gui-test-runner.js` finds `sideview.js` through `SIDEVIEW_JS`, which `test-computer-use-gui.R` sets from `system.file("www", ...)`.
+  - The DuckDB normalize test skips without `dbplyr`. Suggests gained bslib, dbplyr, callr, chromote, httpuv and pkgload.
+  - Run in R no longer writes to `.GlobalEnv` directly. `sideview_server(run_env = globalenv())` is passed through to `eval()`/`assign()`, which removes the NOTE.
+  - `.Rbuildignore` ignores `CONTRIBUTORS.md` and `.git`.
+  - **Remaining NOTE ("non-standard things in the check directory: 'NULL'"):** this is environmental. A one-function dummy package with a single example gets the same empty `NULL` folder on this machine. It appears at the start of the examples run, and there is no user `.Rprofile`/`.Renviron`.
+- **Known trade-off:** the minimap floats over the canvas, so after Fit it can cover a corner of the bottom-left card in small windows. It can be collapsed (M), and Fit does not reserve space for it.
+
 ### 2026-10-24 — Phase 4.6: canvas navigation (minimap, Ctrl+K search, zoom-to-card)
 - **What:**
   - **Minimap** (bottom-left, both gadget and widget): every card as a rectangle plus the current view.

@@ -74,6 +74,9 @@ run_gui_test_scenarios <- function() {
   # localStorage) must not end up inside the JSON on stdout.
   err_file <- tempfile(fileext = ".log")
   on.exit(unlink(err_file), add = TRUE)
+  # Tell the runner where sideview.js is: system.file() also works under
+  # R CMD check, where there is no inst/ folder next to the tests.
+  withr::local_envvar(SIDEVIEW_JS = system.file("www", "sideview.js", package = "sideview"))
   out <- suppressWarnings(system2(
     command = node_bin,
     args = c(shQuote(runner_js)),

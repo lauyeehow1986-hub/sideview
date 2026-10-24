@@ -53,6 +53,41 @@ Launches an interactive Shiny gadget containing an infinite 2D canvas with
 mouse-wheel zoom, pan, draggable table cards, interactive column mapping,
 discrepancy recoding, and LLM-assisted tidyverse code generation.
 }
+\section{Keyboard and navigation}{
+
+Single-key shortcuts work when the canvas has the keyboard and you are not
+typing: \code{F} fit all cards, \code{0} reset zoom, \code{+}/\code{-} zoom, \code{M} show or hide
+the minimap, \code{D} the drawer, \code{T} light/dark, \code{/} the AI prompt and \verb{?} the
+full list. \code{Ctrl+K} finds a card or column, \code{Ctrl+Z}/\code{Ctrl+Y} undo and
+redo a pipeline step, and \code{Esc} cancels a connection or closes a popover.
+Double-click a card title, a minimap rectangle or a search result to zoom
+to that card.
+}
+
+\section{Options}{
+
+\describe{
+\item{\code{sideview.session_grace}}{Seconds the gadget waits after its last
+browser session closes before stopping (default \code{5}), so reloading the
+page does not end the app.}
+\item{\code{sideview.llm_backend}}{\code{"ollama"} (default, or the
+\code{SIDEVIEW_LLM_BACKEND} variable) or \code{"openai"} for any
+OpenAI-compatible server.}
+\item{\code{sideview.llm_model}}{Model name. Defaults to \code{SIDEVIEW_OLLAMA_MODEL}
+or \code{"llama3.2"} for Ollama, and \code{SIDEVIEW_OPENAI_MODEL} or
+\code{"gpt-4o-mini"} otherwise. \code{\link[=sv_llm_models]{sv_llm_models()}} lists what is available.}
+\item{\code{sideview.llm_endpoint}}{Base URL. Defaults to \code{OLLAMA_HOST} or
+\verb{http://localhost:11434}, and \code{OPENAI_BASE_URL} or
+\verb{https://api.openai.com/v1}.}
+\item{\code{sideview.llm_api_key}}{API key for OpenAI-compatible servers
+(default: the \code{OPENAI_API_KEY} variable).}
+\item{\code{sideview.llm_think}}{\code{TRUE} lets Ollama reasoning models "think"
+before answering. Default \code{FALSE}, so they answer promptly.}
+}
+Only schema summaries (column names, types and simple profiles) are sent to
+the model, never raw rows.
+}
+
 \examples{
 if (interactive()) {
   sideview(mtcars, iris)

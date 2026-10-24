@@ -26,7 +26,7 @@ sideview_addin(
 \item{run}{Logical indicating whether to execute the gadget. Default \code{interactive()}.}
 }
 \value{
-Result of \code{sideview(...)}.
+Result of \code{sideview(...)}, invisibly when the gadget was run.
 }
 \description{
 Automatically discovers tabular datasets in the user's active environment

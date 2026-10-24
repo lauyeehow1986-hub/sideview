@@ -1,6 +1,6 @@
 Package: sideview
 Title: Multi-Table 2D Infinite Canvas for R
-Version: 0.2.0
+Version: 0.3.0
 Authors@R: c(
     person("Yee How", "Lau", email = "lauyeehow1986@gmail.com.sg", role = c("aut", "cre", "cph")),
     person("sideview", "contributors", role = "ctb")
@@ -33,5 +33,11 @@ Suggests:
     knitr,
     rmarkdown,
     writexl,
-    withr
+    withr,
+    bslib,
+    dbplyr,
+    callr,
+    chromote,
+    httpuv,
+    pkgload
 Config/testthat/edition: 3

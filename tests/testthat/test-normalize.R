@@ -256,6 +256,7 @@ test_that("sv_normalize handles DuckDB objects lazily with soft dependency", {
   # If duckdb and DBI are installed, test with real DuckDB instance
   skip_if_not_installed("duckdb")
   skip_if_not_installed("DBI")
+  skip_if_not_installed("dbplyr")
 
   con <- DBI::dbConnect(duckdb::duckdb())
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)

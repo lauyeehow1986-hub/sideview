@@ -10,7 +10,8 @@ sideview_server(
   llm_fn = sv_call_llm,
   insert_fn = sv_insert_code,
   console_fn = sv_send_to_console,
-  gadget = FALSE
+  gadget = FALSE,
+  run_env = globalenv()
 )
 }
 \arguments{
@@ -30,6 +31,10 @@ RStudio dialog, and closing the last browser tab all stop the app. After the las
 tab closes the app waits \code{getOption("sideview.session_grace", 5)} seconds so a
 page reload does not end it. Leave \code{FALSE}
 when embedding the server in your own multi-user Shiny app.}
+
+\item{run_env}{Environment where \strong{Run in R} evaluates the pipeline and
+stores its result (as \code{sv_result} unless another name is given). Defaults
+to the global environment, so the result is there after the gadget closes.}
 }
 \value{
 A Shiny server function \verb{function(input, output, session)}.

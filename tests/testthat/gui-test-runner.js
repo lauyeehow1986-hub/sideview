@@ -377,6 +377,9 @@ function parseHTMLToMock(html, parent) {
 
 function findSideviewJs() {
   const candidates = [
+    // Set by test-computer-use-gui.R from system.file(), which also works in
+    // R CMD check where there is no inst/ folder.
+    process.env.SIDEVIEW_JS || '',
     path.join(__dirname, '../../inst/www/sideview.js'),
     path.join(__dirname, '../inst/www/sideview.js'),
     path.join(__dirname, 'inst/www/sideview.js'),

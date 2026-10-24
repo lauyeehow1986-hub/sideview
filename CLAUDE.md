@@ -1,7 +1,7 @@
 # CLAUDE.md — sideview
 
 ## What this is
-`sideview` is an R package (v0.2.x) that puts many tables side by side on a **2D pan/zoom canvas**.
+`sideview` is an R package (v0.3.x) that puts many tables side by side on a **2D pan/zoom canvas**.
 It runs either as an interactive **Shiny gadget** (`sideview()`, RStudio addin `sideview_addin()`) or as an
 exportable **htmlwidget** (`sideview_widget()`, `save_sideview()`, Quarto/Rmd). Users drag table cards,
 sort/filter from headers, connect columns with SVG splines to generate `dplyr` joins, inspect

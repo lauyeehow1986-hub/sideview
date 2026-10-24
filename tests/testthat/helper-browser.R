@@ -12,8 +12,11 @@ skip_if_no_browser <- function() {
   invisible(TRUE)
 }
 
+# The source tree when testing from it (devtools::test()), or "" under
+# R CMD check, where the tests run against the installed package.
 sv_pkg_root <- function() {
-  normalizePath(testthat::test_path("..", ".."), winslash = "/", mustWork = TRUE)
+  root <- normalizePath(testthat::test_path("..", ".."), winslash = "/", mustWork = TRUE)
+  if (file.exists(file.path(root, "DESCRIPTION")) && dir.exists(file.path(root, "inst"))) root else ""
 }
 
 # Synthetic fixture (no real data). Keep in sync with the QA checklist.
@@ -46,7 +49,11 @@ sv_start_app <- function(app_expr = "sideview(patients, visits, labs, run = FALS
   port <- httpuv::randomPort()
   proc <- callr::r_bg(
     function(root, fixture, app_expr, port) {
-      suppressMessages(pkgload::load_all(root, quiet = TRUE, export_all = FALSE))
+      if (nzchar(root)) {
+        suppressMessages(pkgload::load_all(root, quiet = TRUE, export_all = FALSE))
+      } else {
+        suppressMessages(library(sideview))
+      }
       eval(parse(text = fixture), envir = globalenv())
       app <- eval(parse(text = app_expr), envir = globalenv())
       shiny::runApp(app, port = port, launch.browser = FALSE)

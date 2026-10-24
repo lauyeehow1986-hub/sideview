@@ -18,7 +18,7 @@
 #'   `sv_new_lifecycle()`), so the app stops once and only after the last tab closes.
 #' @noRd
 sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_fn, console_fn,
-                                 gadget = FALSE, lifecycle = NULL) {
+                                 gadget = FALSE, lifecycle = NULL, run_env = globalenv()) {
   # Normalize input cards
   card_list <- if (inherits(cards, "sideview_card") || is.data.frame(cards) ||
                    inherits(cards, c("gt_tbl", "flextable", "table"))) {
@@ -598,12 +598,12 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     stop_gadget()
   }, ignoreInit = FALSE)
 
-  # 6c. Evaluate in .GlobalEnv -> executes code in active R session environment
+  # 6c. Run in R: evaluate in `run_env` (the global environment by default)
   shiny::observeEvent(input$eval_env, {
     evt <- input$eval_env
     if (is.null(evt)) return()
     code <- if (is.list(evt)) evt$code else evt
-    # The value of the last expression is kept in the global environment
+    # The value of the last expression is kept in `run_env` under a name
     # (default `sv_result`) instead of being thrown away.
     target <- if (is.list(evt)) evt$assign_to %||% "sv_result" else "sv_result"
     if (!is.character(target) || length(target) != 1L || !identical(make.names(target), target)) {
@@ -611,8 +611,8 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     }
     eval_res <- tryCatch({
       expr <- parse(text = code)
-      out <- eval(expr, envir = .GlobalEnv)
-      if (!is.null(out)) assign(target, out, envir = .GlobalEnv)
+      out <- eval(expr, envir = run_env)
+      if (!is.null(out)) assign(target, out, envir = run_env)
       msg <- if (is.data.frame(out)) {
         sprintf("Executed in R environment: %d rows x %d cols, saved as `%s`.", nrow(out), ncol(out), target)
       } else if (!is.null(out)) {
@@ -653,6 +653,9 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
 #'   tab closes the app waits `getOption("sideview.session_grace", 5)` seconds so a
 #'   page reload does not end it. Leave `FALSE`
 #'   when embedding the server in your own multi-user Shiny app.
+#' @param run_env Environment where **Run in R** evaluates the pipeline and
+#'   stores its result (as `sv_result` unless another name is given). Defaults
+#'   to the global environment, so the result is there after the gadget closes.
 #'
 #' @return A Shiny server function `function(input, output, session)`.
 #' @export
@@ -661,7 +664,8 @@ sideview_server <- function(cards = list(),
                             llm_fn = sv_call_llm,
                             insert_fn = sv_insert_code,
                             console_fn = sv_send_to_console,
-                            gadget = FALSE) {
+                            gadget = FALSE,
+                            run_env = globalenv()) {
   dots <- list(...)
   # If invoked directly as sideview_server(input, output, session, ...)
   if (length(dots) >= 2 && inherits(dots[[2]], c("ShinySession", "MockShinySession"))) {
@@ -670,13 +674,13 @@ sideview_server <- function(cards = list(),
     session <- dots[[2]]
     extra_cards <- if (length(dots) >= 3) dots[[3]] else list()
     return(sideview_server_impl(input, output, session, extra_cards, llm_fn, insert_fn, console_fn,
-                                gadget = gadget))
+                                gadget = gadget, run_env = run_env))
   }
 
   lifecycle <- sv_new_lifecycle()
   function(input, output, session) {
     sideview_server_impl(input, output, session, cards, llm_fn, insert_fn, console_fn,
-                         gadget = gadget, lifecycle = lifecycle)
+                         gadget = gadget, lifecycle = lifecycle, run_env = run_env)
   }
 }
 

@@ -57,6 +57,37 @@ sv_find_tables <- function(env = parent.frame()) {
 #' @return If `run = TRUE`, the generated code (invisibly) when you click
 #'   **Done**, or `NULL` after **Cancel** or closing the window.
 #'   If `run = FALSE`, returns a `shiny.appobj` with the normalized cards attached.
+#'
+#' @section Keyboard and navigation:
+#' Single-key shortcuts work when the canvas has the keyboard and you are not
+#' typing: `F` fit all cards, `0` reset zoom, `+`/`-` zoom, `M` show or hide
+#' the minimap, `D` the drawer, `T` light/dark, `/` the AI prompt and `?` the
+#' full list. `Ctrl+K` finds a card or column, `Ctrl+Z`/`Ctrl+Y` undo and
+#' redo a pipeline step, and `Esc` cancels a connection or closes a popover.
+#' Double-click a card title, a minimap rectangle or a search result to zoom
+#' to that card.
+#'
+#' @section Options:
+#' \describe{
+#'   \item{`sideview.session_grace`}{Seconds the gadget waits after its last
+#'     browser session closes before stopping (default `5`), so reloading the
+#'     page does not end the app.}
+#'   \item{`sideview.llm_backend`}{`"ollama"` (default, or the
+#'     `SIDEVIEW_LLM_BACKEND` variable) or `"openai"` for any
+#'     OpenAI-compatible server.}
+#'   \item{`sideview.llm_model`}{Model name. Defaults to `SIDEVIEW_OLLAMA_MODEL`
+#'     or `"llama3.2"` for Ollama, and `SIDEVIEW_OPENAI_MODEL` or
+#'     `"gpt-4o-mini"` otherwise. [sv_llm_models()] lists what is available.}
+#'   \item{`sideview.llm_endpoint`}{Base URL. Defaults to `OLLAMA_HOST` or
+#'     `http://localhost:11434`, and `OPENAI_BASE_URL` or
+#'     `https://api.openai.com/v1`.}
+#'   \item{`sideview.llm_api_key`}{API key for OpenAI-compatible servers
+#'     (default: the `OPENAI_API_KEY` variable).}
+#'   \item{`sideview.llm_think`}{`TRUE` lets Ollama reasoning models "think"
+#'     before answering. Default `FALSE`, so they answer promptly.}
+#' }
+#' Only schema summaries (column names, types and simple profiles) are sent to
+#' the model, never raw rows.
 #' @export
 #' @examples
 #' if (interactive()) {
@@ -155,7 +186,7 @@ sideview <- function(...,
 #'   (width 1400, height 900) when RStudio is available, otherwise `shiny::paneViewer()`.
 #' @param run Logical indicating whether to execute the gadget. Default `interactive()`.
 #'
-#' @return Result of `sideview(...)`.
+#' @return Result of `sideview(...)`, invisibly when the gadget was run.
 #' @export
 sideview_addin <- function(env = .GlobalEnv,
                            viewer = if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
@@ -186,5 +217,8 @@ sideview_addin <- function(env = .GlobalEnv,
     )
   }
   
-  sideview(tables, title = "Sideview Canvas", viewer = viewer, run = run)
+  res <- sideview(tables, title = "Sideview Canvas", viewer = viewer, run = run)
+  # RStudio calls the addin at top level: don't print NULL (Cancel) or the code
+  # it already inserted. Without `run` the Shiny app object is returned visibly.
+  if (isTRUE(run)) invisible(res) else res
 }

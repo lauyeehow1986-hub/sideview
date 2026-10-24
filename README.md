@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
 [![R (>= 4.0.0)](https://img.shields.io/badge/R->=4.0.0-blue.svg)](https://cran.r-project.org/)
-[![Tests: 1210 passing](https://img.shields.io/badge/tests-1210%20passing-brightgreen.svg)](https://github.com/lauyeehow1986-hub/sideview)
+[![Tests: 2700+ passing](https://img.shields.io/badge/tests-2700%2B%20passing-brightgreen.svg)](https://github.com/lauyeehow1986-hub/sideview)
 <!-- badges: end -->
 
 > **Multi-Table 2D Infinite Canvas for Interactive Data Exploration, Visual Field Mapping, and LLM-Assisted Tidyverse Code Generation**
@@ -107,6 +107,8 @@ flowchart TD
 - **Mouse Wheel Zoom**: Smooth scaling centered on the cursor position (15% to 350% zoom).
 - **Panning & Dragging**: Click-and-drag navigation across the infinite canvas, with magnetic edge-docking for table cards.
 - **Dual Synchronized Scrolling**: Locks both vertical rows (`scrollTop`) and horizontal columns (`scrollLeft`) across linked tables.
+- **Navigation**: **Fit** and **Arrange** buttons, a minimap (bottom-left; click to jump, `M` to hide), `Ctrl+K` to find a card or column, and double-click a card title to zoom to it.
+- **Full-data sort and filter**: Header sorts and filters run on the whole table in R, not just the rows on screen.
 
 ### 2. Universal Multi-Format Normalization
 - **`data.frame` & `tibble`**: Virtualized interactive grid cards.
@@ -132,12 +134,12 @@ flowchart TD
 - **Group & Summarize Builder**: `sv_code_group_summarize()` generates reproducible `group_by(...) %>% summarise(..., .groups = 'drop')` pipelines.
 
 ### 5. Canvas State Persistence & Cloud Sharing
-- **Workspace Serialization**: Save and restore complete canvas layouts (pan/zoom, card coordinates, splines, filters, sorts, pipeline code) to `.json` or `.rds`:
+- **Workspace Serialization**: Save and restore complete canvas layouts (pan/zoom, card coordinates, splines, filters, sorts, pipeline) with the toolbar's **Save** and **Open** buttons, or from R:
   ```r
-  # Save active canvas
-  sv_save_state(state, file = "study_canvas.json")
+  # Reopen a saved workspace on the same tables
+  sideview(patients, visits, labs, state = "study_canvas.json")
 
-  # Load and launch
+  # Or let sideview find the tables by name
   sv_load_state("study_canvas.json", launch = TRUE)
   ```
 
@@ -146,8 +148,21 @@ flowchart TD
 - **Zero Data Leakage**: Never transmits raw patient records. Works seamlessly with local Ollama (`gemma4:26b`, `llama3.2`) or cloud OpenAI-compatible APIs.
 - **1-Click Code Injection**: "Replace Pipeline" updates drawer code, while "Insert into Editor" pastes directly at the cursor via `rstudioapi`.
 
-### 7. Automated Computer Use & Headless GUI QA
-- Complete headless DOM test harness (`gui-test-runner.js`) simulating canvas coordinates, card dragging, port connections, suggested splines, and drawer actions across 1,210 automated unit tests.
+### 7. Pipeline, Builders & Join Diagnostics
+- **Composable pipeline**: every sort, filter, join, rename, recode, mutate, reshape or summarise becomes a step you can toggle, reorder or delete, with undo/redo and a `%>%` / `|>` choice.
+- **Builder tabs**: Join, Filter (AND/OR), Arrange, Mutate, Recode, Reshape and Summarise.
+- **Join diagnostics** (`sv_join_diagnostics()`): match rate both ways, unmatched keys, 1:1 / 1:m / m:m relationship, rows per join type, and NA / spacing / case problems in keys, shown before you commit to a join.
+
+### 8. Column Inspector & Codebook
+- Click a column's inspect icon for type, missingness, distinct values, key check, summary statistics or top levels, and a histogram (`sv_column_profile()`).
+- **Export codebook** writes a data dictionary across all cards (`sv_codebook()`).
+
+### 9. Themes & Keyboard
+- `theme = "auto"` follows RStudio or the browser; also `"light"`, `"dark"`, `sv_theme()` or a `bslib::bs_theme()`.
+- Shortcuts: `F` fit, `0` reset zoom, `+`/`-` zoom, `M` minimap, `D` drawer, `T` theme, `/` AI prompt, `Ctrl+K` search, `Ctrl+Z`/`Ctrl+Y` undo/redo, `?` the full list.
+
+### 10. Tested in Real Browsers
+- Unit tests, a headless DOM harness, and a real-browser suite (`tests/testthat/test-layout-browser.R`, `NOT_CRAN=true`) that drives Chrome with real mouse and keyboard input to check layout and behaviour at several window sizes.
 
 ---
 
@@ -239,6 +254,21 @@ sideview_widget(patients, visits, width = "100%", height = "650px")
 
 ---
 
+## Options
+
+| Option | Default | Purpose |
+| :--- | :--- | :--- |
+| `sideview.session_grace` | `5` | Seconds to wait after the last browser session closes before the gadget stops (a reload survives) |
+| `sideview.llm_backend` | `"ollama"` (or `SIDEVIEW_LLM_BACKEND`) | `"ollama"` or `"openai"` (any OpenAI-compatible server) |
+| `sideview.llm_model` | `SIDEVIEW_OLLAMA_MODEL` / `"llama3.2"`; `SIDEVIEW_OPENAI_MODEL` / `"gpt-4o-mini"` | Model name; `sv_llm_models()` lists what is available |
+| `sideview.llm_endpoint` | `OLLAMA_HOST` / `http://localhost:11434`; `OPENAI_BASE_URL` / `https://api.openai.com/v1` | Base URL of the server |
+| `sideview.llm_api_key` | `OPENAI_API_KEY` | API key for OpenAI-compatible servers |
+| `sideview.llm_think` | `FALSE` | Let Ollama reasoning models think before answering |
+
+Only schema summaries are sent to the model, never raw rows.
+
+---
+
 ## Complete Programmatic API Reference
 
 | Function | Module | Description |
@@ -247,6 +277,7 @@ sideview_widget(patients, visits, width = "100%", height = "650px")
 | `sideview_addin()` | RStudio Addin | Addin entry point registered in RStudio Addins menu |
 | `sideview_widget(...)` | Widget | Create an exportable `htmlwidget` instance |
 | `save_sideview(widget, file)` | Widget Export | Export canvas to standalone self-contained HTML file |
+| `sideview_ui(...)` / `sideview_server(...)` | Shiny Integration | Build the canvas app yourself (custom `llm_fn`, embedding) |
 | `sideviewOutput(id, ...)` | Shiny Integration | Shiny UI widget container |
 | `renderSideview(expr, ...)` | Shiny Integration | Shiny server rendering function |
 | `sv_normalize(x, name, id)` | Normalization | S3 generic converting tables (data.frame, Arrow, DuckDB, gt, flextable) to cards |
@@ -264,6 +295,12 @@ sideview_widget(patients, visits, width = "100%", height = "650px")
 | `sv_detect_discrepancies(...)`| Discrepancies | Vectorized exact & fuzzy Levenshtein discrepancy detection |
 | `sv_code_recode(...)` | Discrepancies | Emits `dplyr::case_when()` (or legacy `case_match()`) or `forcats::fct_recode()` |
 | `sv_auto_clean_rules(...)` | Discrepancies | Generates automatic `case_when` rules for casing, whitespace, and typos |
+| `sv_code_auto_clean(...)` | Discrepancies | Emits the `mutate(case_when(...))` code for auto-clean rules |
+| `sv_join_diagnostics(x, y, by)` | Diagnostics | Match rates, unmatched keys, cardinality and join row counts before joining |
+| `sv_column_profile(x)` | Inspector | Type, missingness, distinct values and summary of one column |
+| `sv_codebook(..., file)` | Inspector | Data dictionary across tables, optionally written to CSV or XLSX |
+| `sv_theme(mode, ...)` | Theme | Light/dark mode and colour, font and radius overrides |
+| `sv_llm_models(backend)` | LLM Engine | Lists models available from Ollama or an OpenAI-compatible server |
 | `sv_suggest_mappings(...)` | Copilot | Heuristic foreign key candidate detection across tables |
 | `sv_build_chat_prompt(...)` | LLM Engine | Synthesizes multi-turn conversational chat prompt with context retention |
 | `sv_build_schema_context(...)` | LLM Engine | Privacy-safe metadata synthesis for LLM prompt |
