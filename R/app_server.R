@@ -124,7 +124,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
       }, error = function(e) {
         sprintf("# Error generating join code: %s", conditionMessage(e))
       })
-      dispatch_message("sideview_code_update", list(code = code))
+      dispatch_message("sideview_code_update", list(code = code, source = "event"))
       return()
     }
 
@@ -151,7 +151,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
       sprintf("# Error generating join code: %s", conditionMessage(e))
     })
 
-    dispatch_message("sideview_code_update", list(code = code))
+    dispatch_message("sideview_code_update", list(code = code, source = "event"))
   }, ignoreInit = FALSE)
 
   # 1b. Column Disconnected -> Sync Event
@@ -160,14 +160,14 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     if (is.null(evt)) return()
     # "" means no code; the client shows its placeholder for that.
     code <- if (sv_is_no_code(evt$code)) "" else evt$code
-    dispatch_message("sideview_code_update", list(code = code))
+    dispatch_message("sideview_code_update", list(code = code, source = "event"))
   }, ignoreInit = FALSE)
 
   # 1bb. Clear Operations -> Reset Event
   shiny::observeEvent(input$clear_operations, {
     evt <- input$clear_operations
     if (is.null(evt)) return()
-    dispatch_message("sideview_code_update", list(code = ""))
+    dispatch_message("sideview_code_update", list(code = "", source = "event"))
   }, ignoreInit = FALSE)
 
   # 1c. Column Sorted -> Arrange Code Generation
@@ -184,7 +184,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     }, error = function(e) {
       sprintf('# Error generating arrange code: %s', conditionMessage(e))
     })
-    dispatch_message('sideview_code_update', list(code = code))
+    dispatch_message('sideview_code_update', list(code = code, source = "event"))
   }, ignoreInit = FALSE)
 
   # 1d. Column Filtered -> Filter Code Generation
@@ -199,7 +199,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     }, error = function(e) {
       sprintf('# Error generating filter code: %s', conditionMessage(e))
     })
-    dispatch_message('sideview_code_update', list(code = code))
+    dispatch_message('sideview_code_update', list(code = code, source = "event"))
   }, ignoreInit = FALSE)
 
   # 1e. Row windows for large cards: sort/filter/scroll answered from the full data
@@ -242,7 +242,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
       sprintf("# Error generating rename code: %s", conditionMessage(e))
     })
 
-    dispatch_message("sideview_code_update", list(code = code))
+    dispatch_message("sideview_code_update", list(code = code, source = "event"))
   }, ignoreInit = FALSE)
 
   # 3. Discrepancy Check -> Discrepancy Analysis
@@ -333,7 +333,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
 
       code <- sv_auto_clean_rules(payload, df_name = tbl, col = col, pipe = pipe)
       if (!is.null(code) && nzchar(code)) {
-        dispatch_message("sideview_code_update", list(code = code))
+        dispatch_message("sideview_code_update", list(code = code, source = "auto_clean"))
       }
     }, error = function(e) {
       message("sideview auto-clean warning: ", conditionMessage(e))
@@ -369,7 +369,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     })
 
     if (is.null(ai_err)) {
-      dispatch_message("sideview_code_update", list(code = ai_code))
+      dispatch_message("sideview_code_update", list(code = ai_code, source = "ai"))
       parses <- tryCatch({ parse(text = ai_code); TRUE }, error = function(e) FALSE)
       dispatch_message("sideview_ai_status", list(
         success = parses,
@@ -470,7 +470,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     ))
 
     if (has_code_fence && !is.null(extracted_code) && nzchar(trimws(extracted_code))) {
-      dispatch_message("sideview_code_update", list(code = extracted_code))
+      dispatch_message("sideview_code_update", list(code = extracted_code, source = "copilot"))
     }
   }, ignoreInit = FALSE)
 

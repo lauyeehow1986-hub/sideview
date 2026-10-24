@@ -21,6 +21,8 @@ sv_normalize() (R/normalize.R)  ->  sideview_card objects
   |-- widget:  sideview_widget() (R/widget.R)  ->  JSON cards  ->  inst/htmlwidgets/sideview.js
                                                                    -> new Sideview.Engine(el, opts)
 codegen: R/codegen.R (sv_code_* generators)    engine: SideviewEngine + VirtualTable (sideview.js)
+pipeline: inst/www/sv-pipeline.js (SideviewPipeline: typed steps -> composed R code, undo/redo;
+          pure JS, no DOM — the single source of generated code in both gadget and widget)
 llm/copilot: R/llm.R, R/copilot.R              pan/zoom: inst/www/sv-panzoom.js (small in-house impl)
 state: R/state.R (sv_save_state/sv_load_state) styles: inst/www/sideview.css (--sv-* tokens)
 rstudio bridge: R/rstudio.R
@@ -33,6 +35,8 @@ rstudio bridge: R/rstudio.R
 - Custom messages (R → client): `sideview_code_update`, `sideview_discrepancies`,
   `sideview_suggested_mappings`, `sideview_copilot_reply`, `sideview_inject_result`,
   `sideview_console_result`, `sideview_eval_result`, `sideview_rows`, `sideview_ai_status`.
+- `sideview_code_update` carries `source`: `event` (echo of a client step; ignored), `auto_clean`
+  (appended as a custom step), `copilot` (offered in the chat bubble only), `ai`/absent (replaces the pipeline).
 - Keep this list in sync when adding inputs/messages.
 - **"No code"** is `""` on the wire. The drawer placeholder (`# Connect two columns ...`) is display text only;
   test with `sv_is_no_code()` (R) / `isNoCode()` (JS). Done with no code returns `NULL`.

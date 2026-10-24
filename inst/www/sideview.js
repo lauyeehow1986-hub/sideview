@@ -658,7 +658,17 @@ function sendToShiny(name, value) {
     this.suggestedConnections = [];
     this.lastDiscrepancy = null;
 
+    // The composable pipeline is the single source of the generated code.
+    if (!global.SideviewPipeline) {
+      throw new Error('sideview: sv-pipeline.js must be loaded before sideview.js');
+    }
+    this.pipeline = new global.SideviewPipeline.Pipeline({
+      pipe: this.options.pipe,
+      onChange: function () { self.renderPipeline(); }
+    });
+
     this.initDOM();
+    this.ensureDrawer();
     hydrateIcons(this.container);
     this.initPanzoom();
     this.initEventListeners();
@@ -669,6 +679,12 @@ function sendToShiny(name, value) {
         self.addCard(cardData, index);
       });
     }
+
+    if (this.options.pipeline) {
+      this.pipeline.load(this.options.pipeline);
+      this.pipeline.undoStack = [];
+    }
+    this.renderPipeline();
 
     this.registerShinyHandlers();
     this.initLayoutObserver();
@@ -691,7 +707,12 @@ function sendToShiny(name, value) {
     sortDesc: '<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>',
     fullscreen: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
     sparkles: '<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/>',
-    close: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
+    close: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    undo: '<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>',
+    redo: '<path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/>',
+    chevronUp: '<path d="m18 15-6-6-6 6"/>',
+    chevronDown: '<path d="m6 9 6 6 6-6"/>',
+    trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'
   };
 
   function icon(name) {
@@ -1014,6 +1035,7 @@ function sendToShiny(name, value) {
       if (card.virtualTable && card.virtualTable.destroy) card.virtualTable.destroy();
     });
     this.closeActivePopover();
+    if (lastActiveEngine === this) lastActiveEngine = null;
     if (this.container._sideviewInstance === this) this.container._sideviewInstance = null;
   };
 
@@ -1263,18 +1285,9 @@ function sendToShiny(name, value) {
         '  <span class="sideview-drawer-title">Tidyverse Operations</span>',
         '  <button class="sideview-icon-btn" data-action="close-drawer" title="Close drawer" aria-label="Close drawer">' + icon('close') + '</button>',
         '</div>',
-        '<div class="sideview-drawer-tabs">',
-        '  <button class="sideview-drawer-tab active" data-tab="join">Join</button>',
-        '  <button class="sideview-drawer-tab" data-tab="filter">Filter</button>',
-        '  <button class="sideview-drawer-tab" data-tab="arrange">Arrange</button>',
-        '  <button class="sideview-drawer-tab" data-tab="mutate">Mutate</button>',
-        '  <button class="sideview-drawer-tab" data-tab="recode">Recode</button>',
-        '  <button class="sideview-drawer-tab" data-tab="discrepancy">Discrepancy</button>',
-        '  <button class="sideview-drawer-tab" data-tab="chat">Copilot</button>',
-        '</div>',
+        '<div class="sideview-drawer-tabs"></div>',
         '<div class="sideview-drawer-content">',
         '  <div class="sideview-tab-pane sideview-pipeline-pane" data-pane="pipeline">',
-        '    <p class="sideview-drawer-desc">Connect columns to generate join or mutation pipelines.</p>',
         '    <pre class="sideview-code-block"><code class="sideview-code-text">' + CODE_PLACEHOLDER + '</code></pre>',
         '  </div>',
         '  <div class="sideview-tab-pane sideview-discrepancy-pane" data-pane="discrepancy" style="display: none;">',
@@ -1436,6 +1449,10 @@ function sendToShiny(name, value) {
             self.showToast('Code copied to clipboard! (Click Clear to reset)', 'info');
           }
         }
+      } else if (action === 'pipeline-undo') {
+        self.undoPipeline();
+      } else if (action === 'pipeline-redo') {
+        self.redoPipeline();
       } else if (action === 'clear-operation') {
         self.clearOperations();
       } else if (action === 'suggest-mappings') {
@@ -1501,27 +1518,8 @@ function sendToShiny(name, value) {
     this.container.addEventListener('click', function (e) {
       var tab = e.target.closest('.sideview-drawer-tab');
       if (!tab) return;
-      var tabs = self.container.querySelectorAll('.sideview-drawer-tab');
-      tabs.forEach(function (t) { t.classList.remove('active'); });
-      tab.classList.add('active');
-
       var tabName = tab.dataset.tab;
-      var pipelinePane = self.container.querySelector('.sideview-pipeline-pane');
-      var chatPane = self.container.querySelector('.sideview-chat-pane');
-      var discPane = self.container.querySelector('.sideview-discrepancy-pane');
-      if (tabName === 'chat' || tabName === 'copilot') {
-        if (pipelinePane) pipelinePane.style.display = 'none';
-        if (discPane) discPane.style.display = 'none';
-        if (chatPane) chatPane.style.display = 'flex';
-      } else if (tabName === 'discrepancy') {
-        if (pipelinePane) pipelinePane.style.display = 'none';
-        if (chatPane) chatPane.style.display = 'none';
-        if (discPane) discPane.style.display = '';
-      } else {
-        if (pipelinePane) pipelinePane.style.display = '';
-        if (chatPane) chatPane.style.display = 'none';
-        if (discPane) discPane.style.display = 'none';
-      }
+      self.activateDrawerTab(tabName);
 
       if (tabName === 'discrepancy' && self.connections.length > 0) {
         var lastConn = self.connections[self.connections.length - 1];
@@ -1533,6 +1531,8 @@ function sendToShiny(name, value) {
         });
       }
     });
+
+    this.initPipelineListeners();
 
     // Copilot Chat Submit Handling
     function submitCopilotChat() {
@@ -1573,8 +1573,8 @@ function sendToShiny(name, value) {
         var bubble = repBtn.closest('.sideview-chat-bubble');
         var codeBlock = bubble ? bubble.querySelector('.sideview-chat-code') : null;
         if (codeBlock && codeBlock.textContent) {
-          self.updateDrawerCode(codeBlock.textContent.trim());
-          self.showToast('Pipeline code replaced!', 'success');
+          self.updateDrawerCode(codeBlock.textContent.trim(), 'Copilot code');
+          self.showToast('Pipeline replaced with the Copilot code (Ctrl+Z to undo)', 'success');
         }
       }
 
@@ -1988,6 +1988,7 @@ function sendToShiny(name, value) {
             var port = th.querySelector('.sideview-col-port');
             if (port) port.dataset.colName = newName;
           }
+          self.pipeline.add({ kind: 'rename', table: cardName, from: currentName, to: newName }, 'rename');
           sendToShiny('column_renamed', {
             table: cardName,
             old_col: currentName,
@@ -2551,10 +2552,9 @@ function sendToShiny(name, value) {
 
     this.updateConnectors();
 
-    // Trigger Tidyverse join code generation
-    var joinCode = connData.fromTable + ' %>%\n  dplyr::left_join(' +
-      connData.toTable + ', by = c("' + connData.fromCol + '" = "' + connData.toCol + '"))';
-    this.updateDrawerCode(joinCode);
+    // Connections between the same two tables merge into one multi-key join.
+    this.pipeline.addJoinKey(connData.fromTable, connData.toTable,
+      connData.fromCol, connData.toCol, connData.type || 'left_join');
 
     sendToShiny('column_mapped', {
       from_table: connData.fromTable,
@@ -2589,15 +2589,7 @@ function sendToShiny(name, value) {
     this.connections.splice(index, 1);
     pruneHitPaths(this);
 
-    // Recompute code based on remaining connections
-    if (this.connections.length > 0) {
-      var lastConn = this.connections[this.connections.length - 1];
-      var joinCode = lastConn.fromTable + ' %>%\n  dplyr::left_join(' +
-        lastConn.toTable + ', by = c("' + lastConn.fromCol + '" = "' + lastConn.toCol + '"))';
-      this.updateDrawerCode(joinCode);
-    } else {
-      this.resetDrawerCode();
-    }
+    this.pipeline.removeJoinKey(conn.fromTable, conn.toTable, conn.fromCol, conn.toCol);
 
     this.showToast('Disconnected ' + conn.fromCol + ' ↔ ' + conn.toCol, 'info');
     sendToShiny('column_disconnected', {
@@ -2675,27 +2667,14 @@ function sendToShiny(name, value) {
     pruneHitPaths(this);
   };
 
+  // Legacy entry points: both now act on the pipeline (and are undoable).
   SideviewEngine.prototype.resetDrawerCode = function () {
-    this.generatedCode = '';
-    var codeText = this.container.querySelector('.sideview-code-text');
-    if (codeText) codeText.textContent = CODE_PLACEHOLDER;
-    var badge = this.container.querySelector('[data-action="toggle-drawer"]');
-    if (badge && badge.classList) badge.classList.remove('has-code');
+    this.pipeline.clear();
   };
 
-  SideviewEngine.prototype.updateDrawerCode = function (code) {
+  SideviewEngine.prototype.updateDrawerCode = function (code, label) {
     if (isNoCode(code)) return this.resetDrawerCode();
-    this.generatedCode = code;
-    var drawer = this.container.querySelector('.sideview-drawer');
-    var codeText = this.container.querySelector('.sideview-code-text');
-    if (codeText) codeText.textContent = code;
-    if (drawer && drawer.classList.contains('collapsed')) {
-      // Open once on the first operation; afterwards respect the user's choice.
-      if (!this._drawerAutoOpened) drawer.classList.remove('collapsed');
-    }
-    this._drawerAutoOpened = true;
-    var badge = this.container.querySelector('[data-action="toggle-drawer"]');
-    if (badge && badge.classList) badge.classList.add('has-code');
+    this.pipeline.replaceWithCode(String(code).trim(), label);
   };
 
   /**
@@ -2791,36 +2770,440 @@ function sendToShiny(name, value) {
     sendToShiny('clear_operations', { timestamp: Date.now() });
   };
 
-  /**
-   * Switch active tab in Action Drawer
-   */
-  SideviewEngine.prototype.activateDrawerTab = function (tabName) {
-    var tabs = this.container.querySelectorAll('.sideview-drawer-tab');
-    tabs.forEach(function (t) {
-      if (t.dataset.tab === tabName) {
-        t.classList.add('active');
-      } else {
-        t.classList.remove('active');
-      }
+  // ---- drawer: tabs, pipeline view, builders --------------------------------
+  // The tab strip and pane containers are owned here so the server-rendered
+  // gadget markup and the widget markup cannot drift apart.
+  var DRAWER_TABS = [
+    { id: 'pipeline', label: 'Pipeline' },
+    { id: 'filter', label: 'Filter' },
+    { id: 'arrange', label: 'Arrange' },
+    { id: 'mutate', label: 'Mutate' },
+    { id: 'recode', label: 'Recode' },
+    { id: 'summarise', label: 'Summarise' },
+    { id: 'discrepancy', label: 'Discrepancy' },
+    { id: 'chat', label: 'Copilot' }
+  ];
+  var BUILDER_TABS = { filter: 1, arrange: 1, mutate: 1, recode: 1, summarise: 1 };
+  var TAB_ALIASES = { join: 'pipeline', copilot: 'chat' };
+
+  function arrangeKey(table) { return JSON.stringify(['arrange', table]); }
+  function headerFilterKey(table) { return JSON.stringify(['header-filter', table]); }
+
+  SideviewEngine.prototype.ensureDrawer = function () {
+    var drawer = this.container.querySelector('.sideview-drawer');
+    if (!drawer) return;
+    var tabs = drawer.querySelector('.sideview-drawer-tabs');
+    if (tabs) {
+      tabs.setAttribute('role', 'tablist');
+      tabs.innerHTML = DRAWER_TABS.map(function (t, i) {
+        return '<button type="button" class="sideview-drawer-tab' + (i === 0 ? ' active' : '') +
+          '" data-tab="' + t.id + '" role="tab" aria-selected="' + (i === 0) + '">' + t.label + '</button>';
+      }).join('');
+    }
+    var content = drawer.querySelector('.sideview-drawer-content');
+    if (!content) return;
+    DRAWER_TABS.forEach(function (t) {
+      if (content.querySelector('[data-pane="' + t.id + '"]')) return;
+      var pane = document.createElement('div');
+      pane.className = 'sideview-tab-pane sideview-' + t.id + '-pane' + (BUILDER_TABS[t.id] ? ' sideview-builder-pane' : '');
+      pane.dataset.pane = t.id;
+      pane.style.display = 'none';
+      content.appendChild(pane);
     });
-    var pipelinePane = this.container.querySelector('.sideview-pipeline-pane');
-    var chatPane = this.container.querySelector('.sideview-chat-pane');
-    var discPane = this.container.querySelector('.sideview-discrepancy-pane');
-    if (tabName === 'chat' || tabName === 'copilot') {
-      if (pipelinePane) pipelinePane.style.display = 'none';
-      if (discPane) discPane.style.display = 'none';
-      if (chatPane) chatPane.style.display = 'flex';
-    } else if (tabName === 'discrepancy') {
-      if (pipelinePane) pipelinePane.style.display = 'none';
-      if (chatPane) chatPane.style.display = 'none';
-      if (discPane) discPane.style.display = '';
-    } else {
-      if (pipelinePane) pipelinePane.style.display = '';
-      if (chatPane) chatPane.style.display = 'none';
-      if (discPane) discPane.style.display = 'none';
+    var pp = content.querySelector('[data-pane="pipeline"]');
+    if (pp && !pp.querySelector('.sideview-step-list')) {
+      var desc = pp.querySelector('.sideview-drawer-desc');
+      if (desc) desc.remove();
+      var bar = document.createElement('div');
+      bar.className = 'sideview-pipeline-bar';
+      bar.innerHTML = [
+        '<button type="button" class="sideview-icon-btn" data-action="pipeline-undo" title="Undo (Ctrl+Z)" aria-label="Undo">' + icon('undo') + '</button>',
+        '<button type="button" class="sideview-icon-btn" data-action="pipeline-redo" title="Redo (Ctrl+Y)" aria-label="Redo">' + icon('redo') + '</button>',
+        '<label class="sideview-pipe-choice">Pipe <select class="sideview-pipe-select" aria-label="Pipe operator">',
+        '<option value="%&gt;%">%&gt;%</option><option value="|&gt;">|&gt;</option></select></label>',
+        '<span class="sideview-step-count" aria-live="polite"></span>'
+      ].join('');
+      var list = document.createElement('ol');
+      list.className = 'sideview-step-list';
+      list.setAttribute('aria-label', 'Pipeline steps');
+      pp.insertBefore(list, pp.firstChild);
+      pp.insertBefore(bar, list);
     }
   };
 
+  SideviewEngine.prototype.activateDrawerTab = function (tabName) {
+    tabName = TAB_ALIASES[tabName] || tabName;
+    this.activeDrawerTab = tabName;
+    this.container.querySelectorAll('.sideview-drawer-tab').forEach(function (t) {
+      var on = t.dataset.tab === tabName;
+      t.classList.toggle('active', on);
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    this.container.querySelectorAll('.sideview-drawer-content > .sideview-tab-pane').forEach(function (p) {
+      var on = p.dataset.pane === tabName;
+      p.style.display = on ? (tabName === 'chat' ? 'flex' : '') : 'none';
+    });
+    if (BUILDER_TABS[tabName]) this.renderBuilder(tabName);
+  };
+
+  SideviewEngine.prototype.recordSort = function (table, col, direction) {
+    if (direction === 'none') {
+      this.pipeline.removeKey(arrangeKey(table), 'arrange');
+    } else {
+      this.pipeline.add({
+        kind: 'arrange', key: arrangeKey(table), table: table,
+        cols: [{ col: col, desc: direction === 'desc' }], source: 'header'
+      }, 'arrange');
+    }
+    return this.generatedCode;
+  };
+
+  SideviewEngine.prototype.undoPipeline = function () {
+    if (this.pipeline.undo()) this.showToast('Undid last pipeline change', 'info');
+  };
+
+  SideviewEngine.prototype.redoPipeline = function () {
+    if (this.pipeline.redo()) this.showToast('Redid pipeline change', 'info');
+  };
+
+  SideviewEngine.prototype.renderPipeline = function () {
+    var P = global.SideviewPipeline;
+    var p = this.pipeline;
+    var code = p.compose();
+    this.generatedCode = code;
+    var codeText = this.container.querySelector('.sideview-code-text');
+    if (codeText) codeText.textContent = code || CODE_PLACEHOLDER;
+
+    var n = p.steps.length;
+    var list = this.container.querySelector('.sideview-step-list');
+    if (list) {
+      if (!n) {
+        list.innerHTML = '<li class="sideview-step-empty">No steps yet. Connect two columns, ' +
+          'sort or filter from a header, or add a step from the builder tabs.</li>';
+      } else {
+        list.innerHTML = p.steps.map(function (s, i) {
+          var on = s.enabled !== false;
+          var label = P.describe(s);
+          var title = s.kind === 'custom' ? String(s.code || '').split('\n')[0] : label;
+          var join = '';
+          if (s.kind === 'join') {
+            join = '<select class="sideview-step-jointype" aria-label="Join type">' +
+              P.JOIN_TYPES.map(function (j) {
+                return '<option value="' + j + '"' + (j === s.type ? ' selected' : '') + '>' + j.replace('_join', '') + '</option>';
+              }).join('') + '</select>';
+          }
+          return '<li class="sideview-step' + (on ? '' : ' is-disabled') + '" data-step-id="' + escapeHtml(s.id) + '">' +
+            '<input type="checkbox" class="sideview-step-toggle"' + (on ? ' checked' : '') +
+            ' aria-label="Include step ' + (i + 1) + '" />' +
+            '<span class="sideview-step-text" title="' + escapeHtml(title) + '">' +
+            '<span class="sideview-step-table">' + escapeHtml(s.table || 'code') + '</span> ' +
+            escapeHtml(label) + '</span>' + join +
+            '<button type="button" class="sideview-icon-btn" data-step-action="up" aria-label="Move step up"' +
+            (i === 0 ? ' disabled' : '') + '>' + icon('chevronUp') + '</button>' +
+            '<button type="button" class="sideview-icon-btn" data-step-action="down" aria-label="Move step down"' +
+            (i === n - 1 ? ' disabled' : '') + '>' + icon('chevronDown') + '</button>' +
+            '<button type="button" class="sideview-icon-btn" data-step-action="delete" aria-label="Delete step">' +
+            icon('trash') + '</button></li>';
+        }).join('');
+      }
+    }
+    var count = this.container.querySelector('.sideview-step-count');
+    if (count) count.textContent = n === 1 ? '1 step' : n + ' steps';
+    var undo = this.container.querySelector('[data-action="pipeline-undo"]');
+    if (undo) undo.disabled = !p.canUndo();
+    var redo = this.container.querySelector('[data-action="pipeline-redo"]');
+    if (redo) redo.disabled = !p.canRedo();
+    var pipeSel = this.container.querySelector('.sideview-pipe-select');
+    if (pipeSel) pipeSel.value = p.pipe;
+
+    // The drawer no longer pops open; the Drawer button shows the step count.
+    var btn = this.container.querySelector('[data-action="toggle-drawer"]');
+    if (btn && btn.classList) {
+      var badge = btn.querySelector('.sideview-step-badge');
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'sideview-step-badge';
+        btn.appendChild(badge);
+      }
+      badge.textContent = n ? String(n) : '';
+      btn.classList.toggle('has-code', n > 0);
+      btn.setAttribute('aria-label', n ? 'Drawer (' + n + ' pipeline step' + (n === 1 ? '' : 's') + ')' : 'Drawer');
+    }
+  };
+
+  // Tables and columns currently on the canvas, for the builder selects.
+  SideviewEngine.prototype.tableSchemas = function () {
+    var out = [];
+    this.cards.forEach(function (card) {
+      var el = card.element;
+      if (!el) return;
+      var cols = [];
+      el.querySelectorAll('thead th[data-col-name]').forEach(function (th) {
+        cols.push({ name: th.dataset.colName, type: th.dataset.colType || '' });
+      });
+      out.push({ name: card.name || el.dataset.cardName, columns: cols });
+    });
+    return out;
+  };
+
+  function optionList(values, selected) {
+    return values.map(function (v) {
+      var val = typeof v === 'object' ? v.value : v;
+      var lab = typeof v === 'object' ? v.label : v;
+      return '<option value="' + escapeHtml(val) + '"' + (val === selected ? ' selected' : '') + '>' +
+        escapeHtml(lab) + '</option>';
+    }).join('');
+  }
+
+  var FILTER_OPS = [
+    { value: 'equals', label: '==' }, { value: 'not_equals', label: '!=' },
+    { value: 'gt', label: '>' }, { value: 'gte', label: '>=' },
+    { value: 'lt', label: '<' }, { value: 'lte', label: '<=' },
+    { value: 'in', label: 'in (a, b, ...)' }, { value: 'contains', label: 'contains' },
+    { value: 'is_na', label: 'is missing' }, { value: 'not_na', label: 'is not missing' }
+  ];
+  var AGG_CHOICES = [
+    { value: 'n', label: 'count rows' }, { value: 'n_distinct', label: 'distinct' },
+    { value: 'mean', label: 'mean' }, { value: 'median', label: 'median' },
+    { value: 'sd', label: 'sd' }, { value: 'min', label: 'min' }, { value: 'max', label: 'max' },
+    { value: 'sum', label: 'sum' }
+  ];
+
+  SideviewEngine.prototype.builderRow = function (kind, cols) {
+    var names = cols.map(function (c) { return c.name; });
+    var remove = '<button type="button" class="sideview-icon-btn" data-builder-action="remove-row" aria-label="Remove row">' +
+      icon('close') + '</button>';
+    if (kind === 'filter') {
+      return '<div class="sideview-builder-row">' +
+        '<select data-field="col" aria-label="Column">' + optionList(names) + '</select>' +
+        '<select data-field="op" aria-label="Operator">' + optionList(FILTER_OPS) + '</select>' +
+        '<input type="text" data-field="val" placeholder="value" aria-label="Value" />' + remove + '</div>';
+    }
+    if (kind === 'arrange') {
+      return '<div class="sideview-builder-row">' +
+        '<select data-field="col" aria-label="Column">' + optionList(names) + '</select>' +
+        '<select data-field="dir" aria-label="Direction">' +
+        optionList([{ value: 'asc', label: 'ascending' }, { value: 'desc', label: 'descending' }]) + '</select>' +
+        remove + '</div>';
+    }
+    if (kind === 'summarise') {
+      return '<div class="sideview-builder-row">' +
+        '<select data-field="fn" aria-label="Summary">' + optionList(AGG_CHOICES) + '</select>' +
+        '<select data-field="col" aria-label="Column">' + optionList(names) + '</select>' +
+        '<input type="text" data-field="name" placeholder="name (optional)" aria-label="Result name" />' +
+        remove + '</div>';
+    }
+    return '';
+  };
+
+  SideviewEngine.prototype.renderBuilder = function (kind, keepTable) {
+    var pane = this.container.querySelector('.sideview-drawer-content > [data-pane="' + kind + '"]');
+    if (!pane) return;
+    var schemas = this.tableSchemas();
+    if (!schemas.length) {
+      pane.innerHTML = '<p class="sideview-drawer-desc">Add a table to the canvas to build steps.</p>';
+      return;
+    }
+    var prev = pane.querySelector('[data-field="table"]');
+    var tableName = keepTable || (prev ? prev.value : '') || this.builderTable || schemas[0].name;
+    var schema = schemas.filter(function (t) { return t.name === tableName; })[0] || schemas[0];
+    var cols = schema.columns;
+    var names = cols.map(function (c) { return c.name; });
+    var head = '<label class="sideview-builder-field">Table <select data-field="table">' +
+      optionList(schemas.map(function (t) { return t.name; }), schema.name) + '</select></label>';
+    var body = '';
+    var submit = 'Add step';
+    if (kind === 'filter') {
+      body = '<label class="sideview-builder-field">Keep rows matching <select data-field="combine">' +
+        optionList([{ value: 'and', label: 'all conditions (AND)' }, { value: 'or', label: 'any condition (OR)' }]) +
+        '</select></label><div class="sideview-builder-rows">' + this.builderRow('filter', cols) + '</div>' +
+        '<button type="button" class="sideview-btn" data-builder-action="add-row">' + icon('plus') + ' Condition</button>';
+      submit = 'Add filter step';
+    } else if (kind === 'arrange') {
+      body = '<div class="sideview-builder-rows">' + this.builderRow('arrange', cols) + '</div>' +
+        '<button type="button" class="sideview-btn" data-builder-action="add-row">' + icon('plus') + ' Column</button>' +
+        '<p class="sideview-builder-hint">Replaces any earlier sort of this table, like a header sort does.</p>';
+      submit = 'Add arrange step';
+    } else if (kind === 'mutate') {
+      body = '<label class="sideview-builder-field">New or existing column <input type="text" data-field="name" placeholder="e.g. bmi" /></label>' +
+        '<label class="sideview-builder-field">R expression <textarea data-field="expr" rows="3" spellcheck="false" placeholder="e.g. weight / (height / 100)^2"></textarea></label>' +
+        '<div class="sideview-col-chips" aria-label="Insert a column name">' + names.map(function (nm) {
+          return '<button type="button" class="sideview-col-chip" data-builder-action="insert-col" data-col="' + escapeHtml(nm) + '">' + escapeHtml(nm) + '</button>';
+        }).join('') + '</div>';
+      submit = 'Add mutate step';
+    } else if (kind === 'recode') {
+      body = '<label class="sideview-builder-field">Column <select data-field="col">' + optionList(names) + '</select></label>' +
+        '<label class="sideview-builder-field">Value map, one per line (<code>old = new</code>) ' +
+        '<textarea data-field="map" rows="4" spellcheck="false" placeholder="M = Male&#10;F = Female&#10;NA = Unknown"></textarea></label>' +
+        '<p class="sideview-builder-hint">Values not listed are kept as they are.</p>';
+      submit = 'Add recode step';
+    } else if (kind === 'summarise') {
+      body = '<label class="sideview-builder-field">Group by <select data-field="groups" multiple size="4">' + optionList(names) + '</select></label>' +
+        '<div class="sideview-builder-rows">' + this.builderRow('summarise', cols) + '</div>' +
+        '<button type="button" class="sideview-btn" data-builder-action="add-row">' + icon('plus') + ' Summary</button>';
+      submit = 'Add summarise step';
+    }
+    pane.innerHTML = '<div class="sideview-builder" data-builder="' + kind + '">' + head + body +
+      '<div class="sideview-builder-actions"><button type="button" class="sideview-btn sideview-btn-primary" data-builder-action="submit">' +
+      submit + '</button></div></div>';
+  };
+
+  function fieldValue(root, name) {
+    var el = root.querySelector('[data-field="' + name + '"]');
+    return el ? String(el.value || '').trim() : '';
+  }
+
+  // Parse "old = new" lines; quotes around either side are optional.
+  function parseRecodeMap(text) {
+    var unq = function (v) { return v.trim().replace(/^(["'])(.*)\1$/, '$2'); };
+    return String(text || '').split(/\r?\n/).map(function (line) {
+      var i = line.indexOf('=');
+      if (i < 0) return null;
+      var from = unq(line.slice(0, i));
+      var to = unq(line.slice(i + 1));
+      return from === '' ? null : { from: from, to: to };
+    }).filter(Boolean);
+  }
+
+  SideviewEngine.prototype.submitBuilder = function (builder) {
+    var P = global.SideviewPipeline;
+    var kind = builder.dataset.builder;
+    var table = fieldValue(builder, 'table');
+    var schema = this.tableSchemas().filter(function (t) { return t.name === table; })[0];
+    var typeOf = function (col) {
+      var c = schema ? schema.columns.filter(function (x) { return x.name === col; })[0] : null;
+      return c ? c.type : '';
+    };
+    var rows = Array.prototype.slice.call(builder.querySelectorAll('.sideview-builder-row'));
+    var step = null;
+    var problem = '';
+    if (kind === 'filter') {
+      var conds = rows.map(function (r) {
+        var col = fieldValue(r, 'col');
+        var op = fieldValue(r, 'op');
+        var val = fieldValue(r, 'val');
+        if (!col || (val === '' && op !== 'is_na' && op !== 'not_na')) return null;
+        var t = typeOf(col);
+        var numeric = t ? !!P.NUMERIC_TYPES[t] : P.literal(val, true) !== P.str(val);
+        return P.condition(col, op, val, numeric);
+      }).filter(Boolean);
+      if (!conds.length) problem = 'Enter a value for at least one condition.';
+      else step = { kind: 'filter', table: table, conds: conds, combine: fieldValue(builder, 'combine') };
+    } else if (kind === 'arrange') {
+      var cols = rows.map(function (r) {
+        return { col: fieldValue(r, 'col'), desc: fieldValue(r, 'dir') === 'desc' };
+      }).filter(function (c) { return c.col; });
+      if (!cols.length) problem = 'Pick at least one column.';
+      else step = { kind: 'arrange', key: arrangeKey(table), table: table, cols: cols };
+    } else if (kind === 'mutate') {
+      var name = fieldValue(builder, 'name');
+      var expr = fieldValue(builder, 'expr');
+      if (!name || !expr) problem = 'Enter a column name and an R expression.';
+      else step = { kind: 'mutate', table: table, name: name, expr: expr };
+    } else if (kind === 'recode') {
+      var rcol = fieldValue(builder, 'col');
+      var map = parseRecodeMap(fieldValue(builder, 'map'));
+      if (!rcol || !map.length) problem = 'Pick a column and enter at least one "old = new" line.';
+      else step = { kind: 'recode', table: table, col: rcol, map: map, numeric: !!P.NUMERIC_TYPES[typeOf(rcol)] };
+    } else if (kind === 'summarise') {
+      var groupSel = builder.querySelector('[data-field="groups"]');
+      var groups = groupSel && groupSel.options
+        ? Array.prototype.filter.call(groupSel.options, function (o) { return o.selected; }).map(function (o) { return o.value; })
+        : [];
+      var aggs = rows.map(function (r) {
+        return { fn: fieldValue(r, 'fn'), col: fieldValue(r, 'col'), name: fieldValue(r, 'name') };
+      });
+      step = { kind: 'summarise', table: table, groups: groups, aggs: aggs };
+    }
+    if (problem) {
+      this.showToast(problem, 'warning');
+      return null;
+    }
+    if (!step) return null;
+    this.builderTable = table;
+    this.pipeline.add(step, kind);
+    this.showToast('Added ' + kind + ' step to the pipeline', 'success');
+    this.activateDrawerTab('pipeline');
+    return step;
+  };
+
+  // With several widgets on one page, keyboard undo goes to the one last used.
+  var lastActiveEngine = null;
+
+  SideviewEngine.prototype.initPipelineListeners = function () {
+    var self = this;
+    this.container.addEventListener('mousedown', function () { lastActiveEngine = self; });
+    this.container.addEventListener('focusin', function () { lastActiveEngine = self; });
+    this.container.addEventListener('click', function (e) {
+      var stepBtn = e.target.closest('[data-step-action]');
+      if (stepBtn) {
+        var li = stepBtn.closest('[data-step-id]');
+        var id = li ? li.dataset.stepId : null;
+        var act = stepBtn.dataset.stepAction;
+        if (id && act === 'up') self.pipeline.move(id, -1);
+        else if (id && act === 'down') self.pipeline.move(id, 1);
+        else if (id && act === 'delete') self.pipeline.remove(id);
+        return;
+      }
+      var bBtn = e.target.closest('[data-builder-action]');
+      if (!bBtn) return;
+      var builder = bBtn.closest('.sideview-builder');
+      if (!builder) return;
+      var bAct = bBtn.dataset.builderAction;
+      if (bAct === 'submit') {
+        self.submitBuilder(builder);
+      } else if (bAct === 'add-row') {
+        var rowsEl = builder.querySelector('.sideview-builder-rows');
+        var schema = self.tableSchemas().filter(function (t) {
+          return t.name === fieldValue(builder, 'table');
+        })[0];
+        if (rowsEl && schema) rowsEl.insertAdjacentHTML('beforeend', self.builderRow(builder.dataset.builder, schema.columns));
+      } else if (bAct === 'remove-row') {
+        var row = bBtn.closest('.sideview-builder-row');
+        if (row && builder.querySelectorAll('.sideview-builder-row').length > 1) row.remove();
+      } else if (bAct === 'insert-col') {
+        var ta = builder.querySelector('[data-field="expr"]');
+        if (!ta) return;
+        var txt = global.SideviewPipeline.ident(bBtn.dataset.col);
+        var start = typeof ta.selectionStart === 'number' ? ta.selectionStart : ta.value.length;
+        var end = typeof ta.selectionEnd === 'number' ? ta.selectionEnd : start;
+        ta.value = ta.value.slice(0, start) + txt + ta.value.slice(end);
+        if (ta.focus) ta.focus();
+        if (ta.setSelectionRange) ta.setSelectionRange(start + txt.length, start + txt.length);
+      }
+    });
+
+    this.container.addEventListener('change', function (e) {
+      var t = e.target;
+      if (!t || !t.classList) return;
+      var li = t.closest ? t.closest('[data-step-id]') : null;
+      if (t.classList.contains('sideview-step-toggle') && li) {
+        self.pipeline.update(li.dataset.stepId, { enabled: !!t.checked });
+      } else if (t.classList.contains('sideview-step-jointype') && li) {
+        self.pipeline.update(li.dataset.stepId, { type: t.value });
+      } else if (t.classList.contains('sideview-pipe-select')) {
+        self.pipeline.setPipe(t.value);
+      } else if (t.dataset && t.dataset.field === 'table') {
+        var builder = t.closest('.sideview-builder');
+        if (builder) self.renderBuilder(builder.dataset.builder, t.value);
+      }
+    });
+
+    // Ctrl/Cmd+Z undoes and Ctrl+Y / Ctrl+Shift+Z redoes pipeline changes,
+    // except while typing in a field (the browser's own text undo wins there).
+    this.listenGlobal(document, 'keydown', function (e) {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      var k = String(e.key || '').toLowerCase();
+      if (k !== 'z' && k !== 'y') return;
+      var tgt = e.target;
+      if (lastActiveEngine && lastActiveEngine !== self) return;
+      var tag = tgt && tgt.tagName ? tgt.tagName.toLowerCase() : '';
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || (tgt && tgt.isContentEditable)) return;
+      if (k === 'y' || e.shiftKey) self.redoPipeline();
+      else self.undoPipeline();
+      if (e.preventDefault) e.preventDefault();
+    });
+  };
   /**
    * Interactive Column Sorting (Asc -> Desc -> Reset)
    */
@@ -2856,18 +3239,14 @@ function sendToShiny(name, value) {
       if (nextState === 'none') {
         setIcon(btn, 'sort');
         btn.classList.remove('active');
+        self.recordSort(cardEl.dataset.cardName || 'df', colName, 'none');
         self.showToast('Reset column sort order on ' + colName, 'info');
       } else {
         btn.classList.add('active');
         setIcon(btn, nextState === 'asc' ? 'sortAsc' : 'sortDesc');
 
         var cardName = cardEl.dataset.cardName || 'df';
-        var escCol = escapeColIdentifier(colName);
-        var arrangeArg = nextState === 'desc' ? 'dplyr::desc(' + escCol + ')' : escCol;
-        var arrangeCode = cardName + ' %>%\n  dplyr::arrange(' + arrangeArg + ')';
-
-        self.activateDrawerTab('arrange');
-        self.updateDrawerCode(arrangeCode);
+        var arrangeCode = self.recordSort(cardName, colName, nextState);
         self.showToast('Sorted ' + colName + ' (' + (nextState === 'asc' ? 'ascending' : 'descending') + ')', 'success');
 
         sendToShiny('column_sorted', {
@@ -2890,6 +3269,7 @@ function sendToShiny(name, value) {
         });
         setIcon(btn, 'sort');
         btn.classList.remove('active');
+        self.recordSort(cardEl.dataset.cardName || 'df', colName, 'none');
         self.showToast('Reset column sort order on ' + colName, 'info');
       } else {
         btn.classList.add('active');
@@ -2913,12 +3293,7 @@ function sendToShiny(name, value) {
         });
 
         var cardNameFallback = cardEl.dataset.cardName || 'df';
-        var escColFallback = escapeColIdentifier(colName);
-        var arrangeArgFallback = nextState === 'desc' ? 'dplyr::desc(' + escColFallback + ')' : escColFallback;
-        var arrangeCodeFallback = cardNameFallback + ' %>%\n  dplyr::arrange(' + arrangeArgFallback + ')';
-
-        self.activateDrawerTab('arrange');
-        self.updateDrawerCode(arrangeCodeFallback);
+        var arrangeCodeFallback = self.recordSort(cardNameFallback, colName, nextState);
         self.showToast('Sorted ' + colName + ' (' + (nextState === 'asc' ? 'ascending' : 'descending') + ')', 'success');
 
         sendToShiny('column_sorted', {
@@ -3108,6 +3483,7 @@ function sendToShiny(name, value) {
         }
       }
       btn.classList.remove('active');
+      self.pipeline.removeKey(headerFilterKey(cardName), 'filter');
       closePopover();
       self.updateConnectors();
       self.showToast('Cleared filter on ' + colName, 'info');
@@ -3171,9 +3547,15 @@ function sendToShiny(name, value) {
       var numericForCode = typeKnown ? isNumericCol : !isNaN(Number(val));
       var condExpr = filterConditionCode(colName, op, val, numericForCode);
 
-      var filterCode = cardName + ' %>%\n  dplyr::filter(' + condExpr + ')';
-      self.activateDrawerTab('filter');
-      self.updateDrawerCode(filterCode);
+      // The preview holds one header filter per table, and so does the pipeline.
+      cardEl.querySelectorAll('.sideview-filter-btn.active').forEach(function (b) {
+        if (b !== btn) b.classList.remove('active');
+      });
+      self.pipeline.add({
+        kind: 'filter', key: headerFilterKey(cardName), table: cardName,
+        conds: [condExpr], source: 'header'
+      }, 'filter');
+      var filterCode = self.generatedCode;
       // Server-paged tables report their count when the first block arrives.
       if (matchedCount !== null) {
         self.showToast('Filtered ' + colName + ' (' + matchedCount + '/' + totalRowsCount + ' rows)', 'success');
@@ -3276,8 +3658,22 @@ function sendToShiny(name, value) {
       }
     });
 
+    // The browser-side pipeline composes the code. Per-event echoes from R
+    // (source "event") are ignored, Copilot replies wait for the user to press
+    // "Replace pipeline", auto-clean code is appended as a step, and anything
+    // else (AI bar, older servers) replaces the pipeline, undoably.
     global.Shiny.addCustomMessageHandler('sideview_code_update', function (data) {
-      if (data) self.updateDrawerCode(data.code);
+      if (!data) return;
+      var src = data.source || '';
+      if (src === 'event' || src === 'copilot') return;
+      if (src === 'auto_clean') {
+        if (!isNoCode(data.code)) {
+          self.pipeline.add({ kind: 'custom', code: String(data.code).trim(), label: 'auto-clean' }, 'auto_clean');
+          self.showToast('Added the auto-clean step to the pipeline', 'success');
+        }
+        return;
+      }
+      self.updateDrawerCode(data.code, src === 'ai' ? 'AI code' : 'code from R');
     });
 
     global.Shiny.addCustomMessageHandler('sideview_ai_status', function (data) {

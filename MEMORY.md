@@ -25,8 +25,8 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 | 12 | JS | `initSideview('.sideview-container')` throws in strict mode (sets a property on a string) | fixed (Phase 2.1) |
 | 13 | JS | Click-to-connect leaves a dangling draft after completing | fixed (Phase 2.1) |
 | 14 | JS | `stopPropagation` between sibling delegated handlers has no effect → sort/filter clicks also highlight or connect | fixed (Phase 2.1) |
-| 15 | Drawer | Join/Filter/Arrange/Mutate/Recode tabs all show the same pane; drawer re-opens on every update | open |
-| 16 | Pipeline | Each operation overwrites the code; nothing composes | open |
+| 15 | Drawer | Join/Filter/Arrange/Mutate/Recode tabs all show the same pane; drawer re-opens on every update | fixed (Phase 4.1) |
+| 16 | Pipeline | Each operation overwrites the code; nothing composes | fixed (Phase 4.1) |
 | 17 | Data | Sort/filter run only on the ≤500-row HTML preview → wrong for big tables; numbers re-parsed from text | fixed (Phase 2.1) |
 | 18 | State | `sv_load_state(launch = TRUE)` ignores the loaded state; `sideview()` has no `state` argument | open |
 | 19 | Server | "Run in R" result is evaluated then thrown away | fixed (Phase 2.2) |
@@ -53,6 +53,7 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 | 40 | Layout | Initial cards are 640px wide but spaced 360px apart → they overlap on launch in every mode | fixed (Phase 2.4) |
 | 41 | Drawer | Code preview text is centred and truncated | fixed (Phase 2.4) |
 | 42 | Pane | In the narrow Viewer pane the toolbar covers card headers and the palette overlaps cards | fixed (Phase 2.4) |
+| 43 | Codegen | R-side `sv_code_recode()` and `sv_auto_clean_rules()` emit `dplyr::case_match()`, deprecated in dplyr 1.2.0 (installed: 1.2.1). The new JS pipeline already uses `case_when(..., .default = col)` | open |
 
 ## Backlog (future rounds, not yet scheduled)
 - Table version diff by key (data-lock comparisons between dataset versions).
@@ -63,6 +64,50 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 ---
 
 ## Log
+
+### 2026-10-24 — Phase 4.1: composable pipeline and real drawer tabs (#15, #16)
+- **Decision: the pipeline lives in the browser, not in R.**
+  - The plan said "R-side pipeline list". Instead, a new pure-JS module, `inst/www/sv-pipeline.js` (`window.SideviewPipeline`), holds the typed steps and composes the R code.
+  - **Why:** the htmlwidget (`save_sideview()`, Quarto) has no R session, but it still needs working sort/filter/join code. One composer serves both modes, and the R server only needs to be told what changed.
+  - The R `sv_code_*` generators stay as they are, for direct use and for the AI and auto-clean paths.
+- **Step model:**
+  - Step kinds: join, filter, arrange, rename, mutate, recode, summarise and custom.
+  - **Keyed steps replace and move to the end.** One header sort per table shares a key with the Arrange builder, so the last sort wins. There is also one header filter per table, which matches the VirtualTable preview, since it holds one filter.
+  - **Joins:** every spline between the same pair of tables becomes one multi-key `by = c("a", "b" = "c")`.
+  - **Chain order:** chains are grouped per base table. A joined table that has its own steps is written first as `<table>_prep <- ...` (DFS order, with a cycle guard).
+  - **Pipe choice:** `%>%` or `|>`.
+  - **Undo/redo:** covers pipeline steps only (up to 100). The toolbar buttons and Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z apply to the last-used widget and are skipped while typing in a field.
+- **Drawer tabs:** Pipeline, Filter, Arrange, Mutate, Recode, Summarise, Discrepancy and Copilot each show only their own pane (`role="tab"`, `aria-selected`).
+  - The Pipeline tab has the step list (enable checkbox, join-type select, move up/down, delete), undo/redo, the pipe select and the code.
+  - Filter (AND/OR, multi-condition, `in`, missing), Arrange (multi-column), Mutate (expression with column chips), Recode (`old = new` lines) and Summarise (group-by plus several summaries) are form builders that add a step.
+- **The drawer no longer pops open on every operation.** The Drawer button shows a step-count badge instead.
+- **Server `sideview_code_update` now carries `source`:**
+  - `event` (sort/filter/join/rename echoes) is ignored by the client, which already composed the step.
+  - `auto_clean` is appended as a custom step.
+  - `ai` or no source replaces the pipeline (undoable).
+  - `copilot` no longer overwrites anything: the user clicks "Replace pipeline" in the chat bubble, and that is undoable.
+- **dplyr 1.2:** `case_match()` is deprecated. The pipeline's recode uses `case_when(..., .default = col)`. The R generators still need the same change (#43).
+- **Tests:**
+  - `test-pipeline.R` (34 expectations): Node drives `sv-pipeline.js`. Every script `parse()`s, keyed replace, join-key merge/removal, undo/redo, identifier escaping, the cycle guard, and a filter → arrange → join → recode → summarise chain that equals hand-written dplyr with no warnings.
+  - Browser (3 new tests, 61 expectations):
+    - Each tab shows exactly its pane, and the builder panes render forms.
+    - Header sort, header filter and a spline compose into one script that runs on the fixture and equals dplyr.
+    - The drawer stays collapsed and the badge reads 3.
+    - Undo/redo, join type, step toggle, delete and Clear all work.
+    - The builders reject empty input. Mutate, recode and summarise steps run.
+    - Ctrl+Z / Ctrl+Y work.
+  - Layout browser suite: 159 expectations, 0 failed. Full `devtools::test()`: 1552 expectations, 0 failed (before the bottom-sheet fix and its 2-expectation test).
+- **Verified in the RStudio Viewer pane (R 4.5.1), with real mouse clicks:**
+  - Sort age plus a patients→visits spline gave Drawer badge "2", and the drawer stayed closed.
+  - The Pipeline tab lists both steps with the join-type select, and shows the composed code.
+  - The Filter builder (age >= 60) added a third step.
+  - Undo → 2 steps, redo → 3. Moving the filter step up reorders the code.
+  - **Done** returned `patients %>% dplyr::arrange(age) %>% dplyr::filter(age >= 60) %>% dplyr::left_join(visits, by = "patient_id")`.
+  - Cancel → returns.
+- **Found in RStudio and fixed:**
+  - **Problem:** the narrow-pane bottom sheet only had a `max-height`, so it grew upward as steps were added. Undo/redo moved under the cursor.
+  - **Fix:** it now has a fixed `height`, and its content scrolls.
+  - **Regression test:** the undo button stays within 1px after 3 steps are added at 560px wide.
 
 ### 2026-10-24 — Phase 2.6: packaging (#24)
 - **Pan/zoom helper:** `panzoom.min.js` is renamed `sv-panzoom.js`. Its header now says it is sideview's own helper and not the `@panzoom/panzoom` 4.5.1 package.

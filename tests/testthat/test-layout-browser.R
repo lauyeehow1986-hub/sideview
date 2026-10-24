@@ -392,3 +392,188 @@ test_that("discrepancy summary reports numeric fuzzy counts", {
   expect_false(grepl("undefined", r))
   expect_match(r, "[1-9][0-9]* fuzzy")
 })
+
+# --- Pipeline drawer (#15/#16) -------------------------------------------------
+
+sv_pipeline_helpers_js <- "
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const sv = window._sideviewInstance;
+  const q = s => document.querySelector(s);
+  const fire = el => { const x = el.getBoundingClientRect(); ['pointerdown','mousedown','pointerup','mouseup','click'].forEach(t => el.dispatchEvent(new MouseEvent(t, {bubbles: true, button: 0, clientX: x.x + 2, clientY: x.y + 2}))); };
+  const setVal = (el, v) => { el.value = v; el.dispatchEvent(new Event('input', {bubbles: true})); el.dispatchEvent(new Event('change', {bubbles: true})); };
+  const steps = () => document.querySelectorAll('.sideview-step-list li.sideview-step').length;
+  const badge = () => (q('[data-action=\"toggle-drawer\"] .sideview-step-badge') || {}).textContent || '';
+  const tab = name => { q('.sideview-drawer-tabs [data-tab=\"' + name + '\"]').click(); };
+"
+
+test_that("each drawer tab shows only its own pane and builders render forms", {
+  b <- sv_shared_page()
+  r <- sv_js(b, paste0("(async () => {", sv_pipeline_helpers_js, "
+    const tabs = [...document.querySelectorAll('.sideview-drawer-tabs [data-tab]')].map(t => t.dataset.tab);
+    const out = {};
+    for (const t of tabs) {
+      tab(t); await sleep(30);
+      const shown = [...document.querySelectorAll('.sideview-drawer-content > .sideview-tab-pane')]
+        .filter(p => getComputedStyle(p).display !== 'none').map(p => p.dataset.pane || p.className);
+      const sel = q('.sideview-drawer-tabs [data-tab=\"' + t + '\"]').getAttribute('aria-selected');
+      const form = !!q('.sideview-drawer-content > [data-pane=\"' + t + '\"] [data-builder-action=\"submit\"]');
+      out[t] = { shown: shown, selected: sel, form: form };
+    }
+    tab('pipeline');
+    return { tabs: tabs, panes: out };
+  })()"))
+  expect_setequal(unlist(r$tabs), c("pipeline", "filter", "arrange", "mutate", "recode",
+                                    "summarise", "discrepancy", "chat"))
+  for (t in unlist(r$tabs)) {
+    p <- r$panes[[t]]
+    expect_length(p$shown, 1)
+    expect_match(p$shown[[1]], t, info = t)
+    expect_identical(p$selected, "true", info = t)
+    expect_identical(p$form, t %in% c("filter", "arrange", "mutate", "recode", "summarise"), info = t)
+  }
+})
+
+test_that("header sort, header filter and a join compose into one runnable script", {
+  b <- sv_shared_page()
+  r <- sv_js(b, sprintf(paste0("(async () => {", sv_pipeline_helpers_js, "
+    const pat = %s, labs = %s;
+    const drawer = q('.sideview-drawer');
+    const wasCollapsed = drawer.classList.contains('collapsed');
+    labs.querySelector('[data-action=\"sort-col\"][data-col-name=\"value\"]').click(); await sleep(600);
+    pat.querySelector('[data-action=\"filter-col\"][data-col-name=\"age\"]').click(); await sleep(200);
+    const pop = q('.sideview-filter-popover');
+    setVal(pop.querySelector('.sideview-filter-select'), 'gt');
+    setVal(pop.querySelector('.sideview-filter-input'), '50');
+    pop.querySelector('.sideview-filter-apply').click(); await sleep(600);
+    fire(pat.querySelector('.sideview-col-port[data-col-name=\"patient_id\"]')); await sleep(150);
+    fire(labs.querySelector('.sideview-col-port[data-col-name=\"patient_id\"]')); await sleep(500);
+    const out = { code: sv.generatedCode, shown: q('.sideview-code-text').textContent, steps: steps(), badge: badge(),
+                  collapsed: wasCollapsed && drawer.classList.contains('collapsed') };
+    q('[data-action=\"pipeline-undo\"]').click(); await sleep(50);
+    out.afterUndo = steps(); out.undoCode = sv.generatedCode;
+    q('[data-action=\"pipeline-redo\"]').click(); await sleep(50);
+    out.afterRedo = steps();
+    const items = () => [...document.querySelectorAll('.sideview-step-list li.sideview-step')];
+    const joinLi = items().find(li => li.querySelector('.sideview-step-jointype'));
+    setVal(joinLi.querySelector('.sideview-step-jointype'), 'inner_join'); await sleep(50);
+    out.inner = sv.generatedCode;
+    const filterLi = items().find(li => /filter/i.test(li.textContent));
+    const tog = filterLi.querySelector('.sideview-step-toggle');
+    tog.checked = false; tog.dispatchEvent(new Event('change', {bubbles: true})); await sleep(50);
+    out.toggled = sv.generatedCode;
+    const off = q('.sideview-step-list li.is-disabled');
+    out.disabledClass = !!off;
+    off.querySelector('[data-step-action=\"delete\"]').click(); await sleep(50);
+    out.afterDelete = steps();
+    q('[data-action=\"clear-operation\"]').click(); await sleep(300);
+    out.cleared = steps(); out.clearedBadge = badge();
+    return out;
+  })()"), sv_card_js("patients"), sv_card_js("labs")))
+
+  expect_true(r$collapsed)            # the drawer no longer pops open on every step
+  expect_equal(r$steps, 3)
+  expect_identical(r$badge, "3")
+  expect_identical(r$shown, r$code)
+  expect_match(r$code, "labs_prep <- labs %>%\n  dplyr::arrange(value)", fixed = TRUE)
+  expect_match(r$code, "dplyr::filter(age > 50)", fixed = TRUE)
+  expect_match(r$code, 'dplyr::left_join(labs_prep, by = "patient_id")', fixed = TRUE)
+
+  env <- new.env()
+  eval(parse(text = sv_fixture_code), envir = env)
+  env$`%>%` <- dplyr::`%>%`
+  got <- eval(parse(text = r$code), envir = env)
+  want <- dplyr::left_join(dplyr::filter(env$patients, age > 50),
+                           dplyr::arrange(env$labs, value), by = "patient_id")
+  expect_equal(as.data.frame(got), as.data.frame(want))
+
+  expect_equal(r$afterUndo, 2)
+  expect_false(grepl("join", r$undoCode))
+  expect_equal(r$afterRedo, 3)
+  expect_match(r$inner, "dplyr::inner_join(", fixed = TRUE)
+  expect_false(grepl("filter", r$toggled))
+  expect_true(r$disabledClass)
+  expect_equal(r$afterDelete, 2)
+  expect_equal(r$cleared, 0)
+  expect_identical(r$clearedBadge, "")
+})
+
+test_that("builder tabs add steps, reject empty input, and Ctrl+Z undoes", {
+  b <- sv_shared_page()
+  r <- sv_js(b, paste0("(async () => {", sv_pipeline_helpers_js, "
+    const root = q('.sideview-container');
+    const pick = async kind => {
+      tab(kind); await sleep(50);
+      setVal(q('[data-pane=\"' + kind + '\"] [data-field=\"table\"]'), 'patients'); await sleep(30);
+      return q('[data-pane=\"' + kind + '\"]');
+    };
+    let pane = await pick('mutate');
+    pane.querySelector('[data-builder-action=\"submit\"]').click(); await sleep(50);
+    const emptyRejected = steps() === 0;
+    setVal(pane.querySelector('[data-field=\"name\"]'), 'decade');
+    setVal(pane.querySelector('[data-field=\"expr\"]'), 'age %/% 10');
+    pane.querySelector('[data-builder-action=\"submit\"]').click(); await sleep(50);
+    const afterMutate = { steps: steps(), code: sv.generatedCode,
+      active: q('.sideview-drawer-tabs [data-tab=\"pipeline\"]').getAttribute('aria-selected') };
+
+    pane = await pick('recode');
+    setVal(pane.querySelector('[data-field=\"col\"]'), 'sex');
+    setVal(pane.querySelector('[data-field=\"map\"]'), 'male = Male\\nF = Female\\nNA = Unknown');
+    pane.querySelector('[data-builder-action=\"submit\"]').click(); await sleep(50);
+
+    pane = await pick('summarise');
+    const g = pane.querySelector('[data-field=\"groups\"]');
+    [...g.options].forEach(o => { o.selected = o.value === 'sex'; });
+    setVal(pane.querySelector('.sideview-builder-row [data-field=\"fn\"]'), 'mean');
+    setVal(pane.querySelector('.sideview-builder-row [data-field=\"col\"]'), 'age');
+    pane.querySelector('[data-builder-action=\"submit\"]').click(); await sleep(50);
+    const full = sv.generatedCode;
+
+    root.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+    document.dispatchEvent(new KeyboardEvent('keydown', {key: 'z', ctrlKey: true, bubbles: true})); await sleep(50);
+    const undone = steps();
+    document.dispatchEvent(new KeyboardEvent('keydown', {key: 'y', ctrlKey: true, bubbles: true})); await sleep(50);
+    const redone = steps();
+    q('[data-action=\"clear-operation\"]').click(); await sleep(300);
+    return { emptyRejected: emptyRejected, afterMutate: afterMutate, full: full, undone: undone, redone: redone };
+  })()"))
+  expect_true(r$emptyRejected)
+  expect_equal(r$afterMutate$steps, 1)
+  expect_identical(r$afterMutate$active, "true")
+  expect_match(r$afterMutate$code, "dplyr::mutate(decade = age %/% 10)", fixed = TRUE)
+  expect_match(r$full, "dplyr::case_when(", fixed = TRUE)
+  expect_match(r$full, "dplyr::group_by(sex)", fixed = TRUE)
+  expect_equal(r$undone, 2)
+  expect_equal(r$redone, 3)
+
+  env <- new.env()
+  eval(parse(text = sv_fixture_code), envir = env)
+  env$`%>%` <- dplyr::`%>%`
+  got <- NULL
+  expect_silent(got <- eval(parse(text = r$full), envir = env))
+  expect_setequal(got$sex, c("Male", "Female", "Unknown"))
+  expect_named(got, c("sex", "mean_age"))
+})
+
+test_that("narrow bottom-sheet drawer keeps undo/redo still as steps change", {
+  b <- sv_shared_page()
+  sv_set_viewport(b, 560, 700)
+  r <- sv_js(b, paste0("(async () => {", sv_pipeline_helpers_js, "
+    const d = q('.sideview-drawer');
+    if (d.classList.contains('collapsed')) q('[data-action=\"toggle-drawer\"]').click();
+    await sleep(400); tab('pipeline'); await sleep(50);
+    const top = () => q('[data-action=\"pipeline-undo\"]').getBoundingClientRect().top;
+    const before = top();
+    sv.pipeline.add({kind: 'mutate', table: 'patients', name: 'a', expr: '1'});
+    sv.pipeline.add({kind: 'mutate', table: 'patients', name: 'b', expr: '2'});
+    sv.pipeline.add({kind: 'mutate', table: 'patients', name: 'c', expr: '3'});
+    await sleep(50);
+    const after = top();
+    const narrow = q('.sideview-container').classList.contains('sv-narrow');
+    q('[data-action=\"clear-operation\"]').click(); await sleep(300);
+    q('[data-action=\"toggle-drawer\"]').click(); await sleep(300);
+    return { before: before, after: after, narrow: narrow };
+  })()"))
+  sv_set_viewport(b, 1400, 900)
+  expect_true(r$narrow)
+  expect_lt(abs(r$after - r$before), 1)
+})

@@ -27,7 +27,7 @@ read_asset <- function(filename) {
 }
 
 test_that("all required web asset files exist and are non-empty", {
-  required_files <- c("sv-panzoom.js", "sideview.css", "sideview.js")
+  required_files <- c("sv-panzoom.js", "sv-pipeline.js", "sideview.css", "sideview.js")
   for (f in required_files) {
     path <- find_asset(f)
     expect_true(file.exists(path), info = paste("Asset missing:", f, "at", path))

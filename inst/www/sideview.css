@@ -932,6 +932,198 @@ html.sv-standalone body {
   white-space: nowrap;
 }
 
+/* Pipeline tab: undo/redo bar, step list, and the step-count badge */
+.sideview-container .sideview-step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 5px;
+  padding: 0 4px;
+  border-radius: 9999px;
+  background: var(--sv-primary);
+  color: var(--sv-text-inverse);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.sideview-container .sideview-step-badge:empty {
+  display: none;
+}
+
+.sideview-container .sideview-pipeline-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.sideview-container .sideview-pipeline-bar .sideview-icon-btn:disabled,
+.sideview-container .sideview-step .sideview-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.sideview-container .sideview-pipe-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--sv-text-muted);
+}
+
+.sideview-container .sideview-step-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--sv-text-muted);
+}
+
+.sideview-container .sideview-step-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sideview-container .sideview-step {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border: 1px solid var(--sv-border-light);
+  border-radius: var(--sv-radius-sm);
+  background: var(--sv-surface);
+  font-size: 12px;
+}
+
+.sideview-container .sideview-step.is-disabled .sideview-step-text {
+  color: var(--sv-text-muted);
+  text-decoration: line-through;
+}
+
+.sideview-container .sideview-step-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sideview-container .sideview-step-table {
+  font-family: var(--sv-font-mono);
+  font-weight: 600;
+  color: var(--sv-primary);
+}
+
+.sideview-container .sideview-step-empty {
+  padding: 8px;
+  font-size: 12px;
+  color: var(--sv-text-muted);
+}
+
+.sideview-container .sideview-step select,
+.sideview-container .sideview-pipe-select {
+  font-size: 11px;
+  padding: 1px 2px;
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-sm);
+  background: var(--sv-surface);
+  color: var(--sv-text);
+}
+
+/* Builder tabs (Filter, Arrange, Mutate, Recode, Summarise) */
+.sideview-container .sideview-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sideview-container .sideview-builder-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sv-text-muted);
+}
+
+.sideview-container .sideview-builder select,
+.sideview-container .sideview-builder input[type="text"],
+.sideview-container .sideview-builder textarea {
+  font-family: var(--sv-font);
+  font-size: 12px;
+  font-weight: 400;
+  padding: 4px 6px;
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-sm);
+  background: var(--sv-surface);
+  color: var(--sv-text);
+  min-width: 0;
+}
+
+.sideview-container .sideview-builder textarea {
+  font-family: var(--sv-font-mono);
+  resize: vertical;
+}
+
+.sideview-container .sideview-builder-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sideview-container .sideview-builder-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sideview-container .sideview-builder-row > select,
+.sideview-container .sideview-builder-row > input {
+  flex: 1 1 0;
+}
+
+.sideview-container .sideview-builder-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.sideview-container .sideview-builder > .sideview-btn {
+  align-self: flex-start;
+}
+
+.sideview-container .sideview-builder-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--sv-text-muted);
+}
+
+.sideview-container .sideview-col-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sideview-container .sideview-col-chip {
+  font-family: var(--sv-font-mono);
+  font-size: 11px;
+  padding: 2px 6px;
+  border: 1px solid var(--sv-border-light);
+  border-radius: 9999px;
+  background: var(--sv-surface-secondary);
+  color: var(--sv-text);
+  cursor: pointer;
+}
+
+.sideview-container .sideview-col-chip:hover {
+  border-color: var(--sv-primary);
+  color: var(--sv-primary);
+}
+
 /* Floating Natural Language AI Prompt Bar */
 .sideview-ai-bar {
   position: absolute;
@@ -1504,6 +1696,9 @@ html.sv-standalone body {
   width: auto;
   max-width: none;
   bottom: calc(var(--sv-aibar-h, 50px) + 32px);
+  /* A fixed height keeps the sheet's top edge (and its undo/redo buttons)
+     still while steps are added or undone; the content scrolls instead. */
+  height: min(55%, calc(100% - var(--sv-topbar-h, 44px) - var(--sv-aibar-h, 50px) - 52px));
   max-height: min(55%, calc(100% - var(--sv-topbar-h, 44px) - var(--sv-aibar-h, 50px) - 52px));
 }
 

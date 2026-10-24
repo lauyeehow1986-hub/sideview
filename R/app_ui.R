@@ -28,7 +28,7 @@ find_sideview_www <- function() {
 #' @param files Asset file names.
 #' @return A version string such as `"0.2.0.1234567"`.
 #' @noRd
-sv_asset_version <- function(www_dir, files = c("sideview.js", "sideview.css", "sv-panzoom.js")) {
+sv_asset_version <- function(www_dir, files = c("sideview.js", "sideview.css", "sv-panzoom.js", "sv-pipeline.js")) {
   pkg <- tryCatch(as.character(utils::packageVersion("sideview")), error = function(e) "0.0.0")
   paths <- file.path(www_dir, files)
   paths <- paths[file.exists(paths)]
@@ -52,7 +52,7 @@ sideview_html_dependency <- function(www_dir = find_sideview_www()) {
     version = sv_asset_version(www_dir),
     src = c(file = www_dir),
     stylesheet = "sideview.css",
-    script = c("sv-panzoom.js", "sideview.js")
+    script = c("sv-panzoom.js", "sv-pipeline.js", "sideview.js")
   )
 }
 
@@ -443,22 +443,26 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
       htmltools::tags$span(class = "sideview-drawer-title", "Tidyverse Operations"),
       htmltools::tags$button(class = "sideview-icon-btn", `data-action` = "close-drawer", title = "Close drawer", `aria-label` = "Close drawer", `data-sv-icon` = "close")
     ),
+    # sideview.js rebuilds this tab strip and fills the builder panes
+    # (ensureDrawer), so keep the ids in sync with DRAWER_TABS there.
     htmltools::tags$div(
       class = "sideview-drawer-tabs",
-      htmltools::tags$button(class = "sideview-drawer-tab active", `data-tab` = "join", "Join"),
-      htmltools::tags$button(class = "sideview-drawer-tab", `data-tab` = "filter", "Filter"),
-      htmltools::tags$button(class = "sideview-drawer-tab", `data-tab` = "arrange", "Arrange"),
-      htmltools::tags$button(class = "sideview-drawer-tab", `data-tab` = "mutate", "Mutate"),
-      htmltools::tags$button(class = "sideview-drawer-tab", `data-tab` = "recode", "Recode"),
-      htmltools::tags$button(class = "sideview-drawer-tab", `data-tab` = "discrepancy", "Discrepancy"),
-      htmltools::tags$button(class = "sideview-drawer-tab", `data-tab` = "chat", "Copilot")
+      role = "tablist",
+      lapply(seq_along(sv_drawer_tabs), function(i) {
+        htmltools::tags$button(
+          type = "button",
+          class = if (i == 1) "sideview-drawer-tab active" else "sideview-drawer-tab",
+          `data-tab` = names(sv_drawer_tabs)[i],
+          role = "tab",
+          sv_drawer_tabs[[i]]
+        )
+      })
     ),
     htmltools::tags$div(
       class = "sideview-drawer-content",
       htmltools::tags$div(
         class = "sideview-tab-pane sideview-pipeline-pane",
         `data-pane` = "pipeline",
-        htmltools::tags$p(class = "sideview-drawer-desc", "Connect columns to generate join or mutation pipelines."),
         # No whitespace inside <pre>: htmltools' indentation would show as code.
         htmltools::tags$pre(
           class = "sideview-code-block",
@@ -466,6 +470,14 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
           htmltools::tags$code(class = "sideview-code-text", "# Connect two columns to generate pipeline code")
         )
       ),
+      # Builder panes are filled in by sideview.js from the cards on the canvas.
+      lapply(c("filter", "arrange", "mutate", "recode", "summarise"), function(id) {
+        htmltools::tags$div(
+          class = paste0("sideview-tab-pane sideview-builder-pane sideview-", id, "-pane"),
+          `data-pane` = id,
+          style = "display: none;"
+        )
+      }),
       htmltools::tags$div(
         class = "sideview-tab-pane sideview-discrepancy-pane",
         `data-pane` = "discrepancy",
@@ -567,3 +579,15 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
 sv_icon_slot <- function(name) {
   htmltools::tags$span(class = "sv-icon-slot", `aria-hidden` = "true", `data-sv-icon` = name)
 }
+
+# Drawer tabs, in order (id = label). Mirrors DRAWER_TABS in sideview.js.
+sv_drawer_tabs <- c(
+  pipeline = "Pipeline",
+  filter = "Filter",
+  arrange = "Arrange",
+  mutate = "Mutate",
+  recode = "Recode",
+  summarise = "Summarise",
+  discrepancy = "Discrepancy",
+  chat = "Copilot"
+)

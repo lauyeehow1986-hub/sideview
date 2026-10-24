@@ -413,7 +413,7 @@ test_that("Feature 9: Standalone HTML export and widget embedding function relia
 # Feature 10: Web Assets & JavaScript Syntax Integrity
 # -------------------------------------------------------------------------
 test_that("Feature 10: All web assets exist, are non-empty, and contain zero JavaScript syntax errors", {
-  assets <- c("sv-panzoom.js", "sideview.css", "sideview.js")
+  assets <- c("sv-panzoom.js", "sv-pipeline.js", "sideview.css", "sideview.js")
   for (a in assets) {
     p <- find_asset(a)
     expect_true(file.exists(p), info = paste("Missing asset:", a))

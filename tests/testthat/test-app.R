@@ -54,7 +54,7 @@ test_that("sideview_ui returns shiny.tag.list with proper dependencies and struc
   
   sv_dep <- deps[[which(dep_names == "sideview-core")[1]]]
   expect_equal(sv_dep$stylesheet, "sideview.css")
-  expect_equal(sv_dep$script, c("sv-panzoom.js", "sideview.js"))
+  expect_equal(sv_dep$script, c("sv-panzoom.js", "sv-pipeline.js", "sideview.js"))
   
   # Render UI to character to verify required DOM elements
   html_rendered <- as.character(ui)

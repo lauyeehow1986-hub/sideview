@@ -458,8 +458,9 @@ function runAllScenarios() {
     };
   };
 
-  // Load and evaluate sideview.js
+  // Load and evaluate sv-pipeline.js, then sideview.js (same order as the dependency)
   const sideviewPath = findSideviewJs();
+  eval(fs.readFileSync(path.join(path.dirname(sideviewPath), 'sv-pipeline.js'), 'utf8'));
   const sideviewCode = fs.readFileSync(sideviewPath, 'utf8');
   eval(sideviewCode);
 
