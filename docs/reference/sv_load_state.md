@@ -56,7 +56,7 @@ tf <- tempfile(fileext = ".json")
 sv_save_state(st, tf)
 loaded <- sv_load_state(tf)
 print(loaded)
-#> <sideview_state v0.3.0>
+#> <sideview_state v0.2.0>
 #>   Cards:       0
 #>   Connections: 0
 #>   Canvas:      zoom = 1, pan = (0, 0)

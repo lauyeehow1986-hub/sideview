@@ -3,7 +3,7 @@
 plus optional overrides of the canvas design tokens (the --sv-* CSS
 custom properties in inst/www/sideview.css)."><meta property="og:description" content="Builds a theme for sideview() and sideview_widget(): a light/dark mode
 plus optional overrides of the canvas design tokens (the --sv-* CSS
-custom properties in inst/www/sideview.css)."><meta property="og:image" content="https://lauyeehow1986-hub.github.io/sideview/logo.svg"></head><body>
+custom properties in inst/www/sideview.css)."><meta property="og:image" content="https://lauyeehow1986-hub.github.io/sideview/logo.png"></head><body>
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
 
 
@@ -31,7 +31,7 @@ custom properties in inst/www/sideview.css)."><meta property="og:image" content=
 </nav><div class="container template-reference-topic">
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
-      <img src="../logo.svg" class="logo" alt=""><h1>Canvas Theme</h1>
+      <img src="../logo.png" class="logo" alt=""><h1>Canvas Theme</h1>
       <small class="dont-index">Source: <a href="https://github.com/lauyeehow1986-hub/sideview/blob/HEAD/R/theme.R" class="external-link"><code>R/theme.R</code></a></small>
       <div class="d-none name"><code>sv_theme.Rd</code></div>
     </div>
@@ -93,25 +93,9 @@ focus and tint shades are derived from it.</p></dd>
     <div class="section level2">
     <h2 id="ref-examples">Examples<a class="anchor" aria-label="anchor" href="#ref-examples"></a></h2>
     <div class="sourceCode"><pre class="sourceCode r"><code><span class="r-in"><span><span class="fu">sv_theme</span><span class="op">(</span><span class="st">"dark"</span><span class="op">)</span></span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> &lt;sv_theme&gt; mode: dark </span>
+<span class="r-err co"><span class="r-pr">#&gt;</span> <span class="error">Error in sv_theme("dark"):</span> could not find function "sv_theme"</span>
 <span class="r-in"><span><span class="fu">sv_theme</span><span class="op">(</span>primary <span class="op">=</span> <span class="st">"#0f766e"</span>, radius <span class="op">=</span> <span class="st">"4px"</span><span class="op">)</span></span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> &lt;sv_theme&gt; mode: auto </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-primary: #0f766e</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-primary-text-light: #0e6a63</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-primary-text-dark: #63a6a1</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-text-inverse: #ffffff</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-primary-hover: #0d645e</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-primary-subtle: rgba(15, 118, 110, 0.12)</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-primary-ring: rgba(15, 118, 110, 0.2)</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-primary-tint: rgba(15, 118, 110, 0.12)</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-focus-ring: #0f766e</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-border-focus: #0f766e</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-connector-color: #0f766e</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-port-ring: rgba(15, 118, 110, 0.35)</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-suggested: #0f766e</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-suggested-hover: #0f766e</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-suggested-glow: rgba(15, 118, 110, 0.5)</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-radius: 4px</span>
+<span class="r-err co"><span class="r-pr">#&gt;</span> <span class="error">Error in sv_theme(primary = "#0f766e", radius = "4px"):</span> could not find function "sv_theme"</span>
 <span class="r-in"><span><span class="kw">if</span> <span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/interactive.html" class="external-link">interactive</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span> <span class="fu"><a href="sideview.html">sideview</a></span><span class="op">(</span><span class="va">mtcars</span>, theme <span class="op">=</span> <span class="fu">sv_theme</span><span class="op">(</span><span class="st">"dark"</span>, primary <span class="op">=</span> <span class="st">"#f59e0b"</span><span class="op">)</span><span class="op">)</span></span></span>
 </code></pre></div>
     </div>

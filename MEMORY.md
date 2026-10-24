@@ -66,6 +66,18 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 
 ## Log
 
+### 2026-10-24 — New hex logo (README, pkgdown site, favicons)
+- **What:**
+  - The user supplied a new 1024px hex artwork (spline-connected tables, "sideview" wordmark). The hex was cut out with a transparent background: a regular pointy-top hexagon fitted at the 30-degree edges, a 4x supersampled mask and a 1.5px inset so no background fringe survives.
+  - `man/figures/logo.png`: 598x693, 256 colours (58 KB instead of 394 KB, identical at the 139px display size). `man/figures/logo.svg` (the old logo) was removed, because pkgdown prefers an SVG over the PNG.
+  - `pkgdown/favicon/*` were regenerated locally from the same cut-out, with no realfavicongenerator upload:
+    - a transparent 96px PNG and a 16/32/48 `.ico`;
+    - a `favicon.svg` that embeds a 64px PNG;
+    - opaque dark apple-touch (180) and maskable manifest icons (192/512, artwork kept in the 80% safe zone).
+  - `site.webmanifest` gained a name and a dark background colour.
+  - A 1280x640 GitHub social preview card was made for the user to upload in Settings. It is not in the repo.
+- **Verified:** served `docs/` locally. The home page header shows the new hex (loads at 598x693, shown at 120x139) and links the new favicons. Favicons were checked at 16/32/48/96/180px. The logo was checked on white and on dark backgrounds.
+
 ### 2026-10-24 — Pushed 0.3.0 to main and rebuilt the GitHub Pages site
 - `_pkgdown.yml`: added `sv_theme` and `sv_llm_models` (`check_pkgdown()` failed without them).
 - `docs/` rebuilt with pkgdown 2.2.0 (Pages serves `main:/docs`). The generated `CLAUDE`/`MEMORY` pages were removed from the site, the sitemap and the search index.

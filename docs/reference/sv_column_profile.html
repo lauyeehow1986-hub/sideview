@@ -7,7 +7,7 @@ empty strings, extreme values)."><meta property="og:description" content="Summar
 distinct values, whether it could serve as a unique key, quartiles and a
 histogram for numbers, the most common values for text, and data-quality
 flags (stray spaces, values that differ only in case, numbers stored as text,
-empty strings, extreme values)."><meta property="og:image" content="https://lauyeehow1986-hub.github.io/sideview/logo.svg"></head><body>
+empty strings, extreme values)."><meta property="og:image" content="https://lauyeehow1986-hub.github.io/sideview/logo.png"></head><body>
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
 
 
@@ -35,7 +35,7 @@ empty strings, extreme values)."><meta property="og:image" content="https://lauy
 </nav><div class="container template-reference-topic">
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
-      <img src="../logo.svg" class="logo" alt=""><h1>Column Profile</h1>
+      <img src="../logo.png" class="logo" alt=""><h1>Column Profile</h1>
       <small class="dont-index">Source: <a href="https://github.com/lauyeehow1986-hub/sideview/blob/HEAD/R/codebook.R" class="external-link"><code>R/codebook.R</code></a></small>
       <div class="d-none name"><code>sv_column_profile.Rd</code></div>
     </div>
@@ -83,51 +83,9 @@ not in <code>top</code>) and <code>issues</code> (character).</p>
     <div class="section level2">
     <h2 id="ref-examples">Examples<a class="anchor" aria-label="anchor" href="#ref-examples"></a></h2>
     <div class="sourceCode"><pre class="sourceCode r"><code><span class="r-in"><span><span class="fu">sv_column_profile</span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">" Male"</span>, <span class="st">"male"</span>, <span class="st">"Female"</span>, <span class="cn">NA</span><span class="op">)</span><span class="op">)</span></span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $kind</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] "character"</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $class</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] "character"</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $label</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> NULL</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $n</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] 4</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $n_missing</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] 1</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $pct_missing</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] 0.25</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $n_distinct</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] 3</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $unique_key</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] FALSE</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $stats</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> NULL</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $histogram</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> NULL</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $top</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>    value n</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1   Male 1</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 2 Female 1</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 3   male 1</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $n_other</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] 0</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $issues</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] "1 value has leading or trailing spaces."                             </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [2] "1 value differs only in case or spacing (e.g. \" Male\" / \"male\")."</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
+<span class="r-err co"><span class="r-pr">#&gt;</span> <span class="error">Error in sv_column_profile(c(" Male", "male", "Female", NA)):</span> could not find function "sv_column_profile"</span>
 <span class="r-in"><span><span class="fu">sv_column_profile</span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">54</span>, <span class="fl">61</span>, <span class="fl">47</span>, <span class="fl">999</span>, <span class="cn">NA</span><span class="op">)</span><span class="op">)</span><span class="op">$</span><span class="va">issues</span></span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> character(0)</span>
+<span class="r-err co"><span class="r-pr">#&gt;</span> <span class="error">Error in sv_column_profile(c(54, 61, 47, 999, NA)):</span> could not find function "sv_column_profile"</span>
 </code></pre></div>
     </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
