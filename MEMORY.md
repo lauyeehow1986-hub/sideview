@@ -66,6 +66,19 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 
 ## Log
 
+### 2026-10-24 — Site and README adopt the dicomtk layout
+- **What:**
+  - At the user's request the GitHub Pages site now follows the sister package dicomtk (https://lauyeehow1986-hub.github.io/dicomtk/).
+  - `_pkgdown.yml` is reduced to `url`, `template: bootstrap: 5` (the default light navbar, no bootswatch or bslib colours, no custom navbar or authors block) and the reference index.
+  - `README.md` was rewritten in the dicomtk shape: an H1 "sideview: Title" with the logo on the right (height 150), three badges, one intro paragraph, Installation, Key Features (bold-label bullets, nested where useful) and a Quick Start.
+  - Dropped from the README: the emoji comparison table, the architecture diagram, the per-capability sections, the API and options tables. That detail lives in the reference pages and `?sideview`.
+- **Why:** the user found the old bootswatch site and the long README hard to read on a phone.
+- **Verified:**
+  - The Quick Start code runs.
+  - `check_pkgdown()` is clean.
+  - The site was rebuilt locally and checked at 375x812 (light navbar, logo beside the title, readable sections, code blocks scroll sideways).
+  - The CLAUDE/MEMORY pages were scrubbed from `docs/`.
+
 ### 2026-10-24 — New hex logo (README, pkgdown site, favicons)
 - **What:**
   - The user supplied a new 1024px hex artwork (spline-connected tables, "sideview" wordmark). The hex was cut out with a transparent background: a regular pointy-top hexagon fitted at the 30-degree edges, a 4x supersampled mask and a 1.5px inset so no background fringe survives.

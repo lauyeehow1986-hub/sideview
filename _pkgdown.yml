@@ -1,33 +1,6 @@
 url: https://lauyeehow1986-hub.github.io/sideview/
 template:
   bootstrap: 5
-  bootswatch: flatly
-  bslib:
-    primary: "#0284c7"
-    secondary: "#64748b"
-    success: "#10b981"
-    info: "#06b6d4"
-    bg: "#ffffff"
-    fg: "#0f172a"
-
-home:
-  title: "sideview: Multi-Table 2D Infinite Canvas for R"
-  description: "Explore multiple tables simultaneously on an infinite 2D canvas with mouse-wheel zoom, visual field mapping, and LLM-assisted tidyverse code generation."
-
-authors:
-  Yee How Lau:
-    href: https://github.com/lauyeehow1986-hub
-    html: <img src="https://avatars.githubusercontent.com/u/249935955?v=4" width="72px" style="border-radius:50%;margin-bottom:8px;" alt="Yee How Lau" />
-
-navbar:
-  structure:
-    left: [intro, reference, articles, news]
-    right: [search, github]
-  components:
-    github:
-      icon: fab fa-github fa-lg
-      href: https://github.com/lauyeehow1986-hub/sideview
-      aria-label: GitHub repository
 
 reference:
   - title: "Interactive Canvas & Gadget"

@@ -2,9 +2,7 @@
 
 ## Authors
 
-- **[![Yee How
-  Lau](https://avatars.githubusercontent.com/u/249935955?v=4)](https://github.com/lauyeehow1986-hub)**.
-  Author, maintainer, copyright holder.
+- **Yee How Lau**. Author, maintainer, copyright holder.
 
 - **sideview contributors**. Contributor.
 

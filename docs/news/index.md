@@ -71,8 +71,7 @@ file and a Quarto page), plus new features for clinical data work.
   break the page.
 - Recode and auto-clean emit
   [`dplyr::case_when()`](https://dplyr.tidyverse.org/reference/case-and-replace-when.html)
-  ([`case_match()`](https://dplyr.tidyverse.org/reference/case_match.html)
-  is deprecated in dplyr 1.2).
+  (`case_match()` is deprecated in dplyr 1.2).
 - A saved or embedded widget hides buttons that need an R session.
 - A widget in Quarto or R Markdown no longer stops the page from
   scrolling or restyles the host page.

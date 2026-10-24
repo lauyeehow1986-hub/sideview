@@ -1,359 +1,72 @@
-# sideview
+# sideview: Multi-Table 2D Infinite Canvas for R
 
-> **Multi-Table 2D Infinite Canvas for Interactive Data Exploration,
-> Visual Field Mapping, and LLM-Assisted Tidyverse Code Generation**
-
-------------------------------------------------------------------------
-
-## Overview
-
-When analyzing complex workflows, data scientists frequently work with
-multiple related tables simultaneously: clinical demographics,
-longitudinal vitals, lab panels, crosswalk dictionaries, and summary
-reports.
-
-Existing tools force analysts into **siloed, tabbed interfaces** where
-only one table is visible at a time. Switching back and forth between
-tabs breaks cognitive flow, obscures structural discrepancies, and makes
-mental reconciliation of column mappings error-prone.
-
-**`sideview`** replaces tabbed viewers with a hardware-accelerated **2D
-infinite canvas**. You can place any number of heterogeneous tabular
-datasets side-by-side, zoom and pan freely across the workspace,
-visually connect columns across tables with interactive SVG splines,
-sort and filter columns directly on table headers, inspect inline SVG
-distribution sparklines, automatically detect categorical discrepancies,
-and generate idiomatic `tidyverse` code that pastes directly into your
-active RStudio script editor.
-
-[`library`](https://rdrr.io/r/base/library.html)`(`[`sideview`](https://lauyeehow1986-hub.github.io/sideview/)`)`` `` ``# Launch side-by-side multi-table canvas in RStudio Viewer or Gadget Window`` `[`sideview`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)`(``patients``, ``visits``, ``lab_results``, ``gt_summary``)`
-
-------------------------------------------------------------------------
-
-## Why `sideview`? Comparison with `dataviewR`
-
-| Feature | `dataviewR` | `sideview` |
-|:---|:--:|:--:|
-| **Workspace Layout** | Single-table tabbed view (one table at a time) | **Infinite 2D canvas** (unlimited tables side-by-side) |
-| **Navigation** | Basic paging | **Smooth mouse-wheel zoom (15%–350%) & canvas pan** |
-| **Table Alignment** | ❌ None | ✅ **Magnetic snap-to-edge docking** |
-| **Synchronized Scrolling** | ❌ None | ✅ **Dual vertical (`scrollTop`) and horizontal (`scrollLeft`) sync** |
-| **100k+ Row Performance** | ❌ Browser freezing | ✅ **DOM Virtualization (`VirtualTable` ~30 rows active, 60 FPS)** |
-| **Big Data Ingestion** | `data.frame` only | ✅ **Apache Arrow (`arrow_table`, `Dataset`) & DuckDB (`tbl_duckdb_connection`)** |
-| **Multi-Format Ingestion** | `data.frame` only | ✅ **`data.frame`, `tibble`, `table`, `matrix`, `gt`, `flextable`, `htmlwidgets`** |
-| **Interactive Sorting** | ❌ None | ✅ **Tri-state header click (Asc / Desc / Reset) generating [`dplyr::arrange`](https://dplyr.tidyverse.org/reference/arrange.html)** |
-| **Interactive Filtering** | ❌ None | ✅ **Header filter popover (`>`, `<`, `==`, `contains`) generating [`dplyr::filter`](https://dplyr.tidyverse.org/reference/filter.html)** |
-| **Visual Table Reshaping** | ❌ None | ✅ **Visual [`tidyr::pivot_longer()`](https://tidyr.tidyverse.org/reference/pivot_longer.html) & [`tidyr::pivot_wider()`](https://tidyr.tidyverse.org/reference/pivot_wider.html) builders** |
-| **Visual Aggregation** | ❌ None | ✅ **Visual [`dplyr::group_by()`](https://dplyr.tidyverse.org/reference/group_by.html) + [`dplyr::summarise()`](https://dplyr.tidyverse.org/reference/summarise.html) builder** |
-| **Header Column Profiling** | ❌ None | ✅ **Inline SVG 5-bin sparklines, categorical frequency bars, NA badges** |
-| **Visual Column Mapping** | ❌ None | ✅ **Click-to-connect interactive SVG splines** |
-| **Multi-Key Composite Joins** | ❌ None | ✅ **Composite vector keys (`by = c("k1" = "k1", "k2" = "k2")`) & DAG chaining** |
-| **Suggested Splines Copilot** | ❌ None | ✅ **Proactive foreign key detection (`sv_suggest_mappings`) with 1-click accept** |
-| **Discrepancy Detection** | ❌ None | ✅ **Vectorized exact & fuzzy string matching with distance scoring** |
-| **Auto-Cleanup Rules** | ❌ None | ✅ **1-Click [`dplyr::case_when`](https://dplyr.tidyverse.org/reference/case-and-replace-when.html) generation for casing, whitespace, & typos** |
-| **Conversational Copilot** | ❌ None | ✅ **Multi-turn dialogue drawer with context retention (20-turn window)** |
-| **Workspace Persistence** | ❌ None | ✅ **Serialize & restore full canvas topology (`.json` and `.rds`)** |
-| **Console & Script Execution** | ❌ None | ✅ **`Insert Script`, `Run & Exit`, `Run in R` (`.GlobalEnv`), and `Run Console`** |
-| **Standalone HTML Export** | ❌ None | ✅ **Self-contained `htmlwidget` ([`save_sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/save_sideview.md))** |
-| **Quarto & Rmd Support** | ❌ None | ✅ **Embeddable via [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md)** |
-| **Automated GUI Testing** | ❌ None | ✅ **Headless DOM & Computer Use verification harness (1,210 tests passing)** |
-
-------------------------------------------------------------------------
-
-## Architecture Overview
-
-`sideview` is built on a **Dual-Hybrid Architecture**:
-
-```
-flowchart TD
-    subgraph Ingestion ["Universal Normalization Engine"]
-        DF["data.frame / tibble"] --> NORM["sv_normalize()"]
-        TAB["table / matrix"] --> NORM
-        GT["gt / gtsummary"] --> NORM
-        FLEX["flextable"] --> NORM
-        WID["htmlwidgets"] --> NORM
-        ARROW["arrow::Table / Dataset"] --> NORM
-        DUCK["duckdb::tbl_duckdb_connection"] --> NORM
-    end
-
-    subgraph Core ["sideview Cards & State"]
-        NORM --> CARDS["sideview_card Objects (Grid / HTML / Widget / Lazy)"]
-        CARDS --> STATE["sideview_state (JSON / RDS Persistence)"]
-    end
-
-    subgraph Gadget ["Interactive Mode: sideview()"]
-        CARDS --> GADGET["Shiny Gadget (Canvas + Panzoom + VirtualTable)"]
-        GADGET --> MAP["Interactive SVG Field Mapping & Suggested Splines"]
-        GADGET --> SORT["Header Sort & Filter Popovers"]
-        GADGET --> PROF["Inline SVG Sparklines & Profiling Badges"]
-        GADGET --> DISC["Discrepancy & Auto-Clean Engine"]
-        GADGET --> RESHAPE["Visual Pivot & Group/Summarize Builders"]
-        GADGET --> COPILOT["Conversational Multi-Turn AI Copilot Drawer"]
-        GADGET --> RSTUDIO["rstudioapi: Insert to Active Script / Console / .GlobalEnv"]
-    end
-
-    subgraph Widget ["Export Mode: save_sideview()"]
-        CARDS --> HTMLWID["htmlwidget Container"]
-        HTMLWID --> HTML["Standalone Self-Contained HTML File"]
-        HTMLWID --> QMD["Quarto (.qmd) / R Markdown (.Rmd)"]
-    end
-```
-
-------------------------------------------------------------------------
-
-## Core Capabilities
-
-### 1. High-Performance Infinite 2D Panzoom Canvas & Virtualization
-
-- **DOM Virtualization (`VirtualTable`)**: Renders datasets containing
-  **100,000+ rows** smoothly at 60 FPS by dynamically maintaining a
-  sliding window of ~30 active `<tr>` elements with spacer elements.
-- **Mouse Wheel Zoom**: Smooth scaling centered on the cursor position
-  (15% to 350% zoom).
-- **Panning & Dragging**: Click-and-drag navigation across the infinite
-  canvas, with magnetic edge-docking for table cards.
-- **Dual Synchronized Scrolling**: Locks both vertical rows
-  (`scrollTop`) and horizontal columns (`scrollLeft`) across linked
-  tables.
-- **Navigation**: **Fit** and **Arrange** buttons, a minimap
-  (bottom-left; click to jump, `M` to hide), `Ctrl+K` to find a card or
-  column, and double-click a card title to zoom to it.
-- **Full-data sort and filter**: Header sorts and filters run on the
-  whole table in R, not just the rows on screen.
-
-### 2. Universal Multi-Format Normalization
-
-- **`data.frame` & `tibble`**: Virtualized interactive grid cards.
-- **[`arrow::Table`](https://arrow.apache.org/docs/r/reference/Table-class.html)
-  & `Dataset`**: Zero-copy schema extraction previewing `head(50)`
-  without materializing multi-gigabyte files.
-- **`duckdb` Connections**: DBI query schemas previewing `head(50)` with
-  lazy counts.
-- **`gt` & `flextable`**: Styled HTML display while extracting raw data
-  frames (`x[["_data"]]` / `x[["body"]][["dataset"]]`) for tidyverse
-  code generation.
-- **`htmlwidgets`**: Embedded container cards.
-
-### 3. Visual Field Mapping & Relational DAG
-
-- **Interactive SVG Splines**: Connect column ports across tables to
-  generate idiomatic tidyverse joins. Click or right-click directly on
-  spline curves to disconnect.
-
-- **Composite Multi-Key Joins**: Draw multiple splines between the same
-  tables to emit composite keys:
-
-  `patients`` ``%>%`` `` ``dplyr``::`[`left_join`](https://dplyr.tidyverse.org/reference/mutate-joins.html)`(``visits``, by ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``"patient_id"`` ``=`` ``"patient_id"``, ``"site_id"`` ``=`` ``"site_id"``)``)`
-
-- **Proactive Foreign Key Detection
-  ([`sv_suggest_mappings()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_suggest_mappings.md))**:
-  Heuristic scoring engine (name similarity, type compatibility, Jaccard
-  value overlap) automatically discovers candidate foreign keys and
-  renders them as animated dashed suggested splines
-  (`.sideview-spline-suggested`) with 1-click acceptance.
-
-### 4. Advanced Visual Wrangling & Profiling
-
-- **Header Column Profiling**: Embedded inline SVG 5-bin distribution
-  sparklines (`<svg class="sideview-sparkline">`), categorical frequency
-  distribution bars, and color-coded missingness badges
-  (`.sideview-na-badge`) with hover range tooltips.
-- **Visual Table Reshaping**:
-  - [`sv_code_pivot_longer()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_code_pivot_longer.md):
-    Emits
-    [`tidyr::pivot_longer()`](https://tidyr.tidyverse.org/reference/pivot_longer.html)
-    pipelines.
-  - [`sv_code_pivot_wider()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_code_pivot_wider.md):
-    Emits
-    [`tidyr::pivot_wider()`](https://tidyr.tidyverse.org/reference/pivot_wider.html)
-    pipelines with aggregation (`values_fn`).
-- **Group & Summarize Builder**:
-  [`sv_code_group_summarize()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_code_group_summarize.md)
-  generates reproducible
-  `group_by(...) %>% summarise(..., .groups = 'drop')` pipelines.
-
-### 5. Canvas State Persistence & Cloud Sharing
-
-- **Workspace Serialization**: Save and restore complete canvas layouts
-  (pan/zoom, card coordinates, splines, filters, sorts, pipeline) with
-  the toolbar’s **Save** and **Open** buttons, or from R:
-
-  `# Reopen a saved workspace on the same tables`` `[`sideview`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)`(``patients``, ``visits``, ``labs``, state ``=`` ``"study_canvas.json"``)`` `` ``# Or let sideview find the tables by name`` `[`sv_load_state`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_load_state.md)`(``"study_canvas.json"``, launch ``=`` ``TRUE``)`
-
-### 6. Conversational AI Copilot Drawer
-
-- **Multi-Turn Context Retention**: Dialogue chat tab in the Action
-  Drawer retaining conversation history, active pipeline R code, and
-  privacy-safe schema summaries.
-- **Zero Data Leakage**: Never transmits raw patient records. Works
-  seamlessly with local Ollama (`gemma4:26b`, `llama3.2`) or cloud
-  OpenAI-compatible APIs.
-- **1-Click Code Injection**: “Replace Pipeline” updates drawer code,
-  while “Insert into Editor” pastes directly at the cursor via
-  `rstudioapi`.
-
-### 7. Pipeline, Builders & Join Diagnostics
-
-- **Composable pipeline**: every sort, filter, join, rename, recode,
-  mutate, reshape or summarise becomes a step you can toggle, reorder or
-  delete, with undo/redo and a `%>%` / `|>` choice.
-- **Builder tabs**: Join, Filter (AND/OR), Arrange, Mutate, Recode,
-  Reshape and Summarise.
-- **Join diagnostics**
-  ([`sv_join_diagnostics()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_join_diagnostics.md)):
-  match rate both ways, unmatched keys, 1:1 / 1:m / m:m relationship,
-  rows per join type, and NA / spacing / case problems in keys, shown
-  before you commit to a join.
-
-### 8. Column Inspector & Codebook
-
-- Click a column’s inspect icon for type, missingness, distinct values,
-  key check, summary statistics or top levels, and a histogram
-  ([`sv_column_profile()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_column_profile.md)).
-- **Export codebook** writes a data dictionary across all cards
-  ([`sv_codebook()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_codebook.md)).
-
-### 9. Themes & Keyboard
-
-- `theme = "auto"` follows RStudio or the browser; also `"light"`,
-  `"dark"`,
-  [`sv_theme()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_theme.md)
-  or a
-  [`bslib::bs_theme()`](https://rstudio.github.io/bslib/reference/bs_theme.html).
-- Shortcuts: `F` fit, `0` reset zoom, `+`/`-` zoom, `M` minimap, `D`
-  drawer, `T` theme, `/` AI prompt, `Ctrl+K` search, `Ctrl+Z`/`Ctrl+Y`
-  undo/redo, `?` the full list.
-
-### 10. Tested in Real Browsers
-
-- Unit tests, a headless DOM harness, and a real-browser suite
-  (`tests/testthat/test-layout-browser.R`, `NOT_CRAN=true`) that drives
-  Chrome with real mouse and keyboard input to check layout and
-  behaviour at several window sizes.
-
-------------------------------------------------------------------------
+`sideview` puts **many tables side by side on a pan-and-zoom canvas**,
+so you can compare them, **connect columns to build joins**, check those
+joins before you run them, and take away **reproducible `tidyverse`
+code**. It runs as an **RStudio gadget** or as an **htmlwidget** you can
+save to HTML or embed in Quarto and R Markdown.
 
 ## Installation
 
-Install the development version of `sideview` from GitHub:
+Install the development version from GitHub:
 
 `# install.packages("remotes")`` ``remotes``::`[`install_github`](https://remotes.r-lib.org/reference/install_github.html)`(``"lauyeehow1986-hub/sideview"``)`
 
-### Dependencies
+## Key Features
 
-- **Core**: `shiny`, `htmltools`, `htmlwidgets`, `dplyr`, `httr2`,
-  `jsonlite`, `rstudioapi`
-- **Suggested**: `arrow`, `duckdb`, `DBI`, `shinytest2`, `gt`,
-  `flextable`, `testthat`, `knitr`, `rmarkdown`
+- **Many Tables at Once**: `data.frame`, `tibble`, `table`, `matrix`,
+  `gt`, `flextable`, `arrow` tables and datasets, and `duckdb`
+  connections each become a card on one canvas. Tables of 100,000+ rows
+  scroll smoothly.
+- **Canvas Navigation**: Wheel zoom (15%–350%), pan, drag and snap
+  cards, **Fit** and **Arrange**, a minimap, `Ctrl+K` to find a card or
+  column, and double-click a card title to zoom to it.
+- **Visual Joins**:
+  - Draw a spline between two columns to generate `dplyr` joins,
+    including multi-key joins.
+  - [`sv_suggest_mappings()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_suggest_mappings.md)
+    proposes likely keys from name, type and value overlap.
+  - **Join diagnostics**
+    ([`sv_join_diagnostics()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_join_diagnostics.md))
+    show match rates both ways, unmatched keys, 1:1 / 1:m / m:m
+    relationships, rows per join type, and NA, spacing or case problems
+    in keys.
+- **Composable Pipeline**: Every sort, filter, join, rename, recode,
+  mutate, reshape or summarise becomes a step you can toggle, reorder or
+  delete, with undo/redo and a `%>%` / `|>` choice. Sorts and filters
+  run on the full data in R, not just the rows on screen.
+- **Data Quality**:
+  - Header sparklines and missingness badges.
+  - Category discrepancy detection with auto-clean rules
+    ([`sv_detect_discrepancies()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_detect_discrepancies.md),
+    [`sv_auto_clean_rules()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_auto_clean_rules.md)).
+  - A column inspector
+    ([`sv_column_profile()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_column_profile.md)).
+  - A data dictionary export
+    ([`sv_codebook()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_codebook.md),
+    CSV or XLSX).
+- **Into Your Script**: Insert the generated code at the cursor in
+  RStudio, send it to the console, or run it and keep the result.
+- **Save and Reopen Workspaces**: Card positions, zoom, joins and the
+  pipeline (`sideview(..., state = "canvas.json")`,
+  [`sv_save_state()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_save_state.md),
+  [`sv_load_state()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_load_state.md)).
+- **AI Copilot**: Ask a local **Ollama** model or any
+  **OpenAI-compatible** endpoint for tidyverse code. Only schema
+  summaries are sent, **never raw rows**.
+- **Themes and Keyboard**: Light, dark or automatic (follows RStudio),
+  [`sv_theme()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_theme.md)
+  or a
+  [`bslib::bs_theme()`](https://rstudio.github.io/bslib/reference/bs_theme.html).
+  Press `?` on the canvas for every shortcut.
 
-------------------------------------------------------------------------
+## Quick Start
 
-## Quick Start Examples
+[`library`](https://rdrr.io/r/base/library.html)`(`[`sideview`](https://lauyeehow1986-hub.github.io/sideview/)`)`` `` ``patients`` ``<-`` `[`data.frame`](https://rdrr.io/r/base/data.frame.html)`(`` `` patient_id ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``"P01"``, ``"P02"``, ``"P03"``, ``"P04"``)``,`` `` age ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``45``, ``52``, ``38``, ``61``)``,`` `` sex ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``"Male"``, ``"Female"``, ``"M"``, ``"Fem"``)`` ``)`` ``visits`` ``<-`` `[`data.frame`](https://rdrr.io/r/base/data.frame.html)`(`` `` patient_id ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``"P01"``, ``"P02"``, ``"P03"``, ``"P05"``)``,`` `` systolic_bp ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``120``, ``140``, ``115``, ``130``)`` ``)`` `` ``# 1. Open the canvas (RStudio dialog by default; also viewer = "pane" or "browser")`` ``if`` ``(`[`interactive`](https://rdrr.io/r/base/interactive.html)`(``)``)`` ``{`` `` `[`sideview`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)`(``patients``, ``visits``)`` ``}`` `` ``# 2. Check a join before you run it`` `[`sv_join_diagnostics`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_join_diagnostics.md)`(``patients``, ``visits``, by ``=`` ``"patient_id"``,`` `` x_name ``=`` ``"patients"``, y_name ``=`` ``"visits"``)`` `` ``# 3. Build a data dictionary across tables`` `[`sv_codebook`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_codebook.md)`(``patients``, ``visits``)`` `` ``# 4. Share the canvas as a standalone HTML file`` `[`save_sideview`](https://lauyeehow1986-hub.github.io/sideview/reference/save_sideview.md)`(`[`sideview_widget`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md)`(``patients``, ``visits``)``, file ``=`` ``"study_overview.html"``)`
 
-### 1. Launch Interactive Gadget with Heterogeneous Tables
+To embed the canvas in Quarto or R Markdown, put
+`sideview_widget(patients, visits, height = "650px")` in a chunk.
 
-[`library`](https://rdrr.io/r/base/library.html)`(`[`sideview`](https://lauyeehow1986-hub.github.io/sideview/)`)`` `[`library`](https://rdrr.io/r/base/library.html)`(`[`dplyr`](https://dplyr.tidyverse.org)`)`` `` ``# Standard data frame`` ``patients`` ``<-`` `[`data.frame`](https://rdrr.io/r/base/data.frame.html)`(`` `` patient_id ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``"P01"``, ``"P02"``, ``"P03"``, ``"P04"``)``,`` `` age ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``45``, ``52``, ``38``, ``61``)``,`` `` gender_raw ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``"Male"``, ``"Female"``, ``"M"``, ``"Fem"``)``,`` `` stringsAsFactors ``=`` ``FALSE`` ``)`` `` ``# Tibble`` ``visits`` ``<-`` `[`tibble`](https://tibble.tidyverse.org/reference/tibble.html)`(`` `` patient_id ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``"P01"``, ``"P02"``, ``"P03"``, ``"P05"``)``,`` `` systolic_bp ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``120``, ``140``, ``115``, ``130``)``,`` `` visit_date ``=`` `[`as.Date`](https://rdrr.io/r/base/as.Date.html)`(`[`c`](https://rdrr.io/r/base/c.html)`(``"2024-01-10"``, ``"2024-01-15"``, ``"2024-02-01"``, ``"2024-02-10"``)``)`` ``)`` `` ``# Base R contingency table`` ``dx_freq`` ``<-`` `[`table`](https://rdrr.io/r/base/table.html)`(`[`c`](https://rdrr.io/r/base/c.html)`(``"Hypertension"``, ``"Diabetes"``, ``"Hypertension"``, ``"Asthma"``)``)`` `` ``# Launch Sideview canvas`` `[`sideview`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)`(``patients``, ``visits``, diagnoses ``=`` ``dx_freq``)`
-
-### 2. Including `gt`, `flextable`, and Big Data Objects
-
-[`library`](https://rdrr.io/r/base/library.html)`(`[`gt`](https://gt.rstudio.com)`)`` `[`library`](https://rdrr.io/r/base/library.html)`(`[`flextable`](https://ardata-fr.github.io/flextable-book/)`)`` `` ``gt_summary`` ``<-`` `[`gt`](https://gt.rstudio.com/reference/gt.html)`(``patients``[``, `[`c`](https://rdrr.io/r/base/c.html)`(``"patient_id"``, ``"age"``)``]``)`` ``flex_visits`` ``<-`` `[`flextable`](https://davidgohel.github.io/flextable/reference/flextable.html)`(`[`as.data.frame`](https://rdrr.io/r/base/as.data.frame.html)`(``visits``)``)`` `` ``# Both stylized HTML tables and raw data grids are accessible on the canvas`` `[`sideview`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)`(``patients``, ``visits``, ``gt_summary``, ``flex_visits``)`
-
-### 3. Export to Standalone HTML Widget
-
-Share interactive canvas boards as self-contained HTML files with zero
-external server dependencies:
-
-`# Save to an HTML file`` `[`save_sideview`](https://lauyeehow1986-hub.github.io/sideview/reference/save_sideview.md)`(`` `` `[`sideview_widget`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md)`(``patients``, ``visits``, diagnoses ``=`` ``dx_freq``)``,`` `` file ``=`` ``"study_overview.html"``,`` `` selfcontained ``=`` ``TRUE``,`` `` title ``=`` ``"Clinical Study Multi-Table Overview"`` ``)`
-
-### 4. Embedding in Quarto (`.qmd`) or R Markdown (`.Rmd`)
-
-```` markdown
----
-title: "Clinical Data Harmonization"
-format: html
----
-
-```{r}
-library(sideview)
-sideview_widget(patients, visits, width = "100%", height = "650px")
-```
-````
-
-------------------------------------------------------------------------
-
-## Options
-
-| Option | Default | Purpose |
-|:---|:---|:---|
-| `sideview.session_grace` | `5` | Seconds to wait after the last browser session closes before the gadget stops (a reload survives) |
-| `sideview.llm_backend` | `"ollama"` (or `SIDEVIEW_LLM_BACKEND`) | `"ollama"` or `"openai"` (any OpenAI-compatible server) |
-| `sideview.llm_model` | `SIDEVIEW_OLLAMA_MODEL` / `"llama3.2"`; `SIDEVIEW_OPENAI_MODEL` / `"gpt-4o-mini"` | Model name; [`sv_llm_models()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_llm_models.md) lists what is available |
-| `sideview.llm_endpoint` | `OLLAMA_HOST` / `http://localhost:11434`; `OPENAI_BASE_URL` / `https://api.openai.com/v1` | Base URL of the server |
-| `sideview.llm_api_key` | `OPENAI_API_KEY` | API key for OpenAI-compatible servers |
-| `sideview.llm_think` | `FALSE` | Let Ollama reasoning models think before answering |
-
-Only schema summaries are sent to the model, never raw rows.
-
-------------------------------------------------------------------------
-
-## Complete Programmatic API Reference
-
-| Function | Module | Description |
-|:---|:---|:---|
-| `sideview(...)` | Interactive Gadget | Launch Shiny Gadget or RStudio Addin on arbitrary tables |
-| [`sideview_addin()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_addin.md) | RStudio Addin | Addin entry point registered in RStudio Addins menu |
-| `sideview_widget(...)` | Widget | Create an exportable `htmlwidget` instance |
-| `save_sideview(widget, file)` | Widget Export | Export canvas to standalone self-contained HTML file |
-| `sideview_ui(...)` / `sideview_server(...)` | Shiny Integration | Build the canvas app yourself (custom `llm_fn`, embedding) |
-| `sideviewOutput(id, ...)` | Shiny Integration | Shiny UI widget container |
-| `renderSideview(expr, ...)` | Shiny Integration | Shiny server rendering function |
-| `sv_normalize(x, name, id)` | Normalization | S3 generic converting tables (data.frame, Arrow, DuckDB, gt, flextable) to cards |
-| `sv_find_tables(env)` | Discovery | Detect all tabular objects in an environment |
-| `sv_code_join(...)` | Code Generation | Emits [`dplyr::left_join`](https://dplyr.tidyverse.org/reference/mutate-joins.html), `inner_join`, `full_join`, `anti_join` with multi-key support |
-| `sv_code_pivot_longer(...)` | Code Generation | Emits [`tidyr::pivot_longer()`](https://tidyr.tidyverse.org/reference/pivot_longer.html) pipelines |
-| `sv_code_pivot_wider(...)` | Code Generation | Emits [`tidyr::pivot_wider()`](https://tidyr.tidyverse.org/reference/pivot_wider.html) pipelines with custom `values_fn` |
-| `sv_code_group_summarize(...)` | Code Generation | Emits `dplyr::group_by(...) %>% summarise(..., .groups = 'drop')` |
-| `sv_code_arrange(...)` | Code Generation | Emits [`dplyr::arrange()`](https://dplyr.tidyverse.org/reference/arrange.html) with optional descending order |
-| `sv_code_filter(...)` | Code Generation | Emits [`dplyr::filter()`](https://dplyr.tidyverse.org/reference/filter.html) expressions |
-| `sv_code_rename(...)` | Code Generation | Emits [`dplyr::rename()`](https://dplyr.tidyverse.org/reference/rename.html) with non-syntactic backtick escaping |
-| `sv_code_mutate(...)` | Code Generation | Emits [`dplyr::mutate()`](https://dplyr.tidyverse.org/reference/mutate.html) expressions |
-| `sv_code_select(...)` | Code Generation | Emits [`dplyr::select()`](https://dplyr.tidyverse.org/reference/select.html) column selections |
-| `sv_escape_ident(x)` | Code Generation | Wraps non-syntactic names and reserved words in backticks |
-| `sv_detect_discrepancies(...)` | Discrepancies | Vectorized exact & fuzzy Levenshtein discrepancy detection |
-| `sv_code_recode(...)` | Discrepancies | Emits [`dplyr::case_when()`](https://dplyr.tidyverse.org/reference/case-and-replace-when.html) (or legacy [`case_match()`](https://dplyr.tidyverse.org/reference/case_match.html)) or [`forcats::fct_recode()`](https://forcats.tidyverse.org/reference/fct_recode.html) |
-| `sv_auto_clean_rules(...)` | Discrepancies | Generates automatic `case_when` rules for casing, whitespace, and typos |
-| `sv_code_auto_clean(...)` | Discrepancies | Emits the `mutate(case_when(...))` code for auto-clean rules |
-| `sv_join_diagnostics(x, y, by)` | Diagnostics | Match rates, unmatched keys, cardinality and join row counts before joining |
-| `sv_column_profile(x)` | Inspector | Type, missingness, distinct values and summary of one column |
-| `sv_codebook(..., file)` | Inspector | Data dictionary across tables, optionally written to CSV or XLSX |
-| `sv_theme(mode, ...)` | Theme | Light/dark mode and colour, font and radius overrides |
-| `sv_llm_models(backend)` | LLM Engine | Lists models available from Ollama or an OpenAI-compatible server |
-| `sv_suggest_mappings(...)` | Copilot | Heuristic foreign key candidate detection across tables |
-| `sv_build_chat_prompt(...)` | LLM Engine | Synthesizes multi-turn conversational chat prompt with context retention |
-| `sv_build_schema_context(...)` | LLM Engine | Privacy-safe metadata synthesis for LLM prompt |
-| `sv_build_prompt(...)` | LLM Engine | Constructs system instructions and user prompt |
-| `sv_call_llm(...)` | LLM Engine | Dispatches request to Ollama or OpenAI-compatible backend |
-| `sv_extract_code(...)` | LLM Engine | Extracts clean R code from markdown fences |
-| `new_sideview_state(...)` | Persistence | Constructor for `sideview_state` object |
-| `sv_save_state(state, file)` | Persistence | Serializes canvas workspace layout to `.json` or `.rds` |
-| `sv_load_state(file, ...)` | Persistence | Deserializes canvas workspace layout and launches or returns state |
-| [`sv_is_rstudio_available()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_is_rstudio_available.md) | RStudio Bridge | Checks if RStudio API is available |
-| `sv_insert_code(code)` | RStudio Bridge | Inserts text into active document editor |
-| `sv_send_to_console(code)` | RStudio Bridge | Sends code to R console for execution |
-
-------------------------------------------------------------------------
-
-## License
-
-This package is licensed under the [MIT
-License](https://lauyeehow1986-hub.github.io/sideview/LICENSE).
-
-------------------------------------------------------------------------
-
-## Medical & Diagnostic Disclaimer
-
-`sideview` is an exploratory data analysis, visualization, and code
-generation tool intended for research, education, and general data
-science workflows. It is **not certified as medical device software**
-and is **not intended for clinical diagnosis or patient treatment
-decisions**.
+`sideview` is a research and education tool for exploring and preparing
+data. It is not medical device software and is not intended for clinical
+decisions.

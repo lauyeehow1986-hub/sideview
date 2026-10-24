@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-<title>sideview: Multi-Table 2D Infinite Canvas for R • sideview</title>
+<title>Multi-Table 2D Infinite Canvas for R • sideview</title>
 <!-- favicons --><link rel="icon" type="image/png" sizes="96x96" href="favicon-96x96.png">
 <link rel="icon" type="”image/svg+xml”" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
@@ -15,16 +15,16 @@
 <link href="deps/bootstrap-5.3.8/bootstrap.min.css" rel="stylesheet">
 <script src="deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="deps/font-awesome-6.5.2/css/all.min.css" rel="stylesheet">
 <link href="deps/font-awesome-6.5.2/css/v4-shims.min.css" rel="stylesheet">
-<script src="deps/headroom-0.11.0/headroom.min.js"></script><script src="deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="deps/search-1.0.0/fuse.min.js"></script><script src="deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="pkgdown.js"></script><meta property="og:title" content="sideview: Multi-Table 2D Infinite Canvas for R">
-<meta name="description" content="Explore multiple tables simultaneously on an infinite 2D canvas with mouse-wheel zoom, visual field mapping, and LLM-assisted tidyverse code generation.">
-<meta property="og:description" content="Explore multiple tables simultaneously on an infinite 2D canvas with mouse-wheel zoom, visual field mapping, and LLM-assisted tidyverse code generation.">
+<script src="deps/headroom-0.11.0/headroom.min.js"></script><script src="deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="deps/search-1.0.0/fuse.min.js"></script><script src="deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="pkgdown.js"></script><meta property="og:title" content="Multi-Table 2D Infinite Canvas for R">
+<meta name="description" content="An interactive 2D infinite canvas for multi-table exploration, interactive field mapping, and LLM-assisted tidyverse code generation.">
+<meta property="og:description" content="An interactive 2D infinite canvas for multi-table exploration, interactive field mapping, and LLM-assisted tidyverse code generation.">
 <meta property="og:image" content="https://lauyeehow1986-hub.github.io/sideview/logo.png">
 </head>
 <body>
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
 
 
-    <nav class="navbar navbar-expand-lg fixed-top bg-primary" data-bs-theme="dark" aria-label="Site navigation"><div class="container">
+    <nav class="navbar navbar-expand-lg fixed-top bg-light" data-bs-theme="light" aria-label="Site navigation"><div class="container">
 
     <a class="navbar-brand me-2" href="index.html">sideview</a>
 
@@ -44,7 +44,7 @@
 <li class="nav-item"><form class="form-inline" role="search">
  <input class="form-control" type="search" name="search-input" id="search-input" autocomplete="off" aria-label="Search site" placeholder="Search for" data-search-index="search.json">
 </form></li>
-<li class="nav-item"><a class="external-link nav-link" href="https://github.com/lauyeehow1986-hub/sideview" aria-label="GitHub repository"><span class="fa fab fa-github fa-lg"></span></a></li>
+<li class="nav-item"><a class="external-link nav-link" href="https://github.com/lauyeehow1986-hub/sideview/" aria-label="GitHub"><span class="fa fab fa-github fa-lg"></span></a></li>
       </ul>
 </div>
 
@@ -54,745 +54,91 @@
 <div class="row">
   <main id="main" class="col-md-9"><div class="section level1">
 <div class="page-header">
-<img src="logo.png" class="logo" alt=""><h1 id="sideview-">sideview <a class="anchor" aria-label="anchor" href="#sideview-"></a>
+<img src="logo.png" class="logo" alt=""><h1 id="sideview-multi-table-2d-infinite-canvas-for-r-">sideview: Multi-Table 2D Infinite Canvas for R <a class="anchor" aria-label="anchor" href="#sideview-multi-table-2d-infinite-canvas-for-r-"></a>
 </h1>
 </div>
 <!-- badges: start -->
 
-<blockquote>
-<p><strong>Multi-Table 2D Infinite Canvas for Interactive Data Exploration, Visual Field Mapping, and LLM-Assisted Tidyverse Code Generation</strong></p>
-</blockquote>
-<hr>
-<div class="section level2">
-<h2 id="overview">Overview<a class="anchor" aria-label="anchor" href="#overview"></a>
-</h2>
-<p>When analyzing complex workflows, data scientists frequently work with multiple related tables simultaneously: clinical demographics, longitudinal vitals, lab panels, crosswalk dictionaries, and summary reports.</p>
-<p>Existing tools force analysts into <strong>siloed, tabbed interfaces</strong> where only one table is visible at a time. Switching back and forth between tabs breaks cognitive flow, obscures structural discrepancies, and makes mental reconciliation of column mappings error-prone.</p>
-<p><strong><code>sideview</code></strong> replaces tabbed viewers with a hardware-accelerated <strong>2D infinite canvas</strong>. You can place any number of heterogeneous tabular datasets side-by-side, zoom and pan freely across the workspace, visually connect columns across tables with interactive SVG splines, sort and filter columns directly on table headers, inspect inline SVG distribution sparklines, automatically detect categorical discrepancies, and generate idiomatic <code>tidyverse</code> code that pastes directly into your active RStudio script editor.</p>
-<div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://lauyeehow1986-hub.github.io/sideview/">sideview</a></span><span class="op">)</span></span>
-<span></span>
-<span><span class="co"># Launch side-by-side multi-table canvas in RStudio Viewer or Gadget Window</span></span>
-<span><span class="fu"><a href="reference/sideview.html">sideview</a></span><span class="op">(</span><span class="va">patients</span>, <span class="va">visits</span>, <span class="va">lab_results</span>, <span class="va">gt_summary</span><span class="op">)</span></span></code></pre></div>
-<hr>
-</div>
-<div class="section level2">
-<h2 id="why-sideview-comparison-with-dataviewr">Why <code>sideview</code>? Comparison with <code>dataviewR</code>
-<a class="anchor" aria-label="anchor" href="#why-sideview-comparison-with-dataviewr"></a>
-</h2>
-<table class="table">
-<colgroup>
-<col width="28%">
-<col width="35%">
-<col width="35%">
-</colgroup>
-<thead><tr>
-<th align="left">Feature</th>
-<th align="center"><code>dataviewR</code></th>
-<th align="center"><code>sideview</code></th>
-</tr></thead>
-<tbody>
-<tr>
-<td align="left"><strong>Workspace Layout</strong></td>
-<td align="center">Single-table tabbed view (one table at a time)</td>
-<td align="center">
-<strong>Infinite 2D canvas</strong> (unlimited tables side-by-side)</td>
-</tr>
-<tr>
-<td align="left"><strong>Navigation</strong></td>
-<td align="center">Basic paging</td>
-<td align="center"><strong>Smooth mouse-wheel zoom (15%–350%) &amp; canvas pan</strong></td>
-</tr>
-<tr>
-<td align="left"><strong>Table Alignment</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong>Magnetic snap-to-edge docking</strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Synchronized Scrolling</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong>Dual vertical (<code>scrollTop</code>) and horizontal (<code>scrollLeft</code>) sync</strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>100k+ Row Performance</strong></td>
-<td align="center">❌ Browser freezing</td>
-<td align="center">✅ <strong>DOM Virtualization (<code>VirtualTable</code> ~30 rows active, 60 FPS)</strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Big Data Ingestion</strong></td>
-<td align="center">
-<code>data.frame</code> only</td>
-<td align="center">✅ <strong>Apache Arrow (<code>arrow_table</code>, <code>Dataset</code>) &amp; DuckDB (<code>tbl_duckdb_connection</code>)</strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Multi-Format Ingestion</strong></td>
-<td align="center">
-<code>data.frame</code> only</td>
-<td align="center">✅ <strong><code>data.frame</code>, <code>tibble</code>, <code>table</code>, <code>matrix</code>, <code>gt</code>, <code>flextable</code>, <code>htmlwidgets</code></strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Interactive Sorting</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong>Tri-state header click (Asc / Desc / Reset) generating <code><a href="https://dplyr.tidyverse.org/reference/arrange.html" class="external-link">dplyr::arrange</a></code></strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Interactive Filtering</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong>Header filter popover (<code>&gt;</code>, <code>&lt;</code>, <code>==</code>, <code>contains</code>) generating <code><a href="https://dplyr.tidyverse.org/reference/filter.html" class="external-link">dplyr::filter</a></code></strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Visual Table Reshaping</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong>Visual <code><a href="https://tidyr.tidyverse.org/reference/pivot_longer.html" class="external-link">tidyr::pivot_longer()</a></code> &amp; <code><a href="https://tidyr.tidyverse.org/reference/pivot_wider.html" class="external-link">tidyr::pivot_wider()</a></code> builders</strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Visual Aggregation</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong>Visual <code><a href="https://dplyr.tidyverse.org/reference/group_by.html" class="external-link">dplyr::group_by()</a></code> + <code><a href="https://dplyr.tidyverse.org/reference/summarise.html" class="external-link">dplyr::summarise()</a></code> builder</strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Header Column Profiling</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong>Inline SVG 5-bin sparklines, categorical frequency bars, NA badges</strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Visual Column Mapping</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong>Click-to-connect interactive SVG splines</strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Multi-Key Composite Joins</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong>Composite vector keys (<code>by = c("k1" = "k1", "k2" = "k2")</code>) &amp; DAG chaining</strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Suggested Splines Copilot</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong>Proactive foreign key detection (<code>sv_suggest_mappings</code>) with 1-click accept</strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Discrepancy Detection</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong>Vectorized exact &amp; fuzzy string matching with distance scoring</strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Auto-Cleanup Rules</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong>1-Click <code><a href="https://dplyr.tidyverse.org/reference/case-and-replace-when.html" class="external-link">dplyr::case_when</a></code> generation for casing, whitespace, &amp; typos</strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Conversational Copilot</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong>Multi-turn dialogue drawer with context retention (20-turn window)</strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Workspace Persistence</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong>Serialize &amp; restore full canvas topology (<code>.json</code> and <code>.rds</code>)</strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Console &amp; Script Execution</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong><code>Insert Script</code>, <code>Run &amp; Exit</code>, <code>Run in R</code> (<code>.GlobalEnv</code>), and <code>Run Console</code></strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Standalone HTML Export</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong>Self-contained <code>htmlwidget</code> (<code><a href="reference/save_sideview.html">save_sideview()</a></code>)</strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Quarto &amp; Rmd Support</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong>Embeddable via <code><a href="reference/sideview_widget.html">sideview_widget()</a></code></strong>
-</td>
-</tr>
-<tr>
-<td align="left"><strong>Automated GUI Testing</strong></td>
-<td align="center">❌ None</td>
-<td align="center">✅ <strong>Headless DOM &amp; Computer Use verification harness (1,210 tests passing)</strong>
-</td>
-</tr>
-</tbody>
-</table>
-<hr>
-</div>
-<div class="section level2">
-<h2 id="architecture-overview">Architecture Overview<a class="anchor" aria-label="anchor" href="#architecture-overview"></a>
-</h2>
-<p><code>sideview</code> is built on a <strong>Dual-Hybrid Architecture</strong>:</p>
-<pre class="mermaid"><code>flowchart TD
-    subgraph Ingestion ["Universal Normalization Engine"]
-        DF["data.frame / tibble"] --&gt; NORM["sv_normalize()"]
-        TAB["table / matrix"] --&gt; NORM
-        GT["gt / gtsummary"] --&gt; NORM
-        FLEX["flextable"] --&gt; NORM
-        WID["htmlwidgets"] --&gt; NORM
-        ARROW["arrow::Table / Dataset"] --&gt; NORM
-        DUCK["duckdb::tbl_duckdb_connection"] --&gt; NORM
-    end
-
-    subgraph Core ["sideview Cards &amp; State"]
-        NORM --&gt; CARDS["sideview_card Objects (Grid / HTML / Widget / Lazy)"]
-        CARDS --&gt; STATE["sideview_state (JSON / RDS Persistence)"]
-    end
-
-    subgraph Gadget ["Interactive Mode: sideview()"]
-        CARDS --&gt; GADGET["Shiny Gadget (Canvas + Panzoom + VirtualTable)"]
-        GADGET --&gt; MAP["Interactive SVG Field Mapping &amp; Suggested Splines"]
-        GADGET --&gt; SORT["Header Sort &amp; Filter Popovers"]
-        GADGET --&gt; PROF["Inline SVG Sparklines &amp; Profiling Badges"]
-        GADGET --&gt; DISC["Discrepancy &amp; Auto-Clean Engine"]
-        GADGET --&gt; RESHAPE["Visual Pivot &amp; Group/Summarize Builders"]
-        GADGET --&gt; COPILOT["Conversational Multi-Turn AI Copilot Drawer"]
-        GADGET --&gt; RSTUDIO["rstudioapi: Insert to Active Script / Console / .GlobalEnv"]
-    end
-
-    subgraph Widget ["Export Mode: save_sideview()"]
-        CARDS --&gt; HTMLWID["htmlwidget Container"]
-        HTMLWID --&gt; HTML["Standalone Self-Contained HTML File"]
-        HTMLWID --&gt; QMD["Quarto (.qmd) / R Markdown (.Rmd)"]
-    end</code></pre>
-<hr>
-</div>
-<div class="section level2">
-<h2 id="core-capabilities">Core Capabilities<a class="anchor" aria-label="anchor" href="#core-capabilities"></a>
-</h2>
-<div class="section level3">
-<h3 id="id_1-high-performance-infinite-2d-panzoom-canvas--virtualization">1. High-Performance Infinite 2D Panzoom Canvas &amp; Virtualization<a class="anchor" aria-label="anchor" href="#id_1-high-performance-infinite-2d-panzoom-canvas--virtualization"></a>
-</h3>
-<ul>
-<li>
-<strong>DOM Virtualization (<code>VirtualTable</code>)</strong>: Renders datasets containing <strong>100,000+ rows</strong> smoothly at 60 FPS by dynamically maintaining a sliding window of ~30 active <code>&lt;tr&gt;</code> elements with spacer elements.</li>
-<li>
-<strong>Mouse Wheel Zoom</strong>: Smooth scaling centered on the cursor position (15% to 350% zoom).</li>
-<li>
-<strong>Panning &amp; Dragging</strong>: Click-and-drag navigation across the infinite canvas, with magnetic edge-docking for table cards.</li>
-<li>
-<strong>Dual Synchronized Scrolling</strong>: Locks both vertical rows (<code>scrollTop</code>) and horizontal columns (<code>scrollLeft</code>) across linked tables.</li>
-<li>
-<strong>Navigation</strong>: <strong>Fit</strong> and <strong>Arrange</strong> buttons, a minimap (bottom-left; click to jump, <code>M</code> to hide), <code>Ctrl+K</code> to find a card or column, and double-click a card title to zoom to it.</li>
-<li>
-<strong>Full-data sort and filter</strong>: Header sorts and filters run on the whole table in R, not just the rows on screen.</li>
-</ul>
-</div>
-<div class="section level3">
-<h3 id="id_2-universal-multi-format-normalization">2. Universal Multi-Format Normalization<a class="anchor" aria-label="anchor" href="#id_2-universal-multi-format-normalization"></a>
-</h3>
-<ul>
-<li>
-<strong><code>data.frame</code> &amp; <code>tibble</code></strong>: Virtualized interactive grid cards.</li>
-<li>
-<strong><code><a href="https://arrow.apache.org/docs/r/reference/Table-class.html" class="external-link">arrow::Table</a></code> &amp; <code>Dataset</code></strong>: Zero-copy schema extraction previewing <code>head(50)</code> without materializing multi-gigabyte files.</li>
-<li>
-<strong><code>duckdb</code> Connections</strong>: DBI query schemas previewing <code>head(50)</code> with lazy counts.</li>
-<li>
-<strong><code>gt</code> &amp; <code>flextable</code></strong>: Styled HTML display while extracting raw data frames (<code>x[["_data"]]</code> / <code>x[["body"]][["dataset"]]</code>) for tidyverse code generation.</li>
-<li>
-<strong><code>htmlwidgets</code></strong>: Embedded container cards.</li>
-</ul>
-</div>
-<div class="section level3">
-<h3 id="id_3-visual-field-mapping--relational-dag">3. Visual Field Mapping &amp; Relational DAG<a class="anchor" aria-label="anchor" href="#id_3-visual-field-mapping--relational-dag"></a>
-</h3>
-<ul>
-<li><p><strong>Interactive SVG Splines</strong>: Connect column ports across tables to generate idiomatic tidyverse joins. Click or right-click directly on spline curves to disconnect.</p></li>
-<li>
-<p><strong>Composite Multi-Key Joins</strong>: Draw multiple splines between the same tables to emit composite keys:</p>
-<div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">patients</span> <span class="op">%&gt;%</span></span>
-<span>  <span class="fu">dplyr</span><span class="fu">::</span><span class="fu"><a href="https://dplyr.tidyverse.org/reference/mutate-joins.html" class="external-link">left_join</a></span><span class="op">(</span><span class="va">visits</span>, by <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"patient_id"</span> <span class="op">=</span> <span class="st">"patient_id"</span>, <span class="st">"site_id"</span> <span class="op">=</span> <span class="st">"site_id"</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
-</li>
-<li><p><strong>Proactive Foreign Key Detection (<code><a href="reference/sv_suggest_mappings.html">sv_suggest_mappings()</a></code>)</strong>: Heuristic scoring engine (name similarity, type compatibility, Jaccard value overlap) automatically discovers candidate foreign keys and renders them as animated dashed suggested splines (<code>.sideview-spline-suggested</code>) with 1-click acceptance.</p></li>
-</ul>
-</div>
-<div class="section level3">
-<h3 id="id_4-advanced-visual-wrangling--profiling">4. Advanced Visual Wrangling &amp; Profiling<a class="anchor" aria-label="anchor" href="#id_4-advanced-visual-wrangling--profiling"></a>
-</h3>
-<ul>
-<li>
-<strong>Header Column Profiling</strong>: Embedded inline SVG 5-bin distribution sparklines (<code>&lt;svg class="sideview-sparkline"&gt;</code>), categorical frequency distribution bars, and color-coded missingness badges (<code>.sideview-na-badge</code>) with hover range tooltips.</li>
-<li>
-<strong>Visual Table Reshaping</strong>:
-<ul>
-<li>
-<code><a href="reference/sv_code_pivot_longer.html">sv_code_pivot_longer()</a></code>: Emits <code><a href="https://tidyr.tidyverse.org/reference/pivot_longer.html" class="external-link">tidyr::pivot_longer()</a></code> pipelines.</li>
-<li>
-<code><a href="reference/sv_code_pivot_wider.html">sv_code_pivot_wider()</a></code>: Emits <code><a href="https://tidyr.tidyverse.org/reference/pivot_wider.html" class="external-link">tidyr::pivot_wider()</a></code> pipelines with aggregation (<code>values_fn</code>).</li>
-</ul>
-</li>
-<li>
-<strong>Group &amp; Summarize Builder</strong>: <code><a href="reference/sv_code_group_summarize.html">sv_code_group_summarize()</a></code> generates reproducible <code>group_by(...) %&gt;% summarise(..., .groups = 'drop')</code> pipelines.</li>
-</ul>
-</div>
-<div class="section level3">
-<h3 id="id_5-canvas-state-persistence--cloud-sharing">5. Canvas State Persistence &amp; Cloud Sharing<a class="anchor" aria-label="anchor" href="#id_5-canvas-state-persistence--cloud-sharing"></a>
-</h3>
-<ul>
-<li>
-<p><strong>Workspace Serialization</strong>: Save and restore complete canvas layouts (pan/zoom, card coordinates, splines, filters, sorts, pipeline) with the toolbar’s <strong>Save</strong> and <strong>Open</strong> buttons, or from R:</p>
-<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="co"># Reopen a saved workspace on the same tables</span></span>
-<span><span class="fu"><a href="reference/sideview.html">sideview</a></span><span class="op">(</span><span class="va">patients</span>, <span class="va">visits</span>, <span class="va">labs</span>, state <span class="op">=</span> <span class="st">"study_canvas.json"</span><span class="op">)</span></span>
-<span></span>
-<span><span class="co"># Or let sideview find the tables by name</span></span>
-<span><span class="fu"><a href="reference/sv_load_state.html">sv_load_state</a></span><span class="op">(</span><span class="st">"study_canvas.json"</span>, launch <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span></code></pre></div>
-</li>
-</ul>
-</div>
-<div class="section level3">
-<h3 id="id_6-conversational-ai-copilot-drawer">6. Conversational AI Copilot Drawer<a class="anchor" aria-label="anchor" href="#id_6-conversational-ai-copilot-drawer"></a>
-</h3>
-<ul>
-<li>
-<strong>Multi-Turn Context Retention</strong>: Dialogue chat tab in the Action Drawer retaining conversation history, active pipeline R code, and privacy-safe schema summaries.</li>
-<li>
-<strong>Zero Data Leakage</strong>: Never transmits raw patient records. Works seamlessly with local Ollama (<code>gemma4:26b</code>, <code>llama3.2</code>) or cloud OpenAI-compatible APIs.</li>
-<li>
-<strong>1-Click Code Injection</strong>: “Replace Pipeline” updates drawer code, while “Insert into Editor” pastes directly at the cursor via <code>rstudioapi</code>.</li>
-</ul>
-</div>
-<div class="section level3">
-<h3 id="id_7-pipeline-builders--join-diagnostics">7. Pipeline, Builders &amp; Join Diagnostics<a class="anchor" aria-label="anchor" href="#id_7-pipeline-builders--join-diagnostics"></a>
-</h3>
-<ul>
-<li>
-<strong>Composable pipeline</strong>: every sort, filter, join, rename, recode, mutate, reshape or summarise becomes a step you can toggle, reorder or delete, with undo/redo and a <code>%&gt;%</code> / <code>|&gt;</code> choice.</li>
-<li>
-<strong>Builder tabs</strong>: Join, Filter (AND/OR), Arrange, Mutate, Recode, Reshape and Summarise.</li>
-<li>
-<strong>Join diagnostics</strong> (<code><a href="reference/sv_join_diagnostics.html">sv_join_diagnostics()</a></code>): match rate both ways, unmatched keys, 1:1 / 1:m / m:m relationship, rows per join type, and NA / spacing / case problems in keys, shown before you commit to a join.</li>
-</ul>
-</div>
-<div class="section level3">
-<h3 id="id_8-column-inspector--codebook">8. Column Inspector &amp; Codebook<a class="anchor" aria-label="anchor" href="#id_8-column-inspector--codebook"></a>
-</h3>
-<ul>
-<li>Click a column’s inspect icon for type, missingness, distinct values, key check, summary statistics or top levels, and a histogram (<code><a href="reference/sv_column_profile.html">sv_column_profile()</a></code>).</li>
-<li>
-<strong>Export codebook</strong> writes a data dictionary across all cards (<code><a href="reference/sv_codebook.html">sv_codebook()</a></code>).</li>
-</ul>
-</div>
-<div class="section level3">
-<h3 id="id_9-themes--keyboard">9. Themes &amp; Keyboard<a class="anchor" aria-label="anchor" href="#id_9-themes--keyboard"></a>
-</h3>
-<ul>
-<li>
-<code>theme = "auto"</code> follows RStudio or the browser; also <code>"light"</code>, <code>"dark"</code>, <code><a href="reference/sv_theme.html">sv_theme()</a></code> or a <code><a href="https://rstudio.github.io/bslib/reference/bs_theme.html" class="external-link">bslib::bs_theme()</a></code>.</li>
-<li>Shortcuts: <code>F</code> fit, <code>0</code> reset zoom, <code>+</code>/<code>-</code> zoom, <code>M</code> minimap, <code>D</code> drawer, <code>T</code> theme, <code>/</code> AI prompt, <code>Ctrl+K</code> search, <code>Ctrl+Z</code>/<code>Ctrl+Y</code> undo/redo, <code>?</code> the full list.</li>
-</ul>
-</div>
-<div class="section level3">
-<h3 id="id_10-tested-in-real-browsers">10. Tested in Real Browsers<a class="anchor" aria-label="anchor" href="#id_10-tested-in-real-browsers"></a>
-</h3>
-<ul>
-<li>Unit tests, a headless DOM harness, and a real-browser suite (<code>tests/testthat/test-layout-browser.R</code>, <code>NOT_CRAN=true</code>) that drives Chrome with real mouse and keyboard input to check layout and behaviour at several window sizes.</li>
-</ul>
-<hr>
-</div>
-</div>
+<p><code>sideview</code> puts <strong>many tables side by side on a pan-and-zoom canvas</strong>, so you can compare them, <strong>connect columns to build joins</strong>, check those joins before you run them, and take away <strong>reproducible <code>tidyverse</code> code</strong>. It runs as an <strong>RStudio gadget</strong> or as an <strong>htmlwidget</strong> you can save to HTML or embed in Quarto and R Markdown.</p>
 <div class="section level2">
 <h2 id="installation">Installation<a class="anchor" aria-label="anchor" href="#installation"></a>
 </h2>
-<p>Install the development version of <code>sideview</code> from GitHub:</p>
-<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<p>Install the development version from GitHub:</p>
+<div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># install.packages("remotes")</span></span>
 <span><span class="fu">remotes</span><span class="fu">::</span><span class="fu"><a href="https://remotes.r-lib.org/reference/install_github.html" class="external-link">install_github</a></span><span class="op">(</span><span class="st">"lauyeehow1986-hub/sideview"</span><span class="op">)</span></span></code></pre></div>
-<div class="section level3">
-<h3 id="dependencies">Dependencies<a class="anchor" aria-label="anchor" href="#dependencies"></a>
-</h3>
+</div>
+<div class="section level2">
+<h2 id="key-features">Key Features<a class="anchor" aria-label="anchor" href="#key-features"></a>
+</h2>
 <ul>
 <li>
-<strong>Core</strong>: <code>shiny</code>, <code>htmltools</code>, <code>htmlwidgets</code>, <code>dplyr</code>, <code>httr2</code>, <code>jsonlite</code>, <code>rstudioapi</code>
+<strong>Many Tables at Once</strong>: <code>data.frame</code>, <code>tibble</code>, <code>table</code>, <code>matrix</code>, <code>gt</code>, <code>flextable</code>, <code>arrow</code> tables and datasets, and <code>duckdb</code> connections each become a card on one canvas. Tables of 100,000+ rows scroll smoothly.</li>
+<li>
+<strong>Canvas Navigation</strong>: Wheel zoom (15%–350%), pan, drag and snap cards, <strong>Fit</strong> and <strong>Arrange</strong>, a minimap, <code>Ctrl+K</code> to find a card or column, and double-click a card title to zoom to it.</li>
+<li>
+<strong>Visual Joins</strong>:
+<ul>
+<li>Draw a spline between two columns to generate <code>dplyr</code> joins, including multi-key joins.</li>
+<li>
+<code><a href="reference/sv_suggest_mappings.html">sv_suggest_mappings()</a></code> proposes likely keys from name, type and value overlap.</li>
+<li>
+<strong>Join diagnostics</strong> (<code><a href="reference/sv_join_diagnostics.html">sv_join_diagnostics()</a></code>) show match rates both ways, unmatched keys, 1:1 / 1:m / m:m relationships, rows per join type, and NA, spacing or case problems in keys.</li>
+</ul>
 </li>
 <li>
-<strong>Suggested</strong>: <code>arrow</code>, <code>duckdb</code>, <code>DBI</code>, <code>shinytest2</code>, <code>gt</code>, <code>flextable</code>, <code>testthat</code>, <code>knitr</code>, <code>rmarkdown</code>
-</li>
+<strong>Composable Pipeline</strong>: Every sort, filter, join, rename, recode, mutate, reshape or summarise becomes a step you can toggle, reorder or delete, with undo/redo and a <code>%&gt;%</code> / <code>|&gt;</code> choice. Sorts and filters run on the full data in R, not just the rows on screen.</li>
+<li>
+<strong>Data Quality</strong>:
+<ul>
+<li>Header sparklines and missingness badges.</li>
+<li>Category discrepancy detection with auto-clean rules (<code><a href="reference/sv_detect_discrepancies.html">sv_detect_discrepancies()</a></code>, <code><a href="reference/sv_auto_clean_rules.html">sv_auto_clean_rules()</a></code>).</li>
+<li>A column inspector (<code><a href="reference/sv_column_profile.html">sv_column_profile()</a></code>).</li>
+<li>A data dictionary export (<code><a href="reference/sv_codebook.html">sv_codebook()</a></code>, CSV or XLSX).</li>
 </ul>
-<hr>
-</div>
+</li>
+<li>
+<strong>Into Your Script</strong>: Insert the generated code at the cursor in RStudio, send it to the console, or run it and keep the result.</li>
+<li>
+<strong>Save and Reopen Workspaces</strong>: Card positions, zoom, joins and the pipeline (<code>sideview(..., state = "canvas.json")</code>, <code><a href="reference/sv_save_state.html">sv_save_state()</a></code>, <code><a href="reference/sv_load_state.html">sv_load_state()</a></code>).</li>
+<li>
+<strong>AI Copilot</strong>: Ask a local <strong>Ollama</strong> model or any <strong>OpenAI-compatible</strong> endpoint for tidyverse code. Only schema summaries are sent, <strong>never raw rows</strong>.</li>
+<li>
+<strong>Themes and Keyboard</strong>: Light, dark or automatic (follows RStudio), <code><a href="reference/sv_theme.html">sv_theme()</a></code> or a <code><a href="https://rstudio.github.io/bslib/reference/bs_theme.html" class="external-link">bslib::bs_theme()</a></code>. Press <code>?</code> on the canvas for every shortcut.</li>
+</ul>
 </div>
 <div class="section level2">
-<h2 id="quick-start-examples">Quick Start Examples<a class="anchor" aria-label="anchor" href="#quick-start-examples"></a>
+<h2 id="quick-start">Quick Start<a class="anchor" aria-label="anchor" href="#quick-start"></a>
 </h2>
-<div class="section level3">
-<h3 id="id_1-launch-interactive-gadget-with-heterogeneous-tables">1. Launch Interactive Gadget with Heterogeneous Tables<a class="anchor" aria-label="anchor" href="#id_1-launch-interactive-gadget-with-heterogeneous-tables"></a>
-</h3>
-<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://lauyeehow1986-hub.github.io/sideview/">sideview</a></span><span class="op">)</span></span>
-<span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://dplyr.tidyverse.org" class="external-link">dplyr</a></span><span class="op">)</span></span>
 <span></span>
-<span><span class="co"># Standard data frame</span></span>
 <span><span class="va">patients</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span></span>
 <span>  patient_id <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"P01"</span>, <span class="st">"P02"</span>, <span class="st">"P03"</span>, <span class="st">"P04"</span><span class="op">)</span>,</span>
-<span>  age <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">45</span>, <span class="fl">52</span>, <span class="fl">38</span>, <span class="fl">61</span><span class="op">)</span>,</span>
-<span>  gender_raw <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"Male"</span>, <span class="st">"Female"</span>, <span class="st">"M"</span>, <span class="st">"Fem"</span><span class="op">)</span>,</span>
-<span>  stringsAsFactors <span class="op">=</span> <span class="cn">FALSE</span></span>
+<span>  age        <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">45</span>, <span class="fl">52</span>, <span class="fl">38</span>, <span class="fl">61</span><span class="op">)</span>,</span>
+<span>  sex        <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"Male"</span>, <span class="st">"Female"</span>, <span class="st">"M"</span>, <span class="st">"Fem"</span><span class="op">)</span></span>
+<span><span class="op">)</span></span>
+<span><span class="va">visits</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span></span>
+<span>  patient_id  <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"P01"</span>, <span class="st">"P02"</span>, <span class="st">"P03"</span>, <span class="st">"P05"</span><span class="op">)</span>,</span>
+<span>  systolic_bp <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">120</span>, <span class="fl">140</span>, <span class="fl">115</span>, <span class="fl">130</span><span class="op">)</span></span>
 <span><span class="op">)</span></span>
 <span></span>
-<span><span class="co"># Tibble</span></span>
-<span><span class="va">visits</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://tibble.tidyverse.org/reference/tibble.html" class="external-link">tibble</a></span><span class="op">(</span></span>
-<span>  patient_id <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"P01"</span>, <span class="st">"P02"</span>, <span class="st">"P03"</span>, <span class="st">"P05"</span><span class="op">)</span>,</span>
-<span>  systolic_bp <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">120</span>, <span class="fl">140</span>, <span class="fl">115</span>, <span class="fl">130</span><span class="op">)</span>,</span>
-<span>  visit_date <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/as.Date.html" class="external-link">as.Date</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"2024-01-10"</span>, <span class="st">"2024-01-15"</span>, <span class="st">"2024-02-01"</span>, <span class="st">"2024-02-10"</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="op">)</span></span>
+<span><span class="co"># 1. Open the canvas (RStudio dialog by default; also viewer = "pane" or "browser")</span></span>
+<span><span class="kw">if</span> <span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/interactive.html" class="external-link">interactive</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span> <span class="op">{</span></span>
+<span>  <span class="fu"><a href="reference/sideview.html">sideview</a></span><span class="op">(</span><span class="va">patients</span>, <span class="va">visits</span><span class="op">)</span></span>
+<span><span class="op">}</span></span>
 <span></span>
-<span><span class="co"># Base R contingency table</span></span>
-<span><span class="va">dx_freq</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/table.html" class="external-link">table</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"Hypertension"</span>, <span class="st">"Diabetes"</span>, <span class="st">"Hypertension"</span>, <span class="st">"Asthma"</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="co"># 2. Check a join before you run it</span></span>
+<span><span class="fu"><a href="reference/sv_join_diagnostics.html">sv_join_diagnostics</a></span><span class="op">(</span><span class="va">patients</span>, <span class="va">visits</span>, by <span class="op">=</span> <span class="st">"patient_id"</span>,</span>
+<span>                    x_name <span class="op">=</span> <span class="st">"patients"</span>, y_name <span class="op">=</span> <span class="st">"visits"</span><span class="op">)</span></span>
 <span></span>
-<span><span class="co"># Launch Sideview canvas</span></span>
-<span><span class="fu"><a href="reference/sideview.html">sideview</a></span><span class="op">(</span><span class="va">patients</span>, <span class="va">visits</span>, diagnoses <span class="op">=</span> <span class="va">dx_freq</span><span class="op">)</span></span></code></pre></div>
-</div>
-<div class="section level3">
-<h3 id="id_2-including-gt-flextable-and-big-data-objects">2. Including <code>gt</code>, <code>flextable</code>, and Big Data Objects<a class="anchor" aria-label="anchor" href="#id_2-including-gt-flextable-and-big-data-objects"></a>
-</h3>
-<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://gt.rstudio.com" class="external-link">gt</a></span><span class="op">)</span></span>
-<span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://ardata-fr.github.io/flextable-book/" class="external-link">flextable</a></span><span class="op">)</span></span>
+<span><span class="co"># 3. Build a data dictionary across tables</span></span>
+<span><span class="fu"><a href="reference/sv_codebook.html">sv_codebook</a></span><span class="op">(</span><span class="va">patients</span>, <span class="va">visits</span><span class="op">)</span></span>
 <span></span>
-<span><span class="va">gt_summary</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://gt.rstudio.com/reference/gt.html" class="external-link">gt</a></span><span class="op">(</span><span class="va">patients</span><span class="op">[</span>, <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"patient_id"</span>, <span class="st">"age"</span><span class="op">)</span><span class="op">]</span><span class="op">)</span></span>
-<span><span class="va">flex_visits</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://davidgohel.github.io/flextable/reference/flextable.html" class="external-link">flextable</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/as.data.frame.html" class="external-link">as.data.frame</a></span><span class="op">(</span><span class="va">visits</span><span class="op">)</span><span class="op">)</span></span>
-<span></span>
-<span><span class="co"># Both stylized HTML tables and raw data grids are accessible on the canvas</span></span>
-<span><span class="fu"><a href="reference/sideview.html">sideview</a></span><span class="op">(</span><span class="va">patients</span>, <span class="va">visits</span>, <span class="va">gt_summary</span>, <span class="va">flex_visits</span><span class="op">)</span></span></code></pre></div>
-</div>
-<div class="section level3">
-<h3 id="id_3-export-to-standalone-html-widget">3. Export to Standalone HTML Widget<a class="anchor" aria-label="anchor" href="#id_3-export-to-standalone-html-widget"></a>
-</h3>
-<p>Share interactive canvas boards as self-contained HTML files with zero external server dependencies:</p>
-<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="co"># Save to an HTML file</span></span>
-<span><span class="fu"><a href="reference/save_sideview.html">save_sideview</a></span><span class="op">(</span></span>
-<span>  <span class="fu"><a href="reference/sideview_widget.html">sideview_widget</a></span><span class="op">(</span><span class="va">patients</span>, <span class="va">visits</span>, diagnoses <span class="op">=</span> <span class="va">dx_freq</span><span class="op">)</span>,</span>
-<span>  file <span class="op">=</span> <span class="st">"study_overview.html"</span>,</span>
-<span>  selfcontained <span class="op">=</span> <span class="cn">TRUE</span>,</span>
-<span>  title <span class="op">=</span> <span class="st">"Clinical Study Multi-Table Overview"</span></span>
-<span><span class="op">)</span></span></code></pre></div>
-</div>
-<div class="section level3">
-<h3 id="id_4-embedding-in-quarto-qmd-or-r-markdown-rmd">4. Embedding in Quarto (<code>.qmd</code>) or R Markdown (<code>.Rmd</code>)<a class="anchor" aria-label="anchor" href="#id_4-embedding-in-quarto-qmd-or-r-markdown-rmd"></a>
-</h3>
-<div class="sourceCode" id="cb9"><pre class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a><span class="co">---</span></span>
-<span id="cb9-2"><a href="#cb9-2" tabindex="-1"></a><span class="an">title:</span><span class="co"> "Clinical Data Harmonization"</span></span>
-<span id="cb9-3"><a href="#cb9-3" tabindex="-1"></a><span class="an">format:</span><span class="co"> html</span></span>
-<span id="cb9-4"><a href="#cb9-4" tabindex="-1"></a><span class="co">---</span></span>
-<span id="cb9-5"><a href="#cb9-5" tabindex="-1"></a></span>
-<span id="cb9-6"><a href="#cb9-6" tabindex="-1"></a><span class="in">```{r}</span></span>
-<span id="cb9-7"><a href="#cb9-7" tabindex="-1"></a><span class="in">library(sideview)</span></span>
-<span id="cb9-8"><a href="#cb9-8" tabindex="-1"></a><span class="in">sideview_widget(patients, visits, width = "100%", height = "650px")</span></span>
-<span id="cb9-9"><a href="#cb9-9" tabindex="-1"></a><span class="in">```</span></span></code></pre></div>
-<hr>
-</div>
-</div>
-<div class="section level2">
-<h2 id="options">Options<a class="anchor" aria-label="anchor" href="#options"></a>
-</h2>
-<table class="table">
-<colgroup>
-<col width="33%">
-<col width="33%">
-<col width="33%">
-</colgroup>
-<thead><tr>
-<th align="left">Option</th>
-<th align="left">Default</th>
-<th align="left">Purpose</th>
-</tr></thead>
-<tbody>
-<tr>
-<td align="left"><code>sideview.session_grace</code></td>
-<td align="left"><code>5</code></td>
-<td align="left">Seconds to wait after the last browser session closes before the gadget stops (a reload survives)</td>
-</tr>
-<tr>
-<td align="left"><code>sideview.llm_backend</code></td>
-<td align="left">
-<code>"ollama"</code> (or <code>SIDEVIEW_LLM_BACKEND</code>)</td>
-<td align="left">
-<code>"ollama"</code> or <code>"openai"</code> (any OpenAI-compatible server)</td>
-</tr>
-<tr>
-<td align="left"><code>sideview.llm_model</code></td>
-<td align="left">
-<code>SIDEVIEW_OLLAMA_MODEL</code> / <code>"llama3.2"</code>; <code>SIDEVIEW_OPENAI_MODEL</code> / <code>"gpt-4o-mini"</code>
-</td>
-<td align="left">Model name; <code><a href="reference/sv_llm_models.html">sv_llm_models()</a></code> lists what is available</td>
-</tr>
-<tr>
-<td align="left"><code>sideview.llm_endpoint</code></td>
-<td align="left">
-<code>OLLAMA_HOST</code> / <code>http://localhost:11434</code>; <code>OPENAI_BASE_URL</code> / <code>https://api.openai.com/v1</code>
-</td>
-<td align="left">Base URL of the server</td>
-</tr>
-<tr>
-<td align="left"><code>sideview.llm_api_key</code></td>
-<td align="left"><code>OPENAI_API_KEY</code></td>
-<td align="left">API key for OpenAI-compatible servers</td>
-</tr>
-<tr>
-<td align="left"><code>sideview.llm_think</code></td>
-<td align="left"><code>FALSE</code></td>
-<td align="left">Let Ollama reasoning models think before answering</td>
-</tr>
-</tbody>
-</table>
-<p>Only schema summaries are sent to the model, never raw rows.</p>
-<hr>
-</div>
-<div class="section level2">
-<h2 id="complete-programmatic-api-reference">Complete Programmatic API Reference<a class="anchor" aria-label="anchor" href="#complete-programmatic-api-reference"></a>
-</h2>
-<table class="table">
-<colgroup>
-<col width="33%">
-<col width="33%">
-<col width="33%">
-</colgroup>
-<thead><tr>
-<th align="left">Function</th>
-<th align="left">Module</th>
-<th align="left">Description</th>
-</tr></thead>
-<tbody>
-<tr>
-<td align="left"><code>sideview(...)</code></td>
-<td align="left">Interactive Gadget</td>
-<td align="left">Launch Shiny Gadget or RStudio Addin on arbitrary tables</td>
-</tr>
-<tr>
-<td align="left"><code><a href="reference/sideview_addin.html">sideview_addin()</a></code></td>
-<td align="left">RStudio Addin</td>
-<td align="left">Addin entry point registered in RStudio Addins menu</td>
-</tr>
-<tr>
-<td align="left"><code>sideview_widget(...)</code></td>
-<td align="left">Widget</td>
-<td align="left">Create an exportable <code>htmlwidget</code> instance</td>
-</tr>
-<tr>
-<td align="left"><code>save_sideview(widget, file)</code></td>
-<td align="left">Widget Export</td>
-<td align="left">Export canvas to standalone self-contained HTML file</td>
-</tr>
-<tr>
-<td align="left">
-<code>sideview_ui(...)</code> / <code>sideview_server(...)</code>
-</td>
-<td align="left">Shiny Integration</td>
-<td align="left">Build the canvas app yourself (custom <code>llm_fn</code>, embedding)</td>
-</tr>
-<tr>
-<td align="left"><code>sideviewOutput(id, ...)</code></td>
-<td align="left">Shiny Integration</td>
-<td align="left">Shiny UI widget container</td>
-</tr>
-<tr>
-<td align="left"><code>renderSideview(expr, ...)</code></td>
-<td align="left">Shiny Integration</td>
-<td align="left">Shiny server rendering function</td>
-</tr>
-<tr>
-<td align="left"><code>sv_normalize(x, name, id)</code></td>
-<td align="left">Normalization</td>
-<td align="left">S3 generic converting tables (data.frame, Arrow, DuckDB, gt, flextable) to cards</td>
-</tr>
-<tr>
-<td align="left"><code>sv_find_tables(env)</code></td>
-<td align="left">Discovery</td>
-<td align="left">Detect all tabular objects in an environment</td>
-</tr>
-<tr>
-<td align="left"><code>sv_code_join(...)</code></td>
-<td align="left">Code Generation</td>
-<td align="left">Emits <code><a href="https://dplyr.tidyverse.org/reference/mutate-joins.html" class="external-link">dplyr::left_join</a></code>, <code>inner_join</code>, <code>full_join</code>, <code>anti_join</code> with multi-key support</td>
-</tr>
-<tr>
-<td align="left"><code>sv_code_pivot_longer(...)</code></td>
-<td align="left">Code Generation</td>
-<td align="left">Emits <code><a href="https://tidyr.tidyverse.org/reference/pivot_longer.html" class="external-link">tidyr::pivot_longer()</a></code> pipelines</td>
-</tr>
-<tr>
-<td align="left"><code>sv_code_pivot_wider(...)</code></td>
-<td align="left">Code Generation</td>
-<td align="left">Emits <code><a href="https://tidyr.tidyverse.org/reference/pivot_wider.html" class="external-link">tidyr::pivot_wider()</a></code> pipelines with custom <code>values_fn</code>
-</td>
-</tr>
-<tr>
-<td align="left"><code>sv_code_group_summarize(...)</code></td>
-<td align="left">Code Generation</td>
-<td align="left">Emits <code>dplyr::group_by(...) %&gt;% summarise(..., .groups = 'drop')</code>
-</td>
-</tr>
-<tr>
-<td align="left"><code>sv_code_arrange(...)</code></td>
-<td align="left">Code Generation</td>
-<td align="left">Emits <code><a href="https://dplyr.tidyverse.org/reference/arrange.html" class="external-link">dplyr::arrange()</a></code> with optional descending order</td>
-</tr>
-<tr>
-<td align="left"><code>sv_code_filter(...)</code></td>
-<td align="left">Code Generation</td>
-<td align="left">Emits <code><a href="https://dplyr.tidyverse.org/reference/filter.html" class="external-link">dplyr::filter()</a></code> expressions</td>
-</tr>
-<tr>
-<td align="left"><code>sv_code_rename(...)</code></td>
-<td align="left">Code Generation</td>
-<td align="left">Emits <code><a href="https://dplyr.tidyverse.org/reference/rename.html" class="external-link">dplyr::rename()</a></code> with non-syntactic backtick escaping</td>
-</tr>
-<tr>
-<td align="left"><code>sv_code_mutate(...)</code></td>
-<td align="left">Code Generation</td>
-<td align="left">Emits <code><a href="https://dplyr.tidyverse.org/reference/mutate.html" class="external-link">dplyr::mutate()</a></code> expressions</td>
-</tr>
-<tr>
-<td align="left"><code>sv_code_select(...)</code></td>
-<td align="left">Code Generation</td>
-<td align="left">Emits <code><a href="https://dplyr.tidyverse.org/reference/select.html" class="external-link">dplyr::select()</a></code> column selections</td>
-</tr>
-<tr>
-<td align="left"><code>sv_escape_ident(x)</code></td>
-<td align="left">Code Generation</td>
-<td align="left">Wraps non-syntactic names and reserved words in backticks</td>
-</tr>
-<tr>
-<td align="left"><code>sv_detect_discrepancies(...)</code></td>
-<td align="left">Discrepancies</td>
-<td align="left">Vectorized exact &amp; fuzzy Levenshtein discrepancy detection</td>
-</tr>
-<tr>
-<td align="left"><code>sv_code_recode(...)</code></td>
-<td align="left">Discrepancies</td>
-<td align="left">Emits <code><a href="https://dplyr.tidyverse.org/reference/case-and-replace-when.html" class="external-link">dplyr::case_when()</a></code> (or legacy <code><a href="https://dplyr.tidyverse.org/reference/case_match.html" class="external-link">case_match()</a></code>) or <code><a href="https://forcats.tidyverse.org/reference/fct_recode.html" class="external-link">forcats::fct_recode()</a></code>
-</td>
-</tr>
-<tr>
-<td align="left"><code>sv_auto_clean_rules(...)</code></td>
-<td align="left">Discrepancies</td>
-<td align="left">Generates automatic <code>case_when</code> rules for casing, whitespace, and typos</td>
-</tr>
-<tr>
-<td align="left"><code>sv_code_auto_clean(...)</code></td>
-<td align="left">Discrepancies</td>
-<td align="left">Emits the <code>mutate(case_when(...))</code> code for auto-clean rules</td>
-</tr>
-<tr>
-<td align="left"><code>sv_join_diagnostics(x, y, by)</code></td>
-<td align="left">Diagnostics</td>
-<td align="left">Match rates, unmatched keys, cardinality and join row counts before joining</td>
-</tr>
-<tr>
-<td align="left"><code>sv_column_profile(x)</code></td>
-<td align="left">Inspector</td>
-<td align="left">Type, missingness, distinct values and summary of one column</td>
-</tr>
-<tr>
-<td align="left"><code>sv_codebook(..., file)</code></td>
-<td align="left">Inspector</td>
-<td align="left">Data dictionary across tables, optionally written to CSV or XLSX</td>
-</tr>
-<tr>
-<td align="left"><code>sv_theme(mode, ...)</code></td>
-<td align="left">Theme</td>
-<td align="left">Light/dark mode and colour, font and radius overrides</td>
-</tr>
-<tr>
-<td align="left"><code>sv_llm_models(backend)</code></td>
-<td align="left">LLM Engine</td>
-<td align="left">Lists models available from Ollama or an OpenAI-compatible server</td>
-</tr>
-<tr>
-<td align="left"><code>sv_suggest_mappings(...)</code></td>
-<td align="left">Copilot</td>
-<td align="left">Heuristic foreign key candidate detection across tables</td>
-</tr>
-<tr>
-<td align="left"><code>sv_build_chat_prompt(...)</code></td>
-<td align="left">LLM Engine</td>
-<td align="left">Synthesizes multi-turn conversational chat prompt with context retention</td>
-</tr>
-<tr>
-<td align="left"><code>sv_build_schema_context(...)</code></td>
-<td align="left">LLM Engine</td>
-<td align="left">Privacy-safe metadata synthesis for LLM prompt</td>
-</tr>
-<tr>
-<td align="left"><code>sv_build_prompt(...)</code></td>
-<td align="left">LLM Engine</td>
-<td align="left">Constructs system instructions and user prompt</td>
-</tr>
-<tr>
-<td align="left"><code>sv_call_llm(...)</code></td>
-<td align="left">LLM Engine</td>
-<td align="left">Dispatches request to Ollama or OpenAI-compatible backend</td>
-</tr>
-<tr>
-<td align="left"><code>sv_extract_code(...)</code></td>
-<td align="left">LLM Engine</td>
-<td align="left">Extracts clean R code from markdown fences</td>
-</tr>
-<tr>
-<td align="left"><code>new_sideview_state(...)</code></td>
-<td align="left">Persistence</td>
-<td align="left">Constructor for <code>sideview_state</code> object</td>
-</tr>
-<tr>
-<td align="left"><code>sv_save_state(state, file)</code></td>
-<td align="left">Persistence</td>
-<td align="left">Serializes canvas workspace layout to <code>.json</code> or <code>.rds</code>
-</td>
-</tr>
-<tr>
-<td align="left"><code>sv_load_state(file, ...)</code></td>
-<td align="left">Persistence</td>
-<td align="left">Deserializes canvas workspace layout and launches or returns state</td>
-</tr>
-<tr>
-<td align="left"><code><a href="reference/sv_is_rstudio_available.html">sv_is_rstudio_available()</a></code></td>
-<td align="left">RStudio Bridge</td>
-<td align="left">Checks if RStudio API is available</td>
-</tr>
-<tr>
-<td align="left"><code>sv_insert_code(code)</code></td>
-<td align="left">RStudio Bridge</td>
-<td align="left">Inserts text into active document editor</td>
-</tr>
-<tr>
-<td align="left"><code>sv_send_to_console(code)</code></td>
-<td align="left">RStudio Bridge</td>
-<td align="left">Sends code to R console for execution</td>
-</tr>
-</tbody>
-</table>
-<hr>
-</div>
-<div class="section level2">
-<h2 id="license">License<a class="anchor" aria-label="anchor" href="#license"></a>
-</h2>
-<p>This package is licensed under the <a href="LICENSE">MIT License</a>.</p>
-<hr>
-</div>
-<div class="section level2">
-<h2 id="medical--diagnostic-disclaimer">Medical &amp; Diagnostic Disclaimer<a class="anchor" aria-label="anchor" href="#medical--diagnostic-disclaimer"></a>
-</h2>
-<p><code>sideview</code> is an exploratory data analysis, visualization, and code generation tool intended for research, education, and general data science workflows. It is <strong>not certified as medical device software</strong> and is <strong>not intended for clinical diagnosis or patient treatment decisions</strong>.</p>
+<span><span class="co"># 4. Share the canvas as a standalone HTML file</span></span>
+<span><span class="fu"><a href="reference/save_sideview.html">save_sideview</a></span><span class="op">(</span><span class="fu"><a href="reference/sideview_widget.html">sideview_widget</a></span><span class="op">(</span><span class="va">patients</span>, <span class="va">visits</span><span class="op">)</span>, file <span class="op">=</span> <span class="st">"study_overview.html"</span><span class="op">)</span></span></code></pre></div>
+<p>To embed the canvas in Quarto or R Markdown, put <code>sideview_widget(patients, visits, height = "650px")</code> in a chunk.</p>
+<p><code>sideview</code> is a research and education tool for exploring and preparing data. It is not medical device software and is not intended for clinical decisions.</p>
 </div>
 </div>
   </main><aside class="col-md-3"><div class="links">
@@ -823,8 +169,7 @@
 <div class="developers">
 <h2 data-toc-skip>Developers</h2>
 <ul class="list-unstyled">
-<li>
-<a href="https://github.com/lauyeehow1986-hub" class="external-link"><img src="https://avatars.githubusercontent.com/u/249935955?v=4" width="72px" style="border-radius:50%;margin-bottom:8px;" alt="Yee How Lau"></a> <br><small class="roles"> Author, maintainer, copyright holder </small>   </li>
+<li>Yee How Lau <br><small class="roles"> Author, maintainer, copyright holder </small>   </li>
 <li><a href="authors.html">More about authors...</a></li>
 </ul>
 </div>
@@ -835,8 +180,6 @@
 <li><a href="https://github.com/lauyeehow1986-hub/sideview" class="external-link"><img src="https://img.shields.io/badge/R--CMD--check-passing-brightgreen.svg" alt="R-CMD-check"></a></li>
 <li><a href="https://opensource.org/licenses/MIT" class="external-link"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a></li>
 <li><a href="https://lifecycle.r-lib.org/articles/stages.html#experimental" class="external-link"><img src="https://img.shields.io/badge/lifecycle-experimental-orange.svg" alt="Lifecycle: experimental"></a></li>
-<li><a href="https://cran.r-project.org/" class="external-link"><img src="https://img.shields.io/badge/R-%3E=4.0.0-blue.svg" alt="R (&gt;= 4.0.0)"></a></li>
-<li><a href="https://github.com/lauyeehow1986-hub/sideview" class="external-link"><img src="https://img.shields.io/badge/tests-2700%2B%20passing-brightgreen.svg" alt="Tests: 2700+ passing"></a></li>
 </ul>
 </div>
 
@@ -845,7 +188,7 @@
 
 
     <footer><div class="pkgdown-footer-left">
-  <p>Developed by <a href="https://github.com/lauyeehow1986-hub" class="external-link"><img src="https://avatars.githubusercontent.com/u/249935955?v=4" width="72px" style="border-radius:50%;margin-bottom:8px;" alt="Yee How Lau"></a>.</p>
+  <p>Developed by Yee How Lau.</p>
 </div>
 
 <div class="pkgdown-footer-right">
