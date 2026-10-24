@@ -5,7 +5,7 @@
 \title{Create a New Sideview Canvas State Object}
 \usage{
 new_sideview_state(
-  version = "0.2.0",
+  version = "0.3.0",
   canvas = list(zoom = 1, pan_x = 0, pan_y = 0),
   cards = list(),
   connections = list(),
@@ -13,15 +13,19 @@ new_sideview_state(
 )
 }
 \arguments{
-\item{version}{Character string representing state schema version (default \code{"0.2.0"}).}
+\item{version}{Character string representing state schema version (default \code{"0.3.0"}).}
 
 \item{canvas}{Named list containing canvas settings: \code{zoom} (numeric), \code{pan_x} (numeric), \code{pan_y} (numeric).}
 
-\item{cards}{List of card state objects (each specifying \code{id}, \code{name}, \code{x}, \code{y}, \code{width}, \code{height}, \code{sorts}, \code{filters}).}
+\item{cards}{List of card state objects (each specifying \code{id}, \code{name}, \code{x}, \code{y},
+\code{width}, \code{height}, \code{minimized}, \code{sorts} and \code{filters}; a sort is
+\code{list(col, dir)} with \code{dir} \code{"asc"} or \code{"desc"}, a filter is \code{list(col, op, val)}).}
 
 \item{connections}{List of join connection objects (each specifying \code{from_table}, \code{from_col}, \code{to_table}, \code{to_col}, \code{join_type}).}
 
-\item{pipeline}{Named list containing \code{code} (character) and \code{active_tab} (character).}
+\item{pipeline}{Named list containing \code{code} (character), \code{active_tab}
+(character) and, from version 0.3.0, the pipeline \code{steps} and \code{pipe}
+(\code{"\%>\%"} or \code{"|>"}). Without \code{steps}, \code{code} is restored as one custom step.}
 }
 \value{
 An object of class \code{c("sideview_state", "list")}.
@@ -29,6 +33,11 @@ An object of class \code{c("sideview_state", "list")}.
 \description{
 Constructs a structured \code{sideview_state} object containing canvas transform,
 card configurations, table join connections, and pipeline script state.
+}
+\details{
+The canvas writes this shape when you click \strong{Save} in the toolbar, and
+\code{sideview(..., state = )} / \code{sideview_widget(..., state = )} restore it.
+Cards are matched to tables by \code{name}.
 }
 \examples{
 st <- new_sideview_state()

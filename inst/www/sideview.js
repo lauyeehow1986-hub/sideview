@@ -697,6 +697,12 @@ function sendToShiny(name, value) {
     }
     this.renderPipeline();
 
+    var saved = initialState(this);
+    if (saved) {
+      var restoredOut = this.applyState(saved);
+      if (restoredOut.missing.length) this.showToast(stateSummary(restoredOut), 'warning');
+    }
+
     this.registerShinyHandlers();
     this.initLayoutObserver();
   }
@@ -730,6 +736,8 @@ function sendToShiny(name, value) {
     inspect: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
     download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
     alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    save: '<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>',
+    folderOpen: '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
     keyboard: '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/>'
   };
 
@@ -905,7 +913,7 @@ function sendToShiny(name, value) {
       // First layout with a real size (a widget can start hidden in a tab).
       if (self._needsInitialLayout && self.container.clientWidth > 0) {
         self._needsInitialLayout = false;
-        if (self.arrangeCards(true)) self.fitAll({ maxScale: 1, minScale: READABLE_SCALE });
+        if (self.arrangeCards(true) && !self._restoredView) self.fitAll({ maxScale: 1, minScale: READABLE_SCALE });
       }
       self.scheduleConnectorUpdate();
     };
@@ -1125,6 +1133,8 @@ function sendToShiny(name, value) {
       }
       after = b;
     };
+    add('save-workspace', 'save', 'Save workspace (cards, joins, pipeline)');
+    add('open-workspace', 'folderOpen', 'Open a saved workspace');
     add('toggle-theme', 'moon', 'Switch to dark theme (T)');
     add('show-shortcuts', 'keyboard', 'Keyboard shortcuts (?)');
   };
@@ -1584,6 +1594,10 @@ function sendToShiny(name, value) {
         if (drawer) drawer.classList.toggle('collapsed');
       } else if (action === 'export-codebook') {
         self.exportCodebook();
+      } else if (action === 'save-workspace') {
+        self.saveWorkspace();
+      } else if (action === 'open-workspace') {
+        self.openWorkspace();
       } else if (action === 'close-drawer') {
         var dr = self.container.querySelector('.sideview-drawer');
         if (dr) dr.classList.add('collapsed');
@@ -3624,6 +3638,251 @@ function sendToShiny(name, value) {
     }
   };
 
+  // ---- workspace state ---------------------------------------------------------
+  // The shape matches new_sideview_state() in R/state.R. Cards are matched by
+  // name, so a state saved on one copy of the data restores on another.
+  var STATE_VERSION = '0.3.0';
+
+  function finiteOr(v, fallback) {
+    var n = typeof v === 'number' ? v : parseFloat(v);
+    return isFinite(n) ? n : fallback;
+  }
+
+  // The state embedded by sideview_ui() / passed by sideview_widget(): JSON text.
+  function initialState(engine) {
+    var s = engine.options.state;
+    if (!s) {
+      var tag = engine.container.querySelector('script.sideview-state');
+      s = tag ? tag.textContent : null;
+    }
+    if (!s) return null;
+    if (typeof s !== 'string') return s;
+    try { return JSON.parse(s); } catch (e) {
+      engine.showToast('Saved workspace could not be read: ' + e.message, 'danger');
+      return null;
+    }
+  }
+
+  SideviewEngine.prototype.getState = function () {
+    var pz = this.panzoom;
+    var pan = pz && pz.getPan ? pz.getPan() : { x: 0, y: 0 };
+    var cards = [];
+    this.cards.forEach(function (card) {
+      var el = card.element;
+      if (!el) return;
+      var w = el.offsetWidth, h = el.offsetHeight;
+      if (el.classList.contains('is-maximized') && el._svRestore) {
+        w = parseFloat(el._svRestore.style.width) || null;
+        h = parseFloat(el._svRestore.style.height) || null;
+      } else if (el.classList.contains('is-minimized')) {
+        h = parseFloat(el._svRestoreHeight) || null;
+      }
+      var vt = el._virtualTable;
+      var sorts = [], filters = [];
+      if (vt && vt.sortState && vt.sortState.colName && vt.sortState.direction && vt.sortState.direction !== 'none') {
+        sorts.push({ col: vt.sortState.colName, dir: vt.sortState.direction });
+      }
+      if (vt && vt.currentFilter && vt.currentFilter.colName) {
+        filters.push({ col: vt.currentFilter.colName, op: vt.currentFilter.operator, val: String(vt.currentFilter.value) });
+      }
+      cards.push({
+        id: card.id,
+        name: card.name,
+        x: parseFloat(el.style.left) || 0,
+        y: parseFloat(el.style.top) || 0,
+        width: w || null,
+        height: h || null,
+        minimized: el.classList.contains('is-minimized'),
+        sorts: sorts,
+        filters: filters
+      });
+    });
+    return {
+      version: STATE_VERSION,
+      canvas: { zoom: pz ? pz.getScale() : 1, pan_x: pan.x || 0, pan_y: pan.y || 0 },
+      cards: cards,
+      connections: this.connections.map(function (c) {
+        return { from_table: c.fromTable, from_col: c.fromCol, to_table: c.toTable, to_col: c.toCol,
+          join_type: c.type || 'left_join' };
+      }),
+      pipeline: {
+        code: isNoCode(this.generatedCode) ? '' : this.generatedCode,
+        active_tab: this.activeDrawerTab || 'pipeline',
+        steps: this.pipeline.toJSON().steps,
+        pipe: this.pipeline.pipe
+      }
+    };
+  };
+
+  // Show a saved sort / filter in a card's preview (the pipeline steps are
+  // restored separately, so nothing is recorded here).
+  SideviewEngine.prototype.applyCardView = function (el, sort, filter) {
+    var table = el.querySelector('.sideview-table');
+    var vt = table && table._virtualTable;
+    if (!vt) return;
+    var thFor = function (cls, col) {
+      var b = col ? table.querySelector('thead .' + cls + '[data-col-name="' + cssEscape(col) + '"]') : null;
+      return b ? { btn: b, th: b.closest('th') } : null;
+    };
+    var s = sort && thFor('sideview-sort-btn', sort.col);
+    if (s && s.th && (sort.dir === 'asc' || sort.dir === 'desc')) {
+      s.th.dataset.sortState = sort.dir;
+      s.btn.classList.add('active');
+      setIcon(s.btn, sort.dir === 'asc' ? 'sortAsc' : 'sortDesc');
+      vt.sort(s.th.cellIndex, sort.col, sort.dir);
+    }
+    var f = filter && thFor('sideview-filter-btn', filter.col);
+    if (f && f.th && filter.op && filter.val !== undefined && filter.val !== null) {
+      f.btn.classList.add('active');
+      vt.filter(f.th.cellIndex, filter.col, filter.op, String(filter.val));
+    }
+  };
+
+  /**
+   * Restore a saved workspace: card geometry, preview sorts/filters, joins,
+   * pipeline steps and the view. Returns { restored, missing } card names.
+   */
+  SideviewEngine.prototype.applyState = function (state) {
+    var self = this;
+    var out = { restored: [], missing: [] };
+    if (!state || typeof state !== 'object') return out;
+    var byName = {};
+    this.cards.forEach(function (card) { byName[card.name] = card; });
+
+    asArray(state.cards).forEach(function (s) {
+      if (!s || !s.name) return;
+      var card = byName[s.name];
+      if (!card || !card.element) { out.missing.push(String(s.name)); return; }
+      var el = card.element;
+      if (el.classList.contains('is-maximized')) self.toggleMaximizeCard(el, el.querySelector('[data-action="maximize-card"]'));
+      var x = finiteOr(s.x, null), y = finiteOr(s.y, null);
+      if (x !== null) { el.style.left = x + 'px'; card.x = x; }
+      if (y !== null) { el.style.top = y + 'px'; card.y = y; }
+      var w = finiteOr(s.width, 0), h = finiteOr(s.height, 0);
+      if (el.classList.contains('is-minimized')) self.toggleMinimizeCard(el, el.querySelector('[data-action="minimize-card"]'));
+      if (w > 0) el.style.width = w + 'px';
+      if (h > 0) el.style.height = h + 'px';
+      if (w > 0 && h > 0) el.classList.add('sv-sized');
+      delete el.dataset.autoPlace;
+      if (s.minimized === true) self.toggleMinimizeCard(el, el.querySelector('[data-action="minimize-card"]'));
+      self.applyCardView(el, asArray(s.sorts)[0], asArray(s.filters)[0]);
+      out.restored.push(card.name);
+    });
+
+    asArray(state.connections).forEach(function (c) {
+      if (!c) return;
+      var from = self.findPortElement(c.from_table, c.from_col);
+      var to = self.findPortElement(c.to_table, c.to_col);
+      if (!from || !to) return;
+      var fromCard = from.closest('.sideview-card'), toCard = to.closest('.sideview-card');
+      self.addConnection({
+        fromCard: fromCard.dataset.cardId, fromTable: c.from_table, fromCol: c.from_col, fromElement: from,
+        toCard: toCard.dataset.cardId, toTable: c.to_table, toCol: c.to_col, toElement: to,
+        type: c.join_type || 'left_join'
+      });
+    });
+
+    var p = state.pipeline || {};
+    if (Array.isArray(p.steps)) {
+      this.pipeline.load({ steps: p.steps, pipe: p.pipe });
+    } else if (!isNoCode(p.code)) {
+      // Version 0.2.0 files carry only the code.
+      this.pipeline.replaceWithCode(String(p.code).trim(), 'restore');
+    }
+    if (p.pipe) this.pipeline.setPipe(p.pipe);
+    // A restored workspace starts a fresh undo history.
+    this.pipeline.undoStack = [];
+    this.pipeline.redoStack = [];
+    this.renderPipeline();
+    if (p.active_tab && this.container.querySelector('.sideview-drawer-tab[data-tab="' + cssEscape(p.active_tab) + '"]')) {
+      this.activateDrawerTab(p.active_tab);
+    }
+
+    var cv = state.canvas || {};
+    var pz = this.panzoom;
+    if (pz && typeof pz.zoom === 'function' && typeof pz.pan === 'function') {
+      var zoom = Math.min(Math.max(finiteOr(cv.zoom, 1), this.options.minScale), this.options.maxScale);
+      pz.zoom(zoom);
+      pz.pan(finiteOr(cv.pan_x, 0), finiteOr(cv.pan_y, 0));
+    }
+    // Keep the saved view: the first layout only places cards the state lacks.
+    if (out.restored.length) this._restoredView = true;
+    this.scheduleConnectorUpdate();
+    return out;
+  };
+
+  function stateSummary(out) {
+    var msg = 'Restored ' + out.restored.length + ' card' + (out.restored.length === 1 ? '' : 's');
+    if (out.missing.length) msg += '; not on this canvas: ' + out.missing.join(', ');
+    return msg;
+  }
+
+  /** Open a workspace into the running canvas (replaces joins and pipeline). */
+  SideviewEngine.prototype.openState = function (state) {
+    this.clearOperations(true);
+    var out = this.applyState(state);
+    this.showToast(stateSummary(out), out.missing.length ? 'warning' : 'success');
+    return out;
+  };
+
+  function downloadText(text, filename, type) {
+    var url = URL.createObjectURL(new Blob([text], { type: type }));
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  /** Save: R writes the file in the gadget (RStudio dialog); the widget downloads JSON. */
+  SideviewEngine.prototype.saveWorkspace = function () {
+    var json = JSON.stringify(this.getState(), null, 2);
+    this.lastStateJson = json;
+    if (this.isGadget()) {
+      if (!sendToShiny('state_save', { json: json, nonce: Date.now() })) {
+        this.showToast('The R session is not connected.', 'warning');
+      }
+      return;
+    }
+    try {
+      downloadText(json, 'sideview-workspace.json', 'application/json');
+      this.showToast('Workspace downloaded (sideview-workspace.json).', 'success');
+    } catch (err) {
+      this.showToast('Download blocked: ' + err.message, 'danger');
+    }
+  };
+
+  /** Open: RStudio's dialog through R when there is one, else the browser's file picker. */
+  SideviewEngine.prototype.openWorkspace = function () {
+    var self = this;
+    if (this.isGadget() && this.container.getAttribute('data-sv-file-dialog') === 'r') {
+      if (!sendToShiny('state_open_request', Date.now())) this.showToast('The R session is not connected.', 'warning');
+      return;
+    }
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.style.display = 'none';
+    input.addEventListener('change', function () {
+      var file = input.files && input.files[0];
+      if (input.parentNode) input.parentNode.removeChild(input);
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        try {
+          self.openState(JSON.parse(String(reader.result)));
+        } catch (err) {
+          self.showToast('Not a sideview workspace: ' + err.message, 'danger');
+        }
+      };
+      reader.readAsText(file);
+    });
+    this.container.appendChild(input);
+    input.click();
+  };
+
   SideviewEngine.prototype.renderBuilder = function (kind, keepTable) {
     var pane = this.container.querySelector('.sideview-drawer-content > [data-pane="' + kind + '"]');
     if (!pane) return;
@@ -4402,6 +4661,22 @@ function sendToShiny(name, value) {
     // Column profile computed in R on the full data (reply to column_profile_request)
     global.Shiny.addCustomMessageHandler('sideview_column_profile', function (data) {
       self.onColumnProfile(data);
+    });
+
+    // Workspace written by R (reply to state_save)
+    global.Shiny.addCustomMessageHandler('sideview_state_saved', function (data) {
+      if (!data || data.cancelled) return;
+      if (data.error) self.showToast('Workspace not saved: ' + data.error, 'danger');
+      else self.showToast('Workspace saved to ' + data.path, 'success');
+    });
+
+    // Workspace chosen in RStudio's dialog (reply to state_open_request)
+    global.Shiny.addCustomMessageHandler('sideview_state_loaded', function (data) {
+      if (!data || data.cancelled) return;
+      if (data.error) { self.showToast('Workspace not opened: ' + data.error, 'danger'); return; }
+      try { self.openState(JSON.parse(data.json)); } catch (err) {
+        self.showToast('Workspace not opened: ' + err.message, 'danger');
+      }
     });
 
     // Codebook written by R (reply to codebook_export)

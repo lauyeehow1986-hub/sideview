@@ -49,6 +49,8 @@ sideview_widget_dependencies <- function() {
 #' @param theme Canvas theme: `"auto"` (default; follows the reader's
 #'   `prefers-color-scheme`), `"light"`, `"dark"`, an [sv_theme()] or a
 #'   `bslib::bs_theme()`.
+#' @param state A saved workspace to restore (see [sideview()]): a
+#'   `sideview_state` or the path to a saved state file.
 #'
 #' @return An S3 object of class \code{c("sideview", "htmlwidget")}.
 #' @export
@@ -61,7 +63,9 @@ sideview_widget <- function(...,
                             height = NULL,
                             elementId = NULL,
                             options = list(),
-                            theme = "auto") {
+                            theme = "auto",
+                            state = NULL) {
+  state <- sv_as_state(state)
   dots_exprs <- as.list(substitute(list(...))[-1])
   dots_vals <- list(...)
   
@@ -122,6 +126,8 @@ sideview_widget <- function(...,
   if (length(theme$vars)) {
     options$themeVars <- stats::setNames(theme$vars, paste0("--sv-", names(theme$vars)))
   }
+  # As JSON text, so the browser gets exactly what a state file holds.
+  if (!is.null(state)) options$state <- sv_state_json(state)
   x <- list(
     cards = card_list,
     options = options

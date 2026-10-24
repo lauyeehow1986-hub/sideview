@@ -283,6 +283,38 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     dispatch_message("sideview_codebook_saved", result)
   }, ignoreInit = FALSE)
 
+  # Workspace Save: the canvas sends its state as JSON text; R writes the file.
+  shiny::observeEvent(input$state_save, {
+    evt <- input$state_save
+    if (is.null(evt)) return()
+    result <- tryCatch({
+      state <- sv_state_from_json(evt$json)
+      path <- sv_choose_state_path(existing = FALSE)
+      if (is.null(path)) {
+        list(cancelled = TRUE)
+      } else {
+        sv_save_state(state, path)
+        list(path = normalizePath(path, winslash = "/", mustWork = FALSE), n_cards = length(state$cards))
+      }
+    }, error = function(e) list(error = conditionMessage(e)))
+    dispatch_message("sideview_state_saved", result)
+  }, ignoreInit = FALSE)
+
+  # Workspace Open: RStudio's file dialog, then the state goes back as JSON text.
+  shiny::observeEvent(input$state_open_request, {
+    if (is.null(input$state_open_request)) return()
+    result <- tryCatch({
+      path <- sv_choose_state_path(existing = TRUE)
+      if (is.null(path)) {
+        list(cancelled = TRUE)
+      } else {
+        list(json = sv_state_json(sv_load_state(path)),
+             path = normalizePath(path, winslash = "/", mustWork = FALSE))
+      }
+    }, error = function(e) list(error = conditionMessage(e)))
+    dispatch_message("sideview_state_loaded", result)
+  }, ignoreInit = FALSE)
+
   # 2. Column Renamed -> Rename Code Generation
   shiny::observeEvent(input$column_renamed, {
     evt <- input$column_renamed

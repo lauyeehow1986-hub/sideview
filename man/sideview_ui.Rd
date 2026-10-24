@@ -8,7 +8,8 @@ sideview_ui(
   cards = list(),
   title = "Sideview Canvas",
   gadget = FALSE,
-  theme = "auto"
+  theme = "auto",
+  state = NULL
 )
 }
 \arguments{
@@ -21,6 +22,8 @@ or tabular objects to be normalized.}
 
 \item{theme}{\code{"auto"}, \code{"light"}, \code{"dark"}, an \code{\link[=sv_theme]{sv_theme()}} or a
 \code{bslib::bs_theme()}. See \code{\link[=sv_theme]{sv_theme()}}.}
+
+\item{state}{Optional saved workspace to restore on load (see \code{\link[=sideview]{sideview()}}).}
 }
 \value{
 A \code{shiny.tag.list} UI definition.

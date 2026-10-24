@@ -15,6 +15,7 @@ sideview(
      shiny::paneViewer(minHeight = 500)
  },
   theme = "auto",
+  state = NULL,
   run = interactive()
 )
 }
@@ -31,6 +32,12 @@ sideview(
 
 \item{theme}{Canvas theme: \code{"auto"} (default; follows the RStudio editor
 theme), \code{"light"}, \code{"dark"}, an \code{\link[=sv_theme]{sv_theme()}} or a \code{bslib::bs_theme()}.}
+
+\item{state}{A saved workspace to restore: a \code{sideview_state} (see
+\code{\link[=new_sideview_state]{new_sideview_state()}}) or the path to a file written by the toolbar's
+\strong{Save} button or \code{\link[=sv_save_state]{sv_save_state()}}. Card positions and sizes, zoom and
+pan, sorts, filters, joins and the pipeline come back; cards are matched
+to tables by name.}
 
 \item{run}{Logical; if \code{TRUE}, launches the interactive gadget via
 \code{shiny::runGadget()}. If \code{FALSE}, returns the \code{shiny.appobj} definition

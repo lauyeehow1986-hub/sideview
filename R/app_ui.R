@@ -351,10 +351,12 @@ render_card_tag <- function(card, index = 1L) {
 #' @param gadget If `TRUE`, add Done and Cancel buttons to the toolbar (used by `sideview()`).
 #' @param theme `"auto"`, `"light"`, `"dark"`, an [sv_theme()] or a
 #'   `bslib::bs_theme()`. See [sv_theme()].
+#' @param state Optional saved workspace to restore on load (see [sideview()]).
 #'
 #' @return A `shiny.tag.list` UI definition.
 #' @export
-sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALSE, theme = "auto") {
+sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALSE, theme = "auto",
+                        state = NULL) {
   # Normalize input into a list of sideview_cards
   if (is.null(cards)) {
     card_list <- list()
@@ -565,12 +567,23 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
     })();
   "))
   
+  # Saved workspace, read by the engine on start-up. "</" is escaped so the
+  # JSON cannot close the script element.
+  state <- sv_as_state(state)
+  state_tag <- if (!is.null(state)) {
+    htmltools::tags$script(type = "application/json", class = "sideview-state",
+                           htmltools::HTML(gsub("</", "<\\/", sv_state_json(state), fixed = TRUE)))
+  }
+
   # Complete container
   theme <- sv_resolve_theme(theme)
   container_tag <- htmltools::tags$div(
     class = paste0("sideview-container sv-standalone sv-theme-", theme$mode),
     `data-sv-theme` = theme$mode,
+    # Save/Open use RStudio's file dialog through R when there is one.
+    `data-sv-file-dialog` = if (isTRUE(gadget) && sv_has_file_dialog()) "r" else NULL,
     style = sv_theme_style(theme),
+    state_tag,
     canvas_tag,
     htmltools::tags$div(class = "sideview-topbar", toolbar_tag, palette_tag),
     drawer_tag,

@@ -10,7 +10,8 @@ sideview_widget(
   height = NULL,
   elementId = NULL,
   options = list(),
-  theme = "auto"
+  theme = "auto",
+  state = NULL
 )
 }
 \arguments{
@@ -29,6 +30,9 @@ sideview_widget(
 \item{theme}{Canvas theme: \code{"auto"} (default; follows the reader's
 \code{prefers-color-scheme}), \code{"light"}, \code{"dark"}, an \code{\link[=sv_theme]{sv_theme()}} or a
 \code{bslib::bs_theme()}.}
+
+\item{state}{A saved workspace to restore (see \code{\link[=sideview]{sideview()}}): a
+\code{sideview_state} or the path to a saved state file.}
 }
 \value{
 An S3 object of class \code{c("sideview", "htmlwidget")}.

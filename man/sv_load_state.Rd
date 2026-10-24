@@ -4,19 +4,23 @@
 \alias{sv_load_state}
 \title{Load Canvas State from File}
 \usage{
-sv_load_state(file, tables = NULL, launch = FALSE, format = NULL)
+sv_load_state(file, tables = NULL, launch = FALSE, format = NULL, ...)
 }
 \arguments{
 \item{file}{Path to the saved state file (\code{.json} or \code{.rds}).}
 
 \item{tables}{Optional named list of data frames or tables to associate with loaded cards.
-If \code{NULL}, tables are discovered from the calling environment.}
+If \code{NULL}, the tables named by the saved cards are looked up in the calling
+environment (then every table there, as \code{\link[=sv_find_tables]{sv_find_tables()}} finds them).}
 
-\item{launch}{Logical; if \code{TRUE} and the session is interactive, launches \code{sideview()}
-with the loaded state. If non-interactive, returns the loaded state object.}
+\item{launch}{Logical; if \code{TRUE} and the session is interactive, launches
+\verb{sideview(tables, state = <loaded state>, ...)} so cards, zoom, joins and
+the pipeline come back. If non-interactive, returns the loaded state object.}
 
 \item{format}{Optional format specification (\code{"json"} or \code{"rds"}). If \code{NULL} (default),
 the format is inferred from the file extension (\code{.json} or \code{.rds}).}
+
+\item{...}{Further arguments for \code{\link[=sideview]{sideview()}} when \code{launch = TRUE} (e.g. \code{viewer}).}
 }
 \value{
 A \code{sideview_state} object of class \code{c("sideview_state", "list")}, or the gadget

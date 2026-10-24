@@ -8,7 +8,7 @@ test_that("new_sideview_state creates valid sideview_state object", {
   state <- new_sideview_state()
   expect_s3_class(state, "sideview_state")
   expect_s3_class(state, "list")
-  expect_equal(state$version, "0.2.0")
+  expect_equal(state$version, "0.3.0")
   expect_type(state$canvas, "list")
   expect_equal(state$canvas$zoom, 1)
   expect_equal(state$canvas$pan_x, 0)
@@ -147,7 +147,7 @@ test_that("sv_save_state supports explicit format argument", {
   
   # Reading with fromJSON should work on tf_json
   parsed <- jsonlite::fromJSON(tf_json, simplifyVector = FALSE)
-  expect_equal(parsed$version, "0.2.0")
+  expect_equal(parsed$version, "0.3.0")
 })
 
 test_that("sv_save_state and sv_load_state error handling", {
@@ -254,5 +254,157 @@ test_that("sv_load_state with launch=TRUE returns state when non-interactive", {
   # In automated/testthat runs interactive() is FALSE
   res <- sv_load_state(tf, launch = TRUE)
   expect_s3_class(res, "sideview_state")
-  expect_equal(res$version, "0.2.0")
+  expect_equal(res$version, "0.3.0")
+})
+
+state_json_fixture <- paste0(
+  '{"version":"0.3.0","canvas":{"zoom":0.8333333,"pan_x":12.25,"pan_y":-3},',
+  '"cards":[{"id":"c1","name":"a","x":1.125,"y":40,"width":null,"height":310,"minimized":false,',
+  '"sorts":[],"filters":[{"col":"x","op":"gt","val":"5"}]}],',
+  '"connections":[{"from_table":"a","from_col":"id","to_table":"b","to_col":"id","join_type":"left_join"}],',
+  '"pipeline":{"code":"a %>% filter(x > 5)","active_tab":"pipeline",',
+  '"steps":[{"kind":"filter","table":"a","conds":["x > 5"],"id":"s1","enabled":true}],"pipe":"|>"}}'
+)
+
+test_that("sv_state_json keeps nulls, one-element arrays and full precision", {
+  st <- sv_state_from_json(state_json_fixture)
+  expect_s3_class(st, "sideview_state")
+  js <- sv_state_json(st)
+  expect_match(js, '"conds":["x > 5"]', fixed = TRUE)
+  expect_match(js, '"sorts":[]', fixed = TRUE)
+  expect_match(js, '"width":null', fixed = TRUE)
+  expect_match(js, '"zoom":0.8333333', fixed = TRUE)
+  expect_match(js, '"x":1.125', fixed = TRUE)
+  # Stable through a file round trip.
+  tf <- tempfile(fileext = ".json")
+  on.exit(unlink(tf), add = TRUE)
+  sv_save_state(st, tf)
+  expect_identical(sv_state_json(sv_load_state(tf)), js)
+  expect_error(sv_state_from_json("[1, 2]"), "root object must be a list")
+  expect_error(sv_state_from_json(""), "expected JSON text")
+})
+
+test_that("sv_as_state accepts NULL, a state, a list or a file path", {
+  expect_null(sv_as_state(NULL))
+  st <- sv_as_state(list(version = "0.3.0", cards = list()))
+  expect_s3_class(st, "sideview_state")
+  tf <- tempfile(fileext = ".json")
+  on.exit(unlink(tf), add = TRUE)
+  sv_save_state(new_sideview_state(canvas = list(zoom = 2, pan_x = 1, pan_y = 2)), tf)
+  expect_equal(sv_as_state(tf)$canvas$zoom, 2)
+  expect_error(sv_as_state(42), "must be a sideview_state")
+})
+
+test_that("sideview_ui embeds the state as escaped JSON for the engine", {
+  st <- new_sideview_state(
+    cards = list(list(name = "mtcars", x = 10, y = 20)),
+    pipeline = list(code = "# </script><b>x</b>", active_tab = "pipeline")
+  )
+  html <- as.character(sideview_ui(list(sv_normalize(mtcars, name = "mtcars")), gadget = TRUE, state = st))
+  expect_match(html, '<script type="application/json" class="sideview-state">', fixed = TRUE)
+  expect_false(grepl("</script><b>", html, fixed = TRUE))
+  body <- regmatches(html, regexpr('(?s)class="sideview-state">.*?</script>', html, perl = TRUE))
+  json <- sub('(?s)^class="sideview-state">(.*)</script>$', "\\1", body, perl = TRUE)
+  expect_identical(jsonlite::fromJSON(json)$pipeline$code, "# </script><b>x</b>")
+  expect_false(grepl("sideview-state", as.character(sideview_ui(list(), gadget = TRUE)), fixed = TRUE))
+})
+
+test_that("Save/Open go through R only when RStudio's file dialog exists", {
+  cards <- list(sv_normalize(mtcars, name = "mtcars"))
+  testthat::local_mocked_bindings(sv_has_file_dialog = function() TRUE)
+  expect_match(as.character(sideview_ui(cards, gadget = TRUE)), 'data-sv-file-dialog="r"', fixed = TRUE)
+  expect_false(grepl("data-sv-file-dialog", as.character(sideview_ui(cards, gadget = FALSE)), fixed = TRUE))
+  testthat::local_mocked_bindings(sv_has_file_dialog = function() FALSE)
+  expect_false(grepl("data-sv-file-dialog", as.character(sideview_ui(cards, gadget = TRUE)), fixed = TRUE))
+})
+
+test_that("sideview() and sideview_widget() pass state through", {
+  tf <- tempfile(fileext = ".json")
+  on.exit(unlink(tf), add = TRUE)
+  sv_save_state(new_sideview_state(cards = list(list(name = "mtcars", x = 5, y = 6))), tf)
+  got <- NULL
+  testthat::local_mocked_bindings(sideview_ui = function(..., state = NULL) {
+    got <<- state
+    htmltools::div()
+  })
+  sideview(mtcars, state = tf, run = FALSE)
+  expect_s3_class(got, "sideview_state")
+  expect_equal(got$cards[[1]]$x, 5)
+
+  w <- sideview_widget(mtcars, state = tf)
+  expect_type(w$x$options$state, "character")
+  expect_identical(jsonlite::fromJSON(w$x$options$state)$cards$name, "mtcars")
+  expect_null(sideview_widget(mtcars)$x$options$state)
+})
+
+test_that("sv_load_state(launch = TRUE) launches sideview() with the state and its tables", {
+  tf <- tempfile(fileext = ".json")
+  on.exit(unlink(tf), add = TRUE)
+  sv_save_state(new_sideview_state(cards = list(list(name = "pts_state_test"), list(name = "gone"))), tf)
+  pts_state_test <- data.frame(id = 1:3)
+  other_tbl <- data.frame(z = 1)
+  got <- NULL
+  testthat::local_mocked_bindings(
+    sv_interactive = function() TRUE,
+    sideview = function(...) { got <<- list(...); "launched" }
+  )
+  expect_identical(sv_load_state(tf, launch = TRUE, viewer = "pane"), "launched")
+  expect_named(got[[1]], "pts_state_test")
+  expect_s3_class(got$state, "sideview_state")
+  expect_identical(got$viewer, "pane")
+
+  # Explicit tables win.
+  sv_load_state(tf, tables = list(x = mtcars), launch = TRUE)
+  expect_named(got[[1]], "x")
+
+  tf2 <- tempfile(fileext = ".json")
+  on.exit(unlink(tf2), add = TRUE)
+  sv_save_state(new_sideview_state(cards = list(list(name = "no_such_table_xyz"))), tf2)
+  f <- function() sv_load_state(tf2, launch = TRUE)
+  expect_error(f(), "None of the saved tables \\(no_such_table_xyz\\)")
+})
+
+test_that("sv_choose_state_path writes a new file in getwd() without RStudio", {
+  testthat::local_mocked_bindings(sv_has_file_dialog = function() FALSE)
+  withr::local_dir(withr::local_tempdir())
+  p1 <- sv_choose_state_path()
+  expect_identical(basename(p1), "sideview-workspace.json")
+  writeLines("{}", p1)
+  expect_identical(basename(sv_choose_state_path()), "sideview-workspace_2.json")
+  expect_error(sv_choose_state_path(existing = TRUE), "No file dialog")
+})
+
+test_that("the server saves the canvas state and opens one from the file dialog", {
+  cards <- list(sv_normalize(data.frame(id = 1:3, x = c(4, 6, 8)), name = "a"))
+  tf <- tempfile(fileext = ".json")
+  on.exit(unlink(tf), add = TRUE)
+  testthat::local_mocked_bindings(sv_choose_state_path = function(existing = FALSE) tf)
+  shiny::testServer(sideview_server(cards), {
+    last_msg <- function() {
+      msgs <- session$userData$custom_messages
+      msgs[[length(msgs)]]
+    }
+    session$setInputs(state_save = list(json = state_json_fixture, nonce = 1))
+    m <- last_msg()
+    expect_identical(m$type, "sideview_state_saved")
+    expect_equal(m$message$n_cards, 1)
+    expect_true(file.exists(tf))
+    saved <- sv_load_state(tf)
+    expect_equal(saved$cards[[1]]$x, 1.125)
+    expect_identical(saved$pipeline$steps[[1]]$conds, list("x > 5"))
+
+    session$setInputs(state_open_request = 2)
+    m <- last_msg()
+    expect_identical(m$type, "sideview_state_loaded")
+    expect_identical(m$message$json, sv_state_json(sv_state_from_json(state_json_fixture)))
+
+    session$setInputs(state_save = list(json = "[1, 2]", nonce = 3))
+    expect_match(last_msg()$message$error, "root object must be a list")
+  })
+  testthat::local_mocked_bindings(sv_choose_state_path = function(existing = FALSE) NULL)
+  shiny::testServer(sideview_server(cards), {
+    session$setInputs(state_open_request = 1)
+    msgs <- session$userData$custom_messages
+    expect_true(isTRUE(msgs[[length(msgs)]]$message$cancelled))
+  })
 })

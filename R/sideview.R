@@ -45,6 +45,11 @@ sv_find_tables <- function(env = parent.frame()) {
 #'   (width 1400, height 900) when RStudio is available, otherwise `shiny::paneViewer()`.
 #' @param theme Canvas theme: `"auto"` (default; follows the RStudio editor
 #'   theme), `"light"`, `"dark"`, an [sv_theme()] or a `bslib::bs_theme()`.
+#' @param state A saved workspace to restore: a `sideview_state` (see
+#'   [new_sideview_state()]) or the path to a file written by the toolbar's
+#'   **Save** button or [sv_save_state()]. Card positions and sizes, zoom and
+#'   pan, sorts, filters, joins and the pipeline come back; cards are matched
+#'   to tables by name.
 #' @param run Logical; if `TRUE`, launches the interactive gadget via
 #'   `shiny::runGadget()`. If `FALSE`, returns the `shiny.appobj` definition
 #'   without launching (useful for testing or embedding). Defaults to `interactive()`.
@@ -65,7 +70,9 @@ sideview <- function(...,
                        shiny::paneViewer(minHeight = 500)
                      },
                      theme = "auto",
+                     state = NULL,
                      run = interactive()) {
+  state <- sv_as_state(state)
   # Normalize character shorthand for viewer ("browser", "dialog", "pane")
   if (is.character(viewer) && length(viewer) == 1L) {
     v_type <- match.arg(tolower(viewer), c("browser", "dialog", "pane"))
@@ -120,7 +127,7 @@ sideview <- function(...,
   
   # Build Shiny application object
   ui <- sideview_ui(card_list, title = title, gadget = TRUE,
-                    theme = sv_resolve_theme(theme, rstudio = TRUE))
+                    theme = sv_resolve_theme(theme, rstudio = TRUE), state = state)
   server <- sideview_server(card_list, gadget = TRUE)
   app <- shiny::shinyApp(ui = ui, server = server)
   

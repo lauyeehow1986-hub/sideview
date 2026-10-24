@@ -1009,3 +1009,191 @@ test_that("the saved widget hides the buttons that need R and never claims they 
   expect_setequal(unlist(vis), c("inject-script", "send-console-exit", "eval-env", "send-console"))
   expect_false(sv_js(g, "document.querySelector('.sideview-container').classList.contains('sv-embedded')"))
 })
+
+# --- Workspace save / open (#18) -----------------------------------------------
+
+# JS: build a workspace on the open canvas with the real controls.
+sv_build_workspace_js <- function() sprintf(paste0("(async () => {", sv_pipeline_helpers_js, "
+  sv.clearOperations(true); await sleep(300);
+  const pat = %s, labs = %s;
+  pat.style.left = '40px'; pat.style.top = '140px';
+  labs.style.left = '760px'; labs.style.top = '180px';
+  const sortBtn = labs.querySelector('[data-action=\"sort-col\"][data-col-name=\"value\"]');
+  sortBtn.click(); await sleep(300); sortBtn.click(); await sleep(600);
+  pat.querySelector('[data-action=\"filter-col\"][data-col-name=\"age\"]').click(); await sleep(200);
+  const pop = q('.sideview-filter-popover');
+  setVal(pop.querySelector('.sideview-filter-select'), 'gt');
+  setVal(pop.querySelector('.sideview-filter-input'), '50');
+  pop.querySelector('.sideview-filter-apply').click(); await sleep(600);
+  fire(pat.querySelector('.sideview-col-port[data-col-name=\"patient_id\"]')); await sleep(150);
+  fire(labs.querySelector('.sideview-col-port[data-col-name=\"patient_id\"]')); await sleep(500);
+  sv.panzoom.zoom(0.8); sv.panzoom.pan(30, 40); await sleep(200);
+  return JSON.stringify(sv.getState());
+})()"), sv_card_js("patients"), sv_card_js("labs"))
+
+# JS: what the canvas shows now.
+sv_canvas_now_js <- function() sprintf("(async () => {
+  await new Promise(r => setTimeout(r, 1500));
+  const sv = window._sideviewInstance, labs = %s, pat = %s;
+  const firstVals = c => [...c.querySelectorAll('tbody tr[data-row-index]')].slice(0, 3).map(r => r.cells[2].textContent.trim());
+  const conn = sv.connections[0];
+  return {
+    state: sv.getState(), code: sv.generatedCode, conns: sv.connections.length,
+    d: conn ? conn.path.getAttribute('d') : '',
+    sortState: labs.querySelector('th[data-col-name=\"value\"]').dataset.sortState,
+    sortActive: labs.querySelector('[data-action=\"sort-col\"][data-col-name=\"value\"]').classList.contains('active'),
+    filterActive: pat.querySelector('[data-action=\"filter-col\"][data-col-name=\"age\"]').classList.contains('active'),
+    labsTop: firstVals(labs), patAges: [...pat.querySelectorAll('tbody tr[data-row-index]')].slice(0, 20).map(r => +r.cells[2].textContent.trim()),
+    toasts: [...document.querySelectorAll('.sideview-toast')].map(t => t.textContent).join(' | ')
+  };
+})()", sv_card_js("labs"), sv_card_js("patients"))
+
+sv_card_state <- function(st, name) Filter(function(c) identical(c$name, name), st$cards)[[1]]
+
+test_that("a saved workspace reopens with cards, view, sorts, filters, joins and pipeline", {
+  b <- sv_shared_page()
+  json <- sv_js(b, sv_build_workspace_js())
+  saved <- sv_state_from_json(json)
+  expect_equal(saved$canvas$zoom, 0.8)
+  expect_equal(sv_card_state(saved, "labs")$sorts[[1]], list(col = "value", dir = "desc"))
+  expect_equal(sv_card_state(saved, "patients")$filters[[1]], list(col = "age", op = "gt", val = "50"))
+  expect_length(saved$connections, 1)
+  expect_gte(length(saved$pipeline$steps), 3)
+  sv_js(b, "(async () => { window._sideviewInstance.clearOperations(true); await new Promise(r => setTimeout(r, 300)); return 1; })()")
+
+  dir <- withr::local_tempdir()
+  path <- file.path(dir, "ws.json")
+  sv_save_state(saved, path)
+  app <- sv_start_app(sprintf('{ setwd("%s"); sideview(patients, visits, labs, state = "%s", run = FALSE) }',
+                              gsub("\\\\", "/", dir), gsub("\\\\", "/", path)))
+  withr::defer(try(app$proc$kill(), silent = TRUE))
+  g <- sv_open_page(app$url)
+  withr::defer(try(g$close(), silent = TRUE))
+  now <- sv_js(g, sv_canvas_now_js())
+
+  env <- new.env()
+  eval(parse(text = sv_fixture_code), envir = env)
+  st <- now$state
+  expect_equal(st$canvas$zoom, 0.8)
+  expect_equal(c(st$canvas$pan_x, st$canvas$pan_y), c(30, 40))
+  for (nm in c("patients", "labs")) {
+    a <- sv_card_state(st, nm)
+    e <- sv_card_state(saved, nm)
+    expect_equal(c(a$x, a$y, a$width, a$height), c(e$x, e$y, e$width, e$height), info = nm)
+  }
+  expect_identical(now$sortState, "desc")
+  expect_true(now$sortActive)
+  expect_equal(as.numeric(unlist(now$labsTop)), head(sort(env$labs$value, decreasing = TRUE), 3))
+  expect_true(now$filterActive)
+  expect_true(all(unlist(now$patAges) > 50))
+  expect_equal(now$conns, 1)
+  expect_match(now$d, "^M")
+  expect_identical(now$code, saved$pipeline$code)
+  expect_true(!is.null(parse(text = now$code)))
+  expect_length(attr(g, "sv_errors")(), 0)
+
+  # Save from the gadget: no RStudio here, so R writes a new file in getwd().
+  msg <- sv_js(g, "(async () => {
+    document.querySelector('[data-action=\"save-workspace\"]').click();
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 100));
+      const t = [...document.querySelectorAll('.sideview-toast')].map(t => t.textContent).join(' | ');
+      if (/Workspace saved to/.test(t)) return t;
+    }
+    return 'timeout';
+  })()")
+  expect_match(msg, "Workspace saved to .*sideview-workspace\\.json")
+  out <- file.path(dir, "sideview-workspace.json")
+  expect_true(file.exists(out))
+  resaved <- sv_load_state(out)
+  expect_equal(resaved$canvas$zoom, 0.8)
+  expect_identical(resaved$pipeline$code, saved$pipeline$code)
+  expect_equal(sv_card_state(resaved, "labs")$sorts[[1]]$dir, "desc")
+})
+
+test_that("Open replaces the running workspace and names cards it cannot place", {
+  b <- sv_shared_page()
+  json <- sv_js(b, sv_build_workspace_js())
+  st <- jsonlite::fromJSON(json, simplifyVector = FALSE)
+  st$cards[[length(st$cards) + 1]] <- list(name = "not_here", x = 1, y = 1)
+  r <- sv_js(b, sprintf("(async () => {
+    const sv = window._sideviewInstance;
+    sv.clearOperations(true); sv.panzoom.zoom(1); sv.panzoom.pan(0, 0); await new Promise(r => setTimeout(r, 300));
+    const before = sv.pipeline.steps.length;
+    const out = sv.openState(JSON.parse(%s));
+    await new Promise(r => setTimeout(r, 800));
+    const res = { before: before, after: sv.pipeline.steps.length, missing: out.missing, zoom: sv.panzoom.getScale(),
+      conns: sv.connections.length, canUndo: sv.pipeline.canUndo(),
+      toasts: [...document.querySelectorAll('.sideview-toast')].map(t => t.textContent).join(' | ') };
+    sv.openState(JSON.parse(%s)); await new Promise(r => setTimeout(r, 300));
+    res.connsAgain = sv.connections.length;
+    sv.clearOperations(true); sv.fitAll(); await new Promise(r => setTimeout(r, 300));
+    return res;
+  })()", jsonlite::toJSON(sv_state_json(st), auto_unbox = TRUE), jsonlite::toJSON(json, auto_unbox = TRUE)))
+  expect_equal(r$before, 0)
+  expect_equal(r$after, length(st$pipeline$steps))
+  expect_identical(unlist(r$missing), "not_here")
+  expect_equal(r$zoom, 0.8)
+  expect_equal(r$conns, 1)
+  expect_false(r$canUndo)
+  expect_match(r$toasts, "not on this canvas: not_here", fixed = TRUE)
+  # Opening twice does not stack joins.
+  expect_equal(r$connsAgain, 1)
+})
+
+test_that("the saved widget restores a state and downloads its own", {
+  skip_if_no_browser()
+  env <- new.env()
+  eval(parse(text = sv_fixture_code), envir = env)
+  st <- new_sideview_state(
+    canvas = list(zoom = 0.7, pan_x = 15, pan_y = 25),
+    cards = list(list(name = "patients", x = 500, y = 300, width = 420, height = 330, minimized = FALSE,
+                      sorts = list(list(col = "age", dir = "asc")), filters = list()),
+                 list(name = "visits", x = 20, y = 300, minimized = TRUE)),
+    connections = list(list(from_table = "visits", from_col = "pid", to_table = "patients",
+                            to_col = "patient_id", join_type = "left_join")),
+    pipeline = list(code = "", active_tab = "pipeline", pipe = "|>",
+                    steps = list(list(kind = "join", key = '["join","visits","patients"]', table = "visits",
+                                      right = "patients", type = "left_join", id = "s1", enabled = TRUE,
+                                      by = list(list(left = "pid", right = "patient_id")))))
+  )
+  dir <- withr::local_tempdir()
+  file <- file.path(dir, "restored.html")
+  w <- local(sideview_widget(patients, visits, state = st), envir = env)
+  suppressMessages(save_sideview(w, file, selfcontained = FALSE))
+  url <- paste0("file:///", gsub("\\\\", "/", normalizePath(file)))
+  b <- sv_open_page(url, wait_for = "!!document.querySelector('.sideview-card .sideview-col-port')")
+  withr::defer(try(b$close(), silent = TRUE))
+  r <- sv_js(b, sprintf("(async () => {
+    await new Promise(r => setTimeout(r, 600));
+    const sv = document.querySelector('.sideview-container')._sideviewInstance;
+    const pat = %s, vis = %s;
+    const ages = [...pat.querySelectorAll('tbody tr[data-row-index]')].slice(0, 5).map(r => +r.cells[2].textContent.trim());
+    const out = { zoom: sv.panzoom.getScale(), pan: sv.panzoom.getPan(), left: pat.style.left, top: pat.style.top,
+      width: pat.offsetWidth, visMin: vis.classList.contains('is-minimized'), conns: sv.connections.length,
+      code: sv.generatedCode, pipe: sv.pipeline.pipe, ages: ages };
+    document.querySelector('[data-action=\"save-workspace\"]').click();
+    await new Promise(r => setTimeout(r, 100));
+    out.saved = sv.lastStateJson;
+    out.toasts = [...document.querySelectorAll('.sideview-toast')].map(t => t.textContent).join(' | ');
+    out.openBtn = !!document.querySelector('[data-action=\"open-workspace\"] svg');
+    return out;
+  })()", sv_card_js("patients"), sv_card_js("visits")))
+  expect_equal(r$zoom, 0.7)
+  expect_equal(c(r$pan$x, r$pan$y), c(15, 25))
+  expect_identical(c(r$left, r$top), c("500px", "300px"))
+  expect_equal(r$width, 420)
+  expect_true(r$visMin)
+  expect_equal(r$conns, 1)
+  expect_identical(r$pipe, "|>")
+  expect_match(r$code, "dplyr::left_join(patients, by = c(\"pid\" = \"patient_id\"))", fixed = TRUE)
+  ages <- unlist(r$ages)
+  expect_equal(ages, head(sort(env$patients$age), 5))
+  expect_match(r$toasts, "Workspace downloaded", fixed = TRUE)
+  expect_true(r$openBtn)
+  back <- sv_state_from_json(r$saved)
+  expect_equal(back$canvas$zoom, 0.7)
+  expect_true(sv_card_state(back, "visits")$minimized)
+  expect_equal(sv_card_state(back, "patients")$sorts[[1]]$col, "age")
+  expect_length(attr(b, "sv_errors")(), 0)
+})

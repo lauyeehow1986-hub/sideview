@@ -28,7 +28,7 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 | 15 | Drawer | Join/Filter/Arrange/Mutate/Recode tabs all show the same pane; drawer re-opens on every update | fixed (Phase 4.1) |
 | 16 | Pipeline | Each operation overwrites the code; nothing composes | fixed (Phase 4.1) |
 | 17 | Data | Sort/filter run only on the ≤500-row HTML preview → wrong for big tables; numbers re-parsed from text | fixed (Phase 2.1) |
-| 18 | State | `sv_load_state(launch = TRUE)` ignores the loaded state; `sideview()` has no `state` argument | open |
+| 18 | State | `sv_load_state(launch = TRUE)` ignores the loaded state; `sideview()` has no `state` argument | fixed (Phase 4.5) |
 | 19 | Server | "Run in R" result is evaluated then thrown away | fixed (Phase 2.2) |
 | 20 | Server | No `onSessionEnded → stopApp`; closing the browser tab leaves the console busy | fixed (Phase 2.2) |
 | 21 | Gadget | "Cannot launch in external browser": reproduced. The browser opens, but the page is broken by #12 (init crash) and #26 (card width) | fixed (Phase 2.1–2.3; verified live in RStudio browser mode) |
@@ -65,6 +65,35 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 ---
 
 ## Log
+
+### 2026-10-24 — Phase 4.5: save and open the workspace (#18)
+- **What:**
+  - `sideview(..., state =)` and `sideview_widget(..., state =)` take a `sideview_state` or a file path and restore everything: card positions, sizes and minimized state, zoom and pan, per-card sorts and filters, joins (splines), and the pipeline (steps, `pipe`, active drawer tab).
+  - `sv_load_state(launch = TRUE)` now really launches. It finds the saved tables by name in the caller's environment, or takes `tables =`. If none are found, it fails with a message naming them.
+  - The toolbar has new **Save** and **Open** buttons (inline SVG):
+    - In the gadget with RStudio, they go through R and `rstudioapi::selectFile` (new inputs `state_save` / `state_open_request`, messages `sideview_state_saved` / `sideview_state_loaded`).
+    - Without the RStudio dialog, Save writes a new `sideview-workspace*.json` in `getwd()`.
+    - In the widget, Save downloads a JSON file and Open uses the browser file picker.
+- **Decisions:**
+  - The state schema is now 0.3.0. 0.2.0 files still load, and their code comes back as a custom step.
+  - State crosses the wire as JSON text (`sv_state_json()` / `sv_state_from_json()`), so one-element arrays and nulls survive.
+  - Cards are matched by name. Names that are missing are listed in a warning toast.
+  - A restored view skips the first auto-fit.
+  - Open replaces the joins and the pipeline and starts a fresh undo history, so opening twice never stacks joins.
+  - The embedded JSON escapes `</` so it cannot close its `<script>`.
+- **Tests:**
+  - `test-state.R`: JSON round trip, `sv_as_state`, UI embedding and escaping, the file-dialog flag, pass-through from `sideview()`/`sideview_widget()`, `sv_load_state(launch = TRUE)`, `sv_choose_state_path`, and server save/open/cancel/error.
+  - Three new browser tests:
+    - A workspace built with real header sort, filter popover and port clicks reopens in a fresh app with identical positions, view, sort (top rows equal `max(labs$value)`), filter, spline and code, and Save writes the file.
+    - Open on a running canvas replaces it, names the missing card, and does not stack joins.
+    - A saved widget restores its state and downloads its own.
+  - Results: `layout-browser` 328 checks, 0 failed. Full suite 2254 checks, 0 failed.
+- **Verified in RStudio (Viewer pane, R 4.5.1):**
+  - Sorted labs descending, moved visits, and joined patients and labs.
+  - **Save** opened RStudio's "Save sideview workspace" dialog, and the toast showed the saved path.
+  - After Arrange, **Open** (its dialog shows the "Sideview workspace" filter) restored all 3 cards ("Restored 3 cards").
+  - Then `with(jc, sv_load_state(path, launch = TRUE, viewer = 'pane'))` reopened the same canvas, and Done returned `labs_prep <- labs %>% arrange(desc(value))` + `patients %>% left_join(labs_prep, by = "patient_id")`.
+  - Note: the Save dialog shows "All Files" because RStudio's save dialog ignores the filter; Open uses it.
 
 ### 2026-10-24 — Phase 4.4b: the saved widget hides buttons that need R (#44)
 - **Why:** found while checking 4.4 in RStudio. In a saved or embedded widget, Insert Script / Run & Exit / Run in R / Run Console have no R session to talk to, yet Insert Script toasted "Code inserted into script!".

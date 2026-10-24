@@ -32,12 +32,14 @@ rstudio bridge: R/rstudio.R
   `apply_auto_clean`, `run_ai_prompt`, `send_copilot_chat`, `inject_script`, `send_console`,
   `send_console_and_exit`, `eval_env`, `sideview_card_moved`, `sideview_highlight_changed`,
   `sideview_rows_request`, `join_diagnostics_request`, `column_profile_request`, `codebook_export`,
+  `state_save`, `state_open_request`,
   `sideview_done`, `sideview_cancel`,
   `cancel` (miniUI dialog close).
 - Custom messages (R → client): `sideview_code_update`, `sideview_discrepancies`,
   `sideview_suggested_mappings`, `sideview_copilot_reply`, `sideview_inject_result`,
   `sideview_console_result`, `sideview_eval_result`, `sideview_rows`, `sideview_ai_status`,
-  `sideview_join_diagnostics`, `sideview_column_profile`, `sideview_codebook_saved`.
+  `sideview_join_diagnostics`, `sideview_column_profile`, `sideview_codebook_saved`,
+  `sideview_state_saved`, `sideview_state_loaded`.
 - `sideview_code_update` carries `source`: `event` (echo of a client step; ignored), `auto_clean`
   (appended as a custom step), `copilot` (offered in the chat bubble only), `ai`/absent (replaces the pipeline).
 - Keep this list in sync when adding inputs/messages.
@@ -50,6 +52,12 @@ rstudio bridge: R/rstudio.R
   checks the fields, the issue texts and that the JS CSV is byte-equal to `write.csv(sv_codebook(...))`.
   The gadget profiles in R (`column_profile_request`) and writes the codebook via `sv_choose_codebook_path()`
   (RStudio save dialog, else a new `codebook*.csv` in `getwd()`); the widget downloads a CSV Blob.
+- **Workspace state (v0.3.0 schema):** `engine.getState()` / `applyState()` (sideview.js) and `R/state.R`.
+  State crosses the wire as **JSON text** (`sv_state_json()` / `sv_state_from_json()`), never as a Shiny
+  list, so one-element arrays and nulls survive. `sideview(state =)` embeds it in
+  `<script class="sideview-state">`; the widget passes `options.state`. Cards match by **name**; a restored
+  view skips the first auto-fit. Open replaces joins and pipeline and clears undo. Save/Open use
+  `rstudioapi::selectFile` only in the gadget when `data-sv-file-dialog="r"`; otherwise browser download/file picker.
 - **"No code"** is `""` on the wire. The drawer placeholder (`# Connect two columns ...`) is display text only;
   test with `sv_is_no_code()` (R) / `isNoCode()` (JS). Done with no code returns `NULL`.
 - **Gadget lifecycle:** `sv_new_lifecycle()` counts sessions; the app stops only after
