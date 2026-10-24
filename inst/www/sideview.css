@@ -2155,6 +2155,209 @@ html.sv-standalone body {
   border-radius: var(--sv-radius-sm);
 }
 
+/* ---- Canvas navigation: zoom-to-card, minimap, card search -------------- */
+
+.sideview-container .sideview-card.sv-card-focus {
+  outline: 3px solid var(--sv-focus-ring);
+  outline-offset: 3px;
+}
+
+.sideview-container .sideview-table th.sv-col-focus {
+  background: var(--sv-primary-tint);
+  box-shadow: inset 0 -2px 0 var(--sv-primary);
+}
+
+/* Bottom-left overview. Below the overlay (maximized cards, popovers, z 110)
+   and the drawer / AI bar, so it never covers working controls. */
+.sideview-container .sideview-minimap {
+  position: absolute;
+  left: 16px;
+  bottom: 20px;
+  z-index: 105;
+  width: 176px;
+  height: 116px;
+  padding: 4px;
+  background: var(--sv-surface-glass);
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-lg);
+  box-shadow: var(--sv-shadow-floating);
+  box-sizing: border-box;
+}
+
+/* Mid-width windows: icon-only Fullscreen keeps the toolbar on one row. */
+.sideview-container.sv-compact .sideview-toolbar .sideview-btn-label {
+  display: none;
+}
+
+.sideview-container.sv-compact .sideview-minimap {
+  bottom: calc(var(--sv-aibar-h, 50px) + 32px);
+}
+
+.sideview-container.sv-narrow .sideview-minimap,
+.sideview-container .sideview-minimap.is-empty {
+  display: none;
+}
+
+.sideview-container .sideview-minimap-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.sideview-container .sideview-minimap-card {
+  fill: var(--sv-surface-tertiary);
+  stroke: var(--sv-text-muted);
+  stroke-width: 1;
+}
+
+.sideview-container .sideview-minimap-card:hover {
+  fill: var(--sv-primary-tint);
+  stroke: var(--sv-primary);
+}
+
+.sideview-container .sideview-minimap-view {
+  fill: var(--sv-primary-tint);
+  stroke: var(--sv-primary);
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+
+.sideview-container .sideview-minimap-toggle {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  z-index: 1;
+  background: var(--sv-surface);
+  border-radius: var(--sv-radius-sm);
+}
+
+.sideview-container .sideview-minimap.is-collapsed {
+  width: auto;
+  height: auto;
+  padding: 2px;
+}
+
+.sideview-container .sideview-minimap.is-collapsed .sideview-minimap-svg {
+  display: none;
+}
+
+.sideview-container .sideview-minimap.is-collapsed .sideview-minimap-toggle {
+  position: static;
+}
+
+/* Ctrl+K search dialog */
+.sideview-container .sideview-search-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 140;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: max(16px, calc(var(--sv-topbar-h, 44px) + 24px)) 16px 16px;
+  background: var(--sv-scrim);
+}
+
+.sideview-container .sideview-search {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 480px);
+  max-height: 100%;
+  background: var(--sv-surface);
+  color: var(--sv-text);
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-lg);
+  box-shadow: var(--sv-shadow-popover);
+  font-size: 13px;
+  overflow: hidden;
+}
+
+.sideview-container .sideview-search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--sv-border-light);
+  color: var(--sv-text-muted);
+}
+
+.sideview-container .sideview-search-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--sv-text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.sideview-container .sideview-search-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  max-height: 320px;
+  position: relative;
+}
+
+.sideview-container .sideview-search-list [role="option"] {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--sv-radius-sm);
+  cursor: pointer;
+}
+
+.sideview-container .sideview-search-list [role="option"]:hover {
+  background: var(--sv-hover-overlay);
+}
+
+.sideview-container .sideview-search-list [role="option"][aria-selected="true"] {
+  background: var(--sv-primary-subtle);
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-search-name {
+  font-weight: 600;
+}
+
+.sideview-container .sideview-search-col {
+  font-family: var(--sv-font-mono);
+  font-size: 12px;
+  color: var(--sv-primary-text);
+}
+
+.sideview-container .sideview-search-meta {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--sv-text-muted);
+  white-space: nowrap;
+}
+
+.sideview-container .sideview-search-empty {
+  padding: 10px 8px;
+  color: var(--sv-text-muted);
+}
+
+.sideview-container .sideview-search-hint {
+  padding: 6px 12px;
+  border-top: 1px solid var(--sv-border-light);
+  font-size: 11px;
+  color: var(--sv-text-muted);
+}
+
+.sideview-container .sideview-search-hint kbd {
+  padding: 0 4px;
+  font-family: var(--sv-font-mono);
+  font-size: 10px;
+  background: var(--sv-surface-secondary);
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-sm);
+}
+
 /* Respect the OS "reduce motion" setting: no dash/pulse animations or slides. */
 @media (prefers-reduced-motion: reduce) {
   .sideview-container *,

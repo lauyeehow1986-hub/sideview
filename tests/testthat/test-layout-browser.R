@@ -1197,3 +1197,280 @@ test_that("the saved widget restores a state and downloads its own", {
   expect_equal(sv_card_state(back, "patients")$sorts[[1]]$col, "age")
   expect_length(attr(b, "sv_errors")(), 0)
 })
+
+# ---- canvas navigation: zoom-to-card, Ctrl+K search, minimap -----------------
+
+sv_mouse <- function(b) {
+  ev <- function(type, p, count = 1) {
+    b$Input$dispatchMouseEvent(type = type, x = p$x, y = p$y, button = "left",
+                               clickCount = if (type == "mouseMoved") 0 else count)
+  }
+  list(
+    click = function(p) { ev("mouseMoved", p); ev("mousePressed", p); ev("mouseReleased", p) },
+    dblclick = function(p) {
+      ev("mouseMoved", p); ev("mousePressed", p, 1); ev("mouseReleased", p, 1)
+      ev("mousePressed", p, 2); ev("mouseReleased", p, 2)
+    },
+    drag = function(from, to) {
+      ev("mouseMoved", from); ev("mousePressed", from)
+      for (t in seq(0.25, 1, by = 0.25)) {
+        ev("mouseMoved", list(x = from$x + (to$x - from$x) * t, y = from$y + (to$y - from$y) * t))
+      }
+      ev("mouseReleased", to)
+    }
+  )
+}
+
+sv_key <- function(b, key, code, vk, modifiers = 0) {
+  b$Input$dispatchKeyEvent(type = "rawKeyDown", key = key, code = code, windowsVirtualKeyCode = vk, modifiers = modifiers)
+  b$Input$dispatchKeyEvent(type = "keyUp", key = key, code = code, windowsVirtualKeyCode = vk, modifiers = modifiers)
+}
+
+# JS: a card's screen rect and the free canvas area it should sit in.
+sv_card_view_js <- function(name) sprintf("(() => {
+  const sv = window._sideviewInstance || document.querySelector('.sideview-container')._sideviewInstance;
+  const el = %s, r = el.getBoundingClientRect(), c = sv.container.getBoundingClientRect();
+  return { card: r.toJSON(), scale: sv.panzoom.getScale(), focus: el.classList.contains('sv-card-focus'),
+    free: { left: c.left + 24, right: c.right - 24, top: c.top + sv.chromeTop() + 16, bottom: c.bottom - sv.chromeBottom() } };
+})()", sv_card_js(name))
+
+sv_expect_card_in_view <- function(v, label) {
+  expect_gte(v$card$left, v$free$left - 1, label = paste(label, "left"))
+  expect_lte(v$card$right, v$free$right + 1, label = paste(label, "right"))
+  expect_gte(v$card$top, v$free$top - 1, label = paste(label, "top"))
+  expect_lte(v$card$bottom, v$free$bottom + 1, label = paste(label, "bottom"))
+  expect_lt(abs((v$card$left + v$card$right) / 2 - (v$free$left + v$free$right) / 2), 2, label = paste(label, "centred"))
+  expect_true(v$focus, label = paste(label, "flashed"))
+}
+
+test_that("double-clicking a card title zooms to that card", {
+  b <- sv_shared_page()
+  m <- sv_mouse(b)
+  sv_js(b, "(async () => { const sv = window._sideviewInstance; sv.panzoom.zoom(0.6); sv.panzoom.pan(-300, 40);
+    await new Promise(r => setTimeout(r, 200)); return 1; })()")
+  title <- sv_js(b, sprintf("(() => { const r = %s.querySelector('.sideview-card-title').getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()", sv_card_js("visits")))
+  m$dblclick(title)
+  Sys.sleep(0.3)
+  v <- sv_js(b, sv_card_view_js("visits"))
+  sv_expect_card_in_view(v, "visits")
+  expect_gte(v$scale, 0.5)
+  expect_lte(v$scale, 1.5)
+
+  # A double-click on a header button keeps its own meaning (no zoom).
+  btn <- sv_js(b, sprintf("(() => { const r = %s.querySelector('[data-action=\"sync-scroll\"]').getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()", sv_card_js("visits")))
+  sv_js(b, "(() => { window._sideviewInstance.panzoom.zoom(0.7); return 1; })()")
+  m$dblclick(btn)
+  Sys.sleep(0.2)
+  expect_equal(sv_js(b, "window._sideviewInstance.panzoom.getScale()"), 0.7)
+  sv_js(b, "(async () => { window._sideviewInstance.fitAll(); return 1; })()")
+  expect_length(attr(b, "sv_errors")(), 0)
+})
+
+test_that("Ctrl+K finds cards and columns and Enter zooms to the match", {
+  b <- sv_shared_page()
+  sv_js(b, "(() => { document.activeElement && document.activeElement.blur(); return 1; })()")
+  sv_key(b, "k", "KeyK", 75, modifiers = 2)
+  Sys.sleep(0.2)
+  open <- sv_js(b, "(() => {
+    const dlg = document.querySelector('.sideview-search'), inp = document.querySelector('.sideview-search-input');
+    return { open: !!dlg, role: dlg && dlg.getAttribute('role'), focused: document.activeElement === inp,
+      options: [...document.querySelectorAll('.sideview-search-list [role=option]')].map(o => o.textContent),
+      selected: document.querySelectorAll('.sideview-search-list [aria-selected=true]').length,
+      active: inp && inp.getAttribute('aria-activedescendant') };
+  })()")
+  expect_true(open$open)
+  expect_identical(open$role, "dialog")
+  expect_true(open$focused)
+  expect_length(open$options, 3)
+  expect_equal(open$selected, 1)
+  expect_match(open$active, "^sv-search-opt-")
+
+  b$Input$insertText(text = "pa")
+  Sys.sleep(0.2)
+  pa <- sv_js(b, "[...document.querySelectorAll('.sideview-search-list [role=option]')].map(o => o.textContent)")
+  # Card name first, then the two patient_id columns.
+  expect_length(pa, 3)
+  expect_match(pa[[1]], "^patients")
+  expect_true(all(grepl("patient_id", unlist(pa[2:3]))))
+
+  # Arrow keys move the selection and wrap.
+  sv_key(b, "ArrowDown", "ArrowDown", 40)
+  sv_key(b, "ArrowUp", "ArrowUp", 38)
+  sv_key(b, "ArrowUp", "ArrowUp", 38)
+  sel <- sv_js(b, "[...document.querySelectorAll('.sideview-search-list [role=option]')].findIndex(o => o.getAttribute('aria-selected') === 'true')")
+  expect_equal(sel, 2)
+
+  sv_js(b, "(() => { document.querySelector('.sideview-search-input').value = ''; return 1; })()")
+  b$Input$insertText(text = "SBP")
+  Sys.sleep(0.2)
+  sbp <- sv_js(b, "[...document.querySelectorAll('.sideview-search-list [role=option]')].map(o => o.textContent)")
+  expect_length(sbp, 1)
+  expect_match(sbp[[1]], "visits.*sbp")
+  sv_js(b, "(() => { window._sideviewInstance.panzoom.zoom(0.55); window._sideviewInstance.panzoom.pan(900, 600); return 1; })()")
+  sv_key(b, "Enter", "Enter", 13)
+  Sys.sleep(0.3)
+  after <- sv_js(b, sprintf("(() => ({ closed: !document.querySelector('.sideview-search-scrim'),
+    colFocus: %s.querySelector('th[data-col-name=\"sbp\"]').classList.contains('sv-col-focus') }))()", sv_card_js("visits")))
+  expect_true(after$closed)
+  expect_true(after$colFocus)
+  sv_expect_card_in_view(sv_js(b, sv_card_view_js("visits")), "search visits")
+
+  # Toolbar button opens it; Esc closes it without touching anything else.
+  sv_js(b, "(() => { document.querySelector('[data-action=\"open-search\"]').click(); return 1; })()")
+  b$Input$insertText(text = "zzz")
+  Sys.sleep(0.2)
+  empty <- sv_js(b, "(document.querySelector('.sideview-search-empty') || {}).textContent")
+  expect_identical(empty, "No card or column matches")
+  sv_key(b, "Escape", "Escape", 27)
+  Sys.sleep(0.2)
+  expect_false(sv_js(b, "!!document.querySelector('.sideview-search-scrim')"))
+  sv_js(b, "(async () => { window._sideviewInstance.fitAll(); return 1; })()")
+  expect_length(attr(b, "sv_errors")(), 0)
+})
+
+# JS: minimap geometry, and a point on it that is not over a card.
+sv_minimap_js <- "(() => {
+  const mm = document.querySelector('.sideview-minimap');
+  const svg = mm.querySelector('.sideview-minimap-svg'), vis = getComputedStyle(mm).display !== 'none';
+  const r = vis ? mm.getBoundingClientRect().toJSON() : null;
+  const cards = [...svg.querySelectorAll('.sideview-minimap-card')].map(e => e.getBoundingClientRect());
+  let empty = null;
+  if (vis) {
+    const s = svg.getBoundingClientRect();
+    for (let y = s.top + 6; y < s.bottom - 6 && !empty; y += 4) for (let x = s.left + 6; x < s.right - 30 && !empty; x += 4) {
+      if (!cards.some(c => x >= c.left - 3 && x <= c.right + 3 && y >= c.top - 3 && y <= c.bottom + 3)) empty = { x: x, y: y };
+    }
+  }
+  const toCanvas = p => { const pt = svg.createSVGPoint(); pt.x = p.x; pt.y = p.y; const c = pt.matrixTransform(svg.getScreenCTM().inverse()); return { x: c.x, y: c.y }; };
+  const first = svg.querySelector('.sideview-minimap-card');
+  const fr = first && first.getBoundingClientRect();
+  return { visible: vis, rect: r, n: cards.length, view: !!svg.querySelector('.sideview-minimap-view'),
+    empty: empty, emptyCanvas: empty ? toCanvas(empty) : null,
+    firstCard: fr ? { x: fr.x + fr.width / 2, y: fr.y + fr.height / 2, id: first.getAttribute('data-card-id') } : null,
+    collapsed: mm.classList.contains('is-collapsed') };
+})()"
+
+# JS: the canvas point at the centre of the free area.
+sv_view_centre_js <- "(() => {
+  const sv = window._sideviewInstance, s = sv.panzoom.getScale(), p = sv.panzoom.getPan();
+  const cy = (sv.chromeTop() + sv.container.clientHeight - sv.chromeBottom()) / 2;
+  return { x: (sv.container.clientWidth / 2 - p.x) / s, y: (cy - p.y) / s };
+})()"
+
+test_that("the minimap shows the cards, moves the view and stays clear of the chrome", {
+  b <- sv_shared_page()
+  m <- sv_mouse(b)
+  mm <- sv_js(b, sv_minimap_js)
+  expect_true(mm$visible)
+  expect_equal(mm$n, 3)
+  expect_true(mm$view)
+
+  # Click empty map: the view centres there at the same zoom.
+  scale <- sv_js(b, "window._sideviewInstance.panzoom.getScale()")
+  m$click(mm$empty)
+  Sys.sleep(0.3)
+  ctr <- sv_js(b, sv_view_centre_js)
+  expect_lt(abs(ctr$x - mm$emptyCanvas$x), 2)
+  expect_lt(abs(ctr$y - mm$emptyCanvas$y), 2)
+  expect_equal(sv_js(b, "window._sideviewInstance.panzoom.getScale()"), scale)
+
+  # Drag: the view follows the pointer.
+  mm <- sv_js(b, sv_minimap_js)
+  to <- list(x = mm$rect$left + 40, y = mm$rect$top + 30)
+  to_canvas <- sv_js(b, sprintf("(() => { const svg = document.querySelector('.sideview-minimap-svg');
+    const pt = svg.createSVGPoint(); pt.x = %f; pt.y = %f; const c = pt.matrixTransform(svg.getScreenCTM().inverse());
+    return { x: c.x, y: c.y }; })()", to$x, to$y))
+  m$drag(mm$empty, to)
+  Sys.sleep(0.3)
+  ctr <- sv_js(b, sv_view_centre_js)
+  expect_lt(abs(ctr$x - to_canvas$x), 2)
+  expect_lt(abs(ctr$y - to_canvas$y), 2)
+
+  # Click a card on the map: zoom to that card.
+  mm <- sv_js(b, sv_minimap_js)
+  m$click(mm$firstCard)
+  Sys.sleep(0.3)
+  name <- sv_js(b, sprintf("document.querySelector('.sideview-card[data-card-id=\"%s\"]').dataset.cardName", mm$firstCard$id))
+  sv_expect_card_in_view(sv_js(b, sv_card_view_js(name)), "minimap card")
+
+  # M collapses it, its button brings it back.
+  sv_js(b, "(() => { document.activeElement && document.activeElement.blur(); return 1; })()")
+  sv_key(b, "m", "KeyM", 77)
+  Sys.sleep(0.2)
+  expect_true(sv_js(b, sv_minimap_js)$collapsed)
+  sv_js(b, "(() => { document.querySelector('.sideview-minimap-toggle').click(); return 1; })()")
+  Sys.sleep(0.2)
+  expect_false(sv_js(b, sv_minimap_js)$collapsed)
+
+  for (sz in list(c(1400, 900), c(1024, 700), c(560, 520))) {
+    sv_set_viewport(b, sz[1], sz[2])
+    r <- sv_js(b, "(async () => {
+      const d = document.querySelector('.sideview-drawer');
+      const was = d.classList.contains('collapsed');
+      if (was) document.querySelector('[data-action=\"toggle-drawer\"]').click();
+      await new Promise(r => setTimeout(r, 400));
+      const box = s => { const e = document.querySelector(s); if (!e || getComputedStyle(e).display === 'none') return null;
+        const x = e.getBoundingClientRect(); return x.width && x.height ? x.toJSON() : null; };
+      const out = { mm: box('.sideview-minimap'), ai: box('.sideview-ai-bar'), toolbar: box('.sideview-toolbar'),
+        palette: box('.sideview-palette'), drawer: box('.sideview-drawer'), vw: innerWidth, vh: innerHeight };
+      if (was) document.querySelector('[data-action=\"toggle-drawer\"]').click();
+      await new Promise(r => setTimeout(r, 300));
+      return out;
+    })()")
+    label <- paste(sz, collapse = "x")
+    if (sz[1] < 720) {
+      expect_null(r$mm, label = paste("minimap hidden", label))
+      next
+    }
+    expect_false(is.null(r$mm), info = label)
+    for (nm in c("ai", "toolbar", "palette", "drawer")) {
+      expect_false(rect_overlap(r$mm, r[[nm]]), info = paste("minimap", nm, label))
+    }
+    expect_true(r$mm$left >= 0 && r$mm$bottom <= r$vh + 1, info = paste("minimap inside", label))
+  }
+  sv_set_viewport(b, 1400, 900)
+  sv_js(b, "(async () => { window._sideviewInstance.fitAll(); return 1; })()")
+  expect_length(attr(b, "sv_errors")(), 0)
+})
+
+test_that("the saved widget has the minimap, search and zoom-to-card", {
+  skip_if_no_browser()
+  env <- new.env()
+  eval(parse(text = sv_fixture_code), envir = env)
+  dir <- withr::local_tempdir()
+  file <- file.path(dir, "nav.html")
+  w <- local(sideview_widget(patients, visits, labs), envir = env)
+  suppressMessages(save_sideview(w, file, selfcontained = FALSE))
+  url <- paste0("file:///", gsub("\\\\", "/", normalizePath(file)))
+  b <- sv_open_page(url, wait_for = "!!document.querySelector('.sideview-card .sideview-col-port')")
+  withr::defer(try(b$close(), silent = TRUE))
+  r <- sv_js(b, "(async () => {
+    await new Promise(r => setTimeout(r, 600));
+    const sv = document.querySelector('.sideview-container')._sideviewInstance;
+    const mm = document.querySelector('.sideview-minimap');
+    const out = { mmCards: mm.querySelectorAll('.sideview-minimap-card').length,
+      searchBtn: !!document.querySelector('[data-action=\"open-search\"] svg') };
+    document.querySelector('[data-action=\"open-search\"]').click(); await new Promise(r => setTimeout(r, 50));
+    const inp = document.querySelector('.sideview-search-input');
+    inp.value = 'value'; inp.dispatchEvent(new Event('input', { bubbles: true }));
+    out.options = [...document.querySelectorAll('.sideview-search-list [role=option]')].map(o => o.textContent);
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    await new Promise(r => setTimeout(r, 100));
+    const labs = [...document.querySelectorAll('.sideview-card')].find(c => c.dataset.cardName === 'labs');
+    out.closed = !document.querySelector('.sideview-search-scrim');
+    out.labsFocus = labs.classList.contains('sv-card-focus');
+    const cr = sv.container.getBoundingClientRect(), lr = labs.getBoundingClientRect();
+    out.inside = lr.left >= cr.left && lr.right <= cr.right && lr.top >= cr.top && lr.bottom <= cr.bottom;
+    return out;
+  })()")
+  expect_equal(r$mmCards, 3)
+  expect_true(r$searchBtn)
+  expect_length(r$options, 1)
+  expect_match(r$options[[1]], "labs.*value")
+  expect_true(r$closed)
+  expect_true(r$labsFocus)
+  expect_true(r$inside)
+  expect_length(attr(b, "sv_errors")(), 0)
+})

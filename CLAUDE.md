@@ -74,9 +74,13 @@ rstudio bridge: R/rstudio.R
 - **Mode-aware overrides:** a custom colour that must differ by mode uses `-light`/`-dark` variables:
   the base block has `--sv-primary-text: var(--sv-primary-text-light, #...)`, the dark blocks use
   `var(--sv-primary-text-dark, #...)`. Use `--sv-primary-text` (not `--sv-primary`) for primary-coloured *text*.
-- **Keyboard:** single-key shortcuts (F, 0, +/-, T, D, /, ?) only fire when the canvas owns the keyboard
-  (`ownsKeyboard()`: standalone, or focus inside an embedded widget) and never while typing.
-  Ctrl+Enter submits a drawer builder. Add new shortcuts to the `?` dialog list too.
+- **Keyboard:** single-key shortcuts (F, 0, +/-, T, D, M, /, ?) and Ctrl+K (card search) only fire when the
+  canvas owns the keyboard (`ownsKeyboard()`: standalone, or focus inside an embedded widget) and never while
+  typing. Ctrl+Enter submits a drawer builder. Add new shortcuts to the `?` dialog list too.
+- **Navigation:** `zoomToCard()` (title double-click, minimap click, Ctrl+K result), the minimap (`renderMinimap()`,
+  redrawn from `scheduleConnectorUpdate()`) and the search dialog live in `sideview.js`. Chrome z-order: minimap 105 <
+  overlay 110 < drawer 120 < AI bar 130 < search/shortcut scrims 140. The container gets `sv-narrow` (< 720px) and
+  `sv-compact` (< 1040px) from `initLayoutObserver()`; use them for responsive chrome rules.
 - **Assets:** dependency versions come from `sv_asset_version()` (package version + content fingerprint),
   so browsers never serve stale JS/CSS. Don't hard-code a version for `sideview.js`/`sideview.css`.
 

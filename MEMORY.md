@@ -66,6 +66,43 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 
 ## Log
 
+### 2026-10-24 — Phase 4.6: canvas navigation (minimap, Ctrl+K search, zoom-to-card)
+- **What:**
+  - **Minimap** (bottom-left, both gadget and widget): every card as a rectangle plus the current view.
+    - Clicking a card zooms to it; clicking empty space centres the view there; dragging pans.
+    - It hides under 720px (`sv-narrow`) and when there are no cards. It can be collapsed with its close button or **M**, and the choice is remembered in `localStorage` (inside try/catch).
+  - **Ctrl+K card search:** a dialog that matches card names first, then column names.
+    - Arrow keys and Enter go to a match, and Escape closes it.
+    - A column match zooms to the card, scrolls the column into view and flashes its header.
+    - There is also a toolbar search button.
+  - **Zoom-to-card:** double-click a card title. It fits the card below the toolbar at 50–150% and flashes a focus ring.
+  - The `?` dialog lists Ctrl+K, M and the title double-click.
+- **Decisions:**
+  - The minimap sits at z 105, below the overlay (110), the drawer (120) and the AI bar (130), so it never covers working controls.
+  - New container class `sv-compact` (width under 1040px):
+    - lifts the minimap above the AI bar;
+    - hides the "Fullscreen" text label, so the toolbar with the new search button stays on one row.
+  - The minimap re-renders from the existing rAF-batched `scheduleConnectorUpdate()`. A signature string skips unchanged frames.
+  - Ctrl+K only fires when the canvas owns the keyboard, and only when Alt and Shift are not held.
+- **Bugs caught while testing:**
+  - The node mock-DOM GUI tests failed with "trailing garbage" JSON. Node now warns on stderr when `localStorage` is touched, and the harness merged stderr into stdout. Fixed by reading stderr separately, and showing it on failure.
+  - At 1024px the toolbar wrapped Done onto a second row after the search button was added. Fixed with `sv-compact`.
+  - A test selector `.sideview-minimap svg` matched the toggle button's icon instead of the map.
+- **Tests:**
+  - New browser tests in `test-layout-browser.R` use real CDP mouse and key input:
+    - title double-click zooms to the card;
+    - Ctrl+K finds cards and columns, and Enter zooms;
+    - the minimap renders, a click moves the view, and it doesn't overlap the toolbar, palette, drawer or AI bar at 1400 and 1024 (hidden at 560);
+    - the saved widget has all three features.
+  - Results: `layout-browser` 399 checks, 0 failed. Full suite 2325 checks, 0 failed.
+- **Verified in RStudio (Viewer pane zoomed, R 4.5.1), `sideview(patients, visits, labs, viewer = 'pane')`:**
+  - The minimap showed the three cards bottom-left.
+  - Double-clicking the visits title zoomed it to 150%.
+  - Ctrl+K inside the Viewer opened the search (RStudio did not take the shortcut). Typing `test` and pressing Enter zoomed to labs with the `test` header flashed.
+  - Clicking the patients rectangle in the minimap jumped to patients.
+  - M collapsed the minimap to its button and M restored it. `?` listed the new shortcuts.
+  - Cancel closed the gadget and freed the console.
+
 ### 2026-10-24 — Phase 4.5: save and open the workspace (#18)
 - **What:**
   - `sideview(..., state =)` and `sideview_widget(..., state =)` take a `sideview_state` or a file path and restore everything: card positions, sizes and minimized state, zoom and pan, per-card sorts and filters, joins (splines), and the pipeline (steps, `pipe`, active drawer tab).

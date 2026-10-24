@@ -704,6 +704,7 @@ function sendToShiny(name, value) {
     }
 
     this.registerShinyHandlers();
+    this.initMinimap();
     this.initLayoutObserver();
   }
 
@@ -738,6 +739,8 @@ function sendToShiny(name, value) {
     alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
     save: '<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>',
     folderOpen: '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
+    search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    map: '<path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z"/><path d="M15 5.764v15"/><path d="M9 3.236v15"/>',
     keyboard: '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/>'
   };
 
@@ -884,6 +887,7 @@ function sendToShiny(name, value) {
     if (this._rafPending) return;
     if (typeof global.requestAnimationFrame !== 'function') {
       this.updateConnectors();
+      this.renderMinimap();
       return;
     }
     this._rafPending = true;
@@ -891,6 +895,7 @@ function sendToShiny(name, value) {
       self._rafPending = false;
       self.updateConnectors();
       self.activePopoverReposition();
+      self.renderMinimap();
     });
   };
 
@@ -909,6 +914,9 @@ function sendToShiny(name, value) {
       if (topbar) setVar('--sv-topbar-h', topbar.offsetHeight + 'px');
       if (aiBar) setVar('--sv-aibar-h', aiBar.offsetHeight + 'px');
       self.container.classList.toggle('sv-narrow', self.container.clientWidth < 720);
+      // Below this width the centred AI bar reaches the minimap's corner, so
+      // the minimap moves up above it.
+      self.container.classList.toggle('sv-compact', self.container.clientWidth < 1040);
       if (self.cards) self.freezeAllCardSizes();
       // First layout with a real size (a widget can start hidden in a tab).
       if (self._needsInitialLayout && self.container.clientWidth > 0) {
@@ -1050,6 +1058,349 @@ function sendToShiny(name, value) {
     pz.pan(margin - minX * s, top - minY * s);
   };
 
+  // Zoom and pan so one card fills the free canvas area (between the top chrome
+  // and the AI bar), then flash it. A card too big to fit at a readable zoom is
+  // shown from its top-left corner.
+  SideviewEngine.prototype.zoomToCard = function (el) {
+    var pz = this.panzoom;
+    if (!el || !pz || typeof pz.zoom !== 'function' || typeof pz.pan !== 'function') return false;
+    if (el.classList.contains('is-maximized')) return false;
+    var l = parseFloat(el.style.left) || 0;
+    var t = parseFloat(el.style.top) || 0;
+    var w = Math.max(el.offsetWidth || 0, 1);
+    var h = Math.max(el.offsetHeight || 0, 1);
+    var margin = 24;
+    var top = this.chromeTop() + 16;
+    var availW = this.container.clientWidth - 2 * margin;
+    var availH = this.container.clientHeight - top - this.chromeBottom();
+    if (availW <= 0 || availH <= 0) return false;
+    var s = Math.min(availW / w, availH / h);
+    var lo = Math.max(READABLE_SCALE, this.options.minScale);
+    var hi = Math.min(1.5, this.options.maxScale);
+    s = Math.min(Math.max(s, lo), hi);
+    pz.zoom(s);
+    pz.pan(margin + Math.max(0, (availW - w * s) / 2) - l * s,
+           top + Math.max(0, (availH - h * s) / 2) - t * s);
+    this.flashClass(el, 'sv-card-focus');
+    return true;
+  };
+
+  // Add a class for a moment (a highlight ring); restarts if already shown.
+  SideviewEngine.prototype.flashClass = function (el, cls, ms) {
+    if (!el) return;
+    if (el._svFlashTimer) clearTimeout(el._svFlashTimer);
+    el.classList.add(cls);
+    el._svFlashTimer = setTimeout(function () {
+      el.classList.remove(cls);
+      el._svFlashTimer = null;
+    }, ms || 1200);
+  };
+
+  // Centre the free canvas area on a canvas point, keeping the zoom.
+  SideviewEngine.prototype.centreViewOn = function (pt) {
+    var pz = this.panzoom;
+    if (!pz || !pt || typeof pz.pan !== 'function') return;
+    var s = pz.getScale();
+    var top = this.chromeTop();
+    var cy = (top + this.container.clientHeight - this.chromeBottom()) / 2;
+    pz.pan(this.container.clientWidth / 2 - pt.x * s, cy - pt.y * s);
+  };
+
+  // ---- minimap ----------------------------------------------------------------
+  // A small overview in the bottom-left corner: one rectangle per card plus the
+  // visible area. Click or drag to move the view; click a card to zoom to it.
+
+  SideviewEngine.prototype.initMinimap = function () {
+    var self = this;
+    var mm = this.container.querySelector('.sideview-minimap');
+    if (!mm) {
+      mm = document.createElement('div');
+      mm.className = 'sideview-minimap';
+      mm.innerHTML =
+        '<button type="button" class="sideview-icon-btn sideview-minimap-toggle" data-action="toggle-minimap"></button>' +
+        '<svg class="sideview-minimap-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" ' +
+        'role="img" aria-label="Map of the cards. Click to move the view, click a card to zoom to it."></svg>';
+      this.container.appendChild(mm);
+    }
+    this.minimap = mm;
+    this._minimapSvg = mm.querySelector('.sideview-minimap-svg');
+    this._minimapSig = '';
+    var hidden = false;
+    try { hidden = global.localStorage && global.localStorage.getItem('sideview.minimap') === 'hidden'; } catch (e) {}
+    this.toggleMinimap(!hidden, true);
+
+    var svg = this._minimapSvg;
+    if (!svg || typeof svg.addEventListener !== 'function') return;
+    svg.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var startX = e.clientX, startY = e.clientY, moved = false;
+      var hit = e.target && e.target.closest ? e.target.closest('.sideview-minimap-card') : null;
+      self._minimapFrozen = true;
+      try { svg.setPointerCapture(e.pointerId); } catch (err) {}
+      var move = function (ev) {
+        if (!moved && Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 4) return;
+        moved = true;
+        self.centreViewOn(self.minimapPoint(ev));
+      };
+      var up = function (ev) {
+        svg.removeEventListener('pointermove', move);
+        svg.removeEventListener('pointerup', up);
+        svg.removeEventListener('pointercancel', up);
+        self._minimapFrozen = false;
+        if (!moved && ev.type === 'pointerup') {
+          var card = hit ? self.cards.get(hit.getAttribute('data-card-id')) : null;
+          if (card && card.element) self.zoomToCard(card.element);
+          else self.centreViewOn(self.minimapPoint(ev));
+        }
+        self._minimapSig = '';
+        self.scheduleConnectorUpdate();
+      };
+      svg.addEventListener('pointermove', move);
+      svg.addEventListener('pointerup', up);
+      svg.addEventListener('pointercancel', up);
+    });
+  };
+
+  SideviewEngine.prototype.toggleMinimap = function (show, initial) {
+    var mm = this.minimap;
+    if (!mm) return false;
+    if (show === undefined) show = mm.classList.contains('is-collapsed');
+    mm.classList.toggle('is-collapsed', !show);
+    var btn = mm.querySelector('.sideview-minimap-toggle');
+    if (btn) {
+      var label = show ? 'Hide the minimap (M)' : 'Show the minimap (M)';
+      btn.title = label;
+      btn.setAttribute('aria-label', label);
+      btn.setAttribute('aria-expanded', show ? 'true' : 'false');
+      setIcon(btn, show ? 'close' : 'map');
+    }
+    if (!initial) {
+      try { if (global.localStorage) global.localStorage.setItem('sideview.minimap', show ? 'shown' : 'hidden'); } catch (e) {}
+    }
+    this._minimapSig = '';
+    if (show) this.scheduleConnectorUpdate();
+    return show;
+  };
+
+  // Canvas coordinates of a pointer event over the minimap.
+  SideviewEngine.prototype.minimapPoint = function (ev) {
+    var svg = this._minimapSvg;
+    if (!svg) return null;
+    var m = typeof svg.getScreenCTM === 'function' ? svg.getScreenCTM() : null;
+    if (m && typeof svg.createSVGPoint === 'function') {
+      var pt = svg.createSVGPoint();
+      pt.x = ev.clientX;
+      pt.y = ev.clientY;
+      var c = pt.matrixTransform(m.inverse());
+      return { x: c.x, y: c.y };
+    }
+    return null;
+  };
+
+  SideviewEngine.prototype.renderMinimap = function () {
+    var mm = this.minimap, svg = this._minimapSvg;
+    if (!mm || !svg || this._minimapFrozen) return;
+    var rects = [];
+    this.cards.forEach(function (card, id) {
+      var el = card.element;
+      if (!el || el.classList.contains('is-maximized')) return;
+      rects.push({
+        id: id, name: el.dataset.cardName || card.name || String(id),
+        x: parseFloat(el.style.left) || 0, y: parseFloat(el.style.top) || 0,
+        w: el.offsetWidth || 0, h: el.offsetHeight || 0
+      });
+    });
+    mm.classList.toggle('is-empty', rects.length === 0);
+    if (mm.classList.contains('is-collapsed') || !rects.length || !mm.offsetWidth) return;
+    var pz = this.panzoom;
+    var s = pz && pz.getScale ? pz.getScale() : 1;
+    var p = pz && pz.getPan ? pz.getPan() : { x: 0, y: 0 };
+    var vx = -p.x / s, vy = -p.y / s;
+    var vw = this.container.clientWidth / s, vh = this.container.clientHeight / s;
+    var minX = vx, minY = vy, maxX = vx + vw, maxY = vy + vh;
+    rects.forEach(function (r) {
+      minX = Math.min(minX, r.x);
+      minY = Math.min(minY, r.y);
+      maxX = Math.max(maxX, r.x + r.w);
+      maxY = Math.max(maxY, r.y + r.h);
+    });
+    var pad = Math.max(maxX - minX, maxY - minY) * 0.04 + 8;
+    var r2 = function (v) { return Math.round(v * 10) / 10; };
+    var box = [minX - pad, minY - pad, maxX - minX + 2 * pad, maxY - minY + 2 * pad].map(r2).join(' ');
+    var cardsSvg = rects.map(function (r) {
+      return '<rect class="sideview-minimap-card" data-card-id="' + escapeHtml(String(r.id)) + '" x="' + r2(r.x) +
+        '" y="' + r2(r.y) + '" width="' + r2(r.w) + '" height="' + r2(r.h) + '" vector-effect="non-scaling-stroke">' +
+        '<title>' + escapeHtml(r.name) + '</title></rect>';
+    }).join('');
+    var view = '<rect class="sideview-minimap-view" x="' + r2(vx) + '" y="' + r2(vy) + '" width="' + r2(vw) +
+      '" height="' + r2(vh) + '" vector-effect="non-scaling-stroke"/>';
+    var sig = box + cardsSvg + view;
+    if (sig === this._minimapSig) return;
+    this._minimapSig = sig;
+    svg.setAttribute('viewBox', box);
+    svg.innerHTML = cardsSvg + view;
+  };
+
+  // ---- card search (Ctrl+K) -----------------------------------------------------
+
+  // Cards and columns matching `query` (case-insensitive): card names first
+  // (prefix matches before others), then columns. An empty query lists cards.
+  SideviewEngine.prototype.searchCards = function (query) {
+    var q = String(query || '').trim().toLowerCase();
+    var out = [];
+    this.cards.forEach(function (card, id) {
+      var el = card.element;
+      if (!el) return;
+      var name = el.dataset.cardName || card.name || String(id);
+      var dimsEl = el.querySelector('.sideview-card-header .sideview-badge:not(.sideview-badge-type)');
+      var dims = dimsEl ? dimsEl.textContent.trim() : '';
+      var lname = name.toLowerCase();
+      var at = q ? lname.indexOf(q) : 0;
+      if (at >= 0) out.push({ id: id, el: el, name: name, dims: dims, col: null, rank: at === 0 ? 0 : 1 });
+      if (!q) return;
+      var ths = el.querySelectorAll('thead th[data-col-name]');
+      var seen = {};
+      for (var i = 0; i < ths.length; i++) {
+        var col = ths[i].dataset.colName;
+        if (seen[col]) continue;
+        seen[col] = true;
+        var ca = col.toLowerCase().indexOf(q);
+        if (ca >= 0) out.push({ id: id, el: el, name: name, dims: dims, col: col, rank: ca === 0 ? 2 : 3 });
+      }
+    });
+    out.sort(function (a, b) { return a.rank - b.rank; });
+    return out.slice(0, 50);
+  };
+
+  var searchSeq = 0;
+
+  SideviewEngine.prototype.toggleSearch = function (show) {
+    var self = this;
+    var existing = this.container.querySelector('.sideview-search-scrim');
+    if (show === undefined) show = !existing;
+    if (!show) {
+      if (existing) {
+        existing.parentNode.removeChild(existing);
+        var back = this._searchReturnFocus;
+        this._searchReturnFocus = null;
+        if (back && back.focus && this.container.contains(back)) back.focus();
+        else { try { this.container.focus({ preventScroll: true }); } catch (e) {} }
+      }
+      return false;
+    }
+    if (existing) {
+      var inp = existing.querySelector('.sideview-search-input');
+      if (inp) inp.focus();
+      return true;
+    }
+    if (this.closeActivePopover) this.closeActivePopover();
+    this.toggleShortcuts(false);
+    this._searchReturnFocus = document.activeElement;
+    var n = ++searchSeq;
+    var listId = 'sv-search-list-' + n;
+    var scrim = document.createElement('div');
+    scrim.className = 'sideview-search-scrim';
+    scrim.innerHTML =
+      '<div class="sideview-search" role="dialog" aria-modal="true" aria-label="Find a card or column">' +
+      '<div class="sideview-search-field">' + icon('search') +
+      '<input type="text" class="sideview-search-input" role="combobox" aria-expanded="true" ' +
+      'aria-autocomplete="list" aria-controls="' + listId + '" autocomplete="off" spellcheck="false" ' +
+      'placeholder="Find a card or column" aria-label="Find a card or column"></div>' +
+      '<ul class="sideview-search-list" id="' + listId + '" role="listbox" aria-label="Matches"></ul>' +
+      '<div class="sideview-search-hint"><kbd>Enter</kbd> go to <kbd>Esc</kbd> close</div></div>';
+    this.container.appendChild(scrim);
+    var input = scrim.querySelector('.sideview-search-input');
+    var list = scrim.querySelector('.sideview-search-list');
+    var items = [], sel = 0;
+    var mark = function () {
+      var lis = list.querySelectorAll('[role="option"]');
+      for (var i = 0; i < lis.length; i++) lis[i].setAttribute('aria-selected', i === sel ? 'true' : 'false');
+      var cur = lis[sel];
+      if (cur) {
+        input.setAttribute('aria-activedescendant', cur.id);
+        // Keep the selection visible inside the list only (no page scroll).
+        if (cur.offsetTop < list.scrollTop) list.scrollTop = cur.offsetTop;
+        else if (cur.offsetTop + cur.offsetHeight > list.scrollTop + list.clientHeight) {
+          list.scrollTop = cur.offsetTop + cur.offsetHeight - list.clientHeight;
+        }
+      } else input.removeAttribute('aria-activedescendant');
+    };
+    var render = function () {
+      items = self.searchCards(input.value);
+      sel = 0;
+      if (!items.length) {
+        list.innerHTML = '<li class="sideview-search-empty" role="presentation">No card or column matches</li>';
+      } else {
+        list.innerHTML = items.map(function (it, i) {
+          return '<li role="option" id="sv-search-opt-' + n + '-' + i + '" data-index="' + i + '">' +
+            '<span class="sideview-search-name">' + escapeHtml(it.name) + '</span>' +
+            (it.col ? '<span class="sideview-search-col">' + escapeHtml(it.col) + '</span>' : '') +
+            (it.dims ? '<span class="sideview-search-meta">' + escapeHtml(it.dims) + '</span>' : '') + '</li>';
+        }).join('');
+      }
+      mark();
+    };
+    var choose = function (i) {
+      var it = items[i];
+      if (!it) return;
+      self.toggleSearch(false);
+      self.goToSearchResult(it);
+    };
+    input.addEventListener('input', render);
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (items.length) sel = (sel + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length;
+        mark();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        choose(sel);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        self.toggleSearch(false);
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+      }
+    });
+    // Keep focus in the input while an option is clicked.
+    list.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    list.addEventListener('click', function (e) {
+      var li = e.target.closest('[role="option"]');
+      if (li) choose(parseInt(li.getAttribute('data-index'), 10));
+    });
+    scrim.addEventListener('click', function (e) {
+      if (e.target === scrim) self.toggleSearch(false);
+    });
+    render();
+    try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); }
+    return true;
+  };
+
+  // Zoom to a search result; for a column, scroll it into the card and flash it.
+  SideviewEngine.prototype.goToSearchResult = function (it) {
+    var el = it && it.el;
+    if (!el) return;
+    if (el.classList.contains('is-minimized')) {
+      var minBtn = el.querySelector('[data-action="minimize-card"]');
+      if (minBtn) this.toggleMinimizeCard(el, minBtn);
+    }
+    this.zoomToCard(el);
+    if (!it.col) return;
+    var th = el.querySelector('thead th[data-col-name="' + cssEscape(it.col) + '"]');
+    var body = el.querySelector('.sideview-card-body');
+    if (!th) return;
+    if (body) {
+      var s = this.panzoom ? this.panzoom.getScale() : 1;
+      var x = (th.getBoundingClientRect().left - body.getBoundingClientRect().left) / s + body.scrollLeft;
+      body.scrollLeft = Math.max(0, x - (body.clientWidth - th.offsetWidth) / 2);
+    }
+    this.flashClass(th, 'sv-col-focus', 1600);
+    this.scheduleConnectorUpdate();
+  };
+
   SideviewEngine.prototype.destroy = function () {
     this._globalListeners.forEach(function (l) {
       try { l[0].removeEventListener(l[1], l[2], l[3]); } catch (e) {}
@@ -1061,8 +1412,10 @@ function sendToShiny(name, value) {
       if (card.virtualTable && card.virtualTable.destroy) card.virtualTable.destroy();
     });
     this.closeActivePopover();
-    var scrim = this.container.querySelector('.sideview-shortcuts-scrim');
-    if (scrim && scrim.parentNode) scrim.parentNode.removeChild(scrim);
+    var dialogs = this.container.querySelectorAll('.sideview-shortcuts-scrim, .sideview-search-scrim');
+    for (var di = 0; di < dialogs.length; di++) {
+      if (dialogs[di].parentNode) dialogs[di].parentNode.removeChild(dialogs[di]);
+    }
     if (lastActiveEngine === this) lastActiveEngine = null;
     if (this.container._sideviewInstance === this) this.container._sideviewInstance = null;
   };
@@ -1133,6 +1486,7 @@ function sendToShiny(name, value) {
       }
       after = b;
     };
+    add('open-search', 'search', 'Find a card or column (Ctrl+K)');
     add('save-workspace', 'save', 'Save workspace (cards, joins, pipeline)');
     add('open-workspace', 'folderOpen', 'Open a saved workspace');
     add('toggle-theme', 'moon', 'Switch to dark theme (T)');
@@ -1144,6 +1498,9 @@ function sendToShiny(name, value) {
     [['F'], 'Fit all cards in view'],
     [['0'], 'Reset zoom to 100%'],
     [['+', '-'], 'Zoom in / out'],
+    [['Ctrl+K'], 'Find a card or column'],
+    [['Double-click a card title'], 'Zoom to that card'],
+    [['M'], 'Show or hide the minimap'],
     [['D'], 'Show or hide the drawer'],
     [['T'], 'Switch light / dark theme'],
     [['/'], 'Type an AI prompt'],
@@ -1401,7 +1758,7 @@ function sendToShiny(name, value) {
         '<button class="sideview-btn active" data-action="toggle-snap" title="Snap to Edge">Snap</button>',
         '<button class="sideview-btn" data-action="suggest-mappings" title="Suggest Mappings across tables">Auto Map</button>',
         '<button class="sideview-btn" data-action="toggle-drawer" title="Show or hide the drawer (D)">Drawer</button>',
-        '<button class="sideview-btn" data-action="toggle-fullscreen" title="Toggle Fullscreen Canvas" aria-label="Toggle fullscreen canvas">' + icon('fullscreen') + ' Fullscreen</button>'
+        '<button class="sideview-btn" data-action="toggle-fullscreen" title="Toggle Fullscreen Canvas" aria-label="Toggle fullscreen canvas">' + icon('fullscreen') + ' <span class="sideview-btn-label">Fullscreen</span></button>'
       ].join('');
       this.container.appendChild(toolbar);
     }
@@ -1594,6 +1951,10 @@ function sendToShiny(name, value) {
         if (drawer) drawer.classList.toggle('collapsed');
       } else if (action === 'export-codebook') {
         self.exportCodebook();
+      } else if (action === 'open-search') {
+        self.toggleSearch(true);
+      } else if (action === 'toggle-minimap') {
+        self.toggleMinimap();
       } else if (action === 'save-workspace') {
         self.saveWorkspace();
       } else if (action === 'open-workspace') {
@@ -2145,6 +2506,10 @@ function sendToShiny(name, value) {
     // or restores a maximized card (in that order).
     this.listenGlobal(document, 'keydown', function (e) {
       if (e.key !== 'Escape') return;
+      if (self.container.querySelector('.sideview-search-scrim')) {
+        if (self.ownsKeyboard()) self.toggleSearch(false);
+        return;
+      }
       if (self.toggleShortcuts && self.container.querySelector('.sideview-shortcuts-scrim')) {
         if (self.ownsKeyboard()) self.toggleShortcuts(false);
         return;
@@ -2169,6 +2534,13 @@ function sendToShiny(name, value) {
         try { self.container.focus({ preventScroll: true }); } catch (err) { self.container.focus(); }
       }
     });
+    // Ctrl+K / Cmd+K opens the card search, also from inside a text field.
+    this.listenGlobal(document, 'keydown', function (e) {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.defaultPrevented) return;
+      if (String(e.key).toLowerCase() !== 'k' || !self.ownsKeyboard()) return;
+      e.preventDefault();
+      self.toggleSearch(true);
+    });
     this.listenGlobal(document, 'keydown', function (e) {
       if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
       if (isTypingTarget(e.target) || !self.ownsKeyboard()) return;
@@ -2184,6 +2556,7 @@ function sendToShiny(name, value) {
       else if ((k === '+' || k === '=') && self.panzoom) self.panzoom.zoomToPoint(self.panzoom.getScale() * 1.25, centre);
       else if ((k === '-' || k === '_') && self.panzoom) self.panzoom.zoomToPoint(self.panzoom.getScale() * 0.8, centre);
       else if (k === 't' || k === 'T') self.toggleTheme();
+      else if (k === 'm' || k === 'M') self.toggleMinimap();
       else if (k === 'd' || k === 'D') {
         var drawerEl = self.container.querySelector('.sideview-drawer');
         if (drawerEl) drawerEl.classList.toggle('collapsed');
@@ -2196,6 +2569,15 @@ function sendToShiny(name, value) {
 
     // Inline Column Renaming via Double Click on column name
     this.container.addEventListener('dblclick', function (e) {
+      var head = e.target.closest('.sideview-card-header');
+      if (head && !e.target.closest('button, input, select, textarea, [data-action]')) {
+        var headCard = head.closest('.sideview-card');
+        if (headCard) {
+          e.preventDefault();
+          self.zoomToCard(headCard);
+        }
+        return;
+      }
       var colNameEl = e.target.closest('.sideview-col-name');
       if (!colNameEl) return;
 

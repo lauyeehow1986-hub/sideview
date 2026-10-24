@@ -70,16 +70,21 @@ run_gui_test_scenarios <- function() {
     skip("Node.js or gui-test-runner.js not available for simulated headless DOM tests")
   }
 
+  # stderr goes to its own file: Node runtime warnings (e.g. about
+  # localStorage) must not end up inside the JSON on stdout.
+  err_file <- tempfile(fileext = ".log")
+  on.exit(unlink(err_file), add = TRUE)
   out <- suppressWarnings(system2(
     command = node_bin,
     args = c(shQuote(runner_js)),
     stdout = TRUE,
-    stderr = TRUE
+    stderr = err_file
   ))
 
   status <- attr(out, "status")
   if (!is.null(status) && status != 0) {
-    stop(paste("gui-test-runner.js failed with status", status, ":", paste(out, collapse = "\n")))
+    stop(paste("gui-test-runner.js failed with status", status, ":",
+               paste(c(out, readLines(err_file, warn = FALSE)), collapse = "\n")))
   }
 
   raw_json <- paste(out, collapse = "\n")
