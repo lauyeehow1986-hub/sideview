@@ -1476,10 +1476,10 @@ function sendToShiny(name, value) {
         '  </div>',
         '</div>',
         '<div class="sideview-drawer-actions">',
-        '  <button class="sideview-btn sideview-btn-primary" data-action="inject-script" title="Insert code into active RStudio script">Insert Script</button>',
-        '  <button class="sideview-btn" data-action="send-console-exit" title="Send code to RStudio console and exit gadget to execute immediately">Run & Exit</button>',
-        '  <button class="sideview-btn" data-action="eval-env" title="Execute code immediately in active R session environment">Run in R</button>',
-        '  <button class="sideview-btn" data-action="send-console" title="Queue code to RStudio console (executes when gadget closes)">Run Console</button>',
+        '  <button class="sideview-btn sideview-btn-primary" data-action="inject-script" data-r-only title="Insert code into active RStudio script">Insert Script</button>',
+        '  <button class="sideview-btn" data-action="send-console-exit" data-r-only title="Send code to RStudio console and exit gadget to execute immediately">Run & Exit</button>',
+        '  <button class="sideview-btn" data-action="eval-env" data-r-only title="Execute code immediately in active R session environment">Run in R</button>',
+        '  <button class="sideview-btn" data-action="send-console" data-r-only title="Queue code to RStudio console (executes when gadget closes)">Run Console</button>',
         '  <button class="sideview-btn" data-action="copy-code">Copy</button>',
         '  <button class="sideview-btn sideview-btn-danger" data-action="clear-operation" title="Clear current operations, connector lines, and generated code">Clear</button>',
         '  <label class="sideview-autoclear-wrap" title="Automatically clear operations after inserting into script or copying"><input type="checkbox" class="sideview-autoclear-toggle" /> Auto-clear</label>',
@@ -1596,7 +1596,7 @@ function sendToShiny(name, value) {
       } else if (action === 'close-shortcuts') {
         self.toggleShortcuts(false);
       } else if (action === 'inject-script') {
-        sendToShiny('inject_script', { code: self.generatedCode });
+        if (!self.sendToR('inject_script', { code: self.generatedCode }, 'Insert Script')) return;
         if (self.shouldAutoClear()) {
           self.clearOperations(true);
           self.showToast('Code inserted into script and operations cleared!', 'success');
@@ -1604,14 +1604,14 @@ function sendToShiny(name, value) {
           self.showToast('Code inserted into script! (Click Clear to reset)', 'success');
         }
       } else if (action === 'send-console') {
+        if (!self.sendToR('send_console', { code: self.generatedCode }, 'Run Console')) return;
         self.showToast('Queuing code to RStudio console...', 'warning');
-        sendToShiny('send_console', { code: self.generatedCode });
       } else if (action === 'send-console-exit') {
+        if (!self.sendToR('send_console_and_exit', { code: self.generatedCode }, 'Run & Exit')) return;
         self.showToast('Executing in RStudio console and closing gadget...', 'success');
-        sendToShiny('send_console_and_exit', { code: self.generatedCode });
       } else if (action === 'eval-env') {
+        if (!self.sendToR('eval_env', { code: self.generatedCode, assign_to: 'sv_result' }, 'Run in R')) return;
         self.showToast('Evaluating in R environment...', 'info');
-        sendToShiny('eval_env', { code: self.generatedCode, assign_to: 'sv_result' });
       } else if (action === 'gadget-done') {
         self.showToast('Returning code to R...', 'success');
         sendToShiny('sideview_done', { code: isNoCode(self.generatedCode) ? '' : self.generatedCode });
@@ -3423,6 +3423,13 @@ function sendToShiny(name, value) {
     var drawer = this.container.querySelector('.sideview-drawer');
     if (drawer) drawer.classList.remove('collapsed');
     this.activateDrawerTab('inspect');
+  };
+
+  /** Send an input that only the gadget's R session handles; warn (never claim success) without one. */
+  SideviewEngine.prototype.sendToR = function (name, value, label) {
+    if (this.isGadget() && sendToShiny(name, value)) return true;
+    this.showToast(label + ' needs the R session (run sideview() from R). Use Copy instead.', 'warning');
+    return false;
   };
 
   SideviewEngine.prototype.isGadget = function () {

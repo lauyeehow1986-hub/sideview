@@ -54,7 +54,7 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 | 41 | Drawer | Code preview text is centred and truncated | fixed (Phase 2.4) |
 | 42 | Pane | In the narrow Viewer pane the toolbar covers card headers and the palette overlaps cards | fixed (Phase 2.4) |
 | 43 | Codegen | R-side `sv_code_recode()` and `sv_auto_clean_rules()` emit `dplyr::case_match()`, deprecated in dplyr 1.2.0 (installed: 1.2.1). The new JS pipeline already uses `case_when(..., .default = col)` | fixed (Phase 4.1b) |
-| 44 | Widget | A saved/embedded widget shows the R-only buttons (Insert Script, Run & Exit, Run in R, Run Console); Insert Script toasts "Code inserted" though nothing happened | open |
+| 44 | Widget | A saved/embedded widget shows the R-only buttons (Insert Script, Run & Exit, Run in R, Run Console); Insert Script toasts "Code inserted" though nothing happened | fixed (Phase 4.4b) |
 
 ## Backlog (future rounds, not yet scheduled)
 - Table version diff by key (data-lock comparisons between dataset versions).
@@ -65,6 +65,17 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 ---
 
 ## Log
+
+### 2026-10-24 — Phase 4.4b: the saved widget hides buttons that need R (#44)
+- **Why:** found while checking 4.4 in RStudio. In a saved or embedded widget, Insert Script / Run & Exit / Run in R / Run Console have no R session to talk to, yet Insert Script toasted "Code inserted into script!".
+- **Fix:**
+  - The four buttons carry `data-r-only` in both drawer templates (the JS template for the widget, `R/app_ui.R` for the gadget).
+  - A scoped CSS rule hides them under `.sv-embedded`.
+  - The handlers go through a new `sendToR()`, which warns "... needs the R session (run sideview() from R). Use Copy instead." and never shows a success toast when nothing was sent. This matches the AI bar.
+- **Tests:** a new browser test. In the saved widget the four buttons are hidden, Copy and Clear are visible, and Insert Script warns rather than claiming success. In the gadget the same four buttons are present. The test was written before the fix, but it was not run red first; its assertions could not pass on the old markup. `layout-browser`: 281, 0 failed. Full suite: 2164, 0 failed.
+- **Verified in the RStudio Viewer pane:**
+  - The saved widget's drawer shows only Copy, Clear and Auto-clear.
+  - The gadget's drawer still shows Insert Script, Run & Exit, Run in R and Run Console.
 
 ### 2026-10-24 — Phase 4.4: column inspector and `sv_codebook()` data dictionary
 - **Why:** before analysis a biostatistician wants each variable's type, missingness, distinct count, key check, quartiles and messy-text problems, plus a codebook to file with the analysis plan. Previously you had to leave the canvas and run `summary()` / `table()` by hand.
@@ -98,7 +109,7 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
   - Export codebook opened RStudio's native Save dialog from inside the running gadget. Saving `rstudio_codebook.xlsx` toasted the path, and the file reads back as 10 rows × 19 columns.
   - Dark mode: the inspector, selects and histogram are legible.
   - Saved widget (`save_sideview` → `rstudioapi::viewer`): the visits `sbp` profile (median 132) matches R's xlsx.
-- **Found in RStudio, not fixed in this step:** the saved widget still shows Insert Script / Run & Exit / Run in R / Run Console, and Insert Script toasts success with no R session (#44).
+- **Found in RStudio:** the saved widget still showed the R-only buttons (#44), so it was fixed in 4.4b.
 
 ### 2026-10-24 — Phase 4.3: join diagnostics before you join
 - **Why:** in clinical data the costly join mistakes are silent: duplicated visit rows, IDs with stray spaces or case, keys of different types. A spline used to give code with no hint of what the join would do.

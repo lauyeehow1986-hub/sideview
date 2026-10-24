@@ -967,3 +967,45 @@ test_that("the saved widget inspects columns and exports the codebook without R"
   expect_match(r$toast, "Codebook downloaded (7 columns)", fixed = TRUE)
   expect_length(attr(b, "sv_errors")(), 0)
 })
+
+test_that("the saved widget hides the buttons that need R and never claims they ran", {
+  skip_if_no_browser()
+  env <- new.env()
+  eval(parse(text = sv_fixture_code), envir = env)
+  dir <- withr::local_tempdir()
+  file <- file.path(dir, "ronly.html")
+  w <- local(sideview_widget(patients, visits), envir = env)
+  suppressMessages(save_sideview(w, file, selfcontained = FALSE))
+  url <- paste0("file:///", gsub("\\\\", "/", normalizePath(file)))
+  b <- sv_open_page(url, wait_for = "!!document.querySelector('.sideview-card .sideview-col-port')")
+  withr::defer(try(b$close(), silent = TRUE))
+  r <- sv_js(b, paste0("(async () => {", sv_pipeline_helpers_js, "
+    const eng = document.querySelector('.sideview-container')._sideviewInstance;
+    eng.activateDrawerTab('pipeline');
+    q('.sideview-drawer').classList.remove('collapsed');
+    await sleep(50);
+    const shown = a => { const el = q('.sideview-drawer-actions [data-action=\"' + a + '\"]');
+                         return !!el && getComputedStyle(el).display !== 'none' && el.offsetWidth > 0; };
+    const acts = ['inject-script', 'send-console-exit', 'eval-env', 'send-console', 'copy-code', 'clear-operation'];
+    const out = {}; acts.forEach(a => out[a] = shown(a));
+    eng.generatedCode = 'patients';
+    q('.sideview-drawer-actions [data-action=\"inject-script\"]').click();
+    await sleep(50);
+    out.toast = [...document.querySelectorAll('.sideview-toast')].map(t => t.textContent).join(' | ');
+    return out;
+  })()"))
+  expect_false(r[["inject-script"]])
+  expect_false(r[["send-console-exit"]])
+  expect_false(r[["eval-env"]])
+  expect_false(r[["send-console"]])
+  expect_true(r[["copy-code"]])
+  expect_true(r[["clear-operation"]])
+  expect_no_match(r$toast, "inserted", fixed = TRUE)
+  expect_match(r$toast, "needs the R session", fixed = TRUE)
+  expect_length(attr(b, "sv_errors")(), 0)
+
+  g <- sv_shared_page()
+  vis <- sv_js(g, "(() => [...document.querySelectorAll('.sideview-drawer-actions [data-r-only]')].map(e => e.dataset.action))()")
+  expect_setequal(unlist(vis), c("inject-script", "send-console-exit", "eval-env", "send-console"))
+  expect_false(sv_js(g, "document.querySelector('.sideview-container').classList.contains('sv-embedded')"))
+})

@@ -2367,3 +2367,8 @@ html.sv-standalone body {
   margin-top: 1px;
   color: var(--sv-success-text);
 }
+
+/* A saved or embedded widget has no R session: hide the buttons that need one (#44). */
+.sideview-container.sv-embedded .sideview-drawer-actions [data-r-only] {
+  display: none;
+}

@@ -524,10 +524,10 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
     ),
     htmltools::tags$div(
       class = "sideview-drawer-actions",
-      htmltools::tags$button(class = "sideview-btn sideview-btn-primary", `data-action` = "inject-script", title = "Insert code into active RStudio script", "Insert Script"),
-      htmltools::tags$button(class = "sideview-btn", `data-action` = "send-console-exit", title = "Send code to RStudio console and exit gadget to execute immediately", "Run & Exit"),
-      htmltools::tags$button(class = "sideview-btn", `data-action` = "eval-env", title = "Execute code immediately in active R session environment", "Run in R"),
-      htmltools::tags$button(class = "sideview-btn", `data-action` = "send-console", title = "Queue code to RStudio console (executes when gadget closes)", "Run Console"),
+      htmltools::tags$button(class = "sideview-btn sideview-btn-primary", `data-action` = "inject-script", `data-r-only` = NA, title = "Insert code into active RStudio script", "Insert Script"),
+      htmltools::tags$button(class = "sideview-btn", `data-action` = "send-console-exit", `data-r-only` = NA, title = "Send code to RStudio console and exit gadget to execute immediately", "Run & Exit"),
+      htmltools::tags$button(class = "sideview-btn", `data-action` = "eval-env", `data-r-only` = NA, title = "Execute code immediately in active R session environment", "Run in R"),
+      htmltools::tags$button(class = "sideview-btn", `data-action` = "send-console", `data-r-only` = NA, title = "Queue code to RStudio console (executes when gadget closes)", "Run Console"),
       htmltools::tags$button(class = "sideview-btn", `data-action` = "copy-code", "Copy"),
       htmltools::tags$button(class = "sideview-btn sideview-btn-danger", `data-action` = "clear-operation", title = "Clear current operations, connector lines, and generated code", "Clear"),
       htmltools::tags$label(
