@@ -42,7 +42,7 @@ A character string of tidyverse code, or \code{NULL} if no discrepancies require
 \description{
 Inspects discrepancy detection output or pairwise column discrepancies (exact matches,
 fuzzy near-matches, and missing levels), automatically synthesizing clean recoding rules
-using \code{dplyr::case_match()}. Handles casing differences, leading/trailing whitespace
+using \code{dplyr::case_when()}. Handles casing differences, leading/trailing whitespace
 discrepancies, and fuzzy string distance variations (Levenshtein distance <= 2).
 }
 \examples{

@@ -26,7 +26,9 @@ or tabular objects to be normalized.}
 \item{console_fn}{Function used to send code to RStudio console (default \code{sv_send_to_console}).}
 
 \item{gadget}{If \code{TRUE}, run as a gadget: the Done and Cancel buttons, closing the
-RStudio dialog, and closing the browser tab all stop the app. Leave \code{FALSE}
+RStudio dialog, and closing the last browser tab all stop the app. After the last
+tab closes the app waits \code{getOption("sideview.session_grace", 5)} seconds so a
+page reload does not end it. Leave \code{FALSE}
 when embedding the server in your own multi-user Shiny app.}
 }
 \value{

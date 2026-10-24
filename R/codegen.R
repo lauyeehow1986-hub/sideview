@@ -366,12 +366,13 @@ sv_detect_discrepancies <- function(x, y, max_distance = 2) {
 #'   }
 #' @param default Fallback value for unmatched records. If NULL, omitted.
 #'   If equal to `col`, emits unquoted column name `.default = <col>`.
-#' @param method Recoding function: "case_match" (dplyr) or "fct_recode" (forcats).
+#' @param method Recoding function: "case_when" (dplyr, the default), "case_match"
+#'   (dplyr; deprecated in dplyr 1.2.0, kept for older pipelines) or "fct_recode" (forcats).
 #' @param pipe Logical; if TRUE, uses pipe syntax `df %>% dplyr::mutate(...)`.
 #' @return A character string of R code.
 #' @export
 sv_code_recode <- function(df_name, col, crosswalk, default = NULL, 
-                           method = c("case_match", "fct_recode"), pipe = FALSE) {
+                           method = c("case_when", "case_match", "fct_recode"), pipe = FALSE) {
   method <- match.arg(method)
   
   from_vals <- character(0)
@@ -412,7 +413,41 @@ sv_code_recode <- function(df_name, col, crosswalk, default = NULL,
   
   esc_col <- sv_escape_ident(col)
   
-  if (method == "case_match") {
+  default_rep <- NULL
+  if (!is.null(default)) {
+    default_rep <- if (length(default) == 1 && is.na(default)) {
+      "NA"
+    } else if (identical(default, col) || identical(default, esc_col)) {
+      esc_col
+    } else if (is.character(default)) {
+      deparse1(default)
+    } else {
+      as.character(default)
+    }
+  }
+  format_src <- function(s) if (is.na(s)) "NA" else deparse1(s)
+
+  if (method == "case_when") {
+    case_lines <- character(0)
+    for (tgt in unique(to_vals)) {
+      srcs <- if (is.na(tgt)) from_vals[is.na(to_vals)] else from_vals[!is.na(to_vals) & to_vals == tgt]
+      tgt_rep <- if (is.na(tgt)) "NA" else deparse1(tgt)
+      conds <- character(0)
+      if (any(is.na(srcs))) conds <- c(conds, sprintf("is.na(%s)", esc_col))
+      vals <- srcs[!is.na(srcs)]
+      if (length(vals) == 1) {
+        conds <- c(conds, sprintf("%s == %s", esc_col, deparse1(vals)))
+      } else if (length(vals) > 1) {
+        conds <- c(conds, sprintf("%s %%in%% c(%s)", esc_col,
+                                  paste(vapply(vals, deparse1, character(1)), collapse = ", ")))
+      }
+      if (length(conds)) {
+        case_lines <- c(case_lines, sprintf("%s ~ %s", paste(conds, collapse = " | "), tgt_rep))
+      }
+    }
+    if (!is.null(default_rep)) case_lines <- c(case_lines, sprintf(".default = %s", default_rep))
+    expr <- sprintf("dplyr::case_when(\n    %s\n  )", paste(case_lines, collapse = ",\n    "))
+  } else if (method == "case_match") {
     unique_targets <- unique(to_vals)
     case_lines <- character(0)
     for (tgt in unique_targets) {
@@ -424,7 +459,6 @@ sv_code_recode <- function(df_name, col, crosswalk, default = NULL,
         tgt_rep <- deparse1(tgt)
       }
       
-      format_src <- function(s) if (is.na(s)) "NA" else deparse1(s)
       if (length(srcs) == 1) {
         case_lines <- c(case_lines, sprintf("%s ~ %s", format_src(srcs), tgt_rep))
       } else {
@@ -433,17 +467,7 @@ sv_code_recode <- function(df_name, col, crosswalk, default = NULL,
       }
     }
     
-    if (!is.null(default)) {
-      if (length(default) == 1 && is.na(default)) {
-        case_lines <- c(case_lines, ".default = NA")
-      } else if (identical(default, col) || identical(default, esc_col)) {
-        case_lines <- c(case_lines, sprintf(".default = %s", esc_col))
-      } else if (is.character(default)) {
-        case_lines <- c(case_lines, sprintf(".default = %s", deparse1(default)))
-      } else {
-        case_lines <- c(case_lines, sprintf(".default = %s", as.character(default)))
-      }
-    }
+    if (!is.null(default_rep)) case_lines <- c(case_lines, sprintf(".default = %s", default_rep))
     
     inner <- paste(c(esc_col, case_lines), collapse = ",\n    ")
     expr <- sprintf("dplyr::case_match(\n    %s\n  )", inner)
@@ -688,7 +712,7 @@ sv_code_group_summarize <- function(df_name = NULL, group_cols, summary_exprs, p
 #'
 #' Inspects discrepancy detection output or pairwise column discrepancies (exact matches,
 #' fuzzy near-matches, and missing levels), automatically synthesizing clean recoding rules
-#' using \code{dplyr::case_match()}. Handles casing differences, leading/trailing whitespace
+#' using \code{dplyr::case_when()}. Handles casing differences, leading/trailing whitespace
 #' discrepancies, and fuzzy string distance variations (Levenshtein distance <= 2).
 #'
 #' @param discrepancy_result A discrepancy result list (such as returned by \code{sv_detect_discrepancies()})
@@ -816,7 +840,7 @@ sv_auto_clean_rules <- function(discrepancy_result, df_name = "df", col = "statu
     col = target_col,
     crosswalk = crosswalk,
     default = target_default,
-    method = "case_match",
+    method = "case_when",
     pipe = pipe
   )
 }

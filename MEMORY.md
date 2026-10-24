@@ -53,7 +53,7 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 | 40 | Layout | Initial cards are 640px wide but spaced 360px apart → they overlap on launch in every mode | fixed (Phase 2.4) |
 | 41 | Drawer | Code preview text is centred and truncated | fixed (Phase 2.4) |
 | 42 | Pane | In the narrow Viewer pane the toolbar covers card headers and the palette overlaps cards | fixed (Phase 2.4) |
-| 43 | Codegen | R-side `sv_code_recode()` and `sv_auto_clean_rules()` emit `dplyr::case_match()`, deprecated in dplyr 1.2.0 (installed: 1.2.1). The new JS pipeline already uses `case_when(..., .default = col)` | open |
+| 43 | Codegen | R-side `sv_code_recode()` and `sv_auto_clean_rules()` emit `dplyr::case_match()`, deprecated in dplyr 1.2.0 (installed: 1.2.1). The new JS pipeline already uses `case_when(..., .default = col)` | fixed (Phase 4.1b) |
 
 ## Backlog (future rounds, not yet scheduled)
 - Table version diff by key (data-lock comparisons between dataset versions).
@@ -64,6 +64,15 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 ---
 
 ## Log
+
+### 2026-10-24 — Phase 4.1b: R recode generators move off deprecated `case_match()` (#43)
+- **Change:** `sv_code_recode()` now defaults to `method = "case_when"`. It emits one `case_when()` arm per target, so several sources that map to one target become `col %in% c(...)` and an NA source becomes `is.na(col)`. The default becomes `.default = ...`. With no default, unmatched values become NA, the same as `case_match()`. `sv_auto_clean_rules()` uses the same method. `method = "case_match"` is still accepted for older pipelines. README and roxygen/`man/` are updated; `man/sideview_server.Rd` also picks up the `sideview.session_grace` doc from Phase 2.2 that had not been regenerated.
+- **Why:** dplyr 1.2.0 deprecated `case_match()`, so every Auto-Clean and recode script printed a lifecycle warning when run. That would also break once the function is removed.
+- **Verified:**
+  - Updated 6 expectations (test-app, test-codegen auto-clean). The auto-clean evaluations now use `expect_no_warning`, where they used to need `suppressWarnings`.
+  - New test: an NA source, multi-value `%in%`, `.default`, the no-default case giving NA, a backticked non-syntactic column, and the legacy method.
+  - `codegen|app|e2e|features-verification`: 692 expectations, 0 failed.
+  - Not a UI change, so there was no RStudio re-walk. The client recode tab was already on `case_when` and is covered by the browser test.
 
 ### 2026-10-24 — Phase 4.1: composable pipeline and real drawer tabs (#15, #16)
 - **Decision: the pipeline lives in the browser, not in R.**
@@ -86,7 +95,7 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
   - `auto_clean` is appended as a custom step.
   - `ai` or no source replaces the pipeline (undoable).
   - `copilot` no longer overwrites anything: the user clicks "Replace pipeline" in the chat bubble, and that is undoable.
-- **dplyr 1.2:** `case_match()` is deprecated. The pipeline's recode uses `case_when(..., .default = col)`. The R generators still need the same change (#43).
+- **dplyr 1.2:** `case_match()` is deprecated. The pipeline's recode uses `case_when(..., .default = col)`. The R generators now do the same (#43, Phase 4.1b).
 - **Tests:**
   - `test-pipeline.R` (34 expectations): Node drives `sv-pipeline.js`. Every script `parse()`s, keyed replace, join-key merge/removal, undo/redo, identifier escaping, the cycle guard, and a filter → arrange → join → recode → summarise chain that equals hand-written dplyr with no warnings.
   - Browser (3 new tests, 61 expectations):

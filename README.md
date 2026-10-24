@@ -49,7 +49,7 @@ sideview(patients, visits, lab_results, gt_summary)
 | **Multi-Key Composite Joins**| ❌ None | ✅ **Composite vector keys (`by = c("k1" = "k1", "k2" = "k2")`) & DAG chaining** |
 | **Suggested Splines Copilot**| ❌ None | ✅ **Proactive foreign key detection (`sv_suggest_mappings`) with 1-click accept** |
 | **Discrepancy Detection** | ❌ None | ✅ **Vectorized exact & fuzzy string matching with distance scoring** |
-| **Auto-Cleanup Rules** | ❌ None | ✅ **1-Click `dplyr::case_match` generation for casing, whitespace, & typos** |
+| **Auto-Cleanup Rules** | ❌ None | ✅ **1-Click `dplyr::case_when` generation for casing, whitespace, & typos** |
 | **Conversational Copilot** | ❌ None | ✅ **Multi-turn dialogue drawer with context retention (20-turn window)** |
 | **Workspace Persistence** | ❌ None | ✅ **Serialize & restore full canvas topology (`.json` and `.rds`)** |
 | **Console & Script Execution**| ❌ None | ✅ **`Insert Script`, `Run & Exit`, `Run in R` (`.GlobalEnv`), and `Run Console`** |
@@ -262,8 +262,8 @@ sideview_widget(patients, visits, width = "100%", height = "650px")
 | `sv_code_select(...)` | Code Generation | Emits `dplyr::select()` column selections |
 | `sv_escape_ident(x)` | Code Generation | Wraps non-syntactic names and reserved words in backticks |
 | `sv_detect_discrepancies(...)`| Discrepancies | Vectorized exact & fuzzy Levenshtein discrepancy detection |
-| `sv_code_recode(...)` | Discrepancies | Emits `dplyr::case_match()` or `forcats::fct_recode()` |
-| `sv_auto_clean_rules(...)` | Discrepancies | Generates automatic `case_match` rules for casing, whitespace, and typos |
+| `sv_code_recode(...)` | Discrepancies | Emits `dplyr::case_when()` (or legacy `case_match()`) or `forcats::fct_recode()` |
+| `sv_auto_clean_rules(...)` | Discrepancies | Generates automatic `case_when` rules for casing, whitespace, and typos |
 | `sv_suggest_mappings(...)` | Copilot | Heuristic foreign key candidate detection across tables |
 | `sv_build_chat_prompt(...)` | LLM Engine | Synthesizes multi-turn conversational chat prompt with context retention |
 | `sv_build_schema_context(...)` | LLM Engine | Privacy-safe metadata synthesis for LLM prompt |

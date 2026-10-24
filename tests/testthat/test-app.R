@@ -532,7 +532,7 @@ test_that("sideview_server handles request_suggested_mappings and apply_auto_cle
     code_msgs <- Filter(function(m) m$type == "sideview_code_update", session$userData$custom_messages)
     expect_gt(length(code_msgs), 0)
     last_code <- code_msgs[[length(code_msgs)]]$message$code
-    expect_true(grepl("dplyr::case_match", last_code))
+    expect_true(grepl("dplyr::case_when", last_code))
     expect_true(grepl('"male"\\s*~\\s*"Male"', last_code))
   })
 })
