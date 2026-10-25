@@ -98,10 +98,45 @@ sv_lazy_close <- function(con_env) {
   invisible(NULL)
 }
 
+#' Decode the dictionary columns of an Arrow object before duckdb sees it
+#'
+#' duckdb (1.4.3) must never scan an Arrow dictionary column (an R factor) that
+#' has NULLs. Its arrow scan points every NULL row at the slot one past the end
+#' of the dictionary, which it marks invalid but never allocates, and its
+#' vector loops load that slot before checking validity. That heap over-read
+#' segfaults R whenever the dictionary buffer happens to end at an uncommitted
+#' page (in about half of the runs of the 3000-scan parity grid in test-lazy.R).
+#'
+#' Each dictionary column is cast to its value type, so a factor becomes a
+#' string, which is what duckdb returns for it anyway. The cast is a lazy Arrow
+#' query, run batch by batch in each scan, so nothing is materialised and a
+#' Dataset stays on disk. An object with no dictionary column is returned as is.
+#' @param source An Arrow Table, RecordBatch, Dataset or query.
+#' @return `source`, or an `arrow_dplyr_query` with the same column names.
+#' @noRd
+sv_lazy_decode_dictionaries <- function(source) {
+  fields <- arrow::schema(source)$fields
+  dict <- Filter(function(f) inherits(f$type, "DictionaryType"), fields)
+  if (length(dict) == 0L) return(source)
+  casts <- lapply(dict, function(f) rlang::expr(cast(!!rlang::sym(f$name), !!f$type$value_type)))
+  names(casts) <- vapply(dict, function(f) f$name, character(1))
+  # arrow's mutate() builds a 0-row data frame of the schema to resolve `.by`, and
+  # warns that a non-string dictionary becomes factor levels there; it is not data
+  withCallingHandlers(
+    dplyr::mutate(source, !!!casts),
+    warning = function(w) {
+      if (grepl("Coercing dictionary values", conditionMessage(w), fixed = TRUE)) {
+        invokeRestart("muffleWarning")
+      }
+    }
+  )
+}
+
 #' A duckdb tbl for a lazy source
 #'
-#' A duckdb tbl is returned as is. An arrow object is handed to duckdb
-#' zero-copy on the private connection, and cached under `key` when given.
+#' A duckdb tbl is returned as is. An arrow object is handed to duckdb on the
+#' private connection, zero-copy except for its dictionary columns (decoded by
+#' [sv_lazy_decode_dictionaries()]), and cached under `key` when given.
 #' @param source A `tbl_duckdb_connection` or an Arrow table / dataset.
 #' @param con_env An environment from [sv_lazy_env()].
 #' @param key Optional cache key (usually the card name).
@@ -109,7 +144,8 @@ sv_lazy_close <- function(con_env) {
 sv_lazy_tbl <- function(source, con_env, key = NULL) {
   if (inherits(source, "tbl_duckdb_connection")) return(source)
   if (!is.null(key) && !is.null(con_env$tbls[[key]])) return(con_env$tbls[[key]])
-  tbl <- arrow::to_duckdb(source, con = sv_lazy_con(con_env), auto_disconnect = FALSE)
+  tbl <- arrow::to_duckdb(sv_lazy_decode_dictionaries(source),
+                          con = sv_lazy_con(con_env), auto_disconnect = FALSE)
   if (!is.null(key)) con_env$tbls[[key]] <- tbl
   tbl
 }
@@ -322,4 +358,4 @@ sv_lazy_rows_window <- function(tbl, req, order_cache = NULL) {
 }
 
 # Names that only exist inside the SQL translation of the verbs above.
-utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc"))
+utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc", "cast"))

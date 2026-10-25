@@ -155,6 +155,55 @@ test_that("sv_lazy_tbl converts arrow and caches by key", {
   expect_identical(sv_lazy_tbl(d, e), d)
 })
 
+test_that("arrow dictionary columns reach duckdb decoded", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  # duckdb's arrow scan points the NULL rows of a dictionary column one past the
+  # end of the dictionary and reads that slot: a heap over-read that segfaults R
+  # when the dictionary ends at a page boundary. Dictionaries must never reach it.
+  df <- data.frame(id = 1:6, f = factor(c("u", "v", NA, "uv", NA, "u")), s = c("a", NA, "b"),
+                   stringsAsFactors = FALSE)
+  at <- arrow::arrow_table(df, g = arrow::DictionaryArray$create(c(0L, 1L, NA, 2L, 0L, NA), c(10L, 20L, 30L)))
+  is_dict <- function(x) vapply(arrow::schema(x)$fields, function(f) inherits(f$type, "DictionaryType"), logical(1))
+  expect_true(any(is_dict(at)))
+
+  dec <- expect_no_warning(sv_lazy_decode_dictionaries(at))
+  expect_false(any(is_dict(dec)))
+  expect_identical(arrow::schema(dec)$names, arrow::schema(at)$names)
+  expect_identical(arrow::schema(dec)$GetFieldByName("f")$type$ToString(), "string")
+  expect_identical(arrow::schema(dec)$GetFieldByName("g")$type$ToString(), "int32")
+  got <- as.data.frame(dplyr::collect(dec))
+  expect_identical(got$f, as.character(df$f))
+  expect_identical(got$g, c(10L, 20L, NA, 30L, 10L, NA))
+
+  # no dictionary: handed over as is (zero-copy)
+  plain <- arrow::arrow_table(df[c("id", "s")])
+  expect_identical(sv_lazy_decode_dictionaries(plain), plain)
+
+  # sv_lazy_tbl() hands duckdb the decoded object, for tables and datasets
+  dir <- withr::local_tempfile()
+  arrow::write_dataset(at, dir)
+  real_to_duckdb <- arrow::to_duckdb
+  seen <- NULL
+  local_mocked_bindings(
+    to_duckdb = function(.data, ...) {
+      seen <<- .data
+      real_to_duckdb(.data, ...)
+    },
+    .package = "arrow"
+  )
+  for (src in list(at, arrow::open_dataset(dir))) {
+    seen <- NULL
+    e <- sv_lazy_env()
+    tb <- expect_no_warning(sv_lazy_tbl(src, e))
+    expect_false(any(is_dict(seen)))
+    res <- dplyr::collect(dplyr::arrange(tb, id))
+    expect_identical(res$f, as.character(df$f))
+    sv_lazy_close(e)
+  }
+})
+
 test_that("attach/detach leaves the connection clean", {
   skip_if_not_installed("duckdb")
   skip_if_not_installed("dbplyr")
@@ -271,8 +320,8 @@ test_that("lazy row windows equal in-memory windows", {
   withr::defer(sv_lazy_close(e))
   con <- sv_lazy_con(e)
   DBI::dbWriteTable(con, "rw", df)
-  # keep the Arrow table referenced for as long as duckdb scans it (a card does
-  # this through card$source); a collected table under a live scan crashes R
+  # the arrow grid runs over 3000 scans in one process: before sv_lazy_tbl()
+  # decoded dictionaries, the factor `f` crashed R in about half of the runs
   arrow_src <- arrow::arrow_table(df)
   sources <- list(
     duckdb = sv_lazy_tbl(dplyr::tbl(con, "rw"), e),
@@ -281,11 +330,6 @@ test_that("lazy row windows equal in-memory windows", {
   for (specs_name in names(sources)) {
     tbl <- sources[[specs_name]]
     for (req in rows_specs()) {
-      # Paging is the database's job whatever the source, so duckdb runs every
-      # offset and arrow the first page of every sort/filter: the full arrow
-      # grid (one scan per request) intermittently crashes R inside
-      # arrow::to_duckdb's scan, see MEMORY.md.
-      if (specs_name == "arrow" && req$offset != 0L) next
       got <- sv_lazy_rows_window(tbl, req)
       want <- sv_rows_window(df, req)
       label <- paste(specs_name, jsonlite::toJSON(req, auto_unbox = TRUE, null = "null"))
