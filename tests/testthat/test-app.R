@@ -1186,3 +1186,21 @@ test_that("auto-clean on a lazy card uses the card's code ref; a name that looks
                                              lazy = TRUE, df_is_code = TRUE),
                          "dplyr::tbl(con, \"d\") %>%"))
 })
+
+test_that("the gadget toolbar offers every action of the widget toolbar, plus Auto Map", {
+  # The gadget renders its toolbar in R (sideview_ui); the widget builds it in sideview.js.
+  # Auto Map asks R for suggestions, so only the gadget offers it.
+  js <- readLines(system.file("www", "sideview.js", package = "sideview"), warn = FALSE)
+  start <- grep("toolbar.innerHTML = [", js, fixed = TRUE)[1]
+  end <- start + grep("].join('')", js[start:length(js)], fixed = TRUE)[1] - 1L
+  js_actions <- regmatches(js[start:end], regexpr('data-action="[^"]+"', js[start:end]))
+  js_actions <- sub('^data-action="([^"]+)"$', "\\1", js_actions)
+  expect_true(all(c("zoom-in", "fit-all", "toggle-drawer") %in% js_actions))
+
+  html <- as.character(sideview_ui(list(), gadget = TRUE))
+  bar <- regmatches(html, regexpr('<div class="sideview-toolbar">.*?</div>', html))
+  r_actions <- sub('^data-action="([^"]+)"$', "\\1",
+                   regmatches(bar, gregexpr('data-action="[^"]+"', bar))[[1]])
+  expect_false("suggest-mappings" %in% js_actions)
+  expect_setequal(r_actions, c(js_actions, "suggest-mappings", "gadget-cancel", "gadget-done"))
+})

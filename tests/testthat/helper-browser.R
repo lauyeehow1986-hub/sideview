@@ -65,10 +65,10 @@ sv_start_app <- function(app_expr = "sideview(patients, visits, labs, run = FALS
   ok <- FALSE
   for (i in 1:120) {
     if (!proc$is_alive()) break
-    ok <- tryCatch({
-      con <- url(url); on.exit(try(close(con), silent = TRUE), add = TRUE)
-      length(readLines(con, n = 1, warn = FALSE)) > 0
-    }, error = function(e) FALSE)
+    con <- url(url)
+    ok <- tryCatch(length(readLines(con, n = 1, warn = FALSE)) > 0,
+                   warning = function(w) FALSE, error = function(e) FALSE)  # not listening yet
+    try(close(con), silent = TRUE)
     if (isTRUE(ok)) break
     Sys.sleep(0.25)
   }

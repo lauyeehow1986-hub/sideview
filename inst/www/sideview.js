@@ -1828,7 +1828,7 @@ function sendToShiny(name, value) {
         '<button class="sideview-btn" data-action="arrange-cards" title="Arrange cards in a grid">Arrange</button>',
         '<span class="sideview-toolbar-divider"></span>',
         '<button class="sideview-btn active" data-action="toggle-snap" title="Snap to Edge">Snap</button>',
-        '<button class="sideview-btn" data-action="suggest-mappings" title="Suggest Mappings across tables">Auto Map</button>',
+        // no Auto Map here: R computes the suggestions, so only the gadget toolbar (app_ui.R) has it
         '<button class="sideview-btn" data-action="toggle-drawer" title="Show or hide the drawer (D)">Drawer</button>',
         '<button class="sideview-btn" data-action="toggle-fullscreen" title="Toggle Fullscreen Canvas" aria-label="Toggle fullscreen canvas">' + icon('fullscreen') + ' <span class="sideview-btn-label">Fullscreen</span></button>'
       ].join('');
@@ -3199,7 +3199,10 @@ function sendToShiny(name, value) {
       candidates = suggestions.data;
     }
 
-    if (!candidates || candidates.length === 0) return;
+    if (!candidates || candidates.length === 0) {
+      this.showToast('No suggested joins found', 'info');
+      return;
+    }
 
     // Auto Map compares the rows on the canvas: for a lazy card, its preview only.
     var names = [];

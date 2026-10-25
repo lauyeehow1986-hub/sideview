@@ -175,6 +175,20 @@ Each sub-project gets its own spec, plan and build, in this order:
   `head(offset + limit)` overflowed near row 2^31 (now `as.numeric(offset)`; test on a 3e9-row view), and the widget
   badge showed "0" for an unknown row count (now "?", as the print method; browser test). Verified with
   test_file() on both tests (headless Chrome).
+- **Gadget check of the preview labels (browser mode):** the RStudio dialog was blocked by a Windows
+  TextInputHost window and access to it was declined, so the gadget ran with `viewer = <url writer>` in the
+  Claude browser pane (1M-row parquet `ds` + 2,500-row `patients`). Seen: badges "1,000,000 × 3" / "2,500 × 3";
+  join check on the whole table with separators; Auto Map spline `data-basis="preview"`, its hit-path title and
+  toast "Based on the first 50 rows"; discrepancy note "Based on the first 50 rows". No auto-clean button there
+  (no `only_in_x` keys), so its tooltip is covered by the browser test only.
+- **Found during that check: the gadget had no Auto Map button** (never had: `R/app_ui.R` lacked it since 0.2;
+  R handled `request_suggested_mappings` but nothing sent it). The widget had the button but no R to answer
+  (the #44 case). Fix: the button moved to the gadget toolbar only; an empty answer toasts "No suggested joins
+  found". New test-app.R parity test (gadget toolbar = widget toolbar + Auto Map + Cancel/Done; run red first)
+  and a real-click Auto Map check in test-lazy-browser.R. Live: a real click gives the toast (the only candidate
+  scored 61%, under the 0.70 default, because the preview overlaps 2%).
+- **Browser helper:** the startup probe's "Could not connect" warning (4 warnings per full run) is now caught,
+  and the probe closes its connection at once (no "closing unused connection").
 
 ### 2026-10-25 - Three UI quirks from the tour fixed
 - Copilot bubble: new pure `SideviewPipeline.splitReply()` (sv-pipeline.js) splits the reply at the first

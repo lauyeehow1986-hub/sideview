@@ -31,6 +31,9 @@ complete when it was not. They now use the whole table.
   Auto Map suggestions and the discrepancy summary say so ("Based on the first
   50 rows"), and so does the auto-clean button. Nothing is sent to the model
   but the schema.
+* Fixed: the gadget toolbar now has the **Auto Map** button (R answered the
+  request, but there was no button). The saved widget drops it, since it needs
+  R. When nothing is found, a toast says "No suggested joins found".
 * Fixed: a BIGINT column (what duckdb gives `count()` and `range()`) made the
   lazy join check, filters and "contains" fail.
 * Fixed: an Arrow factor sorts by its levels, not its text, and keeps its class

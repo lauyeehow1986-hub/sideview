@@ -187,6 +187,15 @@ test_that("preview-only labels", {
   expect_match(m$title, "Based on the first 50 rows", fixed = TRUE)
   expect_identical(m$basis, "preview")
   expect_true(any(grepl("Suggested joins: based on the first 50 rows.", unlist(m$toasts), fixed = TRUE)))
+
+  # The gadget toolbar's Auto Map button asks R and always answers with a toast.
+  sv_js(b, "document.querySelectorAll('.sideview-toast').forEach(t => t.remove())")
+  sv_click(b, "document.querySelector('.sideview-toolbar [data-action=\"suggest-mappings\"]')")
+  a <- sv_js(b, paste0("(async () => {", sv_lazy_helpers_js, "
+    await until(() => document.querySelector('.sideview-toast'), 10000);
+    return [...document.querySelectorAll('.sideview-toast')].map(t => t.textContent);
+  })()"))
+  expect_true(any(grepl("Suggested joins|No suggested joins found", unlist(a))))
   expect_length(attr(b, "sv_errors")(), 0)
 })
 

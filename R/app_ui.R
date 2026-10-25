@@ -426,6 +426,7 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
     htmltools::tags$button(class = "sideview-btn", `data-action` = "arrange-cards", title = "Arrange cards in a grid", "Arrange"),
     htmltools::tags$span(class = "sideview-toolbar-divider"),
     htmltools::tags$button(class = "sideview-btn active", `data-action` = "toggle-snap", title = "Snap to Edge", "Snap"),
+    htmltools::tags$button(class = "sideview-btn", `data-action` = "suggest-mappings", title = "Suggest Mappings across tables", "Auto Map"),
     htmltools::tags$button(class = "sideview-btn", `data-action` = "toggle-drawer", title = "Show or hide the drawer (D)", "Drawer"),
     htmltools::tags$button(class = "sideview-btn", `data-action` = "toggle-fullscreen", title = "Toggle Fullscreen Canvas", `aria-label` = "Toggle fullscreen canvas", sv_icon_slot("fullscreen"), " ", htmltools::tags$span(class = "sideview-btn-label", "Fullscreen")),
     if (isTRUE(gadget)) htmltools::tagList(
