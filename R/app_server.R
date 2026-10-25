@@ -63,6 +63,40 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     tryCatch(session$sendCustomMessage(type, message), error = function(e) NULL)
   }
 
+  # Lazy (arrow / duckdb) cards: one private connection per session, closed when the
+  # session ends. `lazy_failed` holds the ids of cards whose whole-table request
+  # failed; they answer from their preview rows from then on.
+  con_env <- sv_lazy_env()
+  lazy_failed <- new.env(parent = emptyenv())
+  session$onSessionEnded(function() sv_lazy_close(con_env))
+
+  card_full <- function(card) sv_card_is_lazy(card) && is.null(lazy_failed[[card$id]])
+
+  send_toast <- function(text, type = "info") {
+    dispatch_message("sideview_toast", list(text = text, type = type))
+  }
+
+  # Run `f_lazy()` when `card` (or a list of cards) can be answered from the whole
+  # table, else `f_preview()`. A lazy request that fails marks the cards as
+  # preview-only, tells the user once per card, and answers from the preview.
+  # Errors that are about this request, not about the link, are passed on.
+  lazy_or_preview <- function(card, f_lazy, f_preview) {
+    cards <- if (inherits(card, "sideview_card")) list(card) else card
+    full <- Filter(card_full, cards)
+    if (!length(full)) return(f_preview())
+    tryCatch(f_lazy(), error = function(e) {
+      if (inherits(e, c("sv_lazy_cross_con", "sv_lazy_not_duckdb"))) stop(e)
+      for (cd in full) {
+        lazy_failed[[cd$id]] <- TRUE
+        send_toast(
+          sprintf("Lost the link to %s; showing the first %d rows.", cd$name, nrow(cd$data)),
+          "warning"
+        )
+      }
+      f_preview()
+    })
+  }
+
   # Gadget lifecycle. stopApp() must run once per app: a second call (e.g. from
   # onSessionEnded after Done) would replace the returned code with NULL. The
   # state is shared by every session of the app (see sideview_server()).
@@ -202,21 +236,32 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     dispatch_message('sideview_code_update', list(code = code, source = "event"))
   }, ignoreInit = FALSE)
 
-  # 1e. Row windows for large cards: sort/filter/scroll answered from the full data
+  # 1e. Row windows for large cards: sort/filter/scroll answered from the full data.
+  # The preview and the whole table have different row counts, so each keeps its own cache.
   row_order_caches <- new.env(parent = emptyenv())
+  lazy_order_caches <- new.env(parent = emptyenv())
+  cache_of <- function(store, id) {
+    cache <- store[[id]]
+    if (is.null(cache)) {
+      cache <- new.env(parent = emptyenv())
+      store[[id]] <- cache
+    }
+    cache
+  }
   shiny::observeEvent(input$sideview_rows_request, {
     req <- input$sideview_rows_request
     if (is.null(req) || is.null(req$card_id)) return()
     card <- cards_by_id[[req$card_id]] %||% cards_by_name[[req$card_id]]
     if (is.null(card) || !is.data.frame(card$data)) return()
-    cache <- row_order_caches[[req$card_id]]
-    if (is.null(cache)) {
-      cache <- new.env(parent = emptyenv())
-      row_order_caches[[req$card_id]] <- cache
-    }
-    win <- tryCatch(sv_rows_window(card$data, req, order_cache = cache), error = function(e) {
-      list(error = conditionMessage(e))
-    })
+    win <- tryCatch(
+      lazy_or_preview(
+        card,
+        function() sv_lazy_rows_window(sv_lazy_tbl(card$source, con_env, card$id), req,
+                                       order_cache = cache_of(lazy_order_caches, card$id)),
+        function() sv_rows_window(card$data, req, order_cache = cache_of(row_order_caches, card$id))
+      ),
+      error = function(e) list(error = conditionMessage(e))
+    )
     win$card_id <- req$card_id
     win$version <- req$version %||% 0L
     dispatch_message("sideview_rows", win)
@@ -236,9 +281,22 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
       if (is.null(cx) || !is.data.frame(cx$data) || is.null(cy) || !is.data.frame(cy$data)) {
         stop("Join diagnostics need both tables as data frames.", call. = FALSE)
       }
-      sv_join_diagnostics_json(sv_join_diagnostics(
-        cx$data, cy$data, by = stats::setNames(right_cols, left_cols),
-        x_name = req$left, y_name = req$right
+      # a missing key is the same error for the preview and the whole table
+      miss_x <- setdiff(left_cols, names(cx$data))
+      miss_y <- setdiff(right_cols, names(cy$data))
+      if (length(miss_x)) stop(sprintf("Not in %s: %s", req$left, paste(miss_x, collapse = ", ")), call. = FALSE)
+      if (length(miss_y)) stop(sprintf("Not in %s: %s", req$right, paste(miss_y, collapse = ", ")), call. = FALSE)
+      by_cols <- stats::setNames(right_cols, left_cols)
+      sv_join_diagnostics_json(lazy_or_preview(
+        list(cx, cy),
+        function() {
+          sv_lazy_join_diagnostics(
+            if (card_full(cx)) cx$source else cx$data,
+            if (card_full(cy)) cy$source else cy$data,
+            by = by_cols, x_name = req$left, y_name = req$right, con_env = con_env
+          )
+        },
+        function() sv_join_diagnostics(cx$data, cy$data, by = by_cols, x_name = req$left, y_name = req$right)
       ))
     }, error = function(e) list(error = conditionMessage(e)))
     result$id <- req$id
@@ -259,7 +317,14 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
       if (!req$column %in% names(card$data)) {
         stop(sprintf("No column %s in %s.", req$column, req$table), call. = FALSE)
       }
-      sv_column_profile_json(sv_column_profile(card$data[[req$column]]))
+      sv_column_profile_json(lazy_or_preview(
+        card,
+        function() {
+          sv_lazy_column_profile(sv_lazy_tbl(card$source, con_env, card$id), req$column,
+                                 con_env = con_env)
+        },
+        function() sv_column_profile(card$data[[req$column]])
+      ))
     }, error = function(e) list(error = conditionMessage(e)))
     result$id <- req$id
     result$table <- req$table
@@ -267,7 +332,9 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     dispatch_message("sideview_column_profile", result)
   }, ignoreInit = FALSE)
 
-  # Export codebook: one row per column of every data-frame card.
+  # Export codebook: one row per column of every data-frame card. A lazy card is
+  # profiled in full; one that has lost its source is profiled from its preview
+  # rows and reports the table's true size.
   shiny::observeEvent(input$codebook_export, {
     tables <- Filter(function(c) is.data.frame(c$data), cards_by_name)
     result <- tryCatch({
@@ -276,7 +343,31 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
       if (is.null(path)) {
         list(cancelled = TRUE)
       } else {
-        sv_codebook(lapply(tables, `[[`, "data"), file = path)
+        # progress toasts, at most one per 250 ms and none for a quick codebook
+        last_toast <- proc.time()[["elapsed"]]
+        progress <- function(table, j, n_cols) {
+          now <- proc.time()[["elapsed"]]
+          if (now - last_toast < 0.25) return(invisible(NULL))
+          last_toast <<- now
+          send_toast(sprintf("Profiling %s: column %d of %d", table, j, n_cols))
+        }
+        inputs <- function() {
+          lapply(tables, function(card) {
+            if (card_full(card)) {
+              sv_lazy_tbl(card$source, con_env, card$id)
+            } else if (isTRUE(card$is_lazy) && length(card$dims) && !is.na(card$dims[1])) {
+              sv_preview_table(card$data, card$dims[1])
+            } else {
+              card$data
+            }
+          })
+        }
+        cb <- lazy_or_preview(
+          unname(tables),
+          function() sv_codebook(inputs(), progress = progress),
+          function() sv_codebook(inputs(), progress = progress)
+        )
+        sv_write_codebook(cb, path)
         list(path = normalizePath(path, winslash = "/", mustWork = FALSE), n_tables = length(tables))
       }
     }, error = function(e) list(error = conditionMessage(e)))

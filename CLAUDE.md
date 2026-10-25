@@ -39,7 +39,8 @@ rstudio bridge: R/rstudio.R
   `sideview_suggested_mappings`, `sideview_copilot_reply`, `sideview_inject_result`,
   `sideview_console_result`, `sideview_eval_result`, `sideview_rows`, `sideview_ai_status`,
   `sideview_join_diagnostics`, `sideview_column_profile`, `sideview_codebook_saved`,
-  `sideview_state_saved`, `sideview_state_loaded`.
+  `sideview_state_saved`, `sideview_state_loaded`,
+  `sideview_toast` (`{text, type}`: a notice from R, e.g. the lazy-to-preview fallback).
 - `sideview_code_update` carries `source`: `event` (echo of a client step; ignored), `auto_clean`
   (appended as a custom step), `copilot` (offered in the chat bubble only), `ai`/absent (replaces the pipeline).
 - Keep this list in sync when adding inputs/messages.

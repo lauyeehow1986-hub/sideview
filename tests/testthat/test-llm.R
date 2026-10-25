@@ -482,3 +482,18 @@ test_that("sv_build_chat_prompt formats conversation history with arbitrary turn
   expect_match(p$messages[[22]]$content, "Current question")
 })
 
+
+test_that("schema context states the true row count of a lazy card", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbWriteTable(con, "v", data.frame(id = 1:1000, x = seq(0.5, 500, length.out = 1000)))
+  ctx <- sv_build_schema_context(list(sv_normalize(dplyr::tbl(con, "v"), name = "v")))
+  expect_match(ctx, "1000 rows", fixed = TRUE)
+  expect_match(ctx, "(ranges from the first 50 rows)", fixed = TRUE)
+  # a data frame is described as before
+  ctx_df <- sv_build_schema_context(list(sv_normalize(data.frame(id = 1:3), name = "p")))
+  expect_match(ctx_df, "Dimensions: 3 rows x 1 columns", fixed = TRUE)
+  expect_false(grepl("ranges from the first", ctx_df, fixed = TRUE))
+})

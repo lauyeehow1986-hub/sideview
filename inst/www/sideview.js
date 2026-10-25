@@ -5074,6 +5074,12 @@ function sendToShiny(name, value) {
       }
     });
 
+    // A short notice from R (the preview fallback, codebook progress). showToast uses textContent.
+    global.Shiny.addCustomMessageHandler('sideview_toast', function (data) {
+      if (!data || !data.text) return;
+      self.showToast(String(data.text), data.type || 'info');
+    });
+
     // Codebook written by R (reply to codebook_export)
     global.Shiny.addCustomMessageHandler('sideview_codebook_saved', function (data) {
       if (!data || data.cancelled) return;

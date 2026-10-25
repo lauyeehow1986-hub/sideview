@@ -3,6 +3,17 @@
   if (is.null(x)) y else x
 }
 
+# The "Dimensions" line of a card. A lazy card reports the table's true row count;
+# its column ranges and levels still come from the preview rows.
+sv_schema_dimensions <- function(card, nr, nc) {
+  total <- if (isTRUE(card$is_lazy) && length(card$dims) >= 1L) card$dims[1] else NA
+  if (is.na(total) || total <= nr) {
+    return(sprintf("Dimensions: %d rows x %d columns", nr, nc))
+  }
+  sprintf("Dimensions: %s rows x %d columns (ranges from the first %d rows)",
+          format(total, scientific = FALSE, trim = TRUE), nc, nr)
+}
+
 #' Build a Privacy-Safe Schema Context from Sideview Cards
 #'
 #' Summarizes the metadata of sideview cards (table names, dimensions, column
@@ -52,7 +63,7 @@ sv_build_schema_context <- function(cards, max_categories = 5L) {
 
     lines <- c(
       sprintf("Table: %s (id: %s)", c_name, c_id),
-      sprintf("Dimensions: %d rows x %d columns", nr, nc),
+      sv_schema_dimensions(card, nr, nc),
       "Columns:"
     )
 

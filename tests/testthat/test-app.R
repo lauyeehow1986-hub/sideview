@@ -778,3 +778,208 @@ test_that("sideview toolbar renders Fullscreen button and accepts shorthand view
 
 
 
+
+# ---- lazy (duckdb / arrow) cards in the gadget server -------------------------------
+
+lazy_server_fixture <- function(env = parent.frame()) {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("DBI")
+  df <- data.frame(id = 1:1000, grp = rep(c("a", "b", "c", "d"), 250), stringsAsFactors = FALSE)
+  other <- data.frame(id = seq(1L, 1000L, by = 2L), score = 500:1)
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(suppressWarnings(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE)), envir = env)
+  DBI::dbWriteTable(con, "v", df)
+  DBI::dbWriteTable(con, "w", other)
+  list(
+    df = df, con = con,
+    v = sv_normalize(dplyr::tbl(con, "v"), name = "v"),
+    w = sv_normalize(dplyr::tbl(con, "w"), name = "w")
+  )
+}
+
+msgs_of <- function(session, type) {
+  Filter(function(m) identical(m$type, type), session$userData$custom_messages)
+}
+
+test_that("rows request uses the whole lazy table", {
+  fx <- lazy_server_fixture()
+  shiny::testServer(sideview_server(list(fx$v)), {
+    session$setInputs(sideview_rows_request = list(
+      card_id = fx$v$id, version = 1, offset = 0, limit = 10,
+      sort = list(col = "id", dir = "desc")
+    ))
+    m <- msgs_of(session, "sideview_rows")
+    expect_length(m, 1)
+    expect_equal(m[[1]]$message$total, 1000)
+    expect_identical(m[[1]]$message$columns$id[1], "1000")   # the true max, not the preview's 50
+    expect_length(msgs_of(session, "sideview_toast"), 0)
+  })
+})
+
+test_that("join and profile requests use the whole table", {
+  fx <- lazy_server_fixture()
+  shiny::testServer(sideview_server(list(fx$v, fx$w)), {
+    session$setInputs(join_diagnostics_request = list(
+      id = "j1", left = "v", right = "w",
+      by = list(list(left = "id", right = "id"))
+    ))
+    m <- msgs_of(session, "sideview_join_diagnostics")
+    expect_length(m, 1)
+    expect_identical(m[[1]]$message$id, "j1")
+    expect_equal(m[[1]]$message$n_x, 1000)
+    expect_equal(m[[1]]$message$n_y, 500)
+    expect_equal(m[[1]]$message$matched_x, 500)
+
+    session$setInputs(column_profile_request = list(id = "p1", table = "v", column = "id"))
+    p <- msgs_of(session, "sideview_column_profile")
+    expect_length(p, 1)
+    expect_equal(p[[1]]$message$n, 1000)
+    expect_equal(p[[1]]$message$stats$max, 1000)
+    expect_length(msgs_of(session, "sideview_toast"), 0)
+  })
+})
+
+test_that("codebook export profiles lazy tables in full", {
+  fx <- lazy_server_fixture()
+  path <- tempfile(fileext = ".csv")
+  withr::defer(unlink(path))
+  testthat::local_mocked_bindings(sv_choose_codebook_path = function() path)
+  shiny::testServer(sideview_server(list(fx$v)), {
+    session$setInputs(codebook_export = 1)
+    m <- msgs_of(session, "sideview_codebook_saved")
+    expect_length(m, 1)
+    expect_null(m[[1]]$message$error)
+    cb <- utils::read.csv(path, stringsAsFactors = FALSE)
+    expect_equal(cb$n, c(1000, 1000))
+    expect_equal(cb$rows_profiled, c(1000, 1000))
+    # the codebook leaves the session's connection open
+    session$setInputs(sideview_rows_request = list(card_id = fx$v$id, version = 1, offset = 0, limit = 5))
+    expect_equal(msgs_of(session, "sideview_rows")[[1]]$message$total, 1000)
+    # progress toasts depend on timing; a lost link must not be reported
+    lost <- Filter(function(m) grepl("Lost the link", m$message$text), msgs_of(session, "sideview_toast"))
+    expect_length(lost, 0)
+  })
+})
+
+test_that("codebook export of a preview-only lazy card reports the true size", {
+  fx <- lazy_server_fixture()
+  withr::local_options(sideview.use_duckdb = FALSE)
+  path <- tempfile(fileext = ".csv")
+  withr::defer(unlink(path))
+  testthat::local_mocked_bindings(sv_choose_codebook_path = function() path)
+  shiny::testServer(sideview_server(list(fx$v)), {
+    session$setInputs(codebook_export = 1)
+    cb <- utils::read.csv(path, stringsAsFactors = FALSE)
+    expect_equal(cb$n, c(1000, 1000))
+    expect_equal(cb$rows_profiled, c(50, 50))
+  })
+})
+
+test_that("codebook progress is sent as throttled toasts", {
+  fx <- lazy_server_fixture()
+  path <- tempfile(fileext = ".csv")
+  withr::defer(unlink(path))
+  real_codebook <- sv_codebook
+  fake <- function(..., progress = NULL, top_n = 5L, file = NULL) {
+    for (j in 1:3) progress("v", j, 3L)
+    Sys.sleep(0.3)
+    progress("v", 3L, 3L)
+    real_codebook(..., top_n = top_n)
+  }
+  testthat::local_mocked_bindings(sv_choose_codebook_path = function() path, sv_codebook = fake)
+  shiny::testServer(sideview_server(list(fx$v)), {
+    session$setInputs(codebook_export = 1)
+    t <- msgs_of(session, "sideview_toast")
+    expect_length(t, 1)   # three quick calls are swallowed, the one after 300 ms is sent
+    expect_identical(t[[1]]$message$text, "Profiling v: column 3 of 3")
+  })
+})
+
+test_that("a closed connection falls back to the preview once", {
+  fx <- lazy_server_fixture()
+  shiny::testServer(sideview_server(list(fx$v)), {
+    DBI::dbDisconnect(fx$con, shutdown = TRUE)
+    rows <- function(v) session$setInputs(sideview_rows_request = list(
+      card_id = fx$v$id, version = v, offset = 0, limit = 10
+    ))
+    rows(1)
+    rows(2)
+    m <- msgs_of(session, "sideview_rows")
+    expect_length(m, 2)
+    expect_equal(m[[1]]$message$total, 50)
+    expect_equal(m[[2]]$message$total, 50)
+    expect_null(m[[2]]$message$error)
+    t <- msgs_of(session, "sideview_toast")
+    expect_length(t, 1)
+    expect_identical(t[[1]]$message$text, "Lost the link to v; showing the first 50 rows.")
+    expect_identical(t[[1]]$message$type, "warning")
+
+    # the other requests also answer from the preview, without a second toast
+    session$setInputs(column_profile_request = list(id = "p1", table = "v", column = "id"))
+    p <- msgs_of(session, "sideview_column_profile")
+    expect_equal(p[[1]]$message$n, 50)
+    expect_length(msgs_of(session, "sideview_toast"), 1)
+  })
+})
+
+test_that("a failed join falls back to the preview with one toast per card", {
+  fx <- lazy_server_fixture()
+  shiny::testServer(sideview_server(list(fx$v, fx$w)), {
+    DBI::dbDisconnect(fx$con, shutdown = TRUE)
+    session$setInputs(join_diagnostics_request = list(
+      id = "j1", left = "v", right = "w", by = list(list(left = "id", right = "id"))
+    ))
+    m <- msgs_of(session, "sideview_join_diagnostics")
+    expect_length(m, 1)
+    expect_identical(m[[1]]$message$id, "j1")
+    expect_equal(m[[1]]$message$n_x, 50)
+    expect_length(msgs_of(session, "sideview_toast"), 2)
+  })
+})
+
+test_that("tables on different connections answer with an error and keep the link", {
+  fx <- lazy_server_fixture()
+  con2 <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con2, shutdown = TRUE))
+  DBI::dbWriteTable(con2, "z", data.frame(id = 1:10))
+  z <- sv_normalize(dplyr::tbl(con2, "z"), name = "z")
+  shiny::testServer(sideview_server(list(fx$v, z)), {
+    session$setInputs(join_diagnostics_request = list(
+      id = "j1", left = "v", right = "z", by = list(list(left = "id", right = "id"))
+    ))
+    m <- msgs_of(session, "sideview_join_diagnostics")
+    expect_match(m[[1]]$message$error, "different duckdb connections")
+    expect_length(msgs_of(session, "sideview_toast"), 0)
+    # the cards are still full: a rows request still sees every row
+    session$setInputs(sideview_rows_request = list(card_id = fx$v$id, version = 1, offset = 0, limit = 5))
+    expect_equal(msgs_of(session, "sideview_rows")[[1]]$message$total, 1000)
+  })
+})
+
+test_that("preview badge and attributes", {
+  fx <- lazy_server_fixture()
+  local({
+    withr::local_options(sideview.use_duckdb = FALSE)
+    html <- as.character(render_card_tag(fx$v))
+    expect_match(html, "First 50 of 1,000 rows", fixed = TRUE)
+    expect_match(html, "Install duckdb to check the whole table", fixed = TRUE)
+    expect_match(html, 'data-total-rows="50"', fixed = TRUE)
+    expect_match(html, 'data-table-rows="1000"', fixed = TRUE)
+    expect_match(html, 'data-rows-basis="preview"', fixed = TRUE)
+    expect_match(html, 'data-lazy="duckdb"', fixed = TRUE)
+  })
+  html <- as.character(render_card_tag(fx$v))
+  expect_match(html, 'data-total-rows="1000"', fixed = TRUE)
+  expect_match(html, 'data-rows-basis="full"', fixed = TRUE)
+  expect_match(html, 'data-code-ref="v"', fixed = TRUE)
+  expect_false(grepl("First 50 of", html, fixed = TRUE))
+  expect_false(grepl("Install duckdb", html, fixed = TRUE))
+
+  # a plain data frame keeps its badge and has no lazy attribute
+  plain <- as.character(render_card_tag(sv_normalize(data.frame(a = 1:3), name = "p")))
+  expect_false(grepl("data-lazy", plain, fixed = TRUE))
+  expect_match(plain, 'data-total-rows="3"', fixed = TRUE)
+  expect_match(plain, 'data-rows-basis="full"', fixed = TRUE)
+  expect_false(grepl("source", plain, fixed = TRUE))
+})

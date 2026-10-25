@@ -209,6 +209,19 @@ render_card_tag <- function(card, index = 1L) {
   } else {
     ""
   }
+
+  # A lazy card whose whole table the server can reach is "full"; otherwise the
+  # rows on the canvas are a preview of a larger table.
+  is_lazy <- isTRUE(card$is_lazy)
+  full <- sv_card_is_lazy(card)
+  n_preview <- if (is.data.frame(card$data)) nrow(card$data) else NA_integer_
+  n_table <- if (length(card$dims) >= 1L && !is.na(card$dims[1])) card$dims[1] else n_preview
+  preview_only <- is_lazy && !full
+  badge_title <- NULL
+  if (preview_only && !is.na(n_preview) && n_table > n_preview) {
+    dims_text <- sprintf("First %s of %s rows", fmt_n(n_preview), fmt_n(n_table))
+    if (!sv_has_duckdb()) badge_title <- "Install duckdb to check the whole table"
+  }
   
   # Header
   header_tag <- htmltools::tags$div(
@@ -217,7 +230,7 @@ render_card_tag <- function(card, index = 1L) {
       class = "sideview-card-title-group",
       htmltools::tags$span(class = "sideview-card-title", card_name),
       htmltools::tags$span(class = "sideview-badge sideview-badge-type", card_type),
-      if (nzchar(dims_text)) htmltools::tags$span(class = "sideview-badge", dims_text)
+      if (nzchar(dims_text)) htmltools::tags$span(class = "sideview-badge", title = badge_title, dims_text)
     ),
     htmltools::tags$div(
       class = "sideview-card-actions",
@@ -330,7 +343,11 @@ render_card_tag <- function(card, index = 1L) {
     id = card_id,
     `data-card-id` = card_id,
     `data-card-name` = card_name,
-    `data-total-rows` = if (is.data.frame(card$data)) nrow(card$data) else NULL,
+    `data-total-rows` = if (full && !is.na(n_table)) n_table else if (is.data.frame(card$data)) nrow(card$data) else NULL,
+    `data-table-rows` = if (!is.na(n_table)) n_table else NULL,
+    `data-lazy` = if (is_lazy) card$lazy_source else NULL,
+    `data-code-ref` = card$code_ref,
+    `data-rows-basis` = if (!is.data.frame(card$data)) NULL else if (preview_only) "preview" else "full",
     # No saved position: the engine flows these cards into a grid on load.
     `data-auto-place` = if (is.null(card$x) && is.null(card$y)) "true" else NULL,
     style = sprintf("left: %dpx; top: %dpx;", as.integer(initial_x), as.integer(initial_y)),
