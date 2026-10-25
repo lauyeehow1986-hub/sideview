@@ -72,28 +72,48 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
 
   card_full <- function(card) sv_card_is_lazy(card) && is.null(lazy_failed[[card$id]])
 
-  send_toast <- function(text, type = "info") {
-    dispatch_message("sideview_toast", list(text = text, type = type))
+  send_toast <- function(text, type = "info", id = NULL) {
+    msg <- list(text = text, type = type)
+    if (!is.null(id)) msg$id <- id
+    dispatch_message("sideview_toast", msg)
+  }
+
+  # Is the whole table of this card still reachable? A 0-row query is enough.
+  card_alive <- function(card) {
+    tryCatch({
+      dplyr::collect(utils::head(sv_lazy_tbl(card$source, con_env, card$id), 0L))
+      TRUE
+    }, error = function(e) FALSE)
   }
 
   # Run `f_lazy()` when `card` (or a list of cards) can be answered from the whole
-  # table, else `f_preview()`. A lazy request that fails marks the cards as
-  # preview-only, tells the user once per card, and answers from the preview.
-  # Errors that are about this request, not about the link, are passed on.
+  # table, else `f_preview()`. When a lazy request fails, each full card is probed:
+  # a card that no longer answers is marked preview-only and the user is told once.
+  # If every card still answers, the error is about the request itself (a bad
+  # filter, a missing column, tables on different connections), so it is passed on
+  # for the handler to report and nothing is marked.
   lazy_or_preview <- function(card, f_lazy, f_preview) {
     cards <- if (inherits(card, "sideview_card")) list(card) else card
     full <- Filter(card_full, cards)
     if (!length(full)) return(f_preview())
     tryCatch(f_lazy(), error = function(e) {
       if (inherits(e, c("sv_lazy_cross_con", "sv_lazy_not_duckdb"))) stop(e)
-      for (cd in full) {
+      full <- full[!duplicated(vapply(full, function(cd) cd$id, ""))]
+      dead <- Filter(function(cd) !card_alive(cd), full)
+      if (!length(dead)) stop(e)
+      for (cd in dead) {
         lazy_failed[[cd$id]] <- TRUE
         send_toast(
           sprintf("Lost the link to %s; showing the first %d rows.", cd$name, nrow(cd$data)),
           "warning"
         )
       }
-      f_preview()
+      # cards that still answer keep the whole table for this request too
+      if (length(Filter(card_full, cards))) {
+        tryCatch(f_lazy(), error = function(e2) f_preview())
+      } else {
+        f_preview()
+      }
     })
   }
 
@@ -290,9 +310,16 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
       sv_join_diagnostics_json(lazy_or_preview(
         list(cx, cy),
         function() {
+          # an Arrow card is joined from its cached tbl on the session connection, unless the
+          # other side is the user's own duckdb tbl: then it has to move to that connection
+          side <- function(card, other) {
+            if (!card_full(card)) return(card$data)
+            if (inherits(card$source, "tbl_duckdb_connection")) return(card$source)
+            if (card_full(other) && inherits(other$source, "tbl_duckdb_connection")) return(card$source)
+            sv_lazy_tbl(card$source, con_env, card$id)
+          }
           sv_lazy_join_diagnostics(
-            if (card_full(cx)) cx$source else cx$data,
-            if (card_full(cy)) cy$source else cy$data,
+            side(cx, cy), side(cy, cx),
             by = by_cols, x_name = req$left, y_name = req$right, con_env = con_env
           )
         },
@@ -349,7 +376,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
           now <- proc.time()[["elapsed"]]
           if (now - last_toast < 0.25) return(invisible(NULL))
           last_toast <<- now
-          send_toast(sprintf("Profiling %s: column %d of %d", table, j, n_cols))
+          send_toast(sprintf("Profiling %s: column %d of %d", table, j, n_cols), "info", "codebook-progress")
         }
         inputs <- function() {
           lapply(tables, function(card) {
@@ -362,11 +389,8 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
             }
           })
         }
-        cb <- lazy_or_preview(
-          unname(tables),
-          function() sv_codebook(inputs(), progress = progress),
-          function() sv_codebook(inputs(), progress = progress)
-        )
+        run <- function() sv_codebook(inputs(), progress = progress)
+        cb <- lazy_or_preview(unname(tables), run, run)
         sv_write_codebook(cb, path)
         list(path = normalizePath(path, winslash = "/", mustWork = FALSE), n_tables = length(tables))
       }

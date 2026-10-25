@@ -4899,11 +4899,8 @@ function sendToShiny(name, value) {
     }
   };
 
-  SideviewEngine.prototype.showToast = function (message, type) {
-    var toast = document.createElement('div');
-    toast.className = 'sideview-toast ' + (type ? 'sideview-toast-' + type : '');
-    toast.textContent = message;
-    toast.setAttribute('role', 'status');
+  // `key` (optional) names a toast that is updated in place instead of stacked, e.g. progress.
+  SideviewEngine.prototype.showToast = function (message, type, key) {
     var stack = this.container.querySelector('.sideview-toast-stack');
     if (!stack) {
       stack = document.createElement('div');
@@ -4911,15 +4908,34 @@ function sendToShiny(name, value) {
       stack.setAttribute('aria-live', 'polite');
       this.container.appendChild(stack);
     }
-    stack.appendChild(toast);
-    setTimeout(function () {
-      toast.classList.add('visible');
-    }, 10);
+    var toast = null;
+    if (key) {
+      var live = stack.querySelectorAll('.sideview-toast');
+      for (var i = 0; i < live.length; i++) {
+        if (live[i].getAttribute('data-toast-key') === String(key)) toast = live[i];
+      }
+    }
+    if (toast) {
+      clearTimeout(toast._hideTimer);
+      clearTimeout(toast._removeTimer);
+      toast.className = 'sideview-toast visible ' + (type ? 'sideview-toast-' + type : '');
+      toast.textContent = message;
+    } else {
+      toast = document.createElement('div');
+      toast.className = 'sideview-toast ' + (type ? 'sideview-toast-' + type : '');
+      toast.textContent = message;
+      toast.setAttribute('role', 'status');
+      if (key) toast.setAttribute('data-toast-key', String(key));
+      stack.appendChild(toast);
+      setTimeout(function () {
+        toast.classList.add('visible');
+      }, 10);
+    }
     // Errors carry a fix hint, so they stay up longer.
     var ttl = (type === 'danger' || type === 'warning') ? 9000 : 4500;
-    setTimeout(function () {
+    toast._hideTimer = setTimeout(function () {
       toast.classList.remove('visible');
-      setTimeout(function () { toast.remove(); }, 300);
+      toast._removeTimer = setTimeout(function () { toast.remove(); }, 300);
     }, ttl);
   };
 
@@ -5077,7 +5093,7 @@ function sendToShiny(name, value) {
     // A short notice from R (the preview fallback, codebook progress). showToast uses textContent.
     global.Shiny.addCustomMessageHandler('sideview_toast', function (data) {
       if (!data || !data.text) return;
-      self.showToast(String(data.text), data.type || 'info');
+      self.showToast(String(data.text), data.type || 'info', data.id);
     });
 
     // Codebook written by R (reply to codebook_export)

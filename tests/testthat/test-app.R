@@ -893,6 +893,7 @@ test_that("codebook progress is sent as throttled toasts", {
     t <- msgs_of(session, "sideview_toast")
     expect_length(t, 1)   # three quick calls are swallowed, the one after 300 ms is sent
     expect_identical(t[[1]]$message$text, "Profiling v: column 3 of 3")
+    expect_identical(t[[1]]$message$id, "codebook-progress")   # the browser updates one toast
   })
 })
 
@@ -935,6 +936,104 @@ test_that("a failed join falls back to the preview with one toast per card", {
     expect_identical(m[[1]]$message$id, "j1")
     expect_equal(m[[1]]$message$n_x, 50)
     expect_length(msgs_of(session, "sideview_toast"), 2)
+  })
+})
+
+test_that("a request-specific error is not a lost link", {
+  fx <- lazy_server_fixture()
+  shiny::testServer(sideview_server(list(fx$v)), {
+    session$setInputs(sideview_rows_request = list(
+      card_id = fx$v$id, version = 1, offset = 0, limit = 5,
+      filter = list(col = "id", op = "bogus", val = "1")
+    ))
+    m <- msgs_of(session, "sideview_rows")
+    expect_length(m, 1)
+    expect_match(m[[1]]$message$error, "Unknown filter operator")
+    expect_length(msgs_of(session, "sideview_toast"), 0)
+    # the card is still full
+    session$setInputs(sideview_rows_request = list(card_id = fx$v$id, version = 2, offset = 0, limit = 5))
+    expect_equal(msgs_of(session, "sideview_rows")[[2]]$message$total, 1000)
+    expect_length(msgs_of(session, "sideview_toast"), 0)
+  })
+})
+
+test_that("a join with one dead card marks only that card", {
+  skip_if_not_installed("arrow")
+  fx <- lazy_server_fixture()
+  con2 <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(suppressWarnings(try(DBI::dbDisconnect(con2, shutdown = TRUE), silent = TRUE)))
+  DBI::dbWriteTable(con2, "z", data.frame(id = 1:200, q = 1))
+  z <- sv_normalize(dplyr::tbl(con2, "z"), name = "z")
+  a <- sv_normalize(arrow::arrow_table(fx$df), name = "a")
+  shiny::testServer(sideview_server(list(a, z)), {
+    DBI::dbDisconnect(con2, shutdown = TRUE)
+    session$setInputs(join_diagnostics_request = list(
+      id = "j1", left = "a", right = "z", by = list(list(left = "id", right = "id"))
+    ))
+    m <- msgs_of(session, "sideview_join_diagnostics")
+    expect_null(m[[1]]$message$error)
+    expect_equal(m[[1]]$message$n_x, 1000)   # the healthy card keeps its whole table
+    expect_equal(m[[1]]$message$n_y, 50)     # the dead one answers from its preview
+    t <- msgs_of(session, "sideview_toast")
+    expect_length(t, 1)
+    expect_identical(t[[1]]$message$text, "Lost the link to z; showing the first 50 rows.")
+    session$setInputs(sideview_rows_request = list(card_id = a$id, version = 1, offset = 0, limit = 5))
+    session$setInputs(sideview_rows_request = list(card_id = z$id, version = 2, offset = 0, limit = 5))
+    r <- msgs_of(session, "sideview_rows")
+    expect_equal(r[[1]]$message$total, 1000)
+    expect_equal(r[[2]]$message$total, 50)
+    expect_length(msgs_of(session, "sideview_toast"), 1)
+  })
+})
+
+test_that("a self-join of a dead card sends one toast", {
+  fx <- lazy_server_fixture()
+  shiny::testServer(sideview_server(list(fx$v)), {
+    DBI::dbDisconnect(fx$con, shutdown = TRUE)
+    session$setInputs(join_diagnostics_request = list(
+      id = "j1", left = "v", right = "v", by = list(list(left = "id", right = "id"))
+    ))
+    expect_equal(msgs_of(session, "sideview_join_diagnostics")[[1]]$message$n_x, 50)
+    expect_length(msgs_of(session, "sideview_toast"), 1)
+  })
+})
+
+test_that("Arrow cards use the whole table", {
+  skip_if_not_installed("arrow")
+  fx <- lazy_server_fixture()
+  a <- sv_normalize(arrow::arrow_table(fx$df), name = "a")
+  b <- sv_normalize(arrow::arrow_table(data.frame(id = 1:300, k = 1)), name = "b")
+  shiny::testServer(sideview_server(list(a, b, fx$w)), {
+    session$setInputs(sideview_rows_request = list(
+      card_id = a$id, version = 1, offset = 0, limit = 5, sort = list(col = "id", dir = "desc")
+    ))
+    r <- msgs_of(session, "sideview_rows")[[1]]$message
+    expect_equal(r$total, 1000)
+    expect_identical(r$columns$id[1], "1000")
+
+    session$setInputs(column_profile_request = list(id = "p1", table = "a", column = "id"))
+    expect_equal(msgs_of(session, "sideview_column_profile")[[1]]$message$n, 1000)
+
+    # Arrow with Arrow, and Arrow with the user's own duckdb table
+    session$setInputs(join_diagnostics_request = list(
+      id = "j1", left = "a", right = "b", by = list(list(left = "id", right = "id"))
+    ))
+    session$setInputs(join_diagnostics_request = list(
+      id = "j2", left = "a", right = "w", by = list(list(left = "id", right = "id"))
+    ))
+    j <- msgs_of(session, "sideview_join_diagnostics")
+    expect_null(j[[1]]$message$error)
+    expect_equal(j[[1]]$message$n_x, 1000)
+    expect_equal(j[[1]]$message$n_y, 300)
+    expect_null(j[[2]]$message$error)
+    expect_equal(j[[2]]$message$n_y, 500)
+
+    # a bad request is not a lost link
+    session$setInputs(sideview_rows_request = list(
+      card_id = a$id, version = 2, offset = 0, limit = 5, filter = list(col = "id", op = "bogus", val = "1")
+    ))
+    expect_match(msgs_of(session, "sideview_rows")[[2]]$message$error, "Unknown filter operator")
+    expect_length(msgs_of(session, "sideview_toast"), 0)
   })
 })
 
