@@ -357,5 +357,341 @@ sv_lazy_rows_window <- function(tbl, req, order_cache = NULL) {
   )
 }
 
+#' Is this a table the join check should run on in the database?
+#'
+#' A dbplyr tbl, or anything Arrow can hand to duckdb. A data frame is not.
+#' @param x Any object.
+#' @return A single logical.
+#' @noRd
+sv_is_lazy_input <- function(x) {
+  inherits(x, c("tbl_lazy", "ArrowTabular", "Dataset", "arrow_dplyr_query"))
+}
+
+#' `"duckdb"`, `"arrow"` or `"df"`
+#' @noRd
+sv_lazy_origin <- function(x) {
+  if (inherits(x, "tbl_lazy")) {
+    "duckdb"
+  } else if (sv_is_lazy_input(x)) {
+    "arrow"
+  } else if (is.data.frame(x)) {
+    "df"
+  } else {
+    stop("`x` and `y` must be data frames, duckdb tables or Arrow tables.", call. = FALSE)
+  }
+}
+
+#' Column names of a table of any origin, without reading it
+#' @noRd
+sv_lazy_names <- function(x) {
+  if (inherits(x, "tbl_lazy")) dplyr::tbl_vars(x) else names(x)
+}
+
+#' Put two tables on one duckdb connection for a join check
+#'
+#' Follows the placement table of the design (section 4.4): the check runs on
+#' the connection of a duckdb side; with two duckdb sides on different
+#' connections it does not run; with no duckdb side it runs on the private
+#' connection of `con_env`. An Arrow side is handed over with `to_duckdb()`
+#' (dictionary columns decoded first), a data frame is registered under a
+#' temporary name. Only the columns in `cols_x` / `cols_y` are handed over, when
+#' given. Whatever was added to the connection is removed by `cleanup()`,
+#' which is also run here if placing the second table fails.
+#' @param x,y Data frames, duckdb tbls or Arrow objects.
+#' @param con_env An environment from [sv_lazy_env()].
+#' @param cols_x,cols_y Optional key columns of `x` / `y`.
+#' @return `list(x, y, cleanup)`: two tbls on one connection, and a function that
+#'   undoes the placement (safe to call twice).
+#' @noRd
+sv_lazy_place <- function(x, y, con_env, cols_x = NULL, cols_y = NULL) {
+  origin <- c(sv_lazy_origin(x), sv_lazy_origin(y))
+  for (src in list(x, y)) {
+    if (inherits(src, "tbl_lazy") && !inherits(src, "tbl_duckdb_connection")) {
+      rlang::abort("The join check needs duckdb tables; this table is on another database.",
+                   class = "sv_lazy_not_duckdb")
+    }
+  }
+  duck <- which(origin == "duckdb")
+  if (length(duck) == 2L && !identical(dbplyr::remote_con(x), dbplyr::remote_con(y))) {
+    rlang::abort("These tables are on different duckdb connections; join check unavailable.",
+                 class = "sv_lazy_cross_con")
+  }
+  con <- if (length(duck)) dbplyr::remote_con(list(x, y)[[duck[1]]]) else sv_lazy_con(con_env)
+
+  undo <- list()
+  cleanup <- function() {
+    todo <- rev(undo)
+    undo <<- list()
+    for (f in todo) f()
+    invisible(NULL)
+  }
+  ok <- FALSE
+  on.exit(if (!ok) cleanup(), add = TRUE)
+
+  one <- function(src, kind, cols) {
+    switch(kind,
+      duckdb = src,
+      arrow = {
+        if (!is.null(cols)) src <- dplyr::select(src, dplyr::all_of(unique(cols)))
+        tbl <- arrow::to_duckdb(sv_lazy_decode_dictionaries(src), con = con, auto_disconnect = FALSE)
+        name <- dbplyr::remote_name(tbl)
+        undo[[length(undo) + 1L]] <<- function() sv_lazy_detach_arrow(con, name)
+        tbl
+      },
+      df = {
+        if (!is.null(cols)) src <- src[unique(cols)]
+        a <- sv_lazy_attach(as.data.frame(src), con)
+        undo[[length(undo) + 1L]] <<- function() sv_lazy_detach(con, a$name)
+        a$tbl
+      }
+    )
+  }
+  tx <- one(x, origin[1], cols_x)
+  ty <- one(y, origin[2], cols_y)
+  ok <- TRUE
+  list(x = tx, y = ty, cleanup = cleanup)
+}
+
+#' Names of the key columns made by [sv_lazy_join_side()]
+#' @noRd
+sv_lazy_key_names <- function(n) paste0(".sv_k", seq_len(n))
+
+#' The text fix a join hint applies to a key, as an expression
+#' @noRd
+sv_lazy_fix_expr <- function(fix, e) {
+  txt <- rlang::expr(as.character(!!e))
+  switch(fix,
+    # duckdb's trim() strips spaces only; R's trimws() strips [ \t\r\n]
+    trim = rlang::expr(trim(!!txt, !!" \t\r\n")),
+    case = rlang::expr(tolower(!!txt)),
+    zeros = rlang::expr(regexp_replace(!!txt, "^0+([0-9])", "\\1")),
+    stop("Unknown fix: ", fix)
+  )
+}
+
+#' One side of a join check, with its key columns made comparable
+#'
+#' Adds `.sv_k1`, `.sv_k2`, ... (and `.sv_row` when `row` is true). A key is the
+#' column itself, with NaN turned into NULL because R counts NaN as missing and
+#' duckdb sorts it as a number. When the two sides differ in type, a key is
+#' compared as the text R would give it (`text`). A `fix` is applied to the
+#' character keys (`chr`) only, as the in-memory hints do.
+#' @param tbl A duckdb tbl.
+#' @param cols Key column names.
+#' @param kinds [sv_lazy_kind()] of each key column.
+#' @param text,chr Logical per key: compare as text, is a character key.
+#' @param fix `NULL`, `"trim"`, `"case"` or `"zeros"`.
+#' @param row Add `.sv_row`, the row number in table order.
+#' @noRd
+sv_lazy_join_side <- function(tbl, cols, kinds, text, chr, fix = NULL, row = FALSE) {
+  kn <- sv_lazy_key_names(length(cols))
+  if (row) tbl <- dplyr::mutate(tbl, .sv_row = row_number())
+  step1 <- Map(function(col, kind) {
+    s <- rlang::sym(col)
+    if (identical(kind, "double")) rlang::expr(if_else(is.nan(!!s), NA, !!s)) else s
+  }, cols, kinds)
+  names(step1) <- kn
+  tbl <- dplyr::mutate(tbl, !!!step1)
+  step2 <- list()
+  for (i in seq_along(cols)) {
+    k <- rlang::sym(kn[i])
+    e <- k
+    if (text[i]) e <- sv_lazy_text_expr(k, kinds[i])
+    if (!is.null(fix) && chr[i]) e <- sv_lazy_fix_expr(fix, e)
+    if (!identical(e, k)) step2[[kn[i]]] <- e
+  }
+  if (length(step2)) tbl <- dplyr::mutate(tbl, !!!step2)
+  tbl
+}
+
+#' Both sides joined key by key, one row per distinct key
+#'
+#' `nx` / `ny` are the rows each side has for the key (NULL when it has none);
+#' `fx` / `fy` the first row of that side, when it is named in `first`. `NA` matches `NA`
+#' (`IS NOT DISTINCT FROM`), as in the in-memory check.
+#' @noRd
+sv_lazy_join_keys <- function(sx, sy, nk, first = NULL) {
+  kn <- sv_lazy_key_names(nk)
+  ks <- rlang::syms(kn)
+  per_side <- function(side, n, f, which) {
+    aggs <- list(rlang::expr(n()))
+    names(aggs) <- n
+    if (which %in% first) aggs[[f]] <- rlang::expr(min(.sv_row, na.rm = TRUE))
+    dplyr::summarise(dplyr::group_by(side, !!!ks), !!!aggs, .groups = "drop")
+  }
+  dplyr::full_join(per_side(sx, "nx", "fx", "x"), per_side(sy, "ny", "fy", "y"), by = kn, na_matches = "na")
+}
+
+#' The scalars of the join arithmetic, from one SQL aggregate
+#'
+#' Never collects the per-key counts: they can be as large as the tables.
+#' @return The list [sv_join_counts_from()] takes.
+#' @noRd
+sv_lazy_join_scalars <- function(sx, sy, nk) {
+  j <- sv_lazy_join_keys(sx, sy, nk)
+  agg <- dplyr::summarise(
+    j,
+    distinct_x = sum(if_else(is.na(nx), 0, 1), na.rm = TRUE),
+    distinct_y = sum(if_else(is.na(ny), 0, 1), na.rm = TRUE),
+    distinct_matched = sum(if_else(is.na(nx) | is.na(ny), 0, 1), na.rm = TRUE),
+    matched_x = sum(if_else(is.na(ny), 0, nx), na.rm = TRUE),
+    matched_y = sum(if_else(is.na(nx), 0, ny), na.rm = TRUE),
+    dup_keys_x = sum(if_else(nx > 1, 1, 0), na.rm = TRUE),
+    dup_keys_y = sum(if_else(ny > 1, 1, 0), na.rm = TRUE),
+    many_x = sum(if_else(nx > 1 & !is.na(ny), 1, 0), na.rm = TRUE),
+    many_y = sum(if_else(ny > 1 & !is.na(nx), 1, 0), na.rm = TRUE),
+    inner = sum(if_else(is.na(nx) | is.na(ny), 0, as.double(nx) * as.double(ny)), na.rm = TRUE)
+  )
+  r <- dplyr::collect(agg)
+  # an empty join sums to NULL
+  num <- function(v) if (length(v) == 0L || is.na(v)) 0 else as.numeric(v)
+  count <- function(v) {
+    v <- num(v)
+    if (v <= .Machine$integer.max) as.integer(v) else v
+  }
+  list(
+    distinct_x = count(r$distinct_x), distinct_y = count(r$distinct_y),
+    distinct_matched = count(r$distinct_matched),
+    matched_x = count(r$matched_x), matched_y = count(r$matched_y),
+    dup_keys_x = count(r$dup_keys_x), dup_keys_y = count(r$dup_keys_y),
+    many_x = num(r$many_x) > 0, many_y = num(r$many_y) > 0,
+    inner = num(r$inner)
+  )
+}
+
+#' Row count and rows with a missing key, for one side
+#' @noRd
+sv_lazy_join_side_counts <- function(side, nk) {
+  any_na <- Reduce(function(a, b) rlang::expr((!!a) | (!!b)),
+                   lapply(rlang::syms(sv_lazy_key_names(nk)), function(s) rlang::expr(is.na(!!s))))
+  r <- dplyr::collect(dplyr::summarise(
+    side, n = n(), na = sum(if_else(!!any_na, 1, 0), na.rm = TRUE)
+  ))
+  list(n = as.numeric(r$n), na = if (is.na(r$na)) 0 else as.numeric(r$na))
+}
+
+#' Up to `n` keys of one side that the other side lacks, as the check shows them
+#'
+#' In order of first appearance (`LIMIT n`, ordered by the first row), which is
+#' the order `unique()` gives in R. `sx` / `sy` need `.sv_row` on the sampled side.
+#' @noRd
+sv_lazy_join_sample <- function(sx, sy, nk, side, n) {
+  kn <- sv_lazy_key_names(nk)
+  j <- sv_lazy_join_keys(sx, sy, nk, first = side)
+  j <- if (identical(side, "x")) {
+    dplyr::arrange(dplyr::filter(j, is.na(ny)), fx)
+  } else {
+    dplyr::arrange(dplyr::filter(j, is.na(nx)), fy)
+  }
+  keys <- dplyr::collect(utils::head(dplyr::select(j, dplyr::all_of(kn)), n))
+  if (!nrow(keys)) return(character(0))
+  sv_join_decode(sv_join_keys(keys))
+}
+
+#' Join check over the whole tables, run by duckdb
+#'
+#' The twin of [sv_join_diagnostics()]: the same reply for the same data. The
+#' tables are placed on one connection (see [sv_lazy_place()]); the counts come
+#' back as one aggregate row, plus at most `sample_n` unmatched keys per side.
+#' Whatever was added to a user's connection is removed again, also on error.
+#' @inheritParams sv_join_diagnostics
+#' @param con_env An environment from [sv_lazy_env()] holding the private
+#'   connection (used when neither side is a duckdb table). When omitted, a
+#'   private connection is opened for this call and closed again.
+#' @return An `sv_join_diagnostics` object.
+#' @noRd
+sv_lazy_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_name = "y",
+                                     con_env = sv_lazy_env()) {
+  own_env <- missing(con_env)
+  force(con_env)
+  if (own_env) on.exit(sv_lazy_close(con_env), add = TRUE)
+  if (!is.character(by) || !length(by)) stop("`by` must name at least one key column.", call. = FALSE)
+  by_x <- if (is.null(names(by))) by else ifelse(nzchar(names(by)), names(by), by)
+  by_y <- unname(by)
+  miss_x <- setdiff(by_x, sv_lazy_names(x))
+  miss_y <- setdiff(by_y, sv_lazy_names(y))
+  if (length(miss_x)) stop(sprintf("Not in %s: %s", x_name, paste(miss_x, collapse = ", ")), call. = FALSE)
+  if (length(miss_y)) stop(sprintf("Not in %s: %s", y_name, paste(miss_y, collapse = ", ")), call. = FALSE)
+
+  placed <- sv_lazy_place(x, y, con_env, cols_x = by_x, cols_y = by_y)
+  on.exit(placed$cleanup(), add = TRUE, after = FALSE)
+
+  # the R classes of the key columns, from 0 rows
+  zx <- dplyr::collect(utils::head(dplyr::select(placed$x, dplyr::all_of(unique(by_x))), 0L))
+  zy <- dplyr::collect(utils::head(dplyr::select(placed$y, dplyr::all_of(unique(by_y))), 0L))
+  type_issues <- sv_join_type_issues(zx, zy, by_x, by_y, x_name, y_name)
+  kind_x <- vapply(by_x, function(cn) sv_key_kind(zx[[cn]]), "")
+  kind_y <- vapply(by_y, function(cn) sv_key_kind(zy[[cn]]), "")
+  # keys of different types are compared as text, the way the in-memory check does
+  text <- kind_x != kind_y
+  lazy_x <- vapply(by_x, function(cn) sv_lazy_kind(zx[[cn]]), "")
+  lazy_y <- vapply(by_y, function(cn) sv_lazy_kind(zy[[cn]]), "")
+  nk <- length(by_x)
+  side_x <- function(fix = NULL, row = FALSE) {
+    sv_lazy_join_side(placed$x, by_x, lazy_x, text, kind_x == "character", fix, row)
+  }
+  side_y <- function(fix = NULL, row = FALSE) {
+    sv_lazy_join_side(placed$y, by_y, lazy_y, text, kind_y == "character", fix, row)
+  }
+
+  cnt_x <- sv_lazy_join_side_counts(side_x(), nk)
+  cnt_y <- sv_lazy_join_side_counts(side_y(), nk)
+  n_x <- cnt_x$n
+  n_y <- cnt_y$n
+  s <- sv_lazy_join_scalars(side_x(), side_y(), nk)
+  core <- sv_join_counts_from(s, n_x, n_y)
+
+  n_show <- max(0L, as.integer(sample_n))
+  unmatched_x <- if (n_show && s$distinct_x > s$distinct_matched) {
+    sv_lazy_join_sample(side_x(row = TRUE), side_y(), nk, "x", n_show)
+  } else {
+    character(0)
+  }
+  unmatched_y <- if (n_show && s$distinct_y > s$distinct_matched) {
+    sv_lazy_join_sample(side_x(), side_y(row = TRUE), nk, "y", n_show)
+  } else {
+    character(0)
+  }
+
+  out <- list(
+    by = data.frame(x = by_x, y = by_y, stringsAsFactors = FALSE),
+    n_x = as.integer(n_x), n_y = as.integer(n_y),
+    distinct_x = core$distinct_x, distinct_y = core$distinct_y,
+    distinct_matched = core$distinct_matched,
+    matched_x = core$matched_x, matched_y = core$matched_y,
+    match_rate_x = if (n_x) core$matched_x / n_x else 0,
+    match_rate_y = if (n_y) core$matched_y / n_y else 0,
+    na_x = as.integer(cnt_x$na), na_y = as.integer(cnt_y$na),
+    dup_keys_x = core$dup_keys_x, dup_keys_y = core$dup_keys_y,
+    relationship = core$relationship,
+    rows = core$rows,
+    unmatched_x = unmatched_x,
+    unmatched_y = unmatched_y,
+    type_issues = type_issues,
+    hints = list()
+  )
+
+  # Fixes that would match more rows, each measured on its own against the raw keys.
+  # Only character keys change, so a join without one has nothing to fix.
+  if ((core$matched_x < n_x || core$matched_y < n_y) &&
+      any(c(kind_x, kind_y) == "character")) {
+    labels <- c(trim = "trimming whitespace", case = "ignoring case", zeros = "dropping leading zeros")
+    for (nm in names(labels)) {
+      alt <- sv_lazy_join_scalars(side_x(nm), side_y(nm), nk)
+      extra_x <- alt$matched_x - core$matched_x
+      extra_y <- alt$matched_y - core$matched_y
+      if (extra_x > 0 || extra_y > 0) {
+        out$hints[[length(out$hints) + 1L]] <- list(
+          fix = nm, label = unname(labels[nm]), extra_x = extra_x, extra_y = extra_y
+        )
+      }
+    }
+  }
+
+  out$warnings <- sv_join_warnings(out, x_name, y_name)
+  out$status <- if (length(out$type_issues)) "error" else if (length(out$warnings)) "warn" else "ok"
+  structure(out, class = "sv_join_diagnostics")
+}
+
 # Names that only exist inside the SQL translation of the verbs above.
-utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc", "cast"))
+utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc", "cast", "nx", "ny", "fx", "fy", "trim", "regexp_replace"))

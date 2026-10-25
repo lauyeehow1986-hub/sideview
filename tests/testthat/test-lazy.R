@@ -412,3 +412,210 @@ test_that("lazy filter expressions are language objects that parse", {
   expect_true(!is.null(parse(text = paste(deparse(ex), collapse = " "))))
   expect_error(sv_lazy_filter_expr("a", "bogus", "1", FALSE), "Unknown filter operator")
 })
+
+# ---------------------------------------------------------------------------
+# Join check over the whole tables
+# ---------------------------------------------------------------------------
+
+join_scenarios <- function() {
+  list(
+    # whitespace / case / leading-zero near-misses, NA keys, duplicates, different key names
+    text = list(
+      x = data.frame(
+        pid = c("P1", " P1", "p1", "P1\t", "007", NA, "A", "A", "B", "0", "00", "Q", "R", "S", "T"),
+        v = seq_len(15), stringsAsFactors = FALSE
+      ),
+      y = data.frame(
+        patient_id = c("P1", "P1", "7", "A", "A", NA, NA, "C", "0", "12", "B", "0", "D"),
+        w = seq_len(13), stringsAsFactors = FALSE
+      ),
+      by = c(pid = "patient_id")
+    ),
+    # two-column key with NA in either part
+    pair = list(
+      x = data.frame(
+        site = c(1L, 1L, 2L, NA, NA, 3L, 3L, 4L, 5L, 6L, 7L, 8L),
+        code = c("a", "b", NA, "a", NA, "z", "z", "q", "r", "s", "t", "u"),
+        stringsAsFactors = FALSE
+      ),
+      y = data.frame(
+        site = c(1L, 1L, 1L, 2L, NA, NA, 3L, 9L),
+        code = c("a", "a", "b", NA, "a", "a", "z", "q"),
+        stringsAsFactors = FALSE
+      ),
+      by = c("site", "code")
+    ),
+    # doubles: NaN is missing in R, and duckdb sorts it high
+    dbl = list(
+      x = data.frame(k = c(1, 2.5, NaN, NA, Inf, 3, 3, 10, 11, 12, 13)),
+      y = data.frame(k = c(1, NaN, NA, NA, 3, 3, 2.5, -Inf, 99)),
+      by = "k"
+    ),
+    # a factor against text, with NA
+    fct = list(
+      x = data.frame(f = factor(c("u", "v", NA, "w", "u", "z")), stringsAsFactors = TRUE),
+      y = data.frame(f = c("u", "u", "w", NA, "q"), stringsAsFactors = FALSE),
+      by = "f"
+    ),
+    # a number against text: dplyr would refuse the join, the counts still agree
+    mixed = list(
+      x = data.frame(id = c(1L, 2L, 3L, 4L, 5L, NA)),
+      y = data.frame(id = c("1", "2", "2", "x", NA), stringsAsFactors = FALSE),
+      by = "id"
+    ),
+    # only one side is text, and trimming it would match the numbers
+    mixed_ws = list(
+      x = data.frame(id = c(" 1", "2 ", "3", NA), stringsAsFactors = FALSE),
+      y = data.frame(id = c(1, 2, 2, 4, NA)),
+      by = "id"
+    )
+  )
+}
+
+# one side as a data frame, a table on the shared duckdb connection, or an arrow table
+join_side <- function(df, how, con, name) {
+  switch(how,
+    df = df,
+    duckdb = {
+      DBI::dbWriteTable(con, name, df, overwrite = TRUE)
+      dplyr::tbl(con, name)
+    },
+    arrow = arrow::arrow_table(df)
+  )
+}
+
+join_combos <- function() {
+  g <- expand.grid(x = c("df", "duckdb", "arrow"), y = c("df", "duckdb", "arrow"),
+                   stringsAsFactors = FALSE)
+  g[!(g$x == "df" & g$y == "df"), ]
+}
+
+test_that("lazy join diagnostics equal in-memory", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  fx <- lazy_fixture()
+  combos <- join_combos()
+  scenarios <- join_scenarios()
+  for (nm in names(scenarios)) {
+    sc <- scenarios[[nm]]
+    want <- sv_join_diagnostics(sc$x, sc$y, sc$by, x_name = "left", y_name = "right")
+    for (i in seq_len(nrow(combos))) {
+      got <- sv_join_diagnostics(
+        join_side(sc$x, combos$x[i], fx$con, "jx"),
+        join_side(sc$y, combos$y[i], fx$con, "jy"),
+        sc$by, x_name = "left", y_name = "right"
+      )
+      expect_equal(got, want, tolerance = 1e-12,
+                   label = paste(nm, combos$x[i], "x", combos$y[i]))
+    }
+  }
+})
+
+test_that("the lazy join check finds the near-miss fixes and the samples", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("stringr")
+  fx <- lazy_fixture()
+  sc <- join_scenarios()$text
+  d <- sv_join_diagnostics(join_side(sc$x, "duckdb", fx$con, "jx"),
+                           join_side(sc$y, "df", fx$con, "jy"), sc$by, sample_n = 3L)
+  expect_setequal(vapply(d$hints, `[[`, "", "fix"), c("trim", "case", "zeros"))
+  expect_length(d$unmatched_x, 3L)
+  expect_equal(d, sv_join_diagnostics(sc$x, sc$y, sc$by, sample_n = 3L), tolerance = 1e-12)
+})
+
+test_that("the lazy join check handles zero-row and all-NA keys", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  fx <- lazy_fixture()
+  chr <- function(...) data.frame(k = c(...), stringsAsFactors = FALSE)
+  cases <- list(
+    zero_x = list(x = data.frame(k = character(0), v = integer(0), stringsAsFactors = FALSE),
+                  y = chr("a", "b", NA)),
+    zero_y = list(x = chr("a", NA), y = chr(NA)[0, , drop = FALSE]),
+    zero_both = list(x = chr(NA)[0, , drop = FALSE], y = chr(NA)[0, , drop = FALSE]),
+    all_na = list(x = chr(NA_character_, NA_character_),
+                  y = chr(NA_character_, NA_character_, NA_character_)),
+    all_na_num = list(x = data.frame(k = c(NA_real_, NaN)), y = data.frame(k = c(NaN, NA_real_, 1)))
+  )
+  combos <- join_combos()
+  for (nm in names(cases)) {
+    cs <- cases[[nm]]
+    want <- sv_join_diagnostics(cs$x, cs$y, "k")
+    for (i in seq_len(nrow(combos))) {
+      got <- sv_join_diagnostics(join_side(cs$x, combos$x[i], fx$con, "jx"),
+                                 join_side(cs$y, combos$y[i], fx$con, "jy"), "k")
+      expect_equal(got, want, tolerance = 1e-12, label = paste(nm, combos$x[i], "x", combos$y[i]))
+    }
+  }
+})
+
+test_that("tables on different connections give the message", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  fx1 <- lazy_fixture()
+  fx2 <- lazy_fixture()
+  msg <- "These tables are on different duckdb connections; join check unavailable."
+  err <- tryCatch(
+    sv_join_diagnostics(dplyr::tbl(fx1$con, "v"), dplyr::tbl(fx2$con, "v"), "id"),
+    error = function(e) e
+  )
+  expect_s3_class(err, "sv_lazy_cross_con")
+  expect_identical(conditionMessage(err), msg)
+  expect_error(sv_lazy_join_diagnostics(dplyr::tbl(fx1$con, "v"), dplyr::tbl(fx2$con, "v"), "id"),
+               class = "sv_lazy_cross_con")
+  # two tbls on the one connection are fine
+  d <- sv_join_diagnostics(dplyr::tbl(fx1$con, "v"), dplyr::tbl(fx1$con, "v"), "id")
+  expect_identical(d$matched_x, 120L)
+})
+
+test_that("a join check leaves the user's connection clean", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  fx <- lazy_fixture()
+  tbl_v <- dplyr::tbl(fx$con, "v")
+  before <- sort(DBI::dbListTables(fx$con))
+
+  d1 <- sv_join_diagnostics(tbl_v, arrow::arrow_table(fx$df), "id")
+  expect_identical(sort(DBI::dbListTables(fx$con)), before)
+  d2 <- sv_join_diagnostics(tbl_v, fx$df, "id")
+  expect_identical(sort(DBI::dbListTables(fx$con)), before)
+  d3 <- sv_join_diagnostics(fx$df, arrow::arrow_table(fx$df), "id")
+  d4 <- sv_join_diagnostics(arrow::arrow_table(fx$df), tbl_v, "id")
+  expect_identical(sort(DBI::dbListTables(fx$con)), before)
+  expect_equal(d1, d2, tolerance = 1e-12)
+  expect_equal(d3, d4, tolerance = 1e-12)
+
+  # a failure half way through still puts everything back
+  testthat::local_mocked_bindings(
+    sv_lazy_join_scalars = function(...) stop("boom")
+  )
+  expect_error(sv_join_diagnostics(tbl_v, arrow::arrow_table(fx$df), "id"), "boom")
+  expect_error(sv_join_diagnostics(tbl_v, fx$df, "id"), "boom")
+  expect_identical(sort(DBI::dbListTables(fx$con)), before)
+  # a missing column is refused before anything is placed
+  expect_error(sv_join_diagnostics(tbl_v, fx$df, "nope"), "Not in")
+  expect_identical(sort(DBI::dbListTables(fx$con)), before)
+})
+
+test_that("the join check on private tables leaves the shared connection empty", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  df <- data.frame(id = 1:5)
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  d <- sv_lazy_join_diagnostics(arrow::arrow_table(df), df, "id", con_env = e)
+  expect_identical(d$matched_x, 5L)
+  expect_false(is.null(e$con))
+  expect_length(DBI::dbListTables(e$con), 0L)
+  expect_true(sv_is_lazy_input(arrow::arrow_table(df)))
+  expect_false(sv_is_lazy_input(df))
+})

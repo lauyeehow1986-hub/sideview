@@ -7,7 +7,8 @@
 sv_join_diagnostics(x, y, by, sample_n = 5L, x_name = "x", y_name = "y")
 }
 \arguments{
-\item{x, y}{Data frames to join (\code{x} is the left table).}
+\item{x, y}{Tables to join (\code{x} is the left table): data frames, or duckdb
+tables and Arrow tables, which are checked in full without loading them into R.}
 
 \item{by}{Join columns: a character vector as in \code{\link[dplyr:mutate-joins]{dplyr::left_join()}}, where
 names are columns of \code{x} and values columns of \code{y}

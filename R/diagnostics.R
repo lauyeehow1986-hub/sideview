@@ -10,7 +10,8 @@
 #' The canvas runs this whenever two columns are connected and shows the result
 #' on the join step and in the Discrepancy tab.
 #'
-#' @param x,y Data frames to join (`x` is the left table).
+#' @param x,y Tables to join (`x` is the left table): data frames, or duckdb
+#'   tables and Arrow tables, which are checked in full without loading them into R.
 #' @param by Join columns: a character vector as in [dplyr::left_join()], where
 #'   names are columns of `x` and values columns of `y`
 #'   (`c("id", "site" = "site_code")`). Unnamed entries use the same name on
@@ -33,6 +34,9 @@
 #' visits <- data.frame(id = c(1, 1, 2, 5), visit = 1:4)
 #' sv_join_diagnostics(patients, visits, by = "id")
 sv_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_name = "y") {
+  if (sv_is_lazy_input(x) || sv_is_lazy_input(y)) {
+    return(sv_lazy_join_diagnostics(x, y, by, sample_n = sample_n, x_name = x_name, y_name = y_name))
+  }
   if (!is.data.frame(x) || !is.data.frame(y)) stop("`x` and `y` must be data frames.", call. = FALSE)
   if (!is.character(by) || !length(by)) stop("`by` must name at least one key column.", call. = FALSE)
   by_x <- if (is.null(names(by))) by else ifelse(nzchar(names(by)), names(by), by)
@@ -156,40 +160,56 @@ sv_join_counts <- function(kx, ky) {
   hit <- !is.na(in_y)
   cy_for_x <- integer(length(ux))
   cy_for_x[hit] <- cy[in_y[hit]]
-  inner <- sum(as.numeric(cx[hit]) * cy_for_x[hit])
-  matched_x <- sum(cx[hit])
   hit_y <- uy %in% ux
-  matched_y <- sum(cy[hit_y])
-  many_x <- any(cx[hit] > 1)
-  many_y <- any(cy_for_x[hit] > 1)
-  relationship <- if (!any(hit)) {
+  core <- sv_join_counts_from(
+    list(
+      distinct_x = length(ux), distinct_y = length(uy), distinct_matched = sum(hit),
+      matched_x = sum(cx[hit]), matched_y = sum(cy[hit_y]),
+      dup_keys_x = sum(cx > 1), dup_keys_y = sum(cy > 1),
+      many_x = any(cx[hit] > 1), many_y = any(cy_for_x[hit] > 1),
+      inner = sum(as.numeric(cx[hit]) * cy_for_x[hit])
+    ),
+    n_x = length(kx), n_y = length(ky)
+  )
+  core$unmatched_x <- ux[!hit]
+  core$unmatched_y <- uy[!hit_y]
+  core
+}
+
+# The join arithmetic, from a few scalars. Shared by the in-memory check (which
+# gets them from per-key counts in R) and the lazy check (which gets them from
+# one SQL aggregate), so both give the same numbers.
+#   distinct_x/y      distinct keys in each table
+#   distinct_matched  distinct keys present in both
+#   matched_x/y       rows whose key is in the other table
+#   dup_keys_x/y      keys that occur more than once
+#   many_x/y          some matched key repeats in x / in y
+#   inner             rows an inner join returns
+sv_join_counts_from <- function(s, n_x, n_y) {
+  relationship <- if (!s$distinct_matched) {
     "no matches"
-  } else if (many_x && many_y) {
+  } else if (s$many_x && s$many_y) {
     "many-to-many"
-  } else if (many_y) {
+  } else if (s$many_y) {
     "one-to-many"
-  } else if (many_x) {
+  } else if (s$many_x) {
     "many-to-one"
   } else {
     "one-to-one"
   }
-  n_x <- length(kx)
-  n_y <- length(ky)
   list(
-    distinct_x = length(ux), distinct_y = length(uy), distinct_matched = sum(hit),
-    matched_x = matched_x, matched_y = matched_y,
-    dup_keys_x = sum(cx > 1), dup_keys_y = sum(cy > 1),
+    distinct_x = s$distinct_x, distinct_y = s$distinct_y, distinct_matched = s$distinct_matched,
+    matched_x = s$matched_x, matched_y = s$matched_y,
+    dup_keys_x = s$dup_keys_x, dup_keys_y = s$dup_keys_y,
     relationship = relationship,
     rows = list(
-      left_join = inner + (n_x - matched_x),
-      inner_join = inner,
-      full_join = inner + (n_x - matched_x) + (n_y - matched_y),
-      right_join = inner + (n_y - matched_y),
-      semi_join = matched_x,
-      anti_join = n_x - matched_x
-    ),
-    unmatched_x = ux[!hit],
-    unmatched_y = uy[!hit_y]
+      left_join = s$inner + (n_x - s$matched_x),
+      inner_join = s$inner,
+      full_join = s$inner + (n_x - s$matched_x) + (n_y - s$matched_y),
+      right_join = s$inner + (n_y - s$matched_y),
+      semi_join = s$matched_x,
+      anti_join = n_x - s$matched_x
+    )
   )
 }
 
