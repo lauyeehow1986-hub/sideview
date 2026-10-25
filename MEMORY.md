@@ -56,7 +56,20 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 | 43 | Codegen | R-side `sv_code_recode()` and `sv_auto_clean_rules()` emit `dplyr::case_match()`, deprecated in dplyr 1.2.0 (installed: 1.2.1). The new JS pipeline already uses `case_when(..., .default = col)` | fixed (Phase 4.1b) |
 | 44 | Widget | A saved/embedded widget shows the R-only buttons (Insert Script, Run & Exit, Run in R, Run Console); Insert Script toasts "Code inserted" though nothing happened | fixed (Phase 4.4b) |
 
+## Next release (0.4.0), agreed 2026-10-25 after the Gemini review
+Each sub-project gets its own spec, plan and build, in this order:
+1. **Full data for arrow/duckdb cards** (in design): duckdb runs sort/filter, join check, inspector and
+   codebook on the whole table; generated code stays lazy and uses `collect()`.
+2. **Join rules**: `relationship` / `unmatched` arguments from the join check; date-window and
+   nearest-match joins (`join_by()` with `between()` / `closest()`), with R and JS join-check twins.
+3. **`sideviewProxy()`**: update a `sideviewOutput()` canvas from server code in the user's own Shiny app
+   (add/remove/replace cards, set state, read the pipeline). Wanted by the user.
+4. **Small items**: `save_sideview()` row cap and message, Positron check plus a `viewer = "dialog"`
+   fallback, workspace-version warning and migration slot, r-universe.
+
 ## Backlog (future rounds, not yet scheduled)
+- **CDISC / pharmaverse support** (later stage, after 0.4.0 is solid; requested 2026-10-25, do not drop):
+  recognise `USUBJID` / `STUDYID` as join keys, show SDTM/ADaM domain labels (DM, AE, LB, ADSL, ...).
 - Table version diff by key (data-lock comparisons between dataset versions).
 - Validation rules (ranges, allowed values, ID uniqueness) exporting `pointblank`-style checks.
 - PHI/PII column tagging that excludes tagged columns from the LLM schema context.
