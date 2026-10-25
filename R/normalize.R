@@ -474,9 +474,10 @@ sv_normalize.duckdb_connection <- function(x, name = NULL, id = NULL, expr = NUL
       display_name <- if (!is.null(name) && nzchar(name)) name else tbl_name
       card <- sv_normalize(tbl_obj, name = display_name, id = id, ...)
       card$source <- tbl_obj
-      card$code_ref <- sprintf('dplyr::tbl(%s, "%s")',
+      # the name as an R string literal: a quote or backslash in it must still parse
+      card$code_ref <- sprintf('dplyr::tbl(%s, %s)',
                                if (is.null(expr) || !nzchar(expr)) card$name else expr,
-                               tbl_name)
+                               encodeString(tbl_name, quote = '"'))
       return(card)
     }
   }

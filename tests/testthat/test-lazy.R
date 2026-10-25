@@ -57,6 +57,15 @@ test_that("a whole connection gets a tbl() code_ref", {
   # the argument expression is passed in by the callers
   card2 <- sv_normalize(con, name = "x", expr = "db$con")
   expect_identical(card2$code_ref, 'dplyr::tbl(db$con, "v")')
+
+  # a table name with a quote and a backslash is written as an R string that parses
+  odd <- "we\"ird\\name"
+  DBI::dbWriteTable(con, odd, data.frame(a = 1:3))
+  card3 <- sv_normalize(con, name = odd, expr = "con")
+  expect_identical(card3$code_ref, 'dplyr::tbl(con, "we\\"ird\\\\name")')
+  call <- parse(text = card3$code_ref)[[1]]
+  expect_identical(call[[3]], odd)
+  expect_identical(nrow(dplyr::collect(eval(call))), 3L)
 })
 
 test_that("source is never serialised", {
