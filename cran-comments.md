@@ -14,7 +14,6 @@ does not create it.
 
 * local Windows 11, R 4.5.2: `R CMD check --as-cran`
 * win-builder: R-devel and R-release
-* mac-builder: R-release
 * GitHub Actions (`--as-cran`, `NOT_CRAN=false`): Ubuntu R-devel, R-release and
   R-oldrel; macOS and Windows R-release
 
