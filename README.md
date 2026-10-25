@@ -1,7 +1,7 @@
 # sideview: Multi-Table 2D Infinite Canvas for R <img src="man/figures/logo.png" align="right" height="150" alt="sideview hex logo" />
 
 <!-- badges: start -->
-[![R-CMD-check](https://img.shields.io/badge/R--CMD--check-passing-brightgreen.svg)](https://github.com/lauyeehow1986-hub/sideview)
+[![R-CMD-check](https://github.com/lauyeehow1986-hub/sideview/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/lauyeehow1986-hub/sideview/actions/workflows/R-CMD-check.yaml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
 <!-- badges: end -->
