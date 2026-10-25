@@ -143,21 +143,94 @@ sv_lazy_decode_dictionaries <- function(source) {
 #'
 #' A duckdb tbl is returned as is. An arrow object is handed to duckdb on the
 #' private connection, zero-copy except for its dictionary columns (decoded by
-#' `sv_lazy_decode_dictionaries()`), and cached under `key` when given. The time
-#' zones of its timestamp columns, which duckdb does not keep, travel with the
-#' tbl as its `sv_tz` attribute (see `sv_lazy_zones()`).
+#' `sv_lazy_decode_dictionaries()`), and cached under `key` when given. What
+#' duckdb does not keep travels with the tbl as attributes: the time zones of
+#' its timestamp columns as `sv_tz` (see `sv_lazy_zones()`), and the factor
+#' columns, with their levels, as `sv_factors` (see `sv_lazy_factors()`).
 #' @param source A `tbl_duckdb_connection` or an Arrow table / dataset.
 #' @param con_env An environment from `sv_lazy_env()`.
 #' @param key Optional cache key (usually the card name).
+#' @param levels Read the levels of the factor columns too (for sorting and
+#'   comparing them by level). `FALSE` records only which columns are factors.
 #' @noRd
-sv_lazy_tbl <- function(source, con_env, key = NULL) {
+sv_lazy_tbl <- function(source, con_env, key = NULL, levels = TRUE) {
   if (inherits(source, "tbl_duckdb_connection")) return(source)
   if (!is.null(key) && !is.null(con_env$tbls[[key]])) return(con_env$tbls[[key]])
   tbl <- arrow::to_duckdb(sv_lazy_decode_dictionaries(source),
                           con = sv_lazy_con(con_env), auto_disconnect = FALSE)
   tbl <- sv_lazy_with_zones(tbl, sv_lazy_zones(source))
+  factors <- sv_lazy_factors(source, levels = levels)
+  if (length(factors)) attr(tbl, "sv_factors") <- factors
   if (!is.null(key)) con_env$tbls[[key]] <- tbl
   tbl
+}
+
+#' The factor (dictionary) columns of an Arrow source
+#'
+#' duckdb gets a dictionary column decoded to its values, so what made it a
+#' factor is kept here: whether it is ordered (from the schema, no scan) and its
+#' levels, in the order `as.data.frame()` gives them (the dictionaries of the
+#' chunks, in order, without repeats). A Table or RecordBatch holds its
+#' dictionaries; a Dataset or a query is read batch by batch for them, the
+#' values staying in Arrow.
+#' @param source An Arrow Table, RecordBatch, Dataset or query.
+#' @param levels Read the levels (else `levels` is `NULL`).
+#' @return A named list, one `list(ordered, levels)` per dictionary column;
+#'   empty when there is none.
+#' @noRd
+sv_lazy_factors <- function(source, levels = TRUE) {
+  fields <- tryCatch(arrow::schema(source)$fields, error = function(e) list())
+  dict <- Filter(function(f) inherits(f$type, "DictionaryType"), fields)
+  if (!length(dict)) return(list())
+  nms <- vapply(dict, function(f) f$name, "")
+  lv <- if (isTRUE(levels)) tryCatch(sv_lazy_dictionary_levels(source, nms), error = function(e) NULL)
+  out <- lapply(seq_along(dict), function(i) {
+    list(ordered = isTRUE(dict[[i]]$type$ordered), levels = lv[[nms[i]]])
+  })
+  names(out) <- nms
+  out
+}
+
+#' The levels of dictionary columns, without decoding them
+#' @noRd
+sv_lazy_dictionary_levels <- function(source, cols) {
+  lv <- stats::setNames(vector("list", length(cols)), cols)
+  add <- function(cn, arr) {
+    v <- arr$dictionary()$as_vector()
+    lv[[cn]] <<- if (is.null(lv[[cn]])) v else unique(c(lv[[cn]], v))
+  }
+  if (inherits(source, "ArrowTabular")) {
+    for (cn in cols) {
+      a <- source[[cn]]
+      for (ch in if (inherits(a, "ChunkedArray")) a$chunks else list(a)) add(cn, ch)
+    }
+  } else {
+    reader <- arrow::Scanner$create(dplyr::select(source, dplyr::all_of(cols)))$ToRecordBatchReader()
+    while (!is.null(b <- reader$read_next_batch())) for (cn in cols) add(cn, b[[cn]])
+  }
+  lv
+}
+
+#' The factor information of one column of a lazy tbl
+#'
+#' From the `sv_factors` attribute (an Arrow dictionary), else from the 0-row
+#' sample (a duckdb ENUM comes back as a factor; it has no order).
+#' @param factors The `sv_factors` attribute, or `NULL`.
+#' @param col Column name.
+#' @param zero_col The column of a 0-row `collect()`.
+#' @return `list(ordered, levels)` or `NULL` for a column that is not a factor.
+#' @noRd
+sv_lazy_factor_of <- function(factors, col, zero_col) {
+  if (!is.null(factors[[col]])) return(factors[[col]])
+  if (is.factor(zero_col)) return(list(ordered = is.ordered(zero_col), levels = levels(zero_col)))
+  NULL
+}
+
+#' The level number of a factor column, as an expression (`NULL` for no level)
+#' @noRd
+sv_lazy_level_expr <- function(sym, lv) {
+  branches <- lapply(seq_along(lv), function(i) rlang::expr(!!sym == !!lv[[i]] ~ !!i))
+  rlang::expr(case_when(!!!branches))
 }
 
 # Counts temporary table names; unique within a process, so within a connection.
@@ -227,8 +300,9 @@ sv_lazy_with_zones <- function(tbl, zones) {
 
 #' The zone to show a POSIXct column in
 #'
-#' The zone recorded for it, else UTC: duckdb hands instants back as UTC, and a
-#' duckdb TIMESTAMPTZ has no stored zone.
+#' The zone recorded for it (from the Arrow schema, see `sv_lazy_zones()`), else
+#' UTC: duckdb hands instants back as UTC, and without the ICU extension (which an
+#' air-gapped duckdb build lacks) it cannot tell us another zone.
 #' @noRd
 sv_lazy_zone_for <- function(zones, col) {
   tz <- if (length(zones) && col %in% names(zones)) unname(zones[col])[1] else NA_character_
@@ -409,17 +483,48 @@ sv_lazy_text_expr <- function(sym, kind, tz = NULL, tz_range = NULL) {
 #'   matches the wall-clock text of that zone, and the other operators compare the
 #'   instant with the value read by `as.POSIXct()`, as R does.
 #' @param tz_range Optional `c(min, max)` of the column in microseconds.
+#' @param date Is the column a Date? R reads the value with `as.Date()`; a value
+#'   it cannot read matches nothing, whatever the operator.
+#' @param fct For a factor column, `list(ordered, levels)` (see
+#'   `sv_lazy_factor_of()`). R compares a factor by level only when it is ordered;
+#'   `>` and the like on an unordered factor match nothing.
 #' @return A language object for `dplyr::filter()`.
 #' @noRd
-sv_lazy_filter_expr <- function(col, op, value, numeric = FALSE, kind = NULL, tz = NULL, tz_range = NULL) {
+sv_lazy_filter_expr <- function(col, op, value, numeric = FALSE, kind = NULL, tz = NULL, tz_range = NULL,
+                                date = FALSE, fct = NULL) {
   kind <- kind %||% (if (isTRUE(numeric)) "other" else "character")
   double <- identical(kind, "double")
   value <- as.character(value)
   num_ok <- isTRUE(numeric) && !is.na(suppressWarnings(as.numeric(value)))
   sym <- rlang::sym(col)
+  ops <- c("equals", "not_equals", "gt", "gte", "lt", "lte")
+  if (op != "contains" && !op %in% ops) stop("Unknown filter operator: ", op)
   if (!is.null(tz) && op != "contains") {
-    if (!op %in% c("equals", "not_equals", "gt", "gte", "lt", "lte")) stop("Unknown filter operator: ", op)
     return(sv_lazy_tz_cmp_expr(sym, op, value))
+  }
+  rel <- function(lhs, rhs) {
+    switch(op,
+      equals = rlang::expr(!!lhs == !!rhs), not_equals = rlang::expr(!!lhs != !!rhs),
+      gt = rlang::expr(!!lhs > !!rhs), gte = rlang::expr(!!lhs >= !!rhs),
+      lt = rlang::expr(!!lhs < !!rhs), lte = rlang::expr(!!lhs <= !!rhs)
+    )
+  }
+  if (isTRUE(date) && op != "contains") {
+    # R compares a Date with as.Date(value): an error or NA there keeps no row
+    d <- tryCatch(as.Date(value), error = function(e) NULL)
+    if (is.null(d) || length(d) != 1L || is.na(d)) return(rlang::expr(FALSE))
+    return(rel(sym, rlang::expr(as.Date(!!format(d, "%Y-%m-%d")))))
+  }
+  if (identical(kind, "logical") && op != "contains") {
+    # R compares a logical with a string as the text "TRUE" / "FALSE" (duckdb would
+    # cast "yes" or "t" to TRUE)
+    return(rel(sv_lazy_text_expr(sym, "logical"), value))
+  }
+  if (!is.null(fct) && op %in% c("gt", "gte", "lt", "lte")) {
+    if (!isTRUE(fct$ordered) || is.null(fct$levels)) return(rlang::expr(FALSE))
+    pos <- match(value, as.character(fct$levels))
+    if (is.na(pos)) return(rlang::expr(FALSE))
+    return(rel(sv_lazy_level_expr(sym, fct$levels), pos))
   }
   # a numeric column with a non-numeric value compares as text, as R would
   lhs <- if (isTRUE(numeric) && !num_ok) rlang::expr(as.character(!!sym)) else sym
@@ -447,24 +552,29 @@ sv_lazy_filter_expr <- function(col, op, value, numeric = FALSE, kind = NULL, tz
 #'
 #' The twin of `sv_rows_window()`: the same request, the same reply, the same
 #' clamping, but sorted, filtered and paged by the database. Strings sort
-#' bytewise (as `arrange()` does), `NA` sorts last in both directions, and
-#' ties keep the table's own row order. Only the requested window is collected.
+#' bytewise (as `arrange()` does), a factor by its levels, `NA` sorts last in
+#' both directions, and ties keep the table's own row order. Only the requested
+#' window is collected.
+#'
+#' Each request reads only what its window needs: with no sort and no filter the
+#' scan stops after the window (`LIMIT`); a sorted window is a top-N
+#' (`ORDER BY ... LIMIT ... OFFSET`), which duckdb runs with a heap rather than a
+#' full sort; a filtered one is paged with `LIMIT ... OFFSET`. The row count is
+#' taken once per filter and kept in `order_cache`.
 #' @param tbl A duckdb tbl (see `sv_lazy_tbl()`).
 #' @inheritParams sv_rows_window
 #' @return The same list as `sv_rows_window()`.
 #' @noRd
 sv_lazy_rows_window <- function(tbl, req, order_cache = NULL) {
-  # read before any verb: dplyr drops the attribute
+  # read before any verb: dplyr drops the attributes
   zones <- attr(tbl, "sv_tz")
-  spec_key <- paste(
-    unlist(req$sort %||% list()), "|", unlist(req$filter %||% list()),
-    collapse = "\u001f"
-  )
+  factors <- attr(tbl, "sv_factors")
+  # the row count depends on the filter only, so a new sort reuses it
+  count_key <- paste(unlist(req$filter %||% list()), collapse = "\u001f")
   # 0 rows: the column classes and names, nothing else
   zero <- dplyr::collect(utils::head(tbl, 0L))
   cols <- names(zero)
-  # The zone of each POSIXct column: the one Arrow had, else UTC (duckdb hands
-  # back UTC instants, and a TIMESTAMPTZ of a duckdb table has no stored zone).
+  # The zone of each POSIXct column: the one Arrow had, else UTC (see sv_lazy_zone_for()).
   zone_of <- function(col) {
     if (inherits(zero[[col]], "POSIXct")) sv_lazy_zone_for(zones, col) else NULL
   }
@@ -472,72 +582,76 @@ sv_lazy_rows_window <- function(tbl, req, order_cache = NULL) {
   keep <- NULL
   filter <- req$filter
   if (!is.null(filter) && !is.null(filter$col) && filter$col %in% cols) {
+    fcol <- zero[[filter$col]]
     keep <- sv_lazy_filter_expr(
       filter$col, filter$op %||% "equals", filter$val %||% "",
-      numeric = is.numeric(zero[[filter$col]]),
-      kind = sv_lazy_kind(zero[[filter$col]]),
+      numeric = is.numeric(fcol),
+      kind = sv_lazy_kind(fcol),
       tz = zone_of(filter$col),
       tz_range = if (identical(filter$op %||% "equals", "contains") && !is.null(zone_of(filter$col))) {
         sv_lazy_us_range(tbl, filter$col)
-      }
+      },
+      date = inherits(fcol, "Date"),
+      fct = sv_lazy_factor_of(factors, filter$col, fcol)
     )
   }
   sort <- req$sort
   has_sort <- !is.null(sort) && !is.null(sort$col) && sort$col %in% cols &&
     (sort$dir %||% "none") %in% c("asc", "desc")
 
-  # row ids assume duckdb's default preserve_insertion_order = true (ROW_NUMBER() OVER ()
-  # then numbers rows in table order)
-  numbered <- dplyr::mutate(tbl, .sv_row = row_number())
-  if (!is.null(keep)) numbered <- dplyr::filter(numbered, !!keep)
-
   total <- NULL
-  if (!is.null(order_cache) && identical(order_cache$key, spec_key)) total <- order_cache$total
+  if (!is.null(order_cache) && identical(order_cache$key, count_key)) total <- order_cache$total
   if (is.null(total)) {
-    total <- as.integer(dplyr::pull(dplyr::count(numbered), "n"))
+    counted <- if (is.null(keep)) tbl else dplyr::filter(tbl, !!keep)
+    # a double past the integer range, as count() gives
+    total <- sv_lazy_count(dplyr::pull(dplyr::count(counted), "n"))
     if (!is.null(order_cache)) {
-      order_cache$key <- spec_key
+      order_cache$key <- count_key
       order_cache$total <- total
     }
   }
 
-  # Sorting: dbplyr's window_order() takes bare columns only, so two helper
-  # columns carry the rules of dplyr::arrange() whatever the database's own
-  # defaults are: missing values (and NaN, which R treats as missing) go last in
-  # both directions, and the key is NULL for them so they tie by row order.
-  keys <- list()
-  if (has_sort) {
-    sym <- rlang::sym(sort$col)
-    # plain doubles only: a Date or POSIXct is a double in R, but has no NaN
-    is_missing <- if (sv_lazy_kind(zero[[sort$col]]) == "double") {
-      rlang::expr(is.na(!!sym) | isnan(!!sym))
-    } else {
-      rlang::expr(is.na(!!sym))
-    }
-    numbered <- dplyr::mutate(
-      numbered,
-      .sv_na = !!is_missing,
-      .sv_key = if_else(.sv_na, NA, !!sym)
-    )
-    key <- rlang::sym(".sv_key")
-    keys <- list(
-      rlang::sym(".sv_na"),
-      if (identical(sort$dir, "desc")) rlang::expr(desc(!!key)) else key
-    )
-  }
-
-  offset <- max(0L, as.integer(req$offset %||% 0L))
+  offset <- sv_lazy_count(max(0, floor(as.numeric(req$offset %||% 0L))))
   limit <- max(1L, min(2000L, as.integer(req$limit %||% 200L)))
 
   if (total <= offset) {
     win <- zero
     win$.sv_row <- integer(0)
+  } else if (is.null(keep) && !has_sort) {
+    # rows offset + 1 to offset + limit in table order: the scan stops after them
+    first <- dplyr::mutate(utils::head(tbl, offset + limit), .sv_row = row_number())
+    win <- dplyr::collect(dplyr::filter(first, .sv_row > !!offset))
   } else {
-    ranked <- dbplyr::window_order(numbered, !!!keys, .sv_row)
-    ranked <- dplyr::mutate(ranked, .sv_rank = row_number())
-    ranked <- dplyr::filter(ranked, .sv_rank > !!offset, .sv_rank <= !!(offset + limit))
-    ranked <- dplyr::arrange(ranked, .sv_rank)
-    win <- dplyr::collect(ranked)
+    # row ids assume duckdb's default preserve_insertion_order = true (ROW_NUMBER() OVER ()
+    # then numbers rows in table order, and a filter keeps that order)
+    numbered <- dplyr::mutate(tbl, .sv_row = row_number())
+    if (!is.null(keep)) numbered <- dplyr::filter(numbered, !!keep)
+    q <- function(x) as.character(DBI::dbQuoteIdentifier(dbplyr::remote_con(tbl), x))
+    # table order (a top-N on the row number, which also keeps a filtered window stable)
+    order <- q(".sv_row")
+    if (has_sort) {
+      # Two helper columns carry the rules of dplyr::arrange() whatever the
+      # database's own defaults are: missing values (and NaN, which R treats as
+      # missing) go last in both directions, and the key is NULL for them so they
+      # tie by row order. A factor sorts by its levels, as order() does.
+      sym <- rlang::sym(sort$col)
+      scol <- zero[[sort$col]]
+      # plain doubles only: a Date or POSIXct is a double in R, but has no NaN
+      is_missing <- if (sv_lazy_kind(scol) == "double") {
+        rlang::expr(is.na(!!sym) | isnan(!!sym))
+      } else {
+        rlang::expr(is.na(!!sym))
+      }
+      fct <- sv_lazy_factor_of(factors, sort$col, scol)
+      # levels already in byte order sort the same as the text (no CASE needed)
+      by_level <- !is.null(fct) && length(fct$levels) &&
+        !identical(as.character(fct$levels), base::sort(as.character(fct$levels), method = "radix"))
+      key <- if (by_level) sv_lazy_level_expr(sym, fct$levels) else sym
+      numbered <- dplyr::mutate(numbered, .sv_na = !!is_missing, .sv_key = if_else(.sv_na, NA, !!key))
+      order <- c(q(".sv_na"), paste(q(".sv_key"), if (identical(sort$dir, "desc")) "DESC" else "ASC"),
+                 order)
+    }
+    win <- sv_lazy_slice(numbered, offset, limit, order)
   }
   # show each instant in its own zone, as the in-memory window does
   for (cn in cols) {
@@ -545,12 +659,32 @@ sv_lazy_rows_window <- function(tbl, req, order_cache = NULL) {
     if (!is.null(tz)) attr(win[[cn]], "tzone") <- tz
   }
 
+  ids <- as.numeric(win$.sv_row) - 1
   list(
     offset = offset,
     total = total,
-    row_ids = as.integer(win$.sv_row - 1L),
+    row_ids = if (all(ids <= .Machine$integer.max)) as.integer(ids) else ids,
     columns = lapply(win[cols], sv_format_cells)
   )
+}
+
+#' Rows `offset + 1` to `offset + limit` of a lazy query, collected
+#'
+#' `LIMIT ... OFFSET` (dbplyr has no offset verb) on the query as dbplyr renders
+#' it, sorted by `order` (SQL expressions) when given: with an order, duckdb runs a
+#' top-N, which keeps a heap of `offset + limit` rows instead of sorting the table.
+#' @param q A lazy duckdb query.
+#' @param offset,limit Numbers of rows.
+#' @param order Character vector of `ORDER BY` terms, possibly empty.
+#' @noRd
+sv_lazy_slice <- function(q, offset, limit, order = character(0)) {
+  con <- dbplyr::remote_con(q)
+  sql <- paste0(
+    "SELECT * FROM (", dbplyr::sql_render(q), ") AS sv_w",
+    if (length(order)) paste0(" ORDER BY ", paste(order, collapse = ", ")),
+    sprintf(" LIMIT %.0f OFFSET %.0f", limit, offset)
+  )
+  dplyr::collect(dplyr::tbl(con, dplyr::sql(sql)))
 }
 
 #' Is this a table the join check should run on in the database?
@@ -1070,17 +1204,18 @@ sv_lazy_column_profile <- function(tbl, column, top_n = 10L, bins = 20L, con_env
     rlang::abort("The column inspector needs a duckdb table; this table is on another database.",
                  class = "sv_lazy_not_duckdb")
   }
-  arrow_type <- NULL
   if (!inherits(tbl, "tbl_lazy")) {
-    # an Arrow object: only this column goes to duckdb, and it is unregistered after.
-    # The field type is read from the schema first (no scan): duckdb gets a decoded
-    # dictionary as text and a timestamp without its zone, so the class (factor /
-    # ordered) and the time zone are only known here.
-    arrow_type <- sv_lazy_arrow_type(tbl, column)
-    tbl <- sv_lazy_tbl(dplyr::select(tbl, dplyr::all_of(column)), con_env)
+    # an Arrow object: only this column goes to duckdb, and it is unregistered after
+    # (the levels are not needed here, so no dictionary is read)
+    tbl <- sv_lazy_tbl(dplyr::select(tbl, dplyr::all_of(column)), con_env, levels = FALSE)
     name <- dbplyr::remote_name(tbl)
     on.exit(sv_lazy_detach_arrow(sv_lazy_con(con_env), name), add = TRUE, after = FALSE)
   }
+  # read before any verb: dplyr drops the attributes. duckdb gets a decoded
+  # dictionary as text and a timestamp without its zone, so the class (factor /
+  # ordered) and the zone come from what sv_lazy_tbl() recorded from the Arrow schema.
+  zones <- attr(tbl, "sv_tz")
+  factors <- attr(tbl, "sv_factors")
 
   top_n <- as.integer(top_n)
   bins <- as.integer(bins)
@@ -1104,7 +1239,7 @@ sv_lazy_column_profile <- function(tbl, column, top_n = 10L, bins = 20L, con_env
 
   out <- list(
     kind = kind,
-    class = sv_lazy_class(zero, arrow_type),
+    class = sv_lazy_class(zero, factors[[column]]),
     label = NULL,
     n = n,
     n_missing = sv_lazy_count(n_miss),
@@ -1153,13 +1288,12 @@ sv_lazy_column_profile <- function(tbl, column, top_n = 10L, bins = 20L, con_env
     want <- if (all(want <= .Machine$integer.max)) as.integer(want) else want
     ranked <- dplyr::mutate(dbplyr::window_order(present, !!v), .sv_rn = row_number())
     rows <- dplyr::collect(dplyr::select(dplyr::filter(ranked, .sv_rn %in% !!want), !!v, .sv_rn))
-    # Zone: an Arrow timestamp keeps its zone in the schema, but duckdb hands the
-    # instants back as UTC, so they are re-tagged before formatting (the instant is
-    # unchanged, the clock time is the one R shows). A duckdb TIMESTAMPTZ has no
-    # stored zone and is shown as UTC; a table written to duckdb from a non-UTC
-    # POSIXct arrives as UTC instants already.
-    tz <- sv_lazy_arrow_tz(arrow_type)
-    if (!is.null(tz) && inherits(rows$.sv_v, "POSIXct")) attr(rows$.sv_v, "tzone") <- tz
+    # Zone: duckdb hands the instants back as UTC, so they are re-tagged with the
+    # zone recorded from the Arrow schema before formatting (the instant is
+    # unchanged, the clock time is the one R shows). Without that record (a duckdb
+    # table) the zone is UTC: duckdb here has no ICU extension, so it cannot tell
+    # another zone.
+    if (inherits(rows$.sv_v, "POSIXct")) attr(rows$.sv_v, "tzone") <- sv_lazy_zone_for(zones, column)
     pick <- function(p) format(rows$.sv_v[match(p, rows$.sv_rn)])
     out$stats <- list(min = pick(1), q1 = pick(pos[1]), median = pick(pos[2]),
                       q3 = pick(pos[3]), max = pick(n_present))
@@ -1190,15 +1324,6 @@ sv_lazy_column_profile <- function(tbl, column, top_n = 10L, bins = 20L, con_env
   out
 }
 
-#' The Arrow field type of a column, read from the schema (no scan)
-#'
-#' Works for a Table, a Dataset and a query on either. `NULL` when it cannot be
-#' read.
-#' @noRd
-sv_lazy_arrow_type <- function(x, column) {
-  tryCatch(arrow::schema(x)$GetFieldByName(column)$type, error = function(e) NULL)
-}
-
 #' The time zone of an Arrow timestamp type, or `NULL` when it has none
 #' @noRd
 sv_lazy_arrow_tz <- function(type) {
@@ -1213,11 +1338,11 @@ sv_lazy_arrow_tz <- function(type) {
 #' "ordered" or "factor" as in memory (the sample of the decoded column says
 #' "character"). A duckdb ENUM has no order, so an ordered factor in duckdb is
 #' reported as "factor", which is also what `collect()` gives for it.
+#' @param fct The column's entry of the `sv_factors` attribute (see
+#'   `sv_lazy_tbl()`), or `NULL`.
 #' @noRd
-sv_lazy_class <- function(zero, arrow_type = NULL) {
-  if (!is.null(arrow_type) && inherits(arrow_type, "DictionaryType")) {
-    return(if (isTRUE(arrow_type$ordered)) "ordered" else "factor")
-  }
+sv_lazy_class <- function(zero, fct = NULL) {
+  if (!is.null(fct)) return(if (isTRUE(fct$ordered)) "ordered" else "factor")
   class(zero)[1]
 }
 

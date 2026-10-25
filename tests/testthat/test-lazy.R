@@ -406,6 +406,208 @@ test_that("lazy row windows handle zero-row tables", {
   }
 })
 
+# Factors whose levels are not in alphabetical order, plus filter values that do not
+# parse as the column's type.
+level_fixture <- function() {
+  n <- 60L
+  v <- c("high", "low", NA, "mid", "low", "high", "mid")[(seq_len(n) - 1L) %% 7L + 1L]
+  data.frame(
+    id = seq_len(n),
+    lv = factor(v, levels = c("low", "mid", "high")),
+    o = factor(v, levels = c("low", "mid", "high"), ordered = TRUE),
+    ok = c(TRUE, FALSE, NA)[(seq_len(n) - 1L) %% 3L + 1L],
+    d = as.Date("2020-01-01") + seq_len(n),
+    stringsAsFactors = FALSE
+  )
+}
+
+level_specs <- function(what = c("sorts", "filters")) {
+  sorts <- c(list(NULL), unlist(lapply(c("lv", "o"), function(cn) {
+    list(list(col = cn, dir = "asc"), list(col = cn, dir = "desc"))
+  }), recursive = FALSE))
+  filters <- list(
+    NULL,
+    list(col = "lv", op = "equals", val = "mid"),
+    list(col = "lv", op = "not_equals", val = "mid"),
+    list(col = "lv", op = "contains", val = "i"),
+    list(col = "lv", op = "gt", val = "low"),        # unordered: no rows, as in R
+    list(col = "o", op = "gt", val = "low"),         # ordered: by level
+    list(col = "o", op = "lte", val = "mid"),
+    list(col = "o", op = "gt", val = "zzz"),         # not a level: no rows
+    list(col = "o", op = "equals", val = "zzz"),
+    list(col = "ok", op = "equals", val = "yes"),    # not a logical: compared as text
+    list(col = "ok", op = "not_equals", val = "yes"),
+    list(col = "ok", op = "equals", val = "TRUE"),
+    list(col = "ok", op = "gt", val = "FALSE"),
+    list(col = "d", op = "equals", val = "abc"),     # not a date: no rows, no error
+    list(col = "d", op = "gt", val = "abc"),
+    list(col = "d", op = "lt", val = ""),
+    list(col = "d", op = "gte", val = "2020-02-01"),
+    list(col = "d", op = "equals", val = "2020-1-5")
+  )
+  if (!"sorts" %in% what) sorts <- list(NULL)
+  if (!"filters" %in% what) filters <- list(NULL)
+  specs <- list()
+  for (s in sorts) for (f in filters) for (o in c(0L, 7L)) {
+    specs[[length(specs) + 1L]] <- list(sort = s, filter = f, offset = o, limit = 25L)
+  }
+  specs
+}
+
+level_sources <- function(e) {
+  df <- level_fixture()
+  con <- sv_lazy_con(e)
+  # duckdb has no ordered ENUM: an ordered factor comes back as a plain factor
+  df_db <- df
+  df_db$o <- factor(df$o, levels = levels(df$o), ordered = FALSE)
+  DBI::dbWriteTable(con, "lv", df_db, overwrite = TRUE)
+  list(
+    arrow = list(tbl = sv_lazy_tbl(arrow::arrow_table(df), e), df = df),
+    duckdb = list(tbl = dplyr::tbl(con, "lv"), df = df_db)
+  )
+}
+
+test_that("lazy windows sort factors by their levels, not their text", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  sources <- level_sources(e)
+  for (nm in names(sources)) {
+    for (req in level_specs("sorts")) {
+      label <- paste(nm, jsonlite::toJSON(req, auto_unbox = TRUE, null = "null"))
+      expect_equal(sv_lazy_rows_window(sources[[nm]]$tbl, req), sv_rows_window(sources[[nm]]$df, req),
+                   tolerance = 1e-12, label = label)
+    }
+  }
+  # low, mid, high (text order would be high, low, mid)
+  w <- sv_lazy_rows_window(sources$arrow$tbl, list(sort = list(col = "o", dir = "asc"), limit = 60L))
+  expect_identical(unique(w$columns$o), c("low", "mid", "high", NA))
+})
+
+test_that("lazy filters match R on values that do not parse as the column type", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  sources <- level_sources(e)
+  for (nm in names(sources)) {
+    for (req in level_specs()) {
+      label <- paste(nm, jsonlite::toJSON(req, auto_unbox = TRUE, null = "null"))
+      got <- sv_lazy_rows_window(sources[[nm]]$tbl, req)
+      want <- suppressWarnings(sv_rows_window(sources[[nm]]$df, req))  # '>' on a factor warns
+      expect_equal(got, want, tolerance = 1e-12, label = label)
+    }
+  }
+  # no error either: a Date filter on "abc" is an empty window
+  w <- sv_lazy_rows_window(sources$duckdb$tbl, list(filter = list(col = "d", op = "equals", val = "abc")))
+  expect_identical(w$total, 0L)
+})
+
+test_that("a lazy row total past the integer range stays a number", {
+  skip_on_cran()
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  con <- sv_lazy_con(e)
+  DBI::dbExecute(con, "CREATE VIEW huge AS SELECT range AS id FROM range(3000000000)")
+  w <- sv_lazy_rows_window(dplyr::tbl(con, "huge"), list(offset = 0L, limit = 3L))
+  expect_identical(w$total, 3e9)
+  expect_identical(w$row_ids, 0:2)
+  expect_identical(w$columns$id, c("0", "1", "2"))
+})
+
+big_rows_table <- function(con, n = 5e6) {
+  DBI::dbExecute(con, sprintf(
+    "CREATE TABLE big AS SELECT range AS id, (range * 7919) %% 1000003 AS k,
+       'n' || (range %% 997) AS s FROM range(%.0f)", n))
+  dplyr::tbl(con, "big")
+}
+
+test_that("a sorted window of a 5M-row table is under 1 s (duckdb and arrow)", {
+  skip_on_cran()
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  con <- sv_lazy_con(e)
+  duck <- big_rows_table(con)
+  arrow_src <- arrow::arrow_table(dplyr::collect(duck))
+  sources <- list(duckdb = duck, arrow = sv_lazy_tbl(arrow_src, e))
+  for (nm in names(sources)) {
+    tbl <- sources[[nm]]
+    cache <- new.env()
+    first <- sv_lazy_rows_window(tbl, list(offset = 0L, limit = 200L), cache)  # counts once
+    expect_identical(first$total, 5000000L)
+    for (req in list(
+      list(sort = list(col = "k", dir = "asc"), offset = 0L, limit = 200L),
+      list(sort = list(col = "s", dir = "desc"), offset = 1000L, limit = 200L),
+      list(offset = 4999800L, limit = 200L)
+    )) {
+      t <- system.time(w <- sv_lazy_rows_window(tbl, req, cache))[["elapsed"]]
+      label <- paste(nm, jsonlite::toJSON(req, auto_unbox = TRUE))
+      expect_lt(t, 1, label = label)
+      # stable and numbered by table order: id is the 0-based row number
+      expect_identical(as.numeric(w$columns$id), as.numeric(w$row_ids), label = label)
+      expect_length(w$row_ids, 200L)
+    }
+    # ties keep table order; a repeated request gives the same rows
+    req <- list(sort = list(col = "s", dir = "asc"), offset = 0L, limit = 50L)
+    a <- sv_lazy_rows_window(tbl, req, cache)
+    b <- sv_lazy_rows_window(tbl, req, cache)
+    expect_identical(a, b)
+    expect_true(all(unique(a$columns$s) == "n0"))
+    expect_identical(a$row_ids, as.integer(seq(0, by = 997, length.out = 50)))
+  }
+})
+
+test_that("lazy requests never collect more rows than they show", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  n <- 5000L
+  df <- data.frame(id = seq_len(n), g = rep(c("a", "b", "c", "d", "e"), n / 5),
+                   x = round(sin(seq_len(n)), 3), stringsAsFactors = FALSE)
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  con <- sv_lazy_con(e)
+  DBI::dbWriteTable(con, "spy", df)
+  DBI::dbWriteTable(con, "spy2", df[seq(1, n, by = 2), ])
+  sizes <- integer(0)
+  real_collect <- dplyr::collect
+  testthat::local_mocked_bindings(
+    collect = function(x, ...) {
+      out <- real_collect(x, ...)
+      if (is.data.frame(out)) sizes <<- c(sizes, nrow(out))
+      out
+    },
+    .package = "dplyr"
+  )
+  limit <- 40L
+  top_n <- 10L
+  bins <- 20L
+  for (tbl in list(dplyr::tbl(con, "spy"), sv_lazy_tbl(arrow::arrow_table(df), e))) {
+    for (req in list(list(offset = 100L, limit = limit),
+                     list(sort = list(col = "x", dir = "desc"), offset = 4000L, limit = limit),
+                     list(filter = list(col = "g", op = "equals", val = "b"), offset = 10L, limit = limit))) {
+      sv_lazy_rows_window(tbl, req)
+    }
+    sv_lazy_column_profile(tbl, "x", top_n = top_n, bins = bins, con_env = e)
+    sv_lazy_column_profile(tbl, "g", top_n = top_n, bins = bins, con_env = e)
+  }
+  sv_join_diagnostics(dplyr::tbl(con, "spy"), dplyr::tbl(con, "spy2"), by = c(id = "id"))
+  sv_codebook(spy = dplyr::tbl(con, "spy"), top_n = top_n)
+  expect_gt(length(sizes), 10L)   # the spy saw the calls
+  expect_lte(max(sizes), max(limit, top_n, bins))
+})
+
 test_that("lazy filter expressions are language objects that parse", {
   ex <- sv_lazy_filter_expr("a b", "contains", "x\"y", numeric = FALSE)
   expect_true(is.language(ex))

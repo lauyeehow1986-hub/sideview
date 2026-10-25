@@ -1041,6 +1041,48 @@ test_that("Arrow cards use the whole table", {
   })
 })
 
+test_that("the gadget inspector and codebook keep Arrow factor classes and time zones", {
+  skip_if_not_installed("arrow")
+  df <- data.frame(
+    id = 1:120,
+    f = factor(c("high", "low", "mid")[(0:119) %% 3 + 1], levels = c("low", "mid", "high")),
+    o = factor(c("b", "a", NA)[(0:119) %% 3 + 1], levels = c("b", "a"), ordered = TRUE),
+    t = as.POSIXct("2024-03-01 08:30:00", tz = "Asia/Singapore") + (0:119) * 3600,
+    stringsAsFactors = FALSE
+  )
+  a <- sv_normalize(arrow::arrow_table(df), name = "a")
+  path <- tempfile(fileext = ".csv")
+  withr::defer(unlink(path))
+  testthat::local_mocked_bindings(sv_choose_codebook_path = function() path)
+  shiny::testServer(sideview_server(list(a)), {
+    for (cn in c("f", "o", "t")) {
+      session$setInputs(column_profile_request = list(id = cn, table = "a", column = cn))
+    }
+    got <- lapply(msgs_of(session, "sideview_column_profile"), function(m) m$message)
+    names(got) <- vapply(got, function(m) m$column, "")
+    for (cn in c("f", "o", "t")) {
+      want <- sv_column_profile_json(sv_column_profile(as.data.frame(df)[[cn]]))
+      expect_identical(got[[cn]]$class, want$class, label = cn)
+      expect_identical(got[[cn]]$stats, want$stats, label = cn)
+      expect_equal(got[[cn]]$n, 120)
+    }
+    expect_identical(got$f$class, "factor")
+    expect_identical(got$o$class, "ordered")
+    expect_identical(got$t$stats$min, "2024-03-01 08:30:00")
+
+    session$setInputs(codebook_export = 1)
+    cb <- utils::read.csv(path, stringsAsFactors = FALSE)
+    want_path <- withr::local_tempfile(fileext = ".csv")
+    sv_write_codebook(sv_codebook(a = as.data.frame(df)), want_path)
+    want_cb <- utils::read.csv(want_path, stringsAsFactors = FALSE)
+    expect_identical(cb$class, want_cb$class)
+    expect_identical(cb$min, want_cb$min)
+    expect_identical(cb$max, want_cb$max)
+    expect_identical(cb$class[cb$column %in% c("f", "o")], c("factor", "ordered"))
+    expect_identical(cb$min[cb$column == "t"], "2024-03-01 08:30:00")
+  })
+})
+
 test_that("tables on different connections answer with an error and keep the link", {
   fx <- lazy_server_fixture()
   con2 <- DBI::dbConnect(duckdb::duckdb())
