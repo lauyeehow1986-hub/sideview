@@ -2431,6 +2431,13 @@ html.sv-standalone body {
   white-space: nowrap;
 }
 
+/* A check that saw only part of a table (a preview of a larger one) says so. */
+.sideview-container .sideview-basis-note {
+  margin: 0 0 6px;
+  color: var(--sv-text-muted);
+  font-size: 12px;
+}
+
 .sideview-container .sideview-inspect-label {
   margin: 0 0 6px;
   color: var(--sv-text-muted);

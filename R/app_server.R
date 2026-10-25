@@ -72,9 +72,12 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
 
   card_full <- function(card) sv_card_is_lazy(card) && is.null(lazy_failed[[card$id]])
 
-  send_toast <- function(text, type = "info", id = NULL) {
+  # `id` keys a toast the browser updates in place; `card` names the card a notice is
+  # about, so the browser can mark it preview-only (the lost-link fallback).
+  send_toast <- function(text, type = "info", id = NULL, card = NULL) {
     msg <- list(text = text, type = type)
     if (!is.null(id)) msg$id <- id
+    if (!is.null(card)) msg$card <- card
     dispatch_message("sideview_toast", msg)
   }
 
@@ -105,7 +108,8 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
         lazy_failed[[cd$id]] <- TRUE
         send_toast(
           sprintf("Lost the link to %s; showing the first %d rows.", cd$name, nrow(cd$data)),
-          "warning"
+          "warning",
+          card = cd$id
         )
       }
       # cards that still answer keep the whole table for this request too

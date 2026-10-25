@@ -190,6 +190,9 @@ render_col_profiling <- function(col_vals) {
   )
 }
 
+# A row count as plain digits: 200000 must not become "2e+05" (the browser would read 2).
+plain_count <- function(n) format(n, scientific = FALSE, trim = TRUE)
+
 #' Render a Single Card to Shiny HTML Tags
 #'
 #' @param card A `sideview_card` object.
@@ -205,7 +208,8 @@ render_card_tag <- function(card, index = 1L) {
   initial_y <- if (!is.null(card$y)) card$y else 60 + ((index - 1) %% 2) * 50
   
   dims_text <- if (!is.null(card$dims) && length(card$dims) >= 2) {
-    paste0(card$dims[1], " \u00d7 ", card$dims[2])
+    # not scientific: 200000 rows must not read "2e+05"
+    paste0(format(card$dims[1], scientific = FALSE, trim = TRUE), " \u00d7 ", card$dims[2])
   } else {
     ""
   }
@@ -230,7 +234,7 @@ render_card_tag <- function(card, index = 1L) {
       class = "sideview-card-title-group",
       htmltools::tags$span(class = "sideview-card-title", card_name),
       htmltools::tags$span(class = "sideview-badge sideview-badge-type", card_type),
-      if (nzchar(dims_text)) htmltools::tags$span(class = "sideview-badge", title = badge_title, dims_text)
+      if (nzchar(dims_text)) htmltools::tags$span(class = "sideview-badge sideview-badge-dims", title = badge_title, dims_text)
     ),
     htmltools::tags$div(
       class = "sideview-card-actions",
@@ -343,8 +347,8 @@ render_card_tag <- function(card, index = 1L) {
     id = card_id,
     `data-card-id` = card_id,
     `data-card-name` = card_name,
-    `data-total-rows` = if (full && !is.na(n_table)) n_table else if (is.data.frame(card$data)) nrow(card$data) else NULL,
-    `data-table-rows` = if (!is.na(n_table)) n_table else NULL,
+    `data-total-rows` = if (full && !is.na(n_table)) plain_count(n_table) else if (is.data.frame(card$data)) plain_count(nrow(card$data)) else NULL,
+    `data-table-rows` = if (!is.na(n_table)) plain_count(n_table) else NULL,
     `data-lazy` = if (is_lazy) card$lazy_source else NULL,
     `data-code-ref` = card$code_ref,
     `data-rows-basis` = if (!is.data.frame(card$data)) NULL else if (preview_only) "preview" else "full",

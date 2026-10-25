@@ -853,6 +853,56 @@ function sendToShiny(name, value) {
     return t === '' || t === CODE_PLACEHOLDER;
   }
 
+  // ---- full table vs preview -------------------------------------------------
+  // A lazy card holds a preview of a larger table. The gadget asks R for the whole table
+  // (data-rows-basis="full") unless the link was lost ("preview"); the widget never can.
+
+  function fmtCount(n) { return Number(n).toLocaleString('en-US'); }
+
+  function previewBadgeText(shown, total) {
+    return 'First ' + fmtCount(shown) + ' of ' + fmtCount(total) + ' rows';
+  }
+
+  // Rows held in a card's data: columns as arrays, or an array of row objects.
+  function previewRowCount(data) {
+    if (!data) return null;
+    if (Array.isArray(data)) return data.length;
+    var keys = Object.keys(data);
+    if (!keys.length) return 0;
+    var first = data[keys[0]];
+    return Array.isArray(first) ? first.length : 1;
+  }
+
+  /** True row count of a table: a card element (data-table-rows) or widget card data (totalRows). */
+  function tableRows(card) {
+    if (!card) return NaN;
+    if (card.dataset) {
+      var n = parseInt(card.dataset.tableRows, 10);
+      if (!isNaN(n)) return n;
+      return card._virtualTable ? card._virtualTable.totalRows : NaN;
+    }
+    return card.totalRows != null ? Number(card.totalRows) : NaN;
+  }
+
+  /** 'full' when R answers from the whole table; 'preview' for the rows on the canvas only. */
+  function rowsBasis(cardEl) {
+    return (cardEl && cardEl.dataset && cardEl.dataset.rowsBasis) || 'full';
+  }
+
+  function isFullLazy(cardEl) {
+    return !!(cardEl && cardEl.dataset && cardEl.dataset.lazy) && rowsBasis(cardEl) === 'full';
+  }
+
+  /** The note under a check that only saw part of a table; '' when it saw all of it. */
+  function basisNoteHtml(parts) {
+    var cut = parts.filter(function (p) { return p.n < p.total; });
+    if (!cut.length) return '';
+    var same = cut.every(function (p) { return p.n === cut[0].n; });
+    var text = same ? 'Based on the first ' + fmtCount(cut[0].n) + ' rows' :
+      'Based on the first ' + cut.map(function (p) { return fmtCount(p.n) + ' rows of ' + p.name; }).join(' and ');
+    return '<p class="sideview-basis-note">' + escapeHtml(text) + '</p>';
+  }
+
   function asArray(x) {
     if (x === null || x === undefined) return [];
     return Array.isArray(x) ? x : [x];
@@ -2679,11 +2729,21 @@ function sendToShiny(name, value) {
     var header = document.createElement('div');
     header.className = 'sideview-card-header';
     var dimsText = cardData.dims ? cardData.dims[0] + ' × ' + cardData.dims[1] : '';
+    // A lazy widget card holds a preview of a larger table: say so (the widget never has the rest).
+    var shownRows = previewRowCount(cardData.data);
+    var tableRowCount = cardData.totalRows != null ? Number(cardData.totalRows) : NaN;
+    var isLazyCard = !!cardData.lazy;
+    if (isLazyCard && shownRows != null && tableRowCount > shownRows) {
+      dimsText = previewBadgeText(shownRows, tableRowCount);
+    }
+    if (!isNaN(tableRowCount)) cardEl.dataset.tableRows = String(tableRowCount);
+    if (isLazyCard) cardEl.dataset.lazy = String(cardData.lazy);
+    cardEl.dataset.rowsBasis = isLazyCard ? 'preview' : 'full';
     header.innerHTML = [
       '<div class="sideview-card-title-group">',
       '  <span class="sideview-card-title">' + escapeHtml(cardName) + '</span>',
       '  <span class="sideview-badge sideview-badge-type">' + escapeHtml(cardData.type || 'grid') + '</span>',
-      dimsText ? '  <span class="sideview-badge">' + dimsText + '</span>' : '',
+      dimsText ? '  <span class="sideview-badge sideview-badge-dims">' + escapeHtml(dimsText) + '</span>' : '',
       '</div>',
       '<div class="sideview-card-actions">',
       '  <button class="sideview-icon-btn" data-action="maximize-card" title="Maximize card" aria-label="Maximize card" data-sv-icon="maximize">' + icon('maximize') + '</button>',
@@ -2927,6 +2987,33 @@ function sendToShiny(name, value) {
       self.setupCardDrag(cardEl, cardMeta);
       self.setupScrollSync(cardMeta);
     });
+  };
+
+  /**
+   * The server lost the link to a lazy card's table and answers from its preview rows from
+   * now on: label the card that way and let its row windows follow the preview.
+   */
+  SideviewEngine.prototype.markCardPreview = function (cardId) {
+    var meta = this.cards.get(cardId);
+    var el = meta && meta.element;
+    if (!el || rowsBasis(el) === 'preview') return;
+    el.dataset.rowsBasis = 'preview';
+    var vt = el._virtualTable;
+    var shown = vt ? vt.totalRows : null;
+    var total = tableRows(el);
+    var badge = el.querySelector('.sideview-badge-dims');
+    if (badge && shown != null && total > shown) {
+      badge.textContent = previewBadgeText(shown, total);
+    }
+    // Sorted / filtered windows now come from the preview rows: refetch with its row count.
+    if (vt && vt.remote && shown != null) {
+      vt.remote.total = shown;
+      vt.resetRemote();
+    }
+    // Checks still waiting on the whole table are answered from the preview, and say so.
+    this.renderPipeline();
+    this.renderJoinCheck();
+    this.renderInspector();
   };
 
   /**
@@ -3659,9 +3746,16 @@ function sendToShiny(name, value) {
     this.showToast(pair + msg, d.status === 'error' ? 'danger' : 'warning');
   };
 
+  SideviewEngine.prototype.cardElByName = function (name) {
+    return this.container.querySelector('.sideview-card[data-card-name="' + cssEscape(name) + '"]');
+  };
+
   SideviewEngine.prototype.joinDiagLine = function (s) {
     var d = this.joinDiagFor(s);
-    if (!d) return '<span class="sideview-step-diag is-pending">Checking keys…</span>';
+    if (!d) {
+      var whole = isFullLazy(this.cardElByName(s.table)) || isFullLazy(this.cardElByName(s.right));
+      return '<span class="sideview-step-diag is-pending">' + (whole ? 'Checking the whole table…' : 'Checking keys…') + '</span>';
+    }
     if (d.error) {
       return '<span class="sideview-step-diag is-pending" title="' + escapeHtml(d.error) + '">Key check unavailable</span>';
     }
@@ -3696,7 +3790,9 @@ function sendToShiny(name, value) {
     var d = this.joinDiagFor(s);
     var esc = escapeHtml;
     if (!d) {
-      box.innerHTML = '<p class="sideview-joincheck-title">Checking keys for ' + esc(s.table) + ' and ' + esc(s.right) + '…</p>';
+      var whole = isFullLazy(this.cardElByName(s.table)) || isFullLazy(this.cardElByName(s.right));
+      box.innerHTML = whole ? '<p class="sideview-joincheck-title">Checking the whole table…</p>' :
+        '<p class="sideview-joincheck-title">Checking keys for ' + esc(s.table) + ' and ' + esc(s.right) + '…</p>';
       return;
     }
     if (d.error) {
@@ -3723,6 +3819,11 @@ function sendToShiny(name, value) {
     var html = [
       '<p class="sideview-joincheck-title">Join check: <code>' + esc(s.table) + '</code> → <code>' +
         esc(s.right) + '</code> by <code>' + esc(by) + '</code></p>',
+      // the check only saw part of a table when it ran on fewer rows than the table has
+      basisNoteHtml([
+        { n: d.n_x, total: tableRows(this.cardElByName(s.table)), name: s.table },
+        { n: d.n_y, total: tableRows(this.cardElByName(s.right)), name: s.right }
+      ]),
       list(d.type_issues, 'sideview-joincheck-errors'),
       list(d.warnings, 'sideview-joincheck-warnings'),
       '<dl class="sideview-joincheck-stats">',
@@ -3896,9 +3997,12 @@ function sendToShiny(name, value) {
     this.inspectTarget = { table: schema.name, column: column };
     var p = this.columnProfileFor(schema.name, column);
     var body;
-    if (!p) body = '<p class="sideview-drawer-desc">Profiling ' + escapeHtml(column) + '…</p>';
+    if (!p) {
+      body = '<p class="sideview-drawer-desc">' + (isFullLazy(this.cardElByName(schema.name)) ?
+        'Checking the whole table…' : 'Profiling ' + escapeHtml(column) + '…') + '</p>';
+    }
     else if (p.error) body = '<p class="sideview-drawer-desc">' + escapeHtml(p.error) + '</p>';
-    else body = this.profileHtml(column, p);
+    else body = this.profileHtml(column, p, schema.name);
     pane.innerHTML = '<div class="sideview-inspector">' +
       '<div class="sideview-inspect-pick">' +
       '<label class="sideview-builder-field">Table <select data-inspect="table">' +
@@ -3924,7 +4028,7 @@ function sendToShiny(name, value) {
     return v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: dp });
   }
 
-  SideviewEngine.prototype.profileHtml = function (column, p) {
+  SideviewEngine.prototype.profileHtml = function (column, p, table) {
     var esc = escapeHtml;
     var fmt = function (n) { return Number(n).toLocaleString('en-US'); };
     var rows = [
@@ -3946,6 +4050,8 @@ function sendToShiny(name, value) {
     var html = '<div class="sideview-inspect-head"><span class="sideview-inspect-name">' + esc(column) + '</span>' +
       '<span class="sideview-inspect-kind">' + esc(p['class'] || p.kind) + '</span></div>';
     if (p.label) html += '<p class="sideview-inspect-label">' + esc(p.label) + '</p>';
+    // profiled fewer rows than the table has (a preview of a larger table)
+    if (table) html += basisNoteHtml([{ n: p.n, total: tableRows(this.cardElByName(table)), name: table }]);
     html += '<dl class="sideview-inspect-stats">' + rows.map(function (r) {
       return '<div><dt>' + r[0] + '</dt><dd>' + r[1] + '</dd></div>';
     }).join('') + '</dl>';
@@ -5094,6 +5200,8 @@ function sendToShiny(name, value) {
     global.Shiny.addCustomMessageHandler('sideview_toast', function (data) {
       if (!data || !data.text) return;
       self.showToast(String(data.text), data.type || 'info', data.id);
+      // The notice is about a card whose link was lost: it answers from its preview from now on.
+      if (data.card) self.markCardPreview(String(data.card));
     });
 
     // Codebook written by R (reply to codebook_export)

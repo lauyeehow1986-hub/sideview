@@ -894,6 +894,7 @@ test_that("codebook progress is sent as throttled toasts", {
     expect_length(t, 1)   # three quick calls are swallowed, the one after 300 ms is sent
     expect_identical(t[[1]]$message$text, "Profiling v: column 3 of 3")
     expect_identical(t[[1]]$message$id, "codebook-progress")   # the browser updates one toast
+    expect_null(t[[1]]$message$card)
   })
 })
 
@@ -915,6 +916,8 @@ test_that("a closed connection falls back to the preview once", {
     expect_length(t, 1)
     expect_identical(t[[1]]$message$text, "Lost the link to v; showing the first 50 rows.")
     expect_identical(t[[1]]$message$type, "warning")
+    # the toast names the card, so the browser can mark it preview-only
+    expect_identical(t[[1]]$message$card, fx$v$id)
 
     # the other requests also answer from the preview, without a second toast
     session$setInputs(column_profile_request = list(id = "p1", table = "v", column = "id"))
@@ -977,6 +980,7 @@ test_that("a join with one dead card marks only that card", {
     t <- msgs_of(session, "sideview_toast")
     expect_length(t, 1)
     expect_identical(t[[1]]$message$text, "Lost the link to z; showing the first 50 rows.")
+    expect_identical(t[[1]]$message$card, z$id)   # only the dead card is named
     session$setInputs(sideview_rows_request = list(card_id = a$id, version = 1, offset = 0, limit = 5))
     session$setInputs(sideview_rows_request = list(card_id = z$id, version = 2, offset = 0, limit = 5))
     r <- msgs_of(session, "sideview_rows")
@@ -1081,4 +1085,16 @@ test_that("preview badge and attributes", {
   expect_match(plain, 'data-total-rows="3"', fixed = TRUE)
   expect_match(plain, 'data-rows-basis="full"', fixed = TRUE)
   expect_false(grepl("source", plain, fixed = TRUE))
+})
+
+test_that("row counts reach the browser as plain digits, not 2e+05", {
+  # parseInt("2e+05") is 2 in the browser: the card would never page from the server
+  card <- sv_normalize(data.frame(a = 1:5), name = "t")
+  card$dims <- c(200000, 1)
+  html <- as.character(render_card_tag(card))
+  expect_match(html, 'data-table-rows="200000"', fixed = TRUE)
+  expect_match(html, "200000 × 1", fixed = TRUE)
+  expect_no_match(html, "e+05", fixed = TRUE)
+  card$dims <- c(100000, 1)
+  expect_match(as.character(render_card_tag(card)), 'data-table-rows="100000"', fixed = TRUE)
 })
