@@ -546,8 +546,10 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
       # A lazy (arrow / duckdb) table is named by its code_ref and the code ends in collect().
       card <- cards_by_name[[tbl]]
       lazy <- !is.null(card) && isTRUE(card$is_lazy)
+      # code_ref is the card's name unless the card is written as an expression (a duckdb tbl()).
+      is_code <- lazy && !identical(card$code_ref, tbl)
       code <- sv_auto_clean_rules(payload, df_name = if (lazy) card$code_ref else tbl,
-                                  col = col, pipe = pipe, lazy = lazy)
+                                  col = col, pipe = pipe, lazy = lazy, df_is_code = is_code)
       if (!is.null(code) && nzchar(code)) {
         dispatch_message("sideview_code_update", list(code = code, source = "auto_clean"))
       }

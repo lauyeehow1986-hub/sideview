@@ -732,8 +732,12 @@ sv_code_group_summarize <- function(df_name = NULL, group_cols, summary_exprs, p
 #' @param lazy Logical; TRUE when \code{df_name} is an arrow or duckdb table. The code then
 #'   ends in \code{dplyr::collect()} (the one collect of a lazy pipeline), the recode closes with
 #'   \code{TRUE ~ <col>} (arrow cannot take \code{.default = <col>}), and \code{df_name} may be an
-#'   expression such as \code{dplyr::tbl(con, "visits")}. The matching of values is done in R on
+#'   expression such as \code{dplyr::tbl(con, "visits")} when \code{df_is_code} is TRUE. The matching of values is done in R on
 #'   the values compared, so the generated code uses no \code{trimws()} or \code{tolower()}.
+#' @param df_is_code Logical; TRUE when \code{df_name} is R code (such as
+#'   \code{dplyr::tbl(con, "visits")}) to use as written. FALSE (the default) treats it as a
+#'   table name and backtick-quotes it when it is not syntactic, as in \code{visits (2020)}.
+#'   Only used when \code{lazy} is TRUE.
 #'
 #' @return A character string of tidyverse code, or \code{NULL} if no discrepancies require cleaning.
 #' @export
@@ -741,7 +745,7 @@ sv_code_group_summarize <- function(df_name = NULL, group_cols, summary_exprs, p
 #' disc <- sv_detect_discrepancies(c("male", "Female"), c("Male", "Female"))
 #' sv_auto_clean_rules(disc, df_name = "patients", col = "gender")
 sv_auto_clean_rules <- function(discrepancy_result, df_name = "df", col = "status",
-                                default = col, pipe = FALSE, lazy = FALSE) {
+                                default = col, pipe = FALSE, lazy = FALSE, df_is_code = FALSE) {
   if (is.null(discrepancy_result) || !is.list(discrepancy_result) || length(discrepancy_result) == 0) {
     return(NULL)
   }
@@ -870,7 +874,7 @@ sv_auto_clean_rules <- function(discrepancy_result, df_name = "df", col = "statu
   if (is.null(df_name) || !nzchar(df_name)) {
     return(sprintf("%s %%>%% dplyr::collect()", mutate_call))
   }
-  ref <- if (grepl("[(]", df_name)) df_name else sv_escape_ident(df_name)
+  ref <- if (isTRUE(df_is_code)) df_name else sv_escape_ident(df_name)
   if (pipe) {
     sprintf("%s %%>%% %s %%>%% dplyr::collect()", ref, mutate_call)
   } else {

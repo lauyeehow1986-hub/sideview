@@ -745,7 +745,8 @@ test_that("sv_auto_clean_rules(lazy = TRUE) writes one collect() and runs on arr
     env$`%>%` <- magrittr::`%>%`
     if (ref == "vv") env$vv <- arrow::arrow_table(frame)
     for (pipe in c(TRUE, FALSE)) {
-      code <- sv_auto_clean_rules(disc, df_name = ref, col = "sex", pipe = pipe, lazy = TRUE)
+      code <- sv_auto_clean_rules(disc, df_name = ref, col = "sex", pipe = pipe, lazy = TRUE,
+                                    df_is_code = ref != "vv")
       expect_silent(parse(text = code))
       expect_equal(lengths(regmatches(code, gregexpr("collect(", code, fixed = TRUE))), 1L)
       expect_false(grepl(".default", code, fixed = TRUE))

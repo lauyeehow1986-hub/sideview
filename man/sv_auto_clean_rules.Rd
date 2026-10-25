@@ -11,7 +11,8 @@ sv_auto_clean_rules(
   col = "status",
   default = col,
   pipe = FALSE,
-  lazy = FALSE
+  lazy = FALSE,
+  df_is_code = FALSE
 )
 
 sv_code_auto_clean(
@@ -20,7 +21,8 @@ sv_code_auto_clean(
   col = "status",
   default = col,
   pipe = FALSE,
-  lazy = FALSE
+  lazy = FALSE,
+  df_is_code = FALSE
 )
 }
 \arguments{
@@ -41,8 +43,13 @@ records via \code{.default = <col>}. Set to \code{NULL} to omit the default clau
 \item{lazy}{Logical; TRUE when \code{df_name} is an arrow or duckdb table. The code then
 ends in \code{dplyr::collect()} (the one collect of a lazy pipeline), the recode closes with
 \code{TRUE ~ <col>} (arrow cannot take \code{.default = <col>}), and \code{df_name} may be an
-expression such as \code{dplyr::tbl(con, "visits")}. The matching of values is done in R on
+expression such as \code{dplyr::tbl(con, "visits")} when \code{df_is_code} is TRUE. The matching of values is done in R on
 the values compared, so the generated code uses no \code{trimws()} or \code{tolower()}.}
+
+\item{df_is_code}{Logical; TRUE when \code{df_name} is R code (such as
+\code{dplyr::tbl(con, "visits")}) to use as written. FALSE (the default) treats it as a
+table name and backtick-quotes it when it is not syntactic, as in \code{visits (2020)}.
+Only used when \code{lazy} is TRUE.}
 }
 \value{
 A character string of tidyverse code, or \code{NULL} if no discrepancies require cleaning.

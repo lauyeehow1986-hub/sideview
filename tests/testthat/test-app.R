@@ -1098,3 +1098,40 @@ test_that("row counts reach the browser as plain digits, not 2e+05", {
   card$dims <- c(100000, 1)
   expect_match(as.character(render_card_tag(card)), 'data-table-rows="100000"', fixed = TRUE)
 })
+
+
+test_that("auto-clean on a lazy card uses the card's code ref; a name that looks like a call is quoted", {
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("withr")
+  frame <- data.frame(id = 1:3, gender = c("male", "Female", "male"), stringsAsFactors = FALSE)
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbWriteTable(con, "d", frame)
+  cards <- list(
+    sv_normalize(arrow::arrow_table(frame), name = "visits (2020)"),
+    sv_normalize(con, name = "d"),  # a DBI connection: the card is written as dplyr::tbl(...)
+    sv_normalize(arrow::arrow_table(frame), name = "plain")
+  )
+  disc <- sv_detect_discrepancies(c("male", "Female"), c("Male", "Female"))
+  shiny::testServer(sideview_server(cards), {
+    code_for <- function(tbl) {
+      session$setInputs(apply_auto_clean = list(discrepancy = disc, table = tbl, col = "gender",
+                                                pipe = TRUE, nonce = stats::runif(1)))
+      msgs <- Filter(function(m) m$type == "sideview_code_update", session$userData$custom_messages)
+      msgs[[length(msgs)]]$message$code
+    }
+    odd <- code_for("visits (2020)")
+    expect_true(startsWith(odd, "`visits (2020)` %>%"))
+    expect_silent(parse(text = odd))
+    expect_true(startsWith(code_for("d"), "dplyr::tbl("))
+    expect_true(startsWith(code_for("plain"), "plain %>%"))
+  })
+  # the generator on its own
+  expect_true(startsWith(sv_auto_clean_rules(disc, "visits (2020)", "gender", pipe = TRUE, lazy = TRUE),
+                         "`visits (2020)` %>%"))
+  expect_true(startsWith(sv_auto_clean_rules(disc, "dplyr::tbl(con, \"d\")", "gender", pipe = TRUE,
+                                             lazy = TRUE, df_is_code = TRUE),
+                         "dplyr::tbl(con, \"d\") %>%"))
+})

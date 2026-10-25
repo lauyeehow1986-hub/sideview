@@ -146,7 +146,15 @@
           str(step.namesTo || 'name') + ', values_to = ' + str(step.valuesTo || 'value') + ')'];
       }
       case 'filter': {
-        var conds = (step.conds || []).filter(Boolean);
+        // "contains" is written for the engine the chain is in when this step runs (a data frame
+        // moved into duckdb by an earlier join cannot use grepl()): step.specs[i] holds its parts.
+        var specs = step.specs || [];
+        var conds = (step.conds || []).map(function (c, i) {
+          var sp = specs[i];
+          return sp && sp.op === 'contains'
+            ? condition(sp.col, sp.op, sp.val, sp.numeric, ctx.kind)
+            : c;
+        }).filter(Boolean);
         if (!conds.length) return [];
         if (step.combine === 'or' && conds.length > 1) {
           return ['dplyr::filter(' + conds.map(function (c) {

@@ -4479,17 +4479,25 @@ function sendToShiny(name, value) {
     var step = null;
     var problem = '';
     if (kind === 'filter') {
-      var conds = rows.map(function (r) {
+      var parts = rows.map(function (r) {
         var col = fieldValue(r, 'col');
         var op = fieldValue(r, 'op');
         var val = fieldValue(r, 'val');
         if (!col || (val === '' && op !== 'is_na' && op !== 'not_na')) return null;
         var t = typeOf(col);
         var numeric = t ? !!P.NUMERIC_TYPES[t] : P.literal(val, true) !== P.str(val);
-        return P.condition(col, op, val, numeric, !!self.tableLazyKind(table));
+        return { col: col, op: op, val: val, numeric: numeric };
       }).filter(Boolean);
+      var lazyTable = !!self.tableLazyKind(table);
+      var conds = parts.map(function (c) { return P.condition(c.col, c.op, c.val, c.numeric, lazyTable); });
       if (!conds.length) problem = 'Enter a value for at least one condition.';
-      else step = { kind: 'filter', table: table, conds: conds, combine: fieldValue(builder, 'combine') };
+      else {
+        step = {
+          kind: 'filter', table: table, conds: conds, combine: fieldValue(builder, 'combine'),
+          // "contains" is rewritten for the chain's engine when the code is composed
+          specs: parts.map(function (c) { return c.op === 'contains' ? c : null; })
+        };
+      }
     } else if (kind === 'arrange') {
       var cols = rows.map(function (r) {
         return { col: fieldValue(r, 'col'), desc: fieldValue(r, 'dir') === 'desc' };
@@ -4974,7 +4982,8 @@ function sendToShiny(name, value) {
       });
       self.pipeline.add({
         kind: 'filter', key: headerFilterKey(cardName), table: cardName,
-        conds: [condExpr], source: 'header'
+        conds: [condExpr], source: 'header',
+        specs: [op === 'contains' ? { col: colName, op: op, val: val, numeric: numericForCode } : null]
       }, 'filter');
       var filterCode = self.generatedCode;
       // Server-paged tables report their count when the first block arrives.

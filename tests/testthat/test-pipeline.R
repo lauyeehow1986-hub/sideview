@@ -417,7 +417,7 @@ expect_same_rows <- function(got, want, info = NULL) {
     x <- x[, sort(names(x)), drop = FALSE]  # pivot_wider may order new columns differently
     x[do.call(order, unname(as.list(x))), , drop = FALSE] |> `rownames<-`(NULL)
   }
-  expect_equal(norm(got), norm(want), tolerance = 1e-9, info = info)
+  expect_equal(norm(got), norm(want), tolerance = 1e-12, info = info)
 }
 
 skip_unless_lazy_stack <- function() {
@@ -564,5 +564,106 @@ test_that("lazy contains matches the text itself, dots and brackets included, on
       want <- frame[grepl(pat, frame$x, fixed = TRUE), ]
       if (!is.null(got)) expect_equal(sort(got$id), sort(want$id), info = paste(kind, "contains", pat))
     }
+  }
+})
+
+# ---- fix round 1: "contains" is written for the engine the chain is in when the step runs ----------
+# A data-frame card's filter is built with the data-frame form (grepl(fixed = TRUE)) because that
+# is what the card is on its own. After a join into duckdb or arrow the chain is lazy, and duckdb
+# cannot translate grepl(fixed = TRUE): compose() must write str_detect() for that step instead.
+
+contains_step <- function(col, val, numeric = FALSE) {
+  # what the browser adds for a data-frame card: the data-frame condition text plus the spec
+  sprintf("p.add({kind:'filter', table:'visits', conds:[P.condition(%s, 'contains', %s, %s)],
+           specs:[{col:%s, op:'contains', val:%s, numeric:%s}]});",
+          jsonlite::toJSON(col, auto_unbox = TRUE), jsonlite::toJSON(val, auto_unbox = TRUE),
+          tolower(numeric), jsonlite::toJSON(col, auto_unbox = TRUE),
+          jsonlite::toJSON(val, auto_unbox = TRUE), tolower(numeric))
+}
+
+test_that("a contains filter added after a join into duckdb or arrow is written for that engine", {
+  join <- sprintf(join_js, "left_join")
+  for (right in c("duckdb", "arrow")) {
+    meta <- lazy_meta_json(NULL, right)
+    after <- compose_lazy(meta, paste(join, contains_step("site", "a.b")))
+    expect_parses(after)
+    expect_match(after, 'dplyr::filter(stringr::str_detect(site, "a\\\\.b"))', fixed = TRUE, info = right)
+    expect_false(grepl("grepl", after, fixed = TRUE), info = right)
+    expect_false(grepl("fixed", after, fixed = TRUE), info = right)
+    expect_equal(n_collect(after), 1L, info = right)
+    # numeric column: as.character() inside str_detect
+    num <- compose_lazy(meta, paste(join, contains_step("id", "12", TRUE)))
+    expect_match(num, 'stringr::str_detect(as.character(id), "12")', fixed = TRUE, info = right)
+    # before the join the chain is still in R, so the same step keeps the data-frame form
+    before <- compose_lazy(meta, paste(contains_step("site", "a.b"), join))
+    expect_parses(before)
+    expect_match(before, 'grepl("a.b", site, fixed = TRUE)', fixed = TRUE, info = right)
+    expect_false(grepl("str_detect", before, fixed = TRUE), info = right)
+  }
+  # a chain that never leaves R is unchanged
+  df <- compose_lazy(lazy_meta_json(), paste(join, contains_step("site", "a.b")))
+  expect_match(df, 'dplyr::filter(grepl("a.b", site, fixed = TRUE))', fixed = TRUE)
+  expect_false(grepl("str_detect|collect", df))
+  # a step without a spec (older state, a custom condition) is left as written
+  plain <- compose_lazy(lazy_meta_json(NULL, "duckdb"), paste(join,
+    "p.add({kind:'filter', table:'visits', conds:['sbp > 1']});"))
+  expect_match(plain, "dplyr::filter(sbp > 1)", fixed = TRUE)
+})
+
+test_that("a contains filter added after a join into duckdb or arrow runs and equals the data frame", {
+  skip_unless_lazy_stack()
+  join <- sprintf(join_js, "left_join")
+  steps <- list(
+    paste(join, contains_step("site", "A")),
+    paste(join, contains_step("site", ".")),      # a regex dot would match every row on duckdb
+    paste(join, contains_step("site", "A"), contains_step("id", "1", TRUE)),
+    paste(contains_step("site", "A"), join)       # before the join: stays in R
+  )
+  for (right in c("duckdb", "arrow")) {
+    for (i in seq_along(steps)) {
+      label <- sprintf("%s, case %d", right, i)
+      code <- compose_lazy(lazy_meta_json(NULL, right), steps[[i]])
+      expect_parses(code, label)
+      got <- tryCatch(run_code(code, lazy_env(list(patients = right))), error = function(e) {
+        fail(paste0(label, ": ", conditionMessage(e), "\n", code)); NULL
+      })
+      want_env <- lazy_env()
+      want_env$`%>%` <- magrittr::`%>%`
+      want <- run_code(compose_lazy(lazy_meta_json(), steps[[i]]), want_env)
+      if (!is.null(got)) expect_same_rows(got, want, info = label)
+    }
+  }
+})
+
+test_that("a three-way chain across duckdb, a data frame and arrow equals the data-frame result", {
+  skip_unless_lazy_stack()
+  three_meta <- function(a, b, c) {
+    one <- function(kind, name) list(lazy = kind, codeRef = lazy_ref(kind, name))
+    jsonlite::toJSON(list(visits = one(a, "visits"), patients = one(b, "patients"),
+                          readings = one(c, "readings")), auto_unbox = TRUE, null = "null")
+  }
+  body <- paste(
+    "p.addJoinKey('visits', 'patients', 'id', 'id', 'left_join');",
+    "p.addJoinKey('patients', 'readings', 'id', 'id', 'left_join');",
+    "p.add({kind:'filter', table:'visits', conds:[P.condition('age', 'gte', '40', true)]});",
+    "p.add({kind:'arrange', table:'visits', cols:[{col:'id'}, {col:'age'}, {col:'visit'}]});")
+  want_env <- lazy_env()
+  want_env$`%>%` <- magrittr::`%>%`
+  # patients and readings both repeat an id: the many-to-many join is the point, so mute dplyr's note
+  want <- suppressWarnings(run_code(compose_lazy(three_meta(NULL, NULL, NULL), body), want_env))
+  orders <- list(
+    list("duckdb", NULL, "arrow"), list("arrow", NULL, "duckdb"), list(NULL, "duckdb", "arrow"),
+    list("arrow", "duckdb", NULL), list("duckdb", "arrow", NULL), list(NULL, "arrow", "duckdb")
+  )
+  for (k in orders) {
+    label <- paste(vapply(k, function(x) x %||% "df", ""), collapse = " <- ")
+    code <- compose_lazy(three_meta(k[[1]], k[[2]], k[[3]]), body)
+    expect_parses(code, label)
+    expect_equal(n_collect(code), 1L, info = label)
+    env <- lazy_env(list(visits = k[[1]], patients = k[[2]], readings = k[[3]]))
+    got <- tryCatch(run_code(code, env), error = function(e) {
+      fail(paste0(label, ": ", conditionMessage(e), "\n", code)); NULL
+    })
+    if (!is.null(got)) expect_same_rows(got, want, info = label)
   }
 })
