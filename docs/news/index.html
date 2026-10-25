@@ -15,7 +15,8 @@
     </button>
 
     <div id="navbar" class="collapse navbar-collapse ms-3">
-      <ul class="navbar-nav me-auto"><li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
+      <ul class="navbar-nav me-auto"><li class="nav-item"><a class="nav-link" href="../articles/tour.html">Visual tour</a></li>
+<li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="active nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
  <input class="form-control" type="search" name="search-input" id="search-input" autocomplete="off" aria-label="Search site" placeholder="Search for" data-search-index="../search.json"></form></li>
@@ -61,7 +62,7 @@
 <li>Column headers stay put while a table scrolls, so splines stay attached. Maximize, minimize, fullscreen (including in the Viewer pane) and card resize now behave; the toolbar, palette, drawer and AI bar no longer overlap at any window size.</li>
 <li>Click-to-connect no longer starts a stray second connection; sort/filter clicks no longer also connect columns; drawer tabs show their own content.</li>
 <li>
-<strong>Done</strong> returns the generated code and <strong>Cancel</strong> returns <code>NULL</code>; “Run in R” keeps its result in a named object (<code>sv_result</code> by default).</li>
+<strong>Done</strong> returns the generated code and <strong>Cancel</strong> returns <code>NULL</code>; “Run in R” keeps its result in a named object (<code>sv_result</code> by default), in the environment <code><a href="../reference/sideview.html">sideview()</a></code> was called from (new <code>env</code> argument; the workspace when called from the console).</li>
 <li>Card and column names are escaped everywhere, so odd names cannot break the page.</li>
 <li>Recode and auto-clean emit <code><a href="https://dplyr.tidyverse.org/reference/case-and-replace-when.html" class="external-link">dplyr::case_when()</a></code> (<code>case_match()</code> is deprecated in dplyr 1.2).</li>
 <li>A saved or embedded widget hides buttons that need an R session.</li>

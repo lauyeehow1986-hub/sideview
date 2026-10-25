@@ -21,7 +21,8 @@ or Excel to document a dataset or check it before analysis."><meta property="og:
     </button>
 
     <div id="navbar" class="collapse navbar-collapse ms-3">
-      <ul class="navbar-nav me-auto"><li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
+      <ul class="navbar-nav me-auto"><li class="nav-item"><a class="nav-link" href="../articles/tour.html">Visual tour</a></li>
+<li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
  <input class="form-control" type="search" name="search-input" id="search-input" autocomplete="off" aria-label="Search site" placeholder="Search for" data-search-index="../search.json"></form></li>
@@ -80,10 +81,22 @@ package). The codebook is still returned, invisibly.</p></dd>
     <h2 id="ref-examples">Examples<a class="anchor" aria-label="anchor" href="#ref-examples"></a></h2>
     <div class="sourceCode"><pre class="sourceCode r"><code><span class="r-in"><span><span class="va">patients</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>id <span class="op">=</span> <span class="fl">1</span><span class="op">:</span><span class="fl">4</span>, sex <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"M"</span>, <span class="st">"F"</span>, <span class="st">"f"</span>, <span class="cn">NA</span><span class="op">)</span>, age <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">40</span>, <span class="fl">51</span>, <span class="fl">62</span>, <span class="fl">999</span><span class="op">)</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="fu">sv_codebook</span><span class="op">(</span><span class="va">patients</span><span class="op">)</span></span></span>
-<span class="r-err co"><span class="r-pr">#&gt;</span> <span class="error">Error in sv_codebook(patients):</span> could not find function "sv_codebook"</span>
-<span class="r-in"><span><span class="kw">if</span> <span class="op">(</span><span class="cn">FALSE</span><span class="op">)</span> <span class="op">{</span> <span class="co"># \dontrun{</span></span></span>
-<span class="r-in"><span><span class="fu">sv_codebook</span><span class="op">(</span><span class="va">patients</span>, <span class="va">visits</span>, file <span class="op">=</span> <span class="st">"codebook.xlsx"</span><span class="op">)</span></span></span>
-<span class="r-in"><span><span class="op">}</span> <span class="co"># }</span></span></span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>      table column position     class label n n_missing pct_missing n_distinct</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1 patients     id        1   integer  &lt;NA&gt; 4         0           0          4</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 2 patients    sex        2 character  &lt;NA&gt; 4         1          25          3</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 3 patients    age        3   numeric  &lt;NA&gt; 4         0           0          4</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   unique_key  min    q1 median     q3  max  mean        sd          top_values</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1       TRUE    1  1.75    2.5   3.25    4   2.5   1.29099                &lt;NA&gt;</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 2      FALSE &lt;NA&gt;  &lt;NA&gt;   &lt;NA&gt;   &lt;NA&gt; &lt;NA&gt;    NA        NA F (1); M (1); f (1)</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 3       TRUE   40 48.25   56.5 296.25  999 288.0 474.08500                &lt;NA&gt;</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                                                      issues</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1                                                      &lt;NA&gt;</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 2 1 value differs only in case or spacing (e.g. "F" / "f").</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 3                                                      &lt;NA&gt;</span>
+<span class="r-in"><span><span class="va">visits</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>id <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fl">1</span>, <span class="fl">2</span>, <span class="fl">5</span><span class="op">)</span>, sbp <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">120</span>, <span class="fl">135</span>, <span class="fl">128</span>, <span class="fl">141</span><span class="op">)</span><span class="op">)</span></span></span>
+<span class="r-in"><span><span class="va">out</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/tempfile.html" class="external-link">tempfile</a></span><span class="op">(</span>fileext <span class="op">=</span> <span class="st">".csv"</span><span class="op">)</span></span></span>
+<span class="r-in"><span><span class="fu">sv_codebook</span><span class="op">(</span><span class="va">patients</span>, <span class="va">visits</span>, file <span class="op">=</span> <span class="va">out</span><span class="op">)</span></span></span>
+<span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/base/unlink.html" class="external-link">unlink</a></span><span class="op">(</span><span class="va">out</span><span class="op">)</span></span></span>
 </code></pre></div>
     </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>

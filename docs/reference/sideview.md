@@ -20,6 +20,7 @@ sideview(
  },
   theme = "auto",
   state = NULL,
+  env = parent.frame(),
   run = interactive()
 )
 ```
@@ -63,6 +64,13 @@ sideview(
   [`sv_save_state()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_save_state.md).
   Card positions and sizes, zoom and pan, sorts, filters, joins and the
   pipeline come back; cards are matched to tables by name.
+
+- env:
+
+  Environment where **Run in R** evaluates the generated code and stores
+  its result (as `sv_result` unless you name it). Defaults to the
+  environment `sideview()` is called from, which is your workspace when
+  you call it from the console.
 
 - run:
 

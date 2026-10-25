@@ -24,7 +24,8 @@ sideview_addin(
 
 - env:
 
-  Environment to search for tables (defaults to `.GlobalEnv`).
+  Environment to search for tables, and where **Run in R** stores its
+  result (defaults to `.GlobalEnv`, where RStudio addins run).
 
 - viewer:
 

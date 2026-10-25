@@ -67,5 +67,5 @@ require cleaning.
 ``` r
 disc <- sv_detect_discrepancies(c("male", "Female"), c("Male", "Female"))
 sv_auto_clean_rules(disc, df_name = "patients", col = "gender")
-#> [1] "dplyr::mutate(patients, gender = dplyr::case_match(\n    gender,\n    \"male\" ~ \"Male\",\n    .default = gender\n  ))"
+#> [1] "dplyr::mutate(patients, gender = dplyr::case_when(\n    gender == \"male\" ~ \"Male\",\n    .default = gender\n  ))"
 ```

@@ -2,6 +2,14 @@ url: https://lauyeehow1986-hub.github.io/sideview/
 template:
   bootstrap: 5
 
+navbar:
+  structure:
+    left: [intro, tour, reference, news]
+  components:
+    tour:
+      text: Visual tour
+      href: articles/tour.html
+
 reference:
   - title: "Interactive Canvas & Gadget"
     desc: "Launch the interactive side-by-side multi-table canvas in RStudio or standalone."

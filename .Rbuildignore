@@ -14,3 +14,5 @@
 ^\.Rproj\.user$
 ^artifacts$
 ^tests/testthat/artifacts$
+^vignettes/articles$
+^tools$

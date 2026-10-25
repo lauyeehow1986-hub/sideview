@@ -1,4 +1,4 @@
-# sideview: Multi-Table 2D Infinite Canvas for R <img src="man/figures/logo.png" align="right" height="150" alt="sideview hex logo" />
+# sideview: Explore and Join Many Tables on a Zoomable Canvas <img src="man/figures/logo.png" align="right" height="150" alt="sideview hex logo" />
 
 <!-- badges: start -->
 [![R-CMD-check](https://github.com/lauyeehow1986-hub/sideview/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/lauyeehow1986-hub/sideview/actions/workflows/R-CMD-check.yaml)
@@ -7,6 +7,10 @@
 <!-- badges: end -->
 
 `sideview` puts **many tables side by side on a pan-and-zoom canvas**, so you can compare them, **connect columns to build joins**, check those joins before you run them, and take away **reproducible `tidyverse` code**. It runs as an **RStudio gadget** or as an **htmlwidget** you can save to HTML or embed in Quarto and R Markdown.
+
+<img src="man/figures/overview.png" width="100%" alt="The sideview canvas: four tables side by side, with a minimap, toolbar and AI bar" />
+
+**[Take the visual tour](https://lauyeehow1986-hub.github.io/sideview/articles/tour.html)** to see every feature in a screenshot.
 
 ## Installation
 

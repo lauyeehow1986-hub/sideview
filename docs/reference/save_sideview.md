@@ -53,7 +53,9 @@ The normalized path to the saved file (invisibly).
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
-save_sideview(mtcars, file = "cars_sideview.html")
-} # }
+# \donttest{
+out <- tempfile(fileext = ".html")
+save_sideview(mtcars, file = out)
+unlink(out)
+# }
 ```

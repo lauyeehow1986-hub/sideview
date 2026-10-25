@@ -6,6 +6,16 @@ joins before you run them, and take away **reproducible `tidyverse`
 code**. It runs as an **RStudio gadget** or as an **htmlwidget** you can
 save to HTML or embed in Quarto and R Markdown.
 
+![The sideview canvas: four tables side by side, with a minimap, toolbar
+and AI bar](reference/figures/overview.png)
+
+The sideview canvas: four tables side by side, with a minimap, toolbar
+and AI bar
+
+**[Take the visual
+tour](https://lauyeehow1986-hub.github.io/sideview/articles/tour.html)**
+to see every feature in a screenshot.
+
 ## Installation
 
 Install the development version from GitHub:

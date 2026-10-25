@@ -19,7 +19,8 @@ custom properties in inst/www/sideview.css)."><meta property="og:image" content=
     </button>
 
     <div id="navbar" class="collapse navbar-collapse ms-3">
-      <ul class="navbar-nav me-auto"><li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
+      <ul class="navbar-nav me-auto"><li class="nav-item"><a class="nav-link" href="../articles/tour.html">Visual tour</a></li>
+<li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
  <input class="form-control" type="search" name="search-input" id="search-input" autocomplete="off" aria-label="Search site" placeholder="Search for" data-search-index="../search.json"></form></li>
@@ -93,9 +94,25 @@ focus and tint shades are derived from it.</p></dd>
     <div class="section level2">
     <h2 id="ref-examples">Examples<a class="anchor" aria-label="anchor" href="#ref-examples"></a></h2>
     <div class="sourceCode"><pre class="sourceCode r"><code><span class="r-in"><span><span class="fu">sv_theme</span><span class="op">(</span><span class="st">"dark"</span><span class="op">)</span></span></span>
-<span class="r-err co"><span class="r-pr">#&gt;</span> <span class="error">Error in sv_theme("dark"):</span> could not find function "sv_theme"</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> &lt;sv_theme&gt; mode: dark </span>
 <span class="r-in"><span><span class="fu">sv_theme</span><span class="op">(</span>primary <span class="op">=</span> <span class="st">"#0f766e"</span>, radius <span class="op">=</span> <span class="st">"4px"</span><span class="op">)</span></span></span>
-<span class="r-err co"><span class="r-pr">#&gt;</span> <span class="error">Error in sv_theme(primary = "#0f766e", radius = "4px"):</span> could not find function "sv_theme"</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> &lt;sv_theme&gt; mode: auto </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-primary: #0f766e</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-primary-text-light: #0e6a63</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-primary-text-dark: #63a6a1</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-text-inverse: #ffffff</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-primary-hover: #0d645e</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-primary-subtle: rgba(15, 118, 110, 0.12)</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-primary-ring: rgba(15, 118, 110, 0.2)</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-primary-tint: rgba(15, 118, 110, 0.12)</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-focus-ring: #0f766e</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-border-focus: #0f766e</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-connector-color: #0f766e</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-port-ring: rgba(15, 118, 110, 0.35)</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-suggested: #0f766e</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-suggested-hover: #0f766e</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-suggested-glow: rgba(15, 118, 110, 0.5)</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   --sv-radius: 4px</span>
 <span class="r-in"><span><span class="kw">if</span> <span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/interactive.html" class="external-link">interactive</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span> <span class="fu"><a href="sideview.html">sideview</a></span><span class="op">(</span><span class="va">mtcars</span>, theme <span class="op">=</span> <span class="fu">sv_theme</span><span class="op">(</span><span class="st">"dark"</span>, primary <span class="op">=</span> <span class="st">"#f59e0b"</span><span class="op">)</span><span class="op">)</span></span></span>
 </code></pre></div>
     </div>

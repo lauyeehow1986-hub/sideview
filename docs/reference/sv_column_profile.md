@@ -40,7 +40,49 @@ and `issues` (character).
 
 ``` r
 sv_column_profile(c(" Male", "male", "Female", NA))
-#> Error in sv_column_profile(c(" Male", "male", "Female", NA)): could not find function "sv_column_profile"
+#> $kind
+#> [1] "character"
+#> 
+#> $class
+#> [1] "character"
+#> 
+#> $label
+#> NULL
+#> 
+#> $n
+#> [1] 4
+#> 
+#> $n_missing
+#> [1] 1
+#> 
+#> $pct_missing
+#> [1] 0.25
+#> 
+#> $n_distinct
+#> [1] 3
+#> 
+#> $unique_key
+#> [1] FALSE
+#> 
+#> $stats
+#> NULL
+#> 
+#> $histogram
+#> NULL
+#> 
+#> $top
+#>    value n
+#> 1   Male 1
+#> 2 Female 1
+#> 3   male 1
+#> 
+#> $n_other
+#> [1] 0
+#> 
+#> $issues
+#> [1] "1 value has leading or trailing spaces."                             
+#> [2] "1 value differs only in case or spacing (e.g. \" Male\" / \"male\")."
+#> 
 sv_column_profile(c(54, 61, 47, 999, NA))$issues
-#> Error in sv_column_profile(c(54, 61, 47, 999, NA)): could not find function "sv_column_profile"
+#> character(0)
 ```

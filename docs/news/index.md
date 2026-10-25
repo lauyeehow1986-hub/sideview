@@ -66,7 +66,10 @@ file and a Quarto page), plus new features for clinical data work.
   their own content.
 - **Done** returns the generated code and **Cancel** returns `NULL`;
   “Run in R” keeps its result in a named object (`sv_result` by
-  default).
+  default), in the environment
+  [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)
+  was called from (new `env` argument; the workspace when called from
+  the console).
 - Card and column names are escaped everywhere, so odd names cannot
   break the page.
 - Recode and auto-clean emit

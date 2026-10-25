@@ -58,8 +58,24 @@ An object of class `sv_theme`.
 
 ``` r
 sv_theme("dark")
-#> Error in sv_theme("dark"): could not find function "sv_theme"
+#> <sv_theme> mode: dark 
 sv_theme(primary = "#0f766e", radius = "4px")
-#> Error in sv_theme(primary = "#0f766e", radius = "4px"): could not find function "sv_theme"
+#> <sv_theme> mode: auto 
+#>   --sv-primary: #0f766e
+#>   --sv-primary-text-light: #0e6a63
+#>   --sv-primary-text-dark: #63a6a1
+#>   --sv-text-inverse: #ffffff
+#>   --sv-primary-hover: #0d645e
+#>   --sv-primary-subtle: rgba(15, 118, 110, 0.12)
+#>   --sv-primary-ring: rgba(15, 118, 110, 0.2)
+#>   --sv-primary-tint: rgba(15, 118, 110, 0.12)
+#>   --sv-focus-ring: #0f766e
+#>   --sv-border-focus: #0f766e
+#>   --sv-connector-color: #0f766e
+#>   --sv-port-ring: rgba(15, 118, 110, 0.35)
+#>   --sv-suggested: #0f766e
+#>   --sv-suggested-hover: #0f766e
+#>   --sv-suggested-glow: rgba(15, 118, 110, 0.5)
+#>   --sv-radius: 4px
 if (interactive()) sideview(mtcars, theme = sv_theme("dark", primary = "#f59e0b"))
 ```

@@ -66,6 +66,18 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 
 ## Log
 
+### 2026-10-25 - Visual tour on the site
+- New article `vignettes/articles/tour.Rmd` ("Visual tour" in the navbar): 10 screenshots, one per feature
+  (canvas, joins, join check, filter, pipeline, inspector, Ctrl+K search, copilot, dark theme, shortcuts).
+- Screenshots come from `tools/tour-screenshots.R` (headless chromote against the gadget with real
+  mouse/key input, synthetic `patients`/`visits`/`labs`/`adverse_events`, mocked LLM). Re-run it after UI
+  changes and copy `tour/overview.png` to `man/figures/overview.png` (README hero image).
+- README hero uses an HTML `<img>`: Markdown alt text became a visible caption on the pkgdown home page.
+- `.Rbuildignore` drops `vignettes/articles` and `tools`; the tarball gains only `man/figures/overview.png`.
+- Verified: home and tour pages at 375 px (images 351 px wide, no horizontal overflow) and desktop; site scrubbed.
+- Noticed, not fixed: copilot bubble shows prose that follows a code block above the code; narrow drawer
+  wraps the pipeline step's delete button; inspector mean is unrounded (5.33789).
+
 ### 2026-10-25 - Submitted 0.3.0 to CRAN
 - win-builder R-release (4.6.1) and R-devel (r90762): 1 note each (new submission). GitHub Actions
   `--as-cran` on Ubuntu (devel/release/oldrel), macOS, Windows: OK. mac-builder failed on its own missing deps.
