@@ -624,3 +624,123 @@ test_that("lazy counts stay integer until they pass the integer range", {
   expect_identical(sv_lazy_count(5), 5L)
   expect_identical(sv_lazy_count(3e9), 3e9)
 })
+
+profile_columns <- function() {
+  i <- seq_len(300)
+  list(
+    num_outliers = c(rep(10, 6), 11, 12, 12, 13, 14, 15, 15, 15, 500, NA, 1000, NA),
+    num_special = c(1.5, 2.25, NaN, Inf, -Inf, NA, 0.1 + 0.2, 1 / 3, 7, 7, 7),
+    num_wide = sin(i) * 10^((i %% 7) - 3),
+    num_constant = rep(7, 5),
+    num_one = 42,
+    num_few = c(3, 3, 1, 2, 2, 2, NA, 5, 5, 4),
+    int_key = 1:25,
+    int_ties = c(1L, 2L, 2L, 3L, 3L, 3L, NA, 90000L),
+    chr_messy = c(" x", "X", "x\t", "", NA, "x", "x", "Y", "y ", "y"),
+    chr_numtext = c("1", "2.5", " 3", NA, "-4e2", ".5", "7."),
+    chr_key = sprintf("P%03d", 1:30),
+    chr_many = rep(letters, 1:26),
+    chr_same = rep("a", 4),
+    date = as.Date("2024-01-01") + c(0, 10, 20, 30, 30, NA, 365, 4000),
+    datetime = as.POSIXct("2024-03-01 08:30:00", tz = "UTC") + c(0, 3600, 86400, NA, 90000, 5),
+    lgl = c(TRUE, FALSE, TRUE, NA, TRUE),
+    lgl_na = rep(NA, 4),
+    num_na = rep(NA_real_, 3),
+    chr_na = rep(NA_character_, 3),
+    zero_num = numeric(0),
+    zero_chr = character(0),
+    zero_date = as.Date(character(0))
+  )
+}
+
+profile_source <- function(x, how, con, name) {
+  df <- data.frame(c = x, stringsAsFactors = FALSE)
+  switch(how,
+    duckdb = {
+      DBI::dbWriteTable(con, name, df, overwrite = TRUE)
+      dplyr::tbl(con, name)
+    },
+    arrow = arrow::arrow_table(df)
+  )
+}
+
+test_that("lazy column profile equals in-memory", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  fx <- lazy_fixture()
+  cols <- profile_columns()
+  for (nm in names(cols)) {
+    want <- sv_column_profile(cols[[nm]])
+    for (how in c("duckdb", "arrow")) {
+      src <- profile_source(cols[[nm]], how, fx$con, "pc")
+      got <- sv_column_profile(src, column = "c")
+      expect_equal(got, want, tolerance = 1e-12, label = paste(nm, how))
+    }
+  }
+})
+
+test_that("lazy column profile follows top_n and bins", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  fx <- lazy_fixture()
+  cols <- profile_columns()
+  for (nm in c("num_wide", "num_few", "chr_many", "chr_messy", "date")) {
+    for (how in c("duckdb", "arrow")) {
+      src <- profile_source(cols[[nm]], how, fx$con, "pc")
+      for (top_n in c(2L, 5L)) {
+        for (bins in c(4L, 33L)) {
+          expect_equal(
+            sv_column_profile(src, top_n = top_n, bins = bins, column = "c"),
+            sv_column_profile(cols[[nm]], top_n = top_n, bins = bins),
+            tolerance = 1e-12, label = paste(nm, how, top_n, bins)
+          )
+        }
+      }
+    }
+  }
+})
+
+test_that("lazy column profile picks a column of a wider table", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  fx <- lazy_fixture()
+  tb <- dplyr::tbl(fx$con, "v")
+  expect_equal(sv_column_profile(tb, column = "grp"), sv_column_profile(fx$df$grp))
+  expect_equal(sv_column_profile(arrow::arrow_table(fx$df), column = "id"),
+               sv_column_profile(fx$df$id))
+  expect_error(sv_column_profile(tb, column = "nope"), "Not in")
+  # a profile run on a shared connection leaves it empty
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  p <- sv_lazy_column_profile(arrow::arrow_table(fx$df), "grp", con_env = e)
+  expect_equal(p, sv_column_profile(fx$df$grp))
+  expect_length(DBI::dbListTables(e$con), 0L)
+})
+
+test_that("lazy input needs column", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  fx <- lazy_fixture()
+  expect_error(sv_column_profile(dplyr::tbl(fx$con, "v")), "Give `column`")
+  expect_error(sv_column_profile(arrow::arrow_table(fx$df)), "Give `column`")
+})
+
+test_that("lazy issue texts count tabs and newlines as whitespace", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  fx <- lazy_fixture()
+  x <- c("a\t", "b", "c\n", " d", "e\r", "F", "f\t")
+  for (how in c("duckdb", "arrow")) {
+    got <- sv_column_profile(profile_source(x, how, fx$con, "pc"), column = "c")
+    expect_identical(got$issues, sv_column_profile(x)$issues)
+    expect_match(got$issues[1], "^5 values have leading or trailing spaces")
+  }
+})

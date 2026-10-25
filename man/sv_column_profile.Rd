@@ -4,14 +4,19 @@
 \alias{sv_column_profile}
 \title{Column Profile}
 \usage{
-sv_column_profile(x, top_n = 10L, bins = 20L)
+sv_column_profile(x, top_n = 10L, bins = 20L, column = NULL)
 }
 \arguments{
-\item{x}{A vector (a data frame column).}
+\item{x}{A vector (a data frame column), or a lazy table (a duckdb table or an
+Arrow table / dataset) together with \code{column}.}
 
 \item{top_n}{Number of most common values to keep.}
 
 \item{bins}{Number of equal-width histogram bins for numeric columns.}
+
+\item{column}{The column to profile when \code{x} is a lazy table. The whole table
+is profiled by the database, and the result equals the one for the same
+column held in memory. Not used for a vector.}
 }
 \value{
 A list with \code{kind} (\code{"numeric"}, \code{"character"}, \code{"logical"},

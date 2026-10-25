@@ -6,9 +6,13 @@
 #' flags (stray spaces, values that differ only in case, numbers stored as text,
 #' empty strings, extreme values).
 #'
-#' @param x A vector (a data frame column).
+#' @param x A vector (a data frame column), or a lazy table (a duckdb table or an
+#'   Arrow table / dataset) together with `column`.
 #' @param top_n Number of most common values to keep.
 #' @param bins Number of equal-width histogram bins for numeric columns.
+#' @param column The column to profile when `x` is a lazy table. The whole table
+#'   is profiled by the database, and the result equals the one for the same
+#'   column held in memory. Not used for a vector.
 #'
 #' @return A list with `kind` (`"numeric"`, `"character"`, `"logical"`,
 #'   `"date"`, `"datetime"` or `"other"`), `class`, `label` (the `"label"`
@@ -21,7 +25,11 @@
 #' @examples
 #' sv_column_profile(c(" Male", "male", "Female", NA))
 #' sv_column_profile(c(54, 61, 47, 999, NA))$issues
-sv_column_profile <- function(x, top_n = 10L, bins = 20L) {
+sv_column_profile <- function(x, top_n = 10L, bins = 20L, column = NULL) {
+  if (sv_is_lazy_input(x)) {
+    if (is.null(column)) stop("Give `column` for a lazy table.", call. = FALSE)
+    return(sv_lazy_column_profile(x, column, top_n = top_n, bins = bins))
+  }
   kind <- sv_profile_kind(x)
   label <- attr(x, "label", exact = TRUE)
   n <- length(x)
@@ -110,42 +118,87 @@ sv_histogram <- function(v, bins) {
 
 n_of <- function(n, one, many) paste(fmt_n(n), if (n == 1) one else many)
 
+# Whitespace R's trimws() strips; the lazy twin trims the same set in SQL.
+sv_trim_chars <- " \t\r\n"
+
+# A whole value that reads as a number (the "numbers stored as text" flag).
+sv_numeric_text_regex <- "^[-+]?([0-9]+\\.?[0-9]*|\\.[0-9]+)([eE][-+]?[0-9]+)?$"
+
+#' The data-quality flags of a column, as text
+#'
+#' Two steps so that the in-memory and the lazy (database) profile share the
+#' wording: `sv_issue_counts()` counts what is wrong in the values, and
+#' `sv_format_issues()` turns the counts into sentences.
+#' @noRd
 sv_profile_issues <- function(kind, vals, p) {
-  out <- character(0)
-  if (p$n > 0L && p$n_missing == p$n) return("All values are missing.")
-  if (p$n_distinct == 1L && p$n > 1L) out <- c(out, "Only one distinct value.")
+  sv_format_issues(p, sv_issue_counts(kind, vals, p))
+}
+
+#' What is wrong with the non-missing values of a column
+#'
+#' @param kind From `sv_profile_kind()`.
+#' @param vals The non-missing values.
+#' @param p The profile built so far (needs `stats` for numbers).
+#' @return A list: `spaced`, `empty`, `variants_n` (integer), `variants_eg`
+#'   (character, up to 3), `numeric_text` (logical), `far_n` (integer) and
+#'   `far_eg` (numeric, up to 3, descending).
+#' @noRd
+sv_issue_counts <- function(kind, vals, p) {
+  out <- list(spaced = 0L, empty = 0L, variants_n = 0L, variants_eg = character(0),
+              numeric_text = FALSE, far_n = 0L, far_eg = numeric(0))
   if (kind == "character") {
     s <- as.character(vals)
-    spaced <- sum(s != trimws(s))
-    if (spaced) out <- c(out, sprintf("%s leading or trailing spaces.", n_of(spaced, "value has", "values have")))
-    empty <- sum(s == "")
-    if (empty) out <- c(out, sprintf("%s, not NA.", n_of(empty, "empty string", "empty strings")))
+    out$spaced <- sum(s != trimws(s))
+    out$empty <- sum(s == "")
     distinct <- unique(s)
     folded <- tolower(trimws(distinct))
     groups <- split(distinct, folded)
     variants <- groups[lengths(groups) > 1L]
     variants <- variants[order(names(variants), method = "radix")]
+    out$variants_n <- length(variants)
     if (length(variants)) {
-      eg <- paste0("\"", utils::head(sort(variants[[1]], method = "radix"), 3L), "\"", collapse = " / ")
-      out <- c(out, sprintf("%s only in case or spacing (e.g. %s).",
-                            n_of(length(variants), "value differs", "values differ"), eg))
+      out$variants_eg <- utils::head(sort(variants[[1]], method = "radix"), 3L)
     }
     nonblank <- trimws(s[trimws(s) != ""])
-    if (length(nonblank) && all(grepl("^[-+]?([0-9]+\\.?[0-9]*|\\.[0-9]+)([eE][-+]?[0-9]+)?$", nonblank))) {
-      out <- c(out, "All values are numbers stored as text.")
-    }
+    out$numeric_text <- length(nonblank) > 0L && all(grepl(sv_numeric_text_regex, nonblank))
   }
   if (kind == "numeric" && !is.null(p$stats)) {
     iqr <- p$stats$q3 - p$stats$q1
     if (is.finite(iqr) && iqr > 0) {
       v <- as.numeric(vals)
       far <- v[is.finite(v) & (v < p$stats$q1 - 3 * iqr | v > p$stats$q3 + 3 * iqr)]
-      if (length(far)) {
-        eg <- vapply(utils::head(sort(unique(far), decreasing = TRUE), 3L), format_key, character(1))
-        out <- c(out, sprintf("%s beyond 3 IQR of the quartiles (e.g. %s).",
-                              n_of(length(far), "value lies", "values lie"), paste(eg, collapse = ", ")))
-      }
+      out$far_n <- length(far)
+      out$far_eg <- utils::head(sort(unique(far), decreasing = TRUE), 3L)
     }
+  }
+  out
+}
+
+#' The sentences for the counts of `sv_issue_counts()`
+#' @param p The profile built so far (`n`, `n_missing`, `n_distinct`).
+#' @param counts From `sv_issue_counts()` or its lazy twin.
+#' @return A character vector.
+#' @noRd
+sv_format_issues <- function(p, counts) {
+  out <- character(0)
+  if (p$n > 0L && p$n_missing == p$n) return("All values are missing.")
+  if (p$n_distinct == 1L && p$n > 1L) out <- c(out, "Only one distinct value.")
+  if (counts$spaced) {
+    out <- c(out, sprintf("%s leading or trailing spaces.", n_of(counts$spaced, "value has", "values have")))
+  }
+  if (counts$empty) {
+    out <- c(out, sprintf("%s, not NA.", n_of(counts$empty, "empty string", "empty strings")))
+  }
+  if (counts$variants_n) {
+    eg <- paste0("\"", counts$variants_eg, "\"", collapse = " / ")
+    out <- c(out, sprintf("%s only in case or spacing (e.g. %s).",
+                          n_of(counts$variants_n, "value differs", "values differ"), eg))
+  }
+  if (isTRUE(counts$numeric_text)) out <- c(out, "All values are numbers stored as text.")
+  if (counts$far_n) {
+    eg <- vapply(counts$far_eg, format_key, character(1))
+    out <- c(out, sprintf("%s beyond 3 IQR of the quartiles (e.g. %s).",
+                          n_of(counts$far_n, "value lies", "values lie"), paste(eg, collapse = ", ")))
   }
   out
 }

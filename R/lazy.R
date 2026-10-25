@@ -699,5 +699,287 @@ sv_lazy_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_na
   structure(out, class = "sv_join_diagnostics")
 }
 
+#' A double as an exact SQL literal
+#'
+#' dbplyr writes a double with 15 significant digits, which would move a value
+#' by an ulp. 17 digits in scientific notation round-trip and duckdb reads them
+#' as DOUBLE (a plain `0.3` would be a DECIMAL).
+#' @param x A finite number.
+#' @noRd
+sv_lazy_lit <- function(x) dplyr::sql(sprintf("(%.17e)", x))
+
+# a SQL aggregate that is NULL on no rows, as a plain number
+sv_lazy_num0 <- function(v) if (length(v) == 0L || is.na(v)) 0 else as.numeric(v)
+
+#' The one column to profile, as `.sv_v`
+#'
+#' Missing is NULL; for a plain double NaN is made NULL too, because R counts
+#' NaN as missing and duckdb sorts it as a number. A factor / enum is text.
+#' @param tbl A duckdb tbl.
+#' @param column Column name.
+#' @param zero A 0-row `collect()` of the column, for its R class.
+#' @noRd
+sv_lazy_profile_base <- function(tbl, column, zero) {
+  b <- dplyr::select(tbl, .sv_v = dplyr::all_of(column))
+  v <- rlang::sym(".sv_v")
+  if (is.factor(zero)) {
+    b <- dplyr::mutate(b, .sv_v = as.character(!!v))
+  } else if (identical(sv_lazy_kind(zero), "double")) {
+    b <- dplyr::mutate(b, .sv_v = if_else(isnan(!!v), NA, !!v))
+  }
+  b
+}
+
+#' The text key a value is counted under, as in the in-memory profile
+#' @noRd
+sv_lazy_key_expr <- function(kind) {
+  v <- rlang::sym(".sv_v")
+  if (kind == "logical") sv_lazy_text_expr(v, "logical") else if (kind == "character") v else
+    rlang::expr(as.character(!!v))
+}
+
+#' Counts behind the data-quality flags of one column, from the database
+#'
+#' The twin of `sv_issue_counts()`: same names, same types. The texts come
+#' from `sv_format_issues()`.
+#' @param tbl A duckdb tbl holding `column`.
+#' @param column Column name.
+#' @param kind From `sv_profile_kind()`.
+#' @param p The profile built so far (`n`, `n_missing` and, for numbers, `stats`).
+#' @param base For internal use: the result of `sv_lazy_profile_base()`.
+#' @noRd
+sv_lazy_issue_counts <- function(tbl, column, kind, p, base = NULL) {
+  out <- list(spaced = 0L, empty = 0L, variants_n = 0L, variants_eg = character(0),
+              numeric_text = FALSE, far_n = 0L, far_eg = numeric(0))
+  if (p$n == 0L || p$n_missing == p$n) return(out)
+  if (is.null(base)) {
+    zero <- dplyr::collect(utils::head(dplyr::select(tbl, dplyr::all_of(column)), 0L))[[1]]
+    base <- sv_lazy_profile_base(tbl, column, zero)
+  }
+  v <- rlang::sym(".sv_v")
+  present <- dplyr::filter(base, !is.na(!!v))
+
+  if (kind == "character") {
+    # duckdb's trim() strips spaces only; R's trimws() strips [ \t\r\n]
+    trimmed <- rlang::expr(trim(!!v, !!sv_trim_chars))
+    t <- rlang::sym(".sv_t")
+    r <- dplyr::collect(dplyr::summarise(
+      dplyr::mutate(present, .sv_t = !!trimmed),
+      spaced = sum(if_else(!!v != !!t, 1, 0), na.rm = TRUE),
+      empty = sum(if_else(!!v == "", 1, 0), na.rm = TRUE),
+      nonblank = sum(if_else(!!t != "", 1, 0), na.rm = TRUE),
+      numtext = sum(if_else(!!t != "" & regexp_full_match(!!t, !!sv_numeric_text_regex), 1, 0),
+                    na.rm = TRUE)
+    ))
+    out$spaced <- sv_lazy_count(sv_lazy_num0(r$spaced))
+    out$empty <- sv_lazy_count(sv_lazy_num0(r$empty))
+    nonblank <- sv_lazy_num0(r$nonblank)
+    out$numeric_text <- nonblank > 0 && sv_lazy_num0(r$numtext) == nonblank
+
+    # values that differ only in case or spacing: groups of distinct values
+    folded <- dplyr::mutate(dplyr::distinct(present), .sv_f = lower(trim(!!v, !!sv_trim_chars)))
+    f <- rlang::sym(".sv_f")
+    groups <- dplyr::filter(
+      dplyr::summarise(dplyr::group_by(folded, !!f), .sv_k = n(), .groups = "drop"),
+      .sv_k > 1
+    )
+    g <- dplyr::collect(dplyr::summarise(groups, variants_n = n(), first = min(!!f, na.rm = TRUE)))
+    nvar <- sv_lazy_num0(g$variants_n)
+    if (nvar > 0) {
+      out$variants_n <- sv_lazy_count(nvar)
+      first <- g$first
+      eg <- sv_lazy_first(dplyr::filter(folded, !!f == !!first), list(v), 3L)
+      out$variants_eg <- as.character(eg[[".sv_v"]])
+    }
+  }
+
+  if (kind == "numeric" && !is.null(p$stats)) {
+    iqr <- p$stats$q3 - p$stats$q1
+    if (is.finite(iqr) && iqr > 0) {
+      fin <- sv_lazy_finite(present, sv_lazy_is_double(base))
+      lo <- sv_lazy_lit(p$stats$q1 - 3 * iqr)
+      hi <- sv_lazy_lit(p$stats$q3 + 3 * iqr)
+      far <- dplyr::filter(fin, !!v < !!lo | !!v > !!hi)
+      nfar <- sv_lazy_num0(dplyr::collect(dplyr::summarise(far, n = n()))$n)
+      if (nfar > 0) {
+        out$far_n <- sv_lazy_count(nfar)
+        eg <- sv_lazy_first(dplyr::distinct(far), list(rlang::expr(desc(!!v))), 3L)
+        out$far_eg <- as.numeric(eg[[".sv_v"]])
+      }
+    }
+  }
+  out
+}
+
+#' The first `k` rows of a lazy tbl in the order of `keys`, collected
+#'
+#' A window rank, not `arrange()` + `head()`: duckdb turns the latter into a
+#' top-N whose dynamic filter an Arrow scan of an integer or text column
+#' rejects ("Dynamic Filter not supported yet"). Ties keep no order, so `keys`
+#' must be unique per row.
+#' @param keys A list of symbols or `desc()` calls.
+#' @noRd
+sv_lazy_first <- function(tbl, keys, k) {
+  ranked <- dplyr::mutate(dbplyr::window_order(tbl, !!!keys), .sv_rk = row_number())
+  dplyr::collect(dplyr::arrange(dplyr::filter(ranked, .sv_rk <= !!as.integer(k)), .sv_rk))
+}
+
+# is the profiled column a plain double (it can hold Inf and NaN)?
+sv_lazy_is_double <- function(base) {
+  identical(sv_lazy_kind(dplyr::collect(utils::head(base, 0L))[[1]]), "double")
+}
+
+# rows with a finite value; an integer column has no Inf to drop
+sv_lazy_finite <- function(present, is_double) {
+  if (is_double) dplyr::filter(present, isfinite(.sv_v)) else present
+}
+
+#' Column inspector over the whole lazy table, run by duckdb
+#'
+#' The twin of `sv_column_profile()`: the same list for the same data. Each
+#' step is an aggregate or a bounded result (`top_n` values, a histogram, up to
+#' five order statistics, up to three examples), so the column is never
+#' collected. Quartiles are `quantile_cont()`, which is R's `type = 7`. A date or
+#' date-time takes the order statistic at `ceiling(n * p)`, as the in-memory
+#' profile does. The issue texts are built from counts by `sv_format_issues()`.
+#' @param tbl A duckdb tbl, or an Arrow table / dataset (handed to duckdb on the
+#'   private connection of `con_env`, and removed again).
+#' @param column Name of the column to profile.
+#' @inheritParams sv_column_profile
+#' @param con_env An environment from `sv_lazy_env()`. When omitted, a private
+#'   connection is opened for this call and closed again.
+#' @return The list `sv_column_profile()` returns (`label` is `NULL`).
+#' @noRd
+sv_lazy_column_profile <- function(tbl, column, top_n = 10L, bins = 20L, con_env = sv_lazy_env()) {
+  own_env <- missing(con_env)
+  force(con_env)
+  if (own_env) on.exit(sv_lazy_close(con_env), add = TRUE)
+  if (!is.character(column) || length(column) != 1L || is.na(column)) {
+    stop("`column` must be one column name.", call. = FALSE)
+  }
+  if (!column %in% sv_lazy_names(tbl)) stop(sprintf("Not in table: %s", column), call. = FALSE)
+  if (inherits(tbl, "tbl_lazy") && !inherits(tbl, "tbl_duckdb_connection")) {
+    rlang::abort("The column inspector needs a duckdb table; this table is on another database.",
+                 class = "sv_lazy_not_duckdb")
+  }
+  if (!inherits(tbl, "tbl_lazy")) {
+    # an Arrow object: only this column goes to duckdb, and it is unregistered after
+    tbl <- sv_lazy_tbl(dplyr::select(tbl, dplyr::all_of(column)), con_env)
+    name <- dbplyr::remote_name(tbl)
+    on.exit(sv_lazy_detach_arrow(sv_lazy_con(con_env), name), add = TRUE, after = FALSE)
+  }
+
+  top_n <- as.integer(top_n)
+  bins <- as.integer(bins)
+  zero <- dplyr::collect(utils::head(dplyr::select(tbl, dplyr::all_of(column)), 0L))[[1]]
+  kind <- sv_profile_kind(zero)
+  base <- sv_lazy_profile_base(tbl, column, zero)
+  v <- rlang::sym(".sv_v")
+  present <- dplyr::filter(base, !is.na(!!v))
+
+  r <- dplyr::collect(dplyr::summarise(
+    base,
+    n = n(),
+    n_missing = sum(if_else(is.na(!!v), 1, 0), na.rm = TRUE),
+    n_distinct = n_distinct(!!v, na.rm = TRUE)
+  ))
+  n_all <- sv_lazy_num0(r$n)
+  n_miss <- sv_lazy_num0(r$n_missing)
+  n_present <- n_all - n_miss
+  n_distinct <- sv_lazy_num0(r$n_distinct)
+  n <- sv_lazy_count(n_all)
+
+  out <- list(
+    kind = kind,
+    class = class(zero)[1],
+    label = NULL,
+    n = n,
+    n_missing = sv_lazy_count(n_miss),
+    pct_missing = if (n_all > 0) n_miss / n_all else 0,
+    n_distinct = sv_lazy_count(n_distinct),
+    unique_key = n_all > 0 && n_miss == 0 && n_distinct == n_all,
+    stats = NULL,
+    histogram = NULL,
+    top = data.frame(value = character(0), n = integer(0), stringsAsFactors = FALSE),
+    n_other = 0L,
+    issues = character(0)
+  )
+
+  if (kind == "numeric" && n_present > 0) {
+    fin <- sv_lazy_finite(present, identical(sv_lazy_kind(zero), "double"))
+    s <- dplyr::collect(dplyr::summarise(
+      fin,
+      n = n(),
+      q0 = quantile_cont(!!v, 0), q1 = quantile_cont(!!v, 0.25), q2 = quantile_cont(!!v, 0.5),
+      q3 = quantile_cont(!!v, 0.75), q4 = quantile_cont(!!v, 1),
+      mean = mean(!!v, na.rm = TRUE), sd = sd(!!v, na.rm = TRUE)
+    ))
+    n_fin <- sv_lazy_num0(s$n)
+    if (n_fin > 0) {
+      out$stats <- list(
+        min = s$q0, q1 = s$q1, median = s$q2, q3 = s$q3, max = s$q4,
+        mean = s$mean, sd = if (n_fin > 1) s$sd else NA_real_
+      )
+      out$histogram <- sv_lazy_histogram(fin, s$q0, s$q4, n_fin, bins)
+    }
+  } else if (kind %in% c("date", "datetime") && n_present > 0) {
+    # the order statistic at ceiling(n * p), the way sv_column_profile() picks it
+    pos <- pmax(1, ceiling(n_present * c(0.25, 0.5, 0.75)))
+    want <- sort(unique(c(1, pos, n_present)))
+    want <- if (all(want <= .Machine$integer.max)) as.integer(want) else want
+    ranked <- dplyr::mutate(dbplyr::window_order(present, !!v), .sv_rn = row_number())
+    rows <- dplyr::collect(dplyr::select(dplyr::filter(ranked, .sv_rn %in% !!want), !!v, .sv_rn))
+    pick <- function(p) format(rows$.sv_v[match(p, rows$.sv_rn)])
+    out$stats <- list(min = pick(1), q1 = pick(pos[1]), median = pick(pos[2]),
+                      q3 = pick(pos[3]), max = pick(n_present))
+  }
+
+  # A unique key has no common values worth listing.
+  show_top <- kind %in% c("character", "logical", "other") || (kind == "numeric" && n_distinct <= top_n)
+  if (show_top && n_distinct > 0 && !out$unique_key) {
+    if (kind == "numeric") {
+      tab <- sv_lazy_first(
+        dplyr::summarise(dplyr::group_by(present, !!v), .sv_n = n(), .groups = "drop"),
+        list(rlang::expr(desc(.sv_n)), v), top_n)
+      shown <- vapply(as.numeric(tab[[".sv_v"]]), format_key, character(1))
+    } else {
+      keyed <- dplyr::mutate(present, .sv_k = !!sv_lazy_key_expr(kind))
+      k <- rlang::sym(".sv_k")
+      tab <- sv_lazy_first(
+        dplyr::summarise(dplyr::group_by(keyed, !!k), .sv_n = n(), .groups = "drop"),
+        list(rlang::expr(desc(.sv_n)), k), top_n)
+      shown <- as.character(tab[[".sv_k"]])
+    }
+    out$top <- data.frame(value = shown, n = as.integer(tab$.sv_n), stringsAsFactors = FALSE)
+    out$n_other <- sv_lazy_count(n_distinct - nrow(tab))
+  }
+
+  counts <- sv_lazy_issue_counts(tbl, column, kind, out, base = base)
+  out$issues <- sv_format_issues(out, counts)
+  out
+}
+
+#' The histogram of `sv_histogram()`, binned by the database
+#'
+#' `lo` and `hi` are the minimum and maximum of the finite values. The bin of a
+#' value is `floor((v - lo) / width)` with the last bin closed, computed in SQL
+#' from exact literals so that it equals R's.
+#' @param fin The finite values, as a tbl with `.sv_v`.
+#' @param n_fin How many there are.
+#' @noRd
+sv_lazy_histogram <- function(fin, lo, hi, n_fin, bins) {
+  if (lo == hi) return(list(breaks = c(lo, hi), counts = sv_lazy_count(n_fin)))
+  width <- (hi - lo) / bins
+  v <- rlang::sym(".sv_v")
+  binned <- dplyr::mutate(
+    fin, .sv_bin = pmin(floor((!!v - !!sv_lazy_lit(lo)) / !!sv_lazy_lit(width)), !!as.numeric(bins - 1L), na.rm = TRUE)
+  )
+  tab <- dplyr::collect(dplyr::summarise(dplyr::group_by(binned, .sv_bin), n = n(), .groups = "drop"))
+  counts <- integer(bins)
+  idx <- as.integer(tab$.sv_bin) + 1L
+  counts[idx] <- as.integer(tab$n)
+  list(breaks = lo + width * (0:bins), counts = counts)
+}
+
 # Names that only exist inside the SQL translation of the verbs above.
-utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc", "cast", "nx", "ny", "fx", "fy", "trim", "regexp_replace"))
+utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc", "cast", "nx", "ny", "fx", "fy", "trim", "regexp_replace", "regexp_full_match", "quantile_cont", "isfinite", "isnan", "lower", ".sv_v", ".sv_t", ".sv_f", ".sv_k", ".sv_n", ".sv_bin", ".sv_rn", ".sv_rk"))

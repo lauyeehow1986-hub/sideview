@@ -52,6 +52,34 @@ test_that("text profile lists common values and flags messy text", {
   expect_identical(sv_column_profile(lab)$label, "Age at baseline (years)")
 })
 
+test_that("sv_profile_issues is unchanged", {
+  # tab, CR and LF count as whitespace, as trimws() sees them
+  p <- sv_column_profile(c("a\t", "b", "c\n", " d", "e"))
+  expect_identical(p$issues[1], "3 values have leading or trailing spaces.")
+  # the issue text is built from counts, by one shared formatter
+  x <- c(" Male", "male", "Male", "", "Female", NA)
+  p <- sv_column_profile(x)
+  vals <- x[!is.na(x)]
+  counts <- sv_issue_counts("character", vals, p)
+  expect_named(counts, c("spaced", "empty", "variants_n", "variants_eg", "numeric_text", "far_n", "far_eg"))
+  expect_identical(counts$spaced, 1L)
+  expect_identical(counts$empty, 1L)
+  expect_identical(counts$variants_n, 1L)
+  expect_identical(counts$variants_eg, c(" Male", "Male", "male"))
+  expect_false(counts$numeric_text)
+  expect_identical(sv_format_issues(p, counts), sv_profile_issues("character", vals, p))
+  expect_identical(sv_format_issues(p, counts), p$issues)
+
+  num <- c(rep(10, 6), 11, 12, 500, 900, NA)
+  pn <- sv_column_profile(num)
+  cn <- sv_issue_counts("numeric", num[!is.na(num)], pn)
+  expect_identical(cn$far_n, 2L)
+  expect_identical(cn$far_eg, c(900, 500))
+  expect_identical(sv_format_issues(pn, cn), pn$issues)
+  expect_identical(sv_format_issues(list(n = 2L, n_missing = 2L, n_distinct = 0L), counts),
+                   "All values are missing.")
+})
+
 test_that("date profile uses ordered values", {
   d <- as.Date("2024-01-01") + c(0, 10, 20, 30, NA)
   p <- sv_column_profile(d)
