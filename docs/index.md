@@ -1,4 +1,4 @@
-# sideview: Multi-Table 2D Infinite Canvas for R
+# sideview: Explore and Join Many Tables on a Zoomable Canvas
 
 `sideview` puts **many tables side by side on a pan-and-zoom canvas**,
 so you can compare them, **connect columns to build joins**, check those
@@ -8,9 +8,6 @@ save to HTML or embed in Quarto and R Markdown.
 
 ![The sideview canvas: four tables side by side, with a minimap, toolbar
 and AI bar](reference/figures/overview.png)
-
-The sideview canvas: four tables side by side, with a minimap, toolbar
-and AI bar
 
 **[Take the visual
 tour](https://lauyeehow1986-hub.github.io/sideview/articles/tour.html)**

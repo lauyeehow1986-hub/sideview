@@ -1,3 +1,12 @@
+# sideview (development version)
+
+* The copilot chat keeps a reply in order: text written after the code now
+  appears below the code instead of above it.
+* A join step in the Pipeline tab keeps its join type, move and delete buttons
+  on one line in a narrow drawer; the key check stays on the line below.
+* The column inspector shows summary numbers to about four significant digits
+  (5.338, not 5.33789). The profile and the codebook keep full precision.
+
 # sideview 0.3.0
 
 A full pass over the user interface, tested in a real browser and in RStudio

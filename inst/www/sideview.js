@@ -3917,7 +3917,11 @@ function sendToShiny(name, value) {
     if (!isFinite(v)) return String(v);
     var a = Math.abs(v);
     if (a !== 0 && (a >= 1e9 || a < 1e-3)) return v.toPrecision(4);
-    return Number(v.toPrecision(6)).toLocaleString('en-US', { maximumFractionDigits: 6 });
+    // Whole numbers in full; otherwise about 4 significant digits, keeping every integer digit
+    // and at least one decimal (5.33789 -> 5.338, 0.012345 -> 0.01235, 1234.567 -> 1,234.6).
+    if (Number.isInteger(v)) return v.toLocaleString('en-US');
+    var dp = Math.min(6, Math.max(1, 3 - Math.floor(Math.log10(a))));
+    return v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: dp });
   }
 
   SideviewEngine.prototype.profileHtml = function (column, p) {
@@ -4978,16 +4982,24 @@ function sendToShiny(name, value) {
       var assistantBubble = document.createElement('div');
       assistantBubble.className = 'sideview-chat-bubble sideview-chat-assistant';
 
-      if (data.text) {
-        var textWithoutFences = data.text.replace(/```(?:\{?[a-zA-Z0-9_,-]*\}?)?[\s\S]*?```/g, '').trim();
-        var displayText = textWithoutFences || (data.code ? 'Here is the requested tidyverse transformation:' : data.text);
+      // Keep the reply's order: prose before the code, the code, then prose after it.
+      var parts = global.SideviewPipeline.splitReply(data.text);
+      var hasCode = !!(data.code && data.code.trim());
+      var addText = function (txt) {
         var textEl = document.createElement('div');
         textEl.className = 'sideview-chat-bubble-text';
-        textEl.textContent = displayText;
+        textEl.textContent = txt;
         assistantBubble.appendChild(textEl);
+      };
+      if (parts.before) {
+        addText(parts.before);
+      } else if (hasCode && !parts.after) {
+        addText('Here is the requested tidyverse transformation:');
+      } else if (!hasCode && data.text) {
+        addText(data.text);
       }
 
-      if (data.code && data.code.trim()) {
+      if (hasCode) {
         var codeEl = document.createElement('pre');
         codeEl.className = 'sideview-chat-code';
         codeEl.textContent = data.code.trim();
@@ -5010,6 +5022,7 @@ function sendToShiny(name, value) {
         actionsEl.appendChild(insertBtn);
         assistantBubble.appendChild(actionsEl);
       }
+      if (parts.after) addText(parts.after);
 
       chatMessages.appendChild(assistantBubble);
       chatMessages.scrollTop = chatMessages.scrollHeight;

@@ -847,8 +847,23 @@
     return lines.join('\n') + '\n';
   }
 
+  /**
+   * Split a copilot reply around its fenced code: the prose before the first fence and the
+   * prose after it (other fences removed), so the chat bubble keeps the reply's order.
+   * `hasCode` is true when the reply had at least one fence.
+   */
+  function splitReply(text) {
+    var fence = /```(?:\{?[a-zA-Z0-9_,-]*\}?)?[\s\S]*?```/g;
+    var s = String(text == null ? '' : text);
+    var m = fence.exec(s);
+    if (!m) return { before: s.trim(), after: '', hasCode: false };
+    var after = s.slice(m.index + m[0].length).replace(fence, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    return { before: s.slice(0, m.index).trim(), after: after, hasCode: true };
+  }
+
   var api = {
     Pipeline: Pipeline,
+    splitReply: splitReply,
     joinDiagnostics: joinDiagnostics,
     describeDiagnostics: describeDiagnostics,
     columnProfile: columnProfile,

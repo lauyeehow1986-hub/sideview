@@ -1223,8 +1223,10 @@ html.sv-standalone body {
   text-decoration: line-through;
 }
 
+/* Basis 0, not auto: a join step wraps (for its key-check line), and an auto basis would size the
+   label to its full text and push the step's buttons onto a second line. */
 .sideview-container .sideview-step-text {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

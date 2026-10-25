@@ -578,6 +578,67 @@ test_that("narrow bottom-sheet drawer keeps undo/redo still as steps change", {
   expect_lt(abs(r$after - r$before), 1)
 })
 
+test_that("a join step keeps its controls on one line, with the key check below", {
+  b <- sv_shared_page()
+  on.exit(sv_set_viewport(b, 1400, 900), add = TRUE)
+  for (w in c(1400, 1000)) {
+    sv_set_viewport(b, w, 800)
+    r <- sv_js(b, sprintf(paste0("(async () => {", sv_pipeline_helpers_js, "
+      const pat = %s, vis = %s;
+      const until = async (f, ms) => { for (let t = 0; t < ms; t += 50) { if (f()) return true; await sleep(50); } return false; };
+      q('[data-action=\"clear-operation\"]').click(); await sleep(300);
+      fire(pat.querySelector('.sideview-col-port[data-col-name=\"patient_id\"]')); await sleep(150);
+      fire(vis.querySelector('.sideview-col-port[data-col-name=\"pid\"]')); await sleep(100);
+      await until(() => q('.sideview-step-diag:not(.is-pending)'), 8000);
+      tab('pipeline'); await sleep(100);
+      const li = q('.sideview-step.has-diag');
+      const top = el => el.getBoundingClientRect().top;
+      const out = {
+        drawer: q('.sideview-drawer').getBoundingClientRect().width,
+        toggle: top(li.querySelector('.sideview-step-toggle')),
+        del: top(li.querySelector('[data-step-action=\"delete\"]')),
+        select: top(li.querySelector('.sideview-step-jointype')),
+        diag: top(li.querySelector('.sideview-step-diag')),
+        textW: li.querySelector('.sideview-step-text').getBoundingClientRect().width,
+        overflow: li.scrollWidth - li.clientWidth
+      };
+      q('[data-action=\"clear-operation\"]').click(); await sleep(300);
+      return out;
+    })()"), sv_card_js("patients"), sv_card_js("visits")))
+    info <- sprintf("window %d, drawer %.0fpx", w, r$drawer)
+    expect_lt(abs(r$del - r$toggle), 8, label = info)      # delete sits on the first line
+    expect_lt(abs(r$select - r$toggle), 8, label = info)
+    expect_gt(r$diag, r$toggle + 8, label = info)          # the key check wraps below
+    expect_gt(r$textW, 20, label = info)                   # the label still shows something
+    expect_lte(r$overflow, 1, label = info)
+  }
+})
+
+test_that("a copilot reply keeps prose after the code below the code", {
+  b <- sv_shared_page()
+  r <- sv_js(b, paste0("(async () => {", sv_pipeline_helpers_js, "
+    const box = q('.sideview-chat-messages');
+    const n0 = box.children.length;
+    const send = (text, code) => Shiny.shinyapp.dispatchMessage(JSON.stringify(
+      { custom: { sideview_copilot_reply: { text: text, code: code } } }));
+    const parts = () => [...box.lastElementChild.children].map(e =>
+      e.classList.contains('sideview-chat-code') ? 'CODE' :
+      e.classList.contains('sideview-chat-code-actions') ? 'BUTTONS' : e.textContent);
+    send('Join them first.\\n\\n```r\\nx |> f()\\n```\\n\\nThen check the counts.', 'x |> f()');
+    await sleep(100);
+    const out = { both: parts() };
+    send('```r\\ny\\n```', 'y'); await sleep(100); out.codeOnly = parts();
+    send('No code needed here.', ''); await sleep(100); out.prose = parts();
+    out.added = box.children.length - n0;
+    while (box.children.length > n0) box.lastElementChild.remove();
+    return out;
+  })()"))
+  expect_identical(unlist(r$both), c("Join them first.", "CODE", "BUTTONS", "Then check the counts."))
+  expect_identical(unlist(r$codeOnly), c("Here is the requested tidyverse transformation:", "CODE", "BUTTONS"))
+  expect_identical(unlist(r$prose), "No code needed here.")
+  expect_equal(r$added, 3)
+})
+
 sv_key_js <- "
   const key = (k, opts, el) => (el || document).dispatchEvent(new KeyboardEvent('keydown',
     Object.assign({key: k, bubbles: true, cancelable: true}, opts || {})));
@@ -908,6 +969,9 @@ test_that("the header inspect button profiles the full column in R", {
   expect_equal(r$prof$n, 5000)
   expect_equal(r$prof$stats$median, want$stats$median)
   expect_equal(r$prof$stats$q3, want$stats$q3)
+  # Display rounds to about 4 significant digits; the profile keeps full precision.
+  expect_match(r$stats$Mean, "^[0-9,]+\\.[0-9]{1,3}$")
+  expect_equal(as.numeric(gsub(",", "", r$stats$Mean)), want$stats$mean, tolerance = 1e-3)
   expect_equal(unlist(r$prof$histogram$counts), want$histogram$counts)
   expect_equal(r$bars, 20)
   expect_false(r$drafting)                              # the click did not start a connection

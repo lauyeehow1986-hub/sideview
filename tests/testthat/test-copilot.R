@@ -209,3 +209,19 @@ test_that("logical/boolean columns (e.g. is_active vs is_deleted) are not sugges
   # The integer id <-> id foreign key match should still be suggested
   expect_true(any(mappings$from_col == "id" & mappings$to_col == "id"))
 })
+
+test_that("splitReply keeps the prose before and after the code in order", {
+  out <- run_pipeline_js("
+    out = {
+      both: P.splitReply('Join first.\\n\\n```r\\nx\\n```\\n\\nThen count.'),
+      two: P.splitReply('A\\n```r\\nx\\n```\\nB\\n```\\ny\\n```\\nC'),
+      none: P.splitReply('  just prose  '),
+      empty: P.splitReply(null)
+    };
+  ")
+  expect_identical(out$both, list(before = "Join first.", after = "Then count.", hasCode = TRUE))
+  expect_identical(out$two$before, "A")
+  expect_identical(out$two$after, "B\n\nC")
+  expect_identical(out$none, list(before = "just prose", after = "", hasCode = FALSE))
+  expect_identical(out$empty, list(before = "", after = "", hasCode = FALSE))
+})

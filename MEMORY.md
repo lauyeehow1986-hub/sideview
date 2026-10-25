@@ -66,6 +66,18 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 
 ## Log
 
+### 2026-10-25 - Three UI quirks from the tour fixed
+- Copilot bubble: new pure `SideviewPipeline.splitReply()` (sv-pipeline.js) splits the reply at the first
+  fence; the bubble renders before-text, code, buttons, then after-text (middle prose kept, fences removed).
+- Pipeline join step: `.sideview-step-text` uses `flex: 1 1 0`. With `flex-wrap` on `.has-diag` steps an
+  `auto` basis sized the label to its full text, so the buttons wrapped to a second line.
+- Inspector `fmtNum()`: integers in full, else ~4 significant digits with every integer digit and at least
+  one decimal. Display only: profiles and codebook CSV keep full precision (R/JS parity unchanged).
+- Tests: node test for `splitReply` (test-copilot.R); browser tests for join-step row at 1400 and 1000 px
+  windows, copilot bubble order (via `Shiny.shinyapp.dispatchMessage`), and the inspector's Mean text.
+  Full suite with `NOT_CRAN=true`: 2350 passed, 0 failed, 0 skipped. Re-captured copilot/pipeline/inspect
+  tour screenshots and checked them by eye.
+
 ### 2026-10-25 - Visual tour on the site
 - New article `vignettes/articles/tour.Rmd` ("Visual tour" in the navbar): 10 screenshots, one per feature
   (canvas, joins, join check, filter, pipeline, inspector, Ctrl+K search, copilot, dark theme, shortcuts).
