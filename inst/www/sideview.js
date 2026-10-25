@@ -893,14 +893,36 @@ function sendToShiny(name, value) {
     return !!(cardEl && cardEl.dataset && cardEl.dataset.lazy) && rowsBasis(cardEl) === 'full';
   }
 
-  /** The note under a check that only saw part of a table; '' when it saw all of it. */
-  function basisNoteHtml(parts) {
+  /** What a check that only saw part of a table was based on; '' when it saw all of it. */
+  function basisNoteText(parts) {
     var cut = parts.filter(function (p) { return p.n < p.total; });
     if (!cut.length) return '';
     var same = cut.every(function (p) { return p.n === cut[0].n; });
-    var text = same ? 'Based on the first ' + fmtCount(cut[0].n) + ' rows' :
+    return same ? 'Based on the first ' + fmtCount(cut[0].n) + ' rows' :
       'Based on the first ' + cut.map(function (p) { return fmtCount(p.n) + ' rows of ' + p.name; }).join(' and ');
-    return '<p class="sideview-basis-note">' + escapeHtml(text) + '</p>';
+  }
+
+  /** The note under a check that only saw part of a table; '' when it saw all of it. */
+  function basisNoteHtml(parts) {
+    var text = basisNoteText(parts);
+    return text ? '<p class="sideview-basis-note">' + escapeHtml(text) + '</p>' : '';
+  }
+
+  /**
+   * Lazy cards among `names` as basis parts ({n, total, name}): the rows held on the canvas
+   * (data-preview-rows) and the true row count. Checks that R runs on card$data (discrepancy,
+   * Auto Map) see only these rows.
+   */
+  function previewParts(engine, names) {
+    var parts = [];
+    names.forEach(function (name) {
+      if (!name) return;
+      var el = engine.cardElByName(name);
+      if (!el || !el.dataset.lazy) return;
+      var n = parseInt(el.dataset.previewRows, 10), total = tableRows(el);
+      if (!isNaN(n) && !isNaN(total)) parts.push({ n: n, total: total, name: name });
+    });
+    return parts;
   }
 
   function asArray(x) {
@@ -2740,6 +2762,7 @@ function sendToShiny(name, value) {
     if (isLazyCard) cardEl.dataset.lazy = String(cardData.lazy);
     if (cardData.codeRef) cardEl.dataset.codeRef = String(cardData.codeRef);
     cardEl.dataset.rowsBasis = isLazyCard ? 'preview' : 'full';
+    if (isLazyCard && shownRows != null) cardEl.dataset.previewRows = String(shownRows);
     header.innerHTML = [
       '<div class="sideview-card-title-group">',
       '  <span class="sideview-card-title">' + escapeHtml(cardName) + '</span>',
@@ -3178,6 +3201,16 @@ function sendToShiny(name, value) {
 
     if (!candidates || candidates.length === 0) return;
 
+    // Auto Map compares the rows on the canvas: for a lazy card, its preview only.
+    var names = [];
+    candidates.forEach(function (c) {
+      [c.from_table || c.fromTable || c.table1, c.to_table || c.toTable || c.table2].forEach(function (n) {
+        if (n && names.indexOf(n) < 0) names.push(n);
+      });
+    });
+    var mapNote = basisNoteText(previewParts(self, names));
+    if (mapNote) self.showToast('Suggested joins: ' + mapNote.charAt(0).toLowerCase() + mapNote.slice(1) + '.', 'info');
+
     candidates.forEach(function (c) {
       var fromTable = c.from_table || c.fromTable || c.table1;
       var fromCol = c.from_col || c.fromCol || c.col1;
@@ -3215,9 +3248,12 @@ function sendToShiny(name, value) {
       path.dataset.confidence = String(confidence);
 
       var confPct = Math.round(confidence * 100);
+      var pairNote = basisNoteText(previewParts(self, [fromTable, toTable]));
+      if (pairNote) path.dataset.basis = 'preview';
       var titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
       titleEl.textContent = 'Suggested join: ' + fromTable + '.' + fromCol + ' ↔ ' + toTable + '.' + toCol +
-        ' (' + confPct + '% confidence)' + (reason ? ' - ' + reason : '') + '\nClick to accept';
+        ' (' + confPct + '% confidence)' + (reason ? ' - ' + reason : '') +
+        (pairNote ? '\n' + pairNote : '') + '\nClick to accept';
       path.appendChild(titleEl);
 
       path.addEventListener('click', function (e) {
@@ -4128,9 +4164,12 @@ function sendToShiny(name, value) {
     this.tableSchemas().forEach(function (s) {
       var x = self.cardColumns(s.name, s.columns.map(function (c) { return c.name; }));
       if (x.error) return;
+      // a lazy card holds a preview: n is the whole table's row count, rows_profiled the preview's
+      var el = self.cardElByName(s.name);
+      var total = el && el.dataset.lazy ? tableRows(el) : NaN;
       s.columns.forEach(function (c, j) {
         rows.push(P.codebookRow(s.name, c.name, j + 1, x.cols[c.name], x.types[c.name] || c.type,
-          { label: self.columnLabel(s.name, c.name) }));
+          { label: self.columnLabel(s.name, c.name), nTotal: isNaN(total) ? null : total }));
       });
     });
     if (!rows.length) { this.showToast('No tables to describe.', 'warning'); return; }
@@ -5291,8 +5330,15 @@ function sendToShiny(name, value) {
           '    <span>' + exactCnt + ' matched · ' + fuzzyCnt + ' fuzzy · ' + diffCnt + ' diff</span>',
           '  </div>'
         ];
+        // R compares the rows it holds: for a lazy card, its preview only (labelled, not rerun)
+        var discParts = previewParts(self, [data.from_table, data.to_table]);
+        var discNote = basisNoteText(discParts);
+        if (discNote) discHtml.push('  ' + basisNoteHtml(discParts));
         if (fuzzyCnt > 0 || (data.only_in_x && data.only_in_x.length > 0)) {
-          discHtml.push('  <button class="sideview-btn sideview-btn-auto-clean" data-action="apply-auto-clean">Apply Suggested Cleanups</button>');
+          var cleanTitle = discNote ? ' title="' + escapeHtml('Cleanups suggested from the first ' +
+            discNote.replace(/^Based on the first /, '')) + '"' : '';
+          discHtml.push('  <button class="sideview-btn sideview-btn-auto-clean" data-action="apply-auto-clean"' +
+            cleanTitle + '>Apply Suggested Cleanups</button>');
         }
         discHtml.push('</div>');
         discHtml.push('<pre class="sideview-code-block"><code class="sideview-code-text">' + escapeHtml(self.generatedCode || '# Discrepancy checked') + '</code></pre>');

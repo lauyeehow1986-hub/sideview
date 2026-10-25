@@ -121,6 +121,19 @@ test_that("lazy duckdb card uses the whole table", {
   expect_false(p$note)
   sv_shot(b, "lazy-full-card-inspector")
 
+  # The discrepancy summary compares the rows R holds (the preview) and says so,
+  # even for a card whose other checks use the whole table.
+  d <- sv_js(b, paste0("(async () => {", sv_lazy_helpers_js, "
+    Shiny.setInputValue('discrepancy_check', { table1: 'patients', col1: 'age', table2: 'big', col2: 'id' },
+                        { priority: 'event' });
+    await until(() => q('.sideview-discrepancy-card .sideview-btn-auto-clean'), 8000);
+    const n = q('.sideview-discrepancy-card .sideview-basis-note');
+    const btn = q('.sideview-discrepancy-card .sideview-btn-auto-clean');
+    return { note: n ? n.textContent : null, title: btn ? btn.title : null };
+  })()"))
+  expect_identical(d$note, "Based on the first 50 rows")
+  expect_identical(d$title, "Cleanups suggested from the first 50 rows")
+
   expect_length(attr(b, "sv_errors")(), 0)
 })
 
@@ -160,6 +173,20 @@ test_that("preview-only labels", {
     return n ? n.textContent : null;
   })()"))
   expect_identical(r, "Based on the first 50 rows")
+
+  # Auto Map suggestions involving the preview card say what they were based on.
+  m <- sv_js(b, paste0("(async () => {", sv_lazy_helpers_js, "
+    sv.renderSuggestedSplines({ candidates: [{ from_table: 'patients', from_col: 'age',
+                                               to_table: 'big', to_col: 'id', confidence: 0.9 }] });
+    await until(() => [...document.querySelectorAll('.sideview-toast')].some(t => /Suggested joins/.test(t.textContent)), 5000);
+    const path = sv.suggestedConnections.length ? sv.suggestedConnections[0].path : null;
+    const tip = path && (path.querySelector('title') || (path._svHit && path._svHit.querySelector('title')));
+    return { title: tip ? tip.textContent : null, basis: path ? path.dataset.basis : null,
+             toasts: [...document.querySelectorAll('.sideview-toast')].map(t => t.textContent) };
+  })()"))
+  expect_match(m$title, "Based on the first 50 rows", fixed = TRUE)
+  expect_identical(m$basis, "preview")
+  expect_true(any(grepl("Suggested joins: based on the first 50 rows.", unlist(m$toasts), fixed = TRUE)))
   expect_length(attr(b, "sv_errors")(), 0)
 })
 
@@ -216,9 +243,10 @@ test_that("a saved widget labels a lazy card as a preview and says so in the ins
   env <- new.env()
   eval(parse(text = sv_fixture_code), envir = env)
   env$big <- arrow::arrow_table(id = 1:5000, x = seq_len(5000) / 8)
+  env$wide <- data.frame(id = 1:12345)
   dir <- withr::local_tempdir()
   file <- file.path(dir, "lazy.html")
-  w <- local(sideview_widget(patients, big), envir = env)
+  w <- local(sideview_widget(patients, big, wide), envir = env)
   suppressMessages(save_sideview(w, file, selfcontained = FALSE))
   url <- paste0("file:///", gsub("\\\\", "/", normalizePath(file)))
   b <- sv_open_page(url, wait_for = "!!document.querySelector('.sideview-card .sideview-col-port')")
@@ -237,6 +265,18 @@ test_that("a saved widget labels a lazy card as a preview and says so in the ins
   expect_identical(r$rows, "5000")
   expect_identical(r$patients, "200 \u00d7 4")                 # a data frame card is unchanged
   expect_identical(r$patientsBasis, "full")
+  # a data frame card's badge has thousands separators (M4)
+  expect_identical(sv_js(b, sprintf("%s.querySelector('.sideview-badge-dims').textContent", sv_card_js("wide"))),
+                   "12,345 × 1")
+
+  # The codebook of a lazy card reports the whole table's size and the rows profiled (I4).
+  csv <- sv_js(b, "(() => { const eng = document.querySelector('.sideview-container')._sideviewInstance;
+    eng.exportCodebook(); return eng.lastCodebookCsv; })()")
+  cb <- utils::read.csv(text = csv, stringsAsFactors = FALSE)
+  expect_equal(cb$n[cb$table == "big"], c(5000, 5000))
+  expect_equal(cb$rows_profiled[cb$table == "big"], c(50, 50))
+  expect_equal(cb$n[cb$table == "patients"], rep(200, 4))
+  expect_equal(cb$rows_profiled[cb$table == "patients"], rep(200, 4))
 
   sv_click(b, sprintf("%s.querySelector('th[data-col-name=\"x\"] [data-action=\"inspect-col\"]')", card))
   note <- sv_js(b, paste0("(async () => {", sv_lazy_helpers_js, "

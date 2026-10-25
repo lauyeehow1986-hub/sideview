@@ -350,6 +350,8 @@ render_card_tag <- function(card, index = 1L) {
     `data-total-rows` = if (full && !is.na(n_table)) plain_count(n_table) else if (is.data.frame(card$data)) plain_count(nrow(card$data)) else NULL,
     `data-table-rows` = if (!is.na(n_table)) plain_count(n_table) else NULL,
     `data-lazy` = if (is_lazy) card$lazy_source else NULL,
+    # the rows R holds for a lazy card: checks that run on them say so (discrepancy, Auto Map)
+    `data-preview-rows` = if (is_lazy && !is.na(n_preview)) plain_count(n_preview) else NULL,
     `data-code-ref` = card$code_ref,
     `data-rows-basis` = if (!is.data.frame(card$data)) NULL else if (preview_only) "preview" else "full",
     # No saved position: the engine flows these cards into a grid on load.
