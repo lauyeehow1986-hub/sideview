@@ -98,6 +98,12 @@ sv_lazy_close <- function(con_env) {
   invisible(NULL)
 }
 
+# A row count as an integer, or a double past .Machine$integer.max (as count() does)
+sv_lazy_count <- function(n) {
+  n <- as.double(n)
+  if (is.na(n) || n <= .Machine$integer.max) as.integer(n) else n
+}
+
 #' Decode the dictionary columns of an Arrow object before duckdb sees it
 #'
 #' duckdb (1.4.3) must never scan an Arrow dictionary column (an R factor) that
@@ -655,13 +661,13 @@ sv_lazy_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_na
 
   out <- list(
     by = data.frame(x = by_x, y = by_y, stringsAsFactors = FALSE),
-    n_x = as.integer(n_x), n_y = as.integer(n_y),
+    n_x = sv_lazy_count(n_x), n_y = sv_lazy_count(n_y),
     distinct_x = core$distinct_x, distinct_y = core$distinct_y,
     distinct_matched = core$distinct_matched,
     matched_x = core$matched_x, matched_y = core$matched_y,
     match_rate_x = if (n_x) core$matched_x / n_x else 0,
     match_rate_y = if (n_y) core$matched_y / n_y else 0,
-    na_x = as.integer(cnt_x$na), na_y = as.integer(cnt_y$na),
+    na_x = sv_lazy_count(cnt_x$na), na_y = sv_lazy_count(cnt_y$na),
     dup_keys_x = core$dup_keys_x, dup_keys_y = core$dup_keys_y,
     relationship = core$relationship,
     rows = core$rows,

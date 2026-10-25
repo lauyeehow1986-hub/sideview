@@ -619,3 +619,8 @@ test_that("the join check on private tables leaves the shared connection empty",
   expect_true(sv_is_lazy_input(arrow::arrow_table(df)))
   expect_false(sv_is_lazy_input(df))
 })
+
+test_that("lazy counts stay integer until they pass the integer range", {
+  expect_identical(sv_lazy_count(5), 5L)
+  expect_identical(sv_lazy_count(3e9), 3e9)
+})
