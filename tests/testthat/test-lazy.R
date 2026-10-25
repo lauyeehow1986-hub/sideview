@@ -793,3 +793,161 @@ test_that("lazy issue texts count tabs and newlines as whitespace", {
     expect_match(got$issues[1], "^5 values have leading or trailing spaces")
   }
 })
+
+# ---------------------------------------------------------------------------
+# Time zones: duckdb keeps the instant, not the zone
+# ---------------------------------------------------------------------------
+
+tz_rows_df <- function(tz) {
+  utc <- as.POSIXct(c(
+    "2024-03-01 00:30:00",   # 08:30 in Singapore
+    "2024-03-01 16:00:00",   # local midnight in Singapore
+    "2024-03-01 23:59:59",
+    NA,
+    "2024-11-03 05:30:00",   # 01:30 EDT, the first of two 01:30 in New York
+    "2024-11-03 06:30:00",   # 01:30 EST, the second
+    "2024-11-03 06:00:00",   # 01:00 EST: earlier on the clock, later in time
+    "2024-03-10 07:30:00",   # 03:30 EDT, after the spring-forward gap
+    "2024-07-04 12:00:00.5"
+  ), tz = "UTC")
+  attr(utc, "tzone") <- tz
+  data.frame(id = seq_along(utc), t = utc)
+}
+
+tz_row_requests <- function() {
+  ops <- c("equals", "not_equals", "gt", "gte", "lt", "lte")
+  vals <- c("2024-03-01 08:30:00", "2024-03-01", "2024-11-03 01:30:00", "garbage", "")
+  reqs <- list()
+  for (v in c("08:30", "01:30", "2024-11-03", ".5", "00:00", "03:30:00", "2024", "T", "")) {
+    reqs[[length(reqs) + 1L]] <- list(filter = list(col = "t", op = "contains", val = v))
+  }
+  for (op in ops) for (v in vals) {
+    reqs[[length(reqs) + 1L]] <- list(filter = list(col = "t", op = op, val = v))
+  }
+  for (dir in c("asc", "desc")) {
+    reqs[[length(reqs) + 1L]] <- list(sort = list(col = "t", dir = dir))
+    reqs[[length(reqs) + 1L]] <- list(sort = list(col = "t", dir = dir),
+                                      filter = list(col = "t", op = "contains", val = "01:"))
+  }
+  lapply(reqs, function(r) c(r, list(offset = 0L, limit = 50L)))
+}
+
+test_that("Arrow time zones survive the row window: display, filters and sort", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  for (tz in c("Asia/Singapore", "America/New_York")) {
+    df <- tz_rows_df(tz)
+    tbl <- sv_lazy_tbl(arrow::arrow_table(df), e)
+    expect_identical(attr(tbl, "sv_tz"), c(t = tz))
+    for (req in tz_row_requests()) {
+      expect_equal(sv_lazy_rows_window(tbl, req), sv_rows_window(df, req), tolerance = 1e-12,
+                   label = paste(tz, jsonlite::toJSON(req, auto_unbox = TRUE, null = "null")))
+    }
+  }
+
+  sgt <- tz_rows_df("Asia/Singapore")
+  w <- sv_lazy_rows_window(sv_lazy_tbl(arrow::arrow_table(sgt), e), list(offset = 0L, limit = 3L))
+  # local midnight shows as the date alone, as.character() does
+  expect_identical(w$columns$t, c("2024-03-01 08:30:00", "2024-03-02", "2024-03-02 07:59:59"))
+  hit <- sv_lazy_rows_window(
+    sv_lazy_tbl(arrow::arrow_table(sgt), e),
+    list(filter = list(col = "t", op = "contains", val = "08:30"), offset = 0L, limit = 10L)
+  )
+  expect_identical(hit$row_ids, 0L)
+
+  # a sort is by instant, not by the clock text: 01:00 EST comes between the two 01:30
+  ny <- tz_rows_df("America/New_York")
+  s <- sv_lazy_rows_window(sv_lazy_tbl(arrow::arrow_table(ny), e),
+                           list(sort = list(col = "t", dir = "asc"), filter = list(col = "t", op = "contains", val = "01:"),
+                                offset = 0L, limit = 10L))
+  expect_identical(s$row_ids, c(4L, 6L, 5L))
+  expect_identical(s$columns$t, c("2024-11-03 01:30:00", "2024-11-03 01:00:00", "2024-11-03 01:30:00"))
+})
+
+test_that("a duckdb timestamp has no stored zone and is shown as UTC", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("stringr")
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  con <- sv_lazy_con(e)
+  df <- tz_rows_df("America/New_York")
+  DBI::dbWriteTable(con, "tzd", df)
+  tbl <- sv_lazy_tbl(dplyr::tbl(con, "tzd"), e)
+  expect_null(attr(tbl, "sv_tz"))
+  utc <- df
+  attr(utc$t, "tzone") <- "UTC"
+  for (req in tz_row_requests()) {
+    expect_equal(sv_lazy_rows_window(tbl, req), sv_rows_window(utc, req), tolerance = 1e-12,
+                 label = jsonlite::toJSON(req, auto_unbox = TRUE, null = "null"))
+  }
+})
+
+test_that("the SQL text of a timestamp equals as.character() of the POSIXct", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  set.seed(7)
+  for (tz in c("Asia/Singapore", "America/New_York", "Europe/London", "UTC")) {
+    t <- c(as.numeric(as.POSIXct("1950-01-01", tz = "UTC")) + round(runif(150, 0, 2.2e9)),
+           as.numeric(as.POSIXct("2024-11-03 04:30:00", tz = "UTC")) + seq(0, 14400, by = 900),
+           as.numeric(as.POSIXct("2024-03-01", tz = tz)) + c(0, 86400, 0.5, 0.123456), -1e9 + 0.5, NA)
+    x <- as.POSIXct(t, origin = "1970-01-01", tz = tz)
+    tb <- sv_lazy_tbl(arrow::arrow_table(data.frame(c = x)), e)
+    got <- dplyr::collect(dplyr::mutate(tb, .t = !!sv_lazy_tz_text_expr(rlang::sym("c"), tz)))$.t
+    want <- as.character(x)
+    want[is.na(x)] <- NA_character_
+    expect_identical(got, want, label = tz)
+    # an expression narrowed to the data's own range gives the same text
+    narrow <- dplyr::collect(dplyr::mutate(
+      tb, .t = !!sv_lazy_tz_text_expr(rlang::sym("c"), tz, sv_lazy_us_range(tb, "c"))
+    ))$.t
+    expect_identical(narrow, want, label = paste(tz, "narrow"))
+  }
+  # one segment, and a range that straddles a single transition
+  ny <- as.POSIXct(c("2024-01-10 12:00:00", "2024-01-11 01:30:00"), tz = "America/New_York")
+  edge <- list(ny, as.POSIXct(c("2024-03-10 06:59:59", "2024-03-10 07:00:00"), tz = "UTC") |>
+                 (\(v) { attr(v, "tzone") <- "America/New_York"; v })())
+  for (x in edge) {
+    tb <- sv_lazy_tbl(arrow::arrow_table(data.frame(c = x)), e)
+    r <- sv_lazy_us_range(tb, "c")
+    got <- dplyr::collect(dplyr::mutate(tb, .t = !!sv_lazy_tz_text_expr(rlang::sym("c"), "America/New_York", r)))$.t
+    expect_identical(got, as.character(x))
+  }
+})
+
+test_that("the lazy join check shows and compares Arrow time zones as R does", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  fx <- lazy_fixture()
+  tz <- "Asia/Singapore"
+  k <- as.POSIXct(c("2024-03-01 08:30:00", "2024-03-01 09:30:00", "2024-03-02 00:00:00", "2024-03-03 10:00:00"), tz = tz)
+  x <- data.frame(k = k, v = 1:4)
+  # the same instants in the same zone, one missing: both sides keep the zone
+  y <- data.frame(k = k[c(1, 2)], w = 1:2)
+  want <- sv_join_diagnostics(x, y, "k", sample_n = 5L)
+  expect_identical(want$unmatched_x, c("2024-03-02", "2024-03-03 10:00:00"))
+  for (how in c("df", "arrow")) {
+    got <- sv_join_diagnostics(join_side(x, "arrow", fx$con, "jx"), join_side(y, how, fx$con, "jy"),
+                               "k", sample_n = 5L)
+    expect_equal(got, want, tolerance = 1e-12, label = how)
+  }
+  # keys of different types are compared as the text R gives for the time
+  ychr <- data.frame(k = c("2024-03-01 08:30:00", "2024-03-02", "zzz"), w = 1:3)
+  want_chr <- sv_join_diagnostics(x, ychr, "k")
+  expect_equal(want_chr$matched_x, 2L)
+  for (how in c("df", "duckdb", "arrow")) {
+    got <- sv_join_diagnostics(join_side(x, "arrow", fx$con, "jx"), join_side(ychr, how, fx$con, "jy"), "k")
+    expect_equal(got, want_chr, tolerance = 1e-12, label = how)
+  }
+  got <- sv_join_diagnostics(join_side(ychr, "duckdb", fx$con, "jc"), join_side(x, "arrow", fx$con, "jx"), "k")
+  expect_equal(got, sv_join_diagnostics(ychr, x, "k"), tolerance = 1e-12)
+})

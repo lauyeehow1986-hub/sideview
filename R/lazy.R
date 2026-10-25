@@ -142,7 +142,9 @@ sv_lazy_decode_dictionaries <- function(source) {
 #'
 #' A duckdb tbl is returned as is. An arrow object is handed to duckdb on the
 #' private connection, zero-copy except for its dictionary columns (decoded by
-#' [sv_lazy_decode_dictionaries()]), and cached under `key` when given.
+#' [sv_lazy_decode_dictionaries()]), and cached under `key` when given. The time
+#' zones of its timestamp columns, which duckdb does not keep, travel with the
+#' tbl as its `sv_tz` attribute (see [sv_lazy_zones()]).
 #' @param source A `tbl_duckdb_connection` or an Arrow table / dataset.
 #' @param con_env An environment from [sv_lazy_env()].
 #' @param key Optional cache key (usually the card name).
@@ -152,6 +154,7 @@ sv_lazy_tbl <- function(source, con_env, key = NULL) {
   if (!is.null(key) && !is.null(con_env$tbls[[key]])) return(con_env$tbls[[key]])
   tbl <- arrow::to_duckdb(sv_lazy_decode_dictionaries(source),
                           con = sv_lazy_con(con_env), auto_disconnect = FALSE)
+  tbl <- sv_lazy_with_zones(tbl, sv_lazy_zones(source))
   if (!is.null(key)) con_env$tbls[[key]] <- tbl
   tbl
 }
@@ -187,6 +190,162 @@ sv_lazy_detach_arrow <- function(con, name) {
   invisible(NULL)
 }
 
+#' Time zones of the timestamp columns of a source
+#'
+#' duckdb keeps the instant of a timestamp but not its zone, so the zones are
+#' read where they are stored: the Arrow schema (no scan), or the `tzone`
+#' attribute of a data frame column (the session zone when it is empty). Only
+#' columns with a zone are listed.
+#' @param source An Arrow Table / Dataset / query, or a data frame.
+#' @return A named character vector, possibly empty.
+#' @noRd
+sv_lazy_zones <- function(source) {
+  z <- if (is.data.frame(source)) {
+    vapply(source, function(v) {
+      if (!inherits(v, "POSIXct")) return(NA_character_)
+      tz <- attr(v, "tzone")[1]
+      if (is.null(tz) || is.na(tz) || !nzchar(tz)) tz <- Sys.timezone()
+      if (is.null(tz) || is.na(tz)) NA_character_ else tz
+    }, "")
+  } else {
+    fields <- tryCatch(arrow::schema(source)$fields, error = function(e) list())
+    out <- vapply(fields, function(f) sv_lazy_arrow_tz(f$type) %||% NA_character_, "")
+    names(out) <- vapply(fields, function(f) f$name, "")
+    out
+  }
+  if (!length(z)) return(character(0))
+  z[!is.na(z) & nzchar(z)]
+}
+
+#' A tbl with its zones attached (as the `sv_tz` attribute)
+#' @noRd
+sv_lazy_with_zones <- function(tbl, zones) {
+  if (length(zones)) attr(tbl, "sv_tz") <- zones
+  tbl
+}
+
+#' The zone to show a POSIXct column in
+#'
+#' The zone recorded for it, else UTC: duckdb hands instants back as UTC, and a
+#' duckdb TIMESTAMPTZ has no stored zone.
+#' @noRd
+sv_lazy_zone_for <- function(zones, col) {
+  tz <- if (length(zones) && col %in% names(zones)) unname(zones[col])[1] else NA_character_
+  if (is.na(tz)) "UTC" else tz
+}
+
+sv_lazy_tz_cache <- new.env(parent = emptyenv())
+
+#' UTC offsets of a time zone over 1900-2100, from R
+#'
+#' duckdb's own zone conversion is the ICU extension, which an air-gapped build
+#' does not have, so the offsets come from R's time zone database: the instants
+#' (seconds since the epoch) at which the offset changes, found by bisection from
+#' a 14-day grid, and the offset in force before each of them.
+#' @param tz An Olson name.
+#' @return `list(starts, offsets)`: `offsets` has one more element than `starts`;
+#'   `offsets[i]` applies before `starts[i]`, the last one after the last start.
+#' @noRd
+sv_lazy_tz_segments <- function(tz) {
+  hit <- sv_lazy_tz_cache[[tz]]
+  if (!is.null(hit)) return(hit)
+  off <- function(t) {
+    local <- format(as.POSIXct(t, origin = "1970-01-01", tz = "UTC"), "%Y-%m-%d %H:%M:%S", tz = tz)
+    as.numeric(as.POSIXct(local, tz = "UTC")) - t
+  }
+  grid <- seq(-2208988800, 4102444800, by = 14 * 86400)
+  o <- off(grid)
+  chg <- which(diff(o) != 0)
+  lo <- grid[chg]
+  hi <- grid[chg + 1L]
+  before <- o[chg]
+  while (length(lo) && any(hi - lo > 1)) {
+    mid <- floor((lo + hi) / 2)
+    same <- off(mid) == before
+    lo[same] <- mid[same]
+    hi[!same] <- mid[!same]
+  }
+  out <- list(starts = hi, offsets = c(o[1L], o[chg + 1L]))
+  assign(tz, out, envir = sv_lazy_tz_cache)
+  out
+}
+
+#' Smallest and largest instant of a timestamp column, in microseconds
+#'
+#' One aggregate over the column; `NULL` when there is no value or it cannot be read.
+#' @noRd
+sv_lazy_us_range <- function(tbl, col) {
+  sym <- rlang::sym(col)
+  r <- tryCatch(
+    dplyr::collect(dplyr::summarise(tbl, lo = min(epoch_us(!!sym), na.rm = TRUE),
+                                    hi = max(epoch_us(!!sym), na.rm = TRUE))),
+    error = function(e) NULL
+  )
+  if (is.null(r) || nrow(r) != 1L) return(NULL)
+  out <- c(as.numeric(r$lo), as.numeric(r$hi))
+  if (all(is.finite(out))) out else NULL
+}
+
+# an integer as a BIGINT literal (a plain number would be a DOUBLE)
+sv_lazy_bigint <- function(x) dplyr::sql(sprintf("CAST(%.0f AS BIGINT)", x))
+
+#' A timestamp column as the wall-clock text R gives it, in SQL
+#'
+#' Equal to `as.character()` of the POSIXct in zone `tz`: `"2024-03-01 08:30:00"`,
+#' the date alone at midnight, and fractional seconds without trailing zeros. The
+#' instant (`epoch_us`, exact microseconds) is moved by the zone's offset, taken
+#' from a tree of comparisons with the zone's transitions
+#' ([sv_lazy_tz_segments()]), and formatted. `NULL` stays `NULL`.
+#' @param sym A column symbol.
+#' @param tz An Olson name.
+#' @param range Optional `c(min, max)` of the column in microseconds; the offsets
+#'   the data cannot reach are then left out of the expression, which is much
+#'   cheaper to evaluate for a zone with daylight saving time.
+#' @noRd
+sv_lazy_tz_text_expr <- function(sym, tz, range = NULL) {
+  seg <- sv_lazy_tz_segments(tz)
+  if (!is.null(range) && length(seg$starts) && all(is.finite(range))) {
+    # only the transitions the data can reach
+    first <- sum(seg$starts <= range[1] / 1e6) + 1L
+    last <- sum(seg$starts <= range[2] / 1e6) + 1L
+    seg <- list(starts = if (last > first) seg$starts[first:(last - 1L)] else numeric(0),
+                offsets = seg$offsets[first:last])
+  }
+  us <- rlang::expr(epoch_us(!!sym))
+  # a balanced tree of comparisons, so a row costs log2(transitions) of them
+  pick <- function(i, j) {
+    if (i == j) return(sv_lazy_bigint(seg$offsets[i] * 1e6))
+    m <- (i + j) %/% 2L
+    rlang::expr(if_else(!!us < !!sv_lazy_bigint(seg$starts[m] * 1e6), !!pick(i, m), !!pick(m + 1L, j)))
+  }
+  off <- pick(1L, length(seg$offsets))
+  full <- rlang::expr(strftime(make_timestamp(!!us + !!off), "%Y-%m-%d %H:%M:%S.%f"))
+  # trailing zeros and the bare dot of the fraction go, then a time of 00:00:00 (R shows the date alone)
+  rlang::expr(regexp_replace(rtrim(rtrim(!!full, "0"), "."), " 00:00:00$", ""))
+}
+
+#' Compare a POSIXct column with a typed value, as R does
+#'
+#' R reads a string compared with a POSIXct with `as.POSIXct()` (the session
+#' zone) and compares instants; a string it cannot read raises an error, which
+#' the in-memory window turns into "no rows". The column is compared as exact
+#' microseconds since the epoch.
+#' @noRd
+sv_lazy_tz_cmp_expr <- function(sym, op, value) {
+  t <- tryCatch(as.POSIXct(value), error = function(e) NULL)
+  if (is.null(t) || length(t) != 1L || is.na(t)) return(rlang::expr(FALSE))
+  lit <- sv_lazy_bigint(round(as.numeric(t) * 1e6))
+  us <- rlang::expr(epoch_us(!!sym))
+  switch(op,
+    equals = rlang::expr(!!us == !!lit),
+    not_equals = rlang::expr(!!us != !!lit),
+    gt = rlang::expr(!!us > !!lit),
+    gte = rlang::expr(!!us >= !!lit),
+    lt = rlang::expr(!!us < !!lit),
+    lte = rlang::expr(!!us <= !!lit)
+  )
+}
+
 #' The kind of an R column, for the text it should be matched as
 #'
 #' `"character"`, `"logical"`, `"double"` (a plain double, which can hold NaN
@@ -212,10 +371,16 @@ sv_lazy_kind <- function(x) {
 #' scientific notation, so float noise (`0.1 + 0.2` is `"0.3"` in R and
 #' `"0.30000000000000004"` here) and values like `1e+05` (R) versus `100000`
 #' differ. Whole numbers and ordinary decimals agree.
+#' A POSIXct column (`tz` given) is the wall-clock text of its zone, see
+#' [sv_lazy_tz_text_expr()].
 #' @param sym A column symbol.
 #' @param kind From [sv_lazy_kind()].
+#' @param tz Time zone of a POSIXct column, or `NULL`.
+#' @param tz_range Optional `c(min, max)` of the column in microseconds, see
+#'   [sv_lazy_tz_text_expr()].
 #' @noRd
-sv_lazy_text_expr <- function(sym, kind) {
+sv_lazy_text_expr <- function(sym, kind, tz = NULL, tz_range = NULL) {
+  if (!is.null(tz)) return(sv_lazy_tz_text_expr(sym, tz, tz_range))
   switch(kind,
     character = sym,
     logical = rlang::expr(if_else(!!sym, "TRUE", "FALSE")),
@@ -239,14 +404,22 @@ sv_lazy_text_expr <- function(sym, kind) {
 #' @inheritParams sv_filter_condition
 #' @param kind The column's kind, from [sv_lazy_kind()]; when `NULL`, `"other"`
 #'   for a numeric column and `"character"` otherwise.
+#' @param tz The time zone of a POSIXct column, else `NULL`. `contains` then
+#'   matches the wall-clock text of that zone, and the other operators compare the
+#'   instant with the value read by `as.POSIXct()`, as R does.
+#' @param tz_range Optional `c(min, max)` of the column in microseconds.
 #' @return A language object for `dplyr::filter()`.
 #' @noRd
-sv_lazy_filter_expr <- function(col, op, value, numeric = FALSE, kind = NULL) {
+sv_lazy_filter_expr <- function(col, op, value, numeric = FALSE, kind = NULL, tz = NULL, tz_range = NULL) {
   kind <- kind %||% (if (isTRUE(numeric)) "other" else "character")
   double <- identical(kind, "double")
   value <- as.character(value)
   num_ok <- isTRUE(numeric) && !is.na(suppressWarnings(as.numeric(value)))
   sym <- rlang::sym(col)
+  if (!is.null(tz) && op != "contains") {
+    if (!op %in% c("equals", "not_equals", "gt", "gte", "lt", "lte")) stop("Unknown filter operator: ", op)
+    return(sv_lazy_tz_cmp_expr(sym, op, value))
+  }
   # a numeric column with a non-numeric value compares as text, as R would
   lhs <- if (isTRUE(numeric) && !num_ok) rlang::expr(as.character(!!sym)) else sym
   lit <- if (num_ok) as.numeric(format(as.numeric(value), digits = 15)) else value
@@ -255,7 +428,7 @@ sv_lazy_filter_expr <- function(col, op, value, numeric = FALSE, kind = NULL) {
   cmp <- function(e) if (isTRUE(numeric) && double) rlang::expr(!is.nan(!!sym) & !!e) else e
   switch(op,
     contains = {
-      target <- sv_lazy_text_expr(sym, kind)
+      target <- sv_lazy_text_expr(sym, kind, tz, tz_range)
       # not str_detect(fixed()): dbplyr turns that into a REGEXP, so "." matches everything
       rlang::expr(contains(!!target, !!value))
     },
@@ -280,6 +453,8 @@ sv_lazy_filter_expr <- function(col, op, value, numeric = FALSE, kind = NULL) {
 #' @return The same list as [sv_rows_window()].
 #' @noRd
 sv_lazy_rows_window <- function(tbl, req, order_cache = NULL) {
+  # read before any verb: dplyr drops the attribute
+  zones <- attr(tbl, "sv_tz")
   spec_key <- paste(
     unlist(req$sort %||% list()), "|", unlist(req$filter %||% list()),
     collapse = "\u001f"
@@ -287,6 +462,11 @@ sv_lazy_rows_window <- function(tbl, req, order_cache = NULL) {
   # 0 rows: the column classes and names, nothing else
   zero <- dplyr::collect(utils::head(tbl, 0L))
   cols <- names(zero)
+  # The zone of each POSIXct column: the one Arrow had, else UTC (duckdb hands
+  # back UTC instants, and a TIMESTAMPTZ of a duckdb table has no stored zone).
+  zone_of <- function(col) {
+    if (inherits(zero[[col]], "POSIXct")) sv_lazy_zone_for(zones, col) else NULL
+  }
 
   keep <- NULL
   filter <- req$filter
@@ -294,7 +474,11 @@ sv_lazy_rows_window <- function(tbl, req, order_cache = NULL) {
     keep <- sv_lazy_filter_expr(
       filter$col, filter$op %||% "equals", filter$val %||% "",
       numeric = is.numeric(zero[[filter$col]]),
-      kind = sv_lazy_kind(zero[[filter$col]])
+      kind = sv_lazy_kind(zero[[filter$col]]),
+      tz = zone_of(filter$col),
+      tz_range = if (identical(filter$op %||% "equals", "contains") && !is.null(zone_of(filter$col))) {
+        sv_lazy_us_range(tbl, filter$col)
+      }
     )
   }
   sort <- req$sort
@@ -353,6 +537,11 @@ sv_lazy_rows_window <- function(tbl, req, order_cache = NULL) {
     ranked <- dplyr::filter(ranked, .sv_rank > !!offset, .sv_rank <= !!(offset + limit))
     ranked <- dplyr::arrange(ranked, .sv_rank)
     win <- dplyr::collect(ranked)
+  }
+  # show each instant in its own zone, as the in-memory window does
+  for (cn in cols) {
+    tz <- zone_of(cn)
+    if (!is.null(tz)) attr(win[[cn]], "tzone") <- tz
   }
 
   list(
@@ -442,13 +631,13 @@ sv_lazy_place <- function(x, y, con_env, cols_x = NULL, cols_y = NULL) {
         tbl <- arrow::to_duckdb(sv_lazy_decode_dictionaries(src), con = con, auto_disconnect = FALSE)
         name <- dbplyr::remote_name(tbl)
         undo[[length(undo) + 1L]] <<- function() sv_lazy_detach_arrow(con, name)
-        tbl
+        sv_lazy_with_zones(tbl, sv_lazy_zones(src))
       },
       df = {
         if (!is.null(cols)) src <- src[unique(cols)]
         a <- sv_lazy_attach(as.data.frame(src), con)
         undo[[length(undo) + 1L]] <<- function() sv_lazy_detach(con, a$name)
-        a$tbl
+        sv_lazy_with_zones(a$tbl, sv_lazy_zones(src))
       }
     )
   }
@@ -488,8 +677,10 @@ sv_lazy_fix_expr <- function(fix, e) {
 #' @param text,chr Logical per key: compare as text, is a character key.
 #' @param fix `NULL`, `"trim"`, `"case"` or `"zeros"`.
 #' @param row Add `.sv_row`, the row number in table order.
+#' @param tzs Time zone of each key (`NA` for a key that is not a POSIXct), used
+#'   when the key is compared as text.
 #' @noRd
-sv_lazy_join_side <- function(tbl, cols, kinds, text, chr, fix = NULL, row = FALSE) {
+sv_lazy_join_side <- function(tbl, cols, kinds, text, chr, fix = NULL, row = FALSE, tzs = NULL) {
   kn <- sv_lazy_key_names(length(cols))
   if (row) tbl <- dplyr::mutate(tbl, .sv_row = row_number())
   step1 <- Map(function(col, kind) {
@@ -502,7 +693,7 @@ sv_lazy_join_side <- function(tbl, cols, kinds, text, chr, fix = NULL, row = FAL
   for (i in seq_along(cols)) {
     k <- rlang::sym(kn[i])
     e <- k
-    if (text[i]) e <- sv_lazy_text_expr(k, kinds[i])
+    if (text[i]) e <- sv_lazy_text_expr(k, kinds[i], if (is.null(tzs) || is.na(tzs[i])) NULL else tzs[[i]])
     if (!is.null(fix) && chr[i]) e <- sv_lazy_fix_expr(fix, e)
     if (!identical(e, k)) step2[[kn[i]]] <- e
   }
@@ -580,8 +771,9 @@ sv_lazy_join_side_counts <- function(side, nk) {
 #'
 #' In order of first appearance (`LIMIT n`, ordered by the first row), which is
 #' the order `unique()` gives in R. `sx` / `sy` need `.sv_row` on the sampled side.
+#' @param tzs Time zone of each key of the sampled side, `NA` if it has none.
 #' @noRd
-sv_lazy_join_sample <- function(sx, sy, nk, side, n) {
+sv_lazy_join_sample <- function(sx, sy, nk, side, n, tzs = NULL) {
   kn <- sv_lazy_key_names(nk)
   j <- sv_lazy_join_keys(sx, sy, nk, first = side)
   j <- if (identical(side, "x")) {
@@ -591,6 +783,10 @@ sv_lazy_join_sample <- function(sx, sy, nk, side, n) {
   }
   keys <- dplyr::collect(utils::head(dplyr::select(j, dplyr::all_of(kn)), n))
   if (!nrow(keys)) return(character(0))
+  # a POSIXct key is shown in its own zone, as the in-memory check does
+  for (i in seq_len(nk)) {
+    if (!is.null(tzs) && !is.na(tzs[i]) && inherits(keys[[i]], "POSIXct")) attr(keys[[i]], "tzone") <- tzs[[i]]
+  }
   sv_join_decode(sv_join_keys(keys))
 }
 
@@ -633,11 +829,19 @@ sv_lazy_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_na
   lazy_x <- vapply(by_x, function(cn) sv_lazy_kind(zx[[cn]]), "")
   lazy_y <- vapply(by_y, function(cn) sv_lazy_kind(zy[[cn]]), "")
   nk <- length(by_x)
+  # zone of each POSIXct key (UTC when the table kept none), NA for other keys
+  key_tzs <- function(tbl, z, by) {
+    vapply(by, function(cn) {
+      if (inherits(z[[cn]], "POSIXct")) sv_lazy_zone_for(attr(tbl, "sv_tz"), cn) else NA_character_
+    }, "", USE.NAMES = FALSE)
+  }
+  tz_x <- key_tzs(placed$x, zx, by_x)
+  tz_y <- key_tzs(placed$y, zy, by_y)
   side_x <- function(fix = NULL, row = FALSE) {
-    sv_lazy_join_side(placed$x, by_x, lazy_x, text, kind_x == "character", fix, row)
+    sv_lazy_join_side(placed$x, by_x, lazy_x, text, kind_x == "character", fix, row, tz_x)
   }
   side_y <- function(fix = NULL, row = FALSE) {
-    sv_lazy_join_side(placed$y, by_y, lazy_y, text, kind_y == "character", fix, row)
+    sv_lazy_join_side(placed$y, by_y, lazy_y, text, kind_y == "character", fix, row, tz_y)
   }
 
   cnt_x <- sv_lazy_join_side_counts(side_x(), nk)
@@ -649,12 +853,12 @@ sv_lazy_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_na
 
   n_show <- max(0L, as.integer(sample_n))
   unmatched_x <- if (n_show && s$distinct_x > s$distinct_matched) {
-    sv_lazy_join_sample(side_x(row = TRUE), side_y(), nk, "x", n_show)
+    sv_lazy_join_sample(side_x(row = TRUE), side_y(), nk, "x", n_show, tz_x)
   } else {
     character(0)
   }
   unmatched_y <- if (n_show && s$distinct_y > s$distinct_matched) {
-    sv_lazy_join_sample(side_x(), side_y(row = TRUE), nk, "y", n_show)
+    sv_lazy_join_sample(side_x(), side_y(row = TRUE), nk, "y", n_show, tz_y)
   } else {
     character(0)
   }
@@ -1063,4 +1267,4 @@ sv_lazy_histogram <- function(fin, lo, hi, n_fin, bins) {
 }
 
 # Names that only exist inside the SQL translation of the verbs above.
-utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc", "cast", "nx", "ny", "fx", "fy", "trim", "regexp_replace", "regexp_full_match", "quantile_cont", "isfinite", "isnan", "lower", ".sv_v", ".sv_t", ".sv_f", ".sv_k", ".sv_n", ".sv_bin", ".sv_rn", ".sv_rk"))
+utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc", "cast", "nx", "ny", "fx", "fy", "trim", "regexp_replace", "regexp_full_match", "quantile_cont", "isfinite", "isnan", "lower", "epoch_us", "make_timestamp", "strftime", ".sv_v", ".sv_t", ".sv_f", ".sv_k", ".sv_n", ".sv_bin", ".sv_rn", ".sv_rk"))
