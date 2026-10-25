@@ -2728,7 +2728,7 @@ function sendToShiny(name, value) {
     // Build Card Header
     var header = document.createElement('div');
     header.className = 'sideview-card-header';
-    var dimsText = cardData.dims ? cardData.dims[0] + ' × ' + cardData.dims[1] : '';
+    var dimsText = cardData.dims ? fmtCount(cardData.dims[0]) + ' × ' + fmtCount(cardData.dims[1]) : '';
     // A lazy widget card holds a preview of a larger table: say so (the widget never has the rest).
     var shownRows = previewRowCount(cardData.data);
     var tableRowCount = cardData.totalRows != null ? Number(cardData.totalRows) : NaN;

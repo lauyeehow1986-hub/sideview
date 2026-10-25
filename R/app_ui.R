@@ -208,8 +208,8 @@ render_card_tag <- function(card, index = 1L) {
   initial_y <- if (!is.null(card$y)) card$y else 60 + ((index - 1) %% 2) * 50
   
   dims_text <- if (!is.null(card$dims) && length(card$dims) >= 2) {
-    # not scientific: 200000 rows must not read "2e+05"
-    paste0(format(card$dims[1], scientific = FALSE, trim = TRUE), " \u00d7 ", card$dims[2])
+    # thousands separators, never scientific: 200000 rows reads "200,000", not "2e+05"
+    paste0(fmt_n(card$dims[1]), " \u00d7 ", fmt_n(card$dims[2]))
   } else {
     ""
   }

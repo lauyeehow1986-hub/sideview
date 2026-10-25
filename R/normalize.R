@@ -529,8 +529,8 @@ print.sideview_card <- function(x, ...) {
     cat("  Lazy: TRUE\n")
   }
   if (!is.null(x$dims)) {
-    rows_str <- if (is.na(x$dims[1])) "?" else as.character(x$dims[1])
-    cols_str <- if (is.na(x$dims[2])) "?" else as.character(x$dims[2])
+    rows_str <- if (is.na(x$dims[1])) "?" else fmt_n(x$dims[1])
+    cols_str <- if (is.na(x$dims[2])) "?" else fmt_n(x$dims[2])
     cat(sprintf("  Dims: %s rows x %s cols\n", rows_str, cols_str))
   }
   invisible(x)

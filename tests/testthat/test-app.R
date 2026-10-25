@@ -1135,10 +1135,19 @@ test_that("row counts reach the browser as plain digits, not 2e+05", {
   card$dims <- c(200000, 1)
   html <- as.character(render_card_tag(card))
   expect_match(html, 'data-table-rows="200000"', fixed = TRUE)
-  expect_match(html, "200000 × 1", fixed = TRUE)
+  # the badge text has thousands separators (the attributes stay plain digits)
+  expect_match(html, "200,000 × 1", fixed = TRUE)
   expect_no_match(html, "e+05", fixed = TRUE)
   card$dims <- c(100000, 1)
   expect_match(as.character(render_card_tag(card)), 'data-table-rows="100000"', fixed = TRUE)
+})
+
+test_that("a card prints its row count with thousands separators", {
+  card <- sv_normalize(data.frame(a = 1:5), name = "t")
+  card$dims <- c(200000, 1)
+  out <- paste(utils::capture.output(print(card)), collapse = "\n")
+  expect_match(out, "Dims: 200,000 rows x 1 cols", fixed = TRUE)
+  expect_no_match(out, "e+05", fixed = TRUE)
 })
 
 
