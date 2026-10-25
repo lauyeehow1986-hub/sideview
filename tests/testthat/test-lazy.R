@@ -112,3 +112,64 @@ test_that("sv_card_is_lazy respects the option", {
   expect_false(sv_card_is_lazy(d))
   expect_false(sv_card_is_lazy(a))
 })
+
+test_that("private connection opens once and closes", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  e <- sv_lazy_env()
+  expect_null(e$con)
+  expect_identical(e$tbls, list())
+  withr::defer(sv_lazy_close(e))
+
+  c1 <- sv_lazy_con(e)
+  c2 <- sv_lazy_con(e)
+  expect_s4_class(c1, "duckdb_connection")
+  expect_identical(c1, c2)
+
+  sv_lazy_close(e)
+  expect_null(e$con)
+  expect_no_error(sv_lazy_close(e))
+})
+
+test_that("sv_lazy_tbl converts arrow and caches by key", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  fx <- lazy_fixture()
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+
+  a <- arrow::arrow_table(fx$df)
+  t1 <- sv_lazy_tbl(a, e, key = "a")
+  expect_s3_class(t1, "tbl_duckdb_connection")
+  expect_equal(as.data.frame(dplyr::collect(t1)), fx$df)
+
+  t2 <- sv_lazy_tbl(a, e, key = "a")
+  expect_identical(t2, t1)
+  expect_identical(e$tbls[["a"]], t1)
+
+  # a duckdb tbl is returned as is
+  d <- dplyr::tbl(fx$con, "v")
+  expect_identical(sv_lazy_tbl(d, e), d)
+})
+
+test_that("attach/detach leaves the connection clean", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  fx <- lazy_fixture()
+  before <- DBI::dbListTables(fx$con)
+
+  at <- sv_lazy_attach(fx$df, fx$con)
+  expect_match(at$name, "^sv_tmp_[0-9a-f]{8}$")
+  expect_s3_class(at$tbl, "tbl_duckdb_connection")
+  expect_equal(as.data.frame(dplyr::collect(at$tbl)), fx$df)
+  sv_lazy_detach(fx$con, at$name)
+  expect_identical(DBI::dbListTables(fx$con), before)
+
+  # arrow tables registered by to_duckdb() on a user connection are undone too
+  skip_if_not_installed("arrow")
+  tb <- arrow::to_duckdb(arrow::arrow_table(fx$df), con = fx$con, auto_disconnect = FALSE)
+  nm <- as.character(dbplyr::remote_name(tb))
+  sv_lazy_detach_arrow(fx$con, nm)
+  expect_identical(DBI::dbListTables(fx$con), before)
+})

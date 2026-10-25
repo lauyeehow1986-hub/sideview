@@ -60,3 +60,81 @@ sv_normalize_arg <- function(val, nm, expr = NULL) {
     sv_normalize(val, name = nm)
   }
 }
+
+#' A fresh holder for the per-session private duckdb connection
+#'
+#' `con` is opened on first use by [sv_lazy_con()]; `tbls` caches converted
+#' arrow tables by key.
+#' @return An environment with `con = NULL` and `tbls = list()`.
+#' @noRd
+sv_lazy_env <- function() {
+  e <- new.env(parent = emptyenv())
+  e$con <- NULL
+  e$tbls <- list()
+  e
+}
+
+#' The private duckdb connection, opened on first use
+#' @param con_env An environment from [sv_lazy_env()].
+#' @noRd
+sv_lazy_con <- function(con_env) {
+  if (is.null(con_env$con)) {
+    con_env$con <- DBI::dbConnect(duckdb::duckdb())
+  }
+  con_env$con
+}
+
+#' Shut down the private connection (safe to call twice)
+#'
+#' Only the private connection is closed, never a connection the user passed in.
+#' @noRd
+sv_lazy_close <- function(con_env) {
+  con <- con_env$con
+  if (!is.null(con)) {
+    try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE)
+  }
+  con_env$con <- NULL
+  con_env$tbls <- list()
+  invisible(NULL)
+}
+
+#' A duckdb tbl for a lazy source
+#'
+#' A duckdb tbl is returned as is. An arrow object is handed to duckdb
+#' zero-copy on the private connection, and cached under `key` when given.
+#' @param source A `tbl_duckdb_connection` or an Arrow table / dataset.
+#' @param con_env An environment from [sv_lazy_env()].
+#' @param key Optional cache key (usually the card name).
+#' @noRd
+sv_lazy_tbl <- function(source, con_env, key = NULL) {
+  if (inherits(source, "tbl_duckdb_connection")) return(source)
+  if (!is.null(key) && !is.null(con_env$tbls[[key]])) return(con_env$tbls[[key]])
+  tbl <- arrow::to_duckdb(source, con = sv_lazy_con(con_env), auto_disconnect = FALSE)
+  if (!is.null(key)) con_env$tbls[[key]] <- tbl
+  tbl
+}
+
+#' Register a data frame on a connection under a temporary name
+#' @return `list(tbl, name)`; undo with [sv_lazy_detach()].
+#' @noRd
+sv_lazy_attach <- function(df, con) {
+  name <- paste0("sv_tmp_", paste(sample(c(0:9, letters[1:6]), 8, TRUE), collapse = ""))
+  duckdb::duckdb_register(con, name, df)
+  list(tbl = dplyr::tbl(con, name), name = name)
+}
+
+#' Undo [sv_lazy_attach()]
+#' @noRd
+sv_lazy_detach <- function(con, name) {
+  try(duckdb::duckdb_unregister(con, name), silent = TRUE)
+  invisible(NULL)
+}
+
+#' Undo an `arrow::to_duckdb()` on a user connection
+#'
+#' The table name is `dbplyr::remote_name()` of the converted tbl.
+#' @noRd
+sv_lazy_detach_arrow <- function(con, name) {
+  try(duckdb::duckdb_unregister_arrow(con, name), silent = TRUE)
+  invisible(NULL)
+}
