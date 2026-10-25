@@ -148,6 +148,25 @@ Each sub-project gets its own spec, plan and build, in this order:
   `dialogViewer()` and a Done button does the same (its `Sys.sleep(1)` line never finished). Typing the next line at the
   console works. Screenshots and logs are in the session scratchpad only.
 - **Verification:** `node --check` on every file in inst/www and inst/htmlwidgets. `devtools::check()` with `NOT_CRAN=true`: 0 errors, 0 warnings, 1 NOTE (''NULL'' in the check directory, environmental). 5568 test expectations passed; the one failure in that run was the live Ollama test (the local model wrote code starting with a pipe), which passed when re-run alone - a flaky live-model test, not a regression.
+- **Final fix wave (final review I1-I5, M1-M8, M10; M9 kept):** see
+  `.superpowers/sdd/2026-10-25-lazy-full-data-implementation/final-fix-report.md`. (I1) `sv_lazy_tbl()` sets
+  `attr(, "sv_factors")` (levels, ordered) next to `sv_tz`; `sv_lazy_column_profile()` reads both, so the gadget
+  inspector and codebook report `factor`/`ordered` and the Arrow zone (testServer test vs the data frame codebook).
+  (I5) Arrow dictionaries keep their levels: a factor sorts by level (a `CASE` key when the levels are not in text
+  order) and `<`/`>` on an unordered factor match nothing, as in R. (I2) `sv_lazy_rows_window()`: the row total is
+  counted once per filter (cached in `order_cache`), an unsorted unfiltered window is `head(offset + limit)`, and a
+  sorted or filtered one is one `ORDER BY ... LIMIT/OFFSET` query (`sv_lazy_slice()`), so a window of a 5M-row table
+  is under 1 s on duckdb and arrow (test, skip_on_cran; 1.84 s / 1.59 s before, now 0.06-0.25 s). (M1) a filter value that does not
+  parse as the column type matches nothing. (M2) totals are doubles, so a 3e9-row view works. (M3) the table name in
+  `code_ref` is `encodeString()`d. (M4) `fmt_n()` in the gadget badge and the print method, `fmtCount()` in the
+  widget badge. (I3, label only) Auto Map suggestions (spline title, `data-basis`, one toast), the discrepancy card
+  and the auto-clean button say "first N rows" when a card is lazy (`data-preview-rows` on the card, `previewParts()`).
+  (I4) the widget codebook passes the true `n` for lazy cards. (M7) `sv_state_scrub()` drops `source` from state
+  files. (M8) a spy on `dplyr::collect` holds every lazy request to the rows it shows (guard only; passed before).
+  (M5) no timing message in the speed test; (M6) the "130.0" wording says "in generated code"; (M10) comment.
+  Also fixed the browser test helper: a failed startup probe threw "invalid connection" from `on.exit(close())`
+  and made the app look dead (seen as flaky starts). Every fix was run red against BASE 7993636 first.
+  Whole-table discrepancy and Auto Map stay deferred.
 
 ### 2026-10-25 - Three UI quirks from the tour fixed
 - Copilot bubble: new pure `SideviewPipeline.splitReply()` (sv-pipeline.js) splits the reply at the first

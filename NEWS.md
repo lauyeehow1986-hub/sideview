@@ -28,9 +28,22 @@ complete when it was not. They now use the whole table.
   "This step may need data in R: move collect() above it."
 * Auto Map, the Discrepancy tab's value comparison and the copilot's schema
   summary still use the preview (the copilot is told the true row count).
-  Nothing is sent to the model but the schema.
+  Auto Map suggestions and the discrepancy summary say so ("Based on the first
+  50 rows"), and so does the auto-clean button. Nothing is sent to the model
+  but the schema.
 * Fixed: a BIGINT column (what duckdb gives `count()` and `range()`) made the
   lazy join check, filters and "contains" fail.
+* Fixed: an Arrow factor sorts by its levels, not its text, and keeps its class
+  and its time zones in the gadget's inspector and codebook.
+* Fixed: a filter value that is not a valid value for the column (`"yes"` on a
+  logical, `"abc"` on a date) matches no rows, as on a data frame, instead of
+  failing.
+* Fixed: card headers and printed cards write counts as `200,000`, not `200000`
+  or `2e+05`; a widget codebook gives a lazy card's true row count as `n`.
+* Fixed: a duckdb table whose name holds `"` or `\` gets code that parses; a
+  saved state never holds a card's lazy table.
+* Sorted and scrolled windows on a big table are faster: duckdb returns only the
+  rows shown (a sorted window of 5,000,000 rows takes under 0.3 s).
 
 Known differences from an in-memory card:
 
