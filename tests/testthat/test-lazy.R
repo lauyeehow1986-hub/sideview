@@ -643,6 +643,12 @@ profile_columns <- function() {
     chr_same = rep("a", 4),
     date = as.Date("2024-01-01") + c(0, 10, 20, 30, 30, NA, 365, 4000),
     datetime = as.POSIXct("2024-03-01 08:30:00", tz = "UTC") + c(0, 3600, 86400, NA, 90000, 5),
+    datetime_sgt = as.POSIXct("2024-03-01 08:30:00", tz = "Asia/Singapore") + c(0, 3600, 86400, NA, 90000, 5),
+    datetime_sgt_midnight = as.POSIXct("2024-03-01 00:00:00", tz = "Asia/Singapore") + c(0, 86400, NA),
+    factor = factor(c("a", "b", NA, "a", "c", "a", "b b")),
+    ordered = factor(c("lo", "hi", NA, "lo", "mid"), levels = c("lo", "mid", "hi"), ordered = TRUE),
+    num_all_inf = c(Inf, -Inf, Inf, NA),
+    num_sd_overflow = c(1e-300, 1e300, 5, 6, 7),
     lgl = c(TRUE, FALSE, TRUE, NA, TRUE),
     lgl_na = rep(NA, 4),
     num_na = rep(NA_real_, 3),
@@ -672,13 +678,56 @@ test_that("lazy column profile equals in-memory", {
   fx <- lazy_fixture()
   cols <- profile_columns()
   for (nm in names(cols)) {
-    want <- sv_column_profile(cols[[nm]])
     for (how in c("duckdb", "arrow")) {
+      x <- cols[[nm]]
+      want <- sv_column_profile(x)
+      if (how == "duckdb") {
+        # duckdb has no stored zone (a timestamp comes back as UTC instants) and no
+        # ordered enum, so those columns are compared as duckdb gives them
+        if (inherits(x, "POSIXct")) attr(x, "tzone") <- "UTC"
+        want <- sv_column_profile(x)
+        if (is.ordered(x)) want$class <- "factor"
+      }
       src <- profile_source(cols[[nm]], how, fx$con, "pc")
       got <- sv_column_profile(src, column = "c")
       expect_equal(got, want, tolerance = 1e-12, label = paste(nm, how))
     }
   }
+})
+
+test_that("lazy column profile keeps the factor class and the time zone of Arrow", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  cols <- profile_columns()
+  prof <- function(x) sv_column_profile(arrow::arrow_table(data.frame(c = x)), column = "c")
+  expect_identical(prof(cols$factor)$class, "factor")
+  expect_identical(prof(cols$ordered)$class, "ordered")
+  expect_identical(prof(cols$datetime_sgt)$stats$min, "2024-03-01 08:30:00")
+  expect_identical(prof(cols$datetime_sgt_midnight)$stats$min, "2024-03-01")
+  # a dataset and a query on it read the same schema
+  ds <- arrow::InMemoryDataset$create(data.frame(c = cols$ordered, k = 1))
+  expect_identical(sv_column_profile(ds, column = "c")$class, "ordered")
+  expect_identical(sv_column_profile(dplyr::filter(ds, k == 1), column = "c")$class, "ordered")
+})
+
+test_that("lazy standard deviation does not fail where R overflows", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  fx <- lazy_fixture()
+  x <- c(1e-300, 1e300, 5, 6, 7)
+  expect_identical(sv_column_profile(x)$stats$sd, Inf)
+  for (how in c("duckdb", "arrow")) {
+    got <- sv_column_profile(profile_source(x, how, fx$con, "pc"), column = "c")
+    expect_identical(got$stats$sd, Inf)
+  }
+  # large but not overflowing: the scaled fallback agrees with R
+  y <- c(-3e153, 4e153, 1e153, 0)
+  fx2 <- profile_source(y, "duckdb", fx$con, "pc")
+  fin <- dplyr::rename(fx2, .sv_v = c)
+  expect_equal(sv_lazy_sd_scaled(fin, min(y), max(y)), stats::sd(y), tolerance = 1e-12)
 })
 
 test_that("lazy column profile follows top_n and bins", {

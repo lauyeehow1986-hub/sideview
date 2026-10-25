@@ -777,6 +777,9 @@ sv_lazy_issue_counts <- function(tbl, column, kind, p, base = NULL) {
     out$numeric_text <- nonblank > 0 && sv_lazy_num0(r$numtext) == nonblank
 
     # values that differ only in case or spacing: groups of distinct values
+    # Caveat: duckdb's lower() and R's tolower() can fold non-ASCII letters
+    # differently (a locale or Unicode-version matter), so variant groups of
+    # non-ASCII text may rarely differ from the in-memory count.
     folded <- dplyr::mutate(dplyr::distinct(present), .sv_f = lower(trim(!!v, !!sv_trim_chars)))
     f <- rlang::sym(".sv_f")
     groups <- dplyr::filter(
@@ -862,8 +865,13 @@ sv_lazy_column_profile <- function(tbl, column, top_n = 10L, bins = 20L, con_env
     rlang::abort("The column inspector needs a duckdb table; this table is on another database.",
                  class = "sv_lazy_not_duckdb")
   }
+  arrow_type <- NULL
   if (!inherits(tbl, "tbl_lazy")) {
-    # an Arrow object: only this column goes to duckdb, and it is unregistered after
+    # an Arrow object: only this column goes to duckdb, and it is unregistered after.
+    # The field type is read from the schema first (no scan): duckdb gets a decoded
+    # dictionary as text and a timestamp without its zone, so the class (factor /
+    # ordered) and the time zone are only known here.
+    arrow_type <- sv_lazy_arrow_type(tbl, column)
     tbl <- sv_lazy_tbl(dplyr::select(tbl, dplyr::all_of(column)), con_env)
     name <- dbplyr::remote_name(tbl)
     on.exit(sv_lazy_detach_arrow(sv_lazy_con(con_env), name), add = TRUE, after = FALSE)
@@ -891,7 +899,7 @@ sv_lazy_column_profile <- function(tbl, column, top_n = 10L, bins = 20L, con_env
 
   out <- list(
     kind = kind,
-    class = class(zero)[1],
+    class = sv_lazy_class(zero, arrow_type),
     label = NULL,
     n = n,
     n_missing = sv_lazy_count(n_miss),
@@ -907,13 +915,24 @@ sv_lazy_column_profile <- function(tbl, column, top_n = 10L, bins = 20L, con_env
 
   if (kind == "numeric" && n_present > 0) {
     fin <- sv_lazy_finite(present, identical(sv_lazy_kind(zero), "double"))
-    s <- dplyr::collect(dplyr::summarise(
-      fin,
-      n = n(),
-      q0 = quantile_cont(!!v, 0), q1 = quantile_cont(!!v, 0.25), q2 = quantile_cont(!!v, 0.5),
-      q3 = quantile_cont(!!v, 0.75), q4 = quantile_cont(!!v, 1),
-      mean = mean(!!v, na.rm = TRUE), sd = sd(!!v, na.rm = TRUE)
-    ))
+    moments <- function(with_sd) {
+      sd_expr <- if (with_sd) rlang::expr(sd(!!v, na.rm = TRUE)) else NA_real_
+      dplyr::collect(dplyr::summarise(
+        fin,
+        n = n(),
+        q0 = quantile_cont(!!v, 0), q1 = quantile_cont(!!v, 0.25), q2 = quantile_cont(!!v, 0.5),
+        q3 = quantile_cont(!!v, 0.75), q4 = quantile_cont(!!v, 1),
+        mean = mean(!!v, na.rm = TRUE),
+        sd = !!sd_expr
+      ))
+    }
+    # duckdb's STDDEV_SAMP raises "out of range" where R returns Inf (the sum of
+    # squares overflows), so a failure falls back to the scaled computation.
+    s <- tryCatch(moments(TRUE), error = function(e) NULL)
+    if (is.null(s)) {
+      s <- moments(FALSE)
+      s$sd <- sv_lazy_sd_scaled(fin, s$q0, s$q4)
+    }
     n_fin <- sv_lazy_num0(s$n)
     if (n_fin > 0) {
       out$stats <- list(
@@ -929,6 +948,13 @@ sv_lazy_column_profile <- function(tbl, column, top_n = 10L, bins = 20L, con_env
     want <- if (all(want <= .Machine$integer.max)) as.integer(want) else want
     ranked <- dplyr::mutate(dbplyr::window_order(present, !!v), .sv_rn = row_number())
     rows <- dplyr::collect(dplyr::select(dplyr::filter(ranked, .sv_rn %in% !!want), !!v, .sv_rn))
+    # Zone: an Arrow timestamp keeps its zone in the schema, but duckdb hands the
+    # instants back as UTC, so they are re-tagged before formatting (the instant is
+    # unchanged, the clock time is the one R shows). A duckdb TIMESTAMPTZ has no
+    # stored zone and is shown as UTC; a table written to duckdb from a non-UTC
+    # POSIXct arrives as UTC instants already.
+    tz <- sv_lazy_arrow_tz(arrow_type)
+    if (!is.null(tz) && inherits(rows$.sv_v, "POSIXct")) attr(rows$.sv_v, "tzone") <- tz
     pick <- function(p) format(rows$.sv_v[match(p, rows$.sv_rn)])
     out$stats <- list(min = pick(1), q1 = pick(pos[1]), median = pick(pos[2]),
                       q3 = pick(pos[3]), max = pick(n_present))
@@ -957,6 +983,61 @@ sv_lazy_column_profile <- function(tbl, column, top_n = 10L, bins = 20L, con_env
   counts <- sv_lazy_issue_counts(tbl, column, kind, out, base = base)
   out$issues <- sv_format_issues(out, counts)
   out
+}
+
+#' The Arrow field type of a column, read from the schema (no scan)
+#'
+#' Works for a Table, a Dataset and a query on either. `NULL` when it cannot be
+#' read.
+#' @noRd
+sv_lazy_arrow_type <- function(x, column) {
+  tryCatch(arrow::schema(x)$GetFieldByName(column)$type, error = function(e) NULL)
+}
+
+#' The time zone of an Arrow timestamp type, or `NULL` when it has none
+#' @noRd
+sv_lazy_arrow_tz <- function(type) {
+  if (is.null(type) || !inherits(type, "Timestamp")) return(NULL)
+  tz <- tryCatch(type$timezone(), error = function(e) "")
+  if (is.character(tz) && length(tz) == 1L && !is.na(tz) && nzchar(tz)) tz else NULL
+}
+
+#' The class `sv_column_profile()` reports for a lazy column
+#'
+#' The first class of the zero-row sample, except that an Arrow dictionary is
+#' "ordered" or "factor" as in memory (the sample of the decoded column says
+#' "character"). A duckdb ENUM has no order, so an ordered factor in duckdb is
+#' reported as "factor", which is also what `collect()` gives for it.
+#' @noRd
+sv_lazy_class <- function(zero, arrow_type = NULL) {
+  if (!is.null(arrow_type) && inherits(arrow_type, "DictionaryType")) {
+    return(if (isTRUE(arrow_type$ordered)) "ordered" else "factor")
+  }
+  class(zero)[1]
+}
+
+#' Sample standard deviation without overflow
+#'
+#' Used when the database's own `STDDEV_SAMP` fails. The values are divided by the
+#' largest absolute one, so that no square overflows, and the result is scaled
+#' back. R computes the variance first, so a variance beyond the double range is
+#' `Inf` and so is the standard deviation (`sd(c(1e-300, 1e300, 5, 6, 7))`).
+#' `NA` when even the scaled computation fails.
+#' @param fin The finite values, as a tbl with `.sv_v`.
+#' @param lo,hi Their minimum and maximum.
+#' @noRd
+sv_lazy_sd_scaled <- function(fin, lo, hi) {
+  scale <- max(abs(lo), abs(hi))
+  if (!is.finite(scale)) return(NA_real_)
+  if (scale == 0) return(0)
+  v <- rlang::sym(".sv_v")
+  r <- tryCatch(
+    dplyr::collect(dplyr::summarise(fin, sd = sd(!!v / !!sv_lazy_lit(scale), na.rm = TRUE))),
+    error = function(e) NULL
+  )
+  if (is.null(r) || length(r$sd) != 1L || is.na(r$sd)) return(NA_real_)
+  out <- r$sd * scale
+  if (is.finite(out) && is.infinite(out^2)) Inf else out
 }
 
 #' The histogram of `sv_histogram()`, binned by the database
