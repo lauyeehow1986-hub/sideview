@@ -122,12 +122,14 @@ test_that("private connection opens once and closes", {
   withr::defer(sv_lazy_close(e))
 
   c1 <- sv_lazy_con(e)
+  expect_true(DBI::dbIsValid(c1))
   c2 <- sv_lazy_con(e)
   expect_s4_class(c1, "duckdb_connection")
   expect_identical(c1, c2)
 
   sv_lazy_close(e)
   expect_null(e$con)
+  expect_false(DBI::dbIsValid(c1))
   expect_no_error(sv_lazy_close(e))
 })
 
@@ -172,4 +174,20 @@ test_that("attach/detach leaves the connection clean", {
   nm <- as.character(dbplyr::remote_name(tb))
   sv_lazy_detach_arrow(fx$con, nm)
   expect_identical(DBI::dbListTables(fx$con), before)
+})
+
+test_that("attach names do not touch the user's RNG stream", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  fx <- lazy_fixture()
+  set.seed(1)
+  x <- runif(1)
+  set.seed(1)
+  a1 <- sv_lazy_attach(fx$df, fx$con)
+  a2 <- sv_lazy_attach(fx$df, fx$con)
+  y <- runif(1)
+  expect_identical(x, y)
+  expect_false(identical(a1$name, a2$name))
+  sv_lazy_detach(fx$con, a1$name)
+  sv_lazy_detach(fx$con, a2$name)
 })

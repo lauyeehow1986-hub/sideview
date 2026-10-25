@@ -114,11 +114,17 @@ sv_lazy_tbl <- function(source, con_env, key = NULL) {
   tbl
 }
 
+# Counts temporary table names; unique within a process, so within a connection.
+sv_lazy_counter <- new.env(parent = emptyenv())
+sv_lazy_counter$n <- 0L
+
 #' Register a data frame on a connection under a temporary name
 #' @return `list(tbl, name)`; undo with [sv_lazy_detach()].
 #' @noRd
 sv_lazy_attach <- function(df, con) {
-  name <- paste0("sv_tmp_", paste(sample(c(0:9, letters[1:6]), 8, TRUE), collapse = ""))
+  # a counter, not sample(): the user's set.seed() stream must not move
+  sv_lazy_counter$n <- sv_lazy_counter$n + 1L
+  name <- sprintf("sv_tmp_%08x", sv_lazy_counter$n)
   duckdb::duckdb_register(con, name, df)
   list(tbl = dplyr::tbl(con, name), name = name)
 }
