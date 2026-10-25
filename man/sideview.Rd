@@ -59,6 +59,41 @@ Launches an interactive Shiny gadget containing an infinite 2D canvas with
 mouse-wheel zoom, pan, draggable table cards, interactive column mapping,
 discrepancy recoding, and LLM-assisted tidyverse code generation.
 }
+\section{Big tables (arrow and duckdb)}{
+
+Arrow tables, datasets and queries and duckdb tables (\code{dplyr::tbl()}) go on
+the canvas as cards that show a 50-row preview. When the duckdb, dbplyr and
+DBI packages are installed, sorting, filtering, scrolling, the join check,
+the column inspector and the codebook use the whole table: duckdb runs them
+and only summaries and row windows come back into R. The table is never
+collected. Without duckdb, or when the link to a table is lost, the card
+says "First 50 of N rows" and the checks use the preview.
+
+Generated code stays lazy and ends in one \code{collect()}. Known differences
+from an in-memory card:
+\itemize{
+\item "Contains" on a number matches its text; for doubles duckdb writes
+\code{"130.0"} where R writes \code{"130"}, and float noise or scientific
+notation can differ. The generated filter is a literal match,
+\code{stringr::str_detect(col, "<escaped literal>")}.
+\item POSIXct values at exactly midnight, and \code{-0}, can print differently.
+\item Join keys of different types compare as text, and double keys
+compare exactly.
+\item Arrow time-zone offsets are computed for 1900 to 2100; local times
+outside that range may be off. duckdb \code{TIMESTAMPTZ} columns show in UTC.
+\item Joining arrow with duckdb copies the arrow side into a duckdb
+temporary table (\code{arrow::to_duckdb()} then \code{dplyr::compute()}), which
+costs memory; a data frame joined into duckdb is copied as
+\verb{sideview_<table>}.
+\item duckdb 1.4.3 can crash when it scans an arrow factor column that
+contains \code{NA}. sideview decodes such columns itself, but generated code
+that calls \code{arrow::to_duckdb()} on one may hit it: convert the factor to
+character first.
+}
+If \strong{Run in R} fails on a lazy pipeline, the message suggests moving
+\code{collect()} above the step that needs R.
+}
+
 \section{Keyboard and navigation}{
 
 Single-key shortcuts work when the canvas has the keyboard and you are not

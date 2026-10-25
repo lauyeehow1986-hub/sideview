@@ -99,6 +99,48 @@ or top levels, a histogram and data-quality checks. **Export codebook**
 writes a data dictionary for every table
 ([`sv_codebook()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_codebook.md)).
 
+## Big tables
+
+Arrow tables, datasets and duckdb tables go on the canvas as they are,
+for example `sideview(visits_db, patients)`. A card shows a 50-row
+preview, but when the duckdb, dbplyr and DBI packages are installed,
+**sorting, filtering, the join check, the inspector and the codebook use
+the whole table**. duckdb does the work and only summaries and row
+windows come back into R; sideview never collects the table. The card
+header shows the true row count, and a descending sort puts the true
+maximum first.
+
+If duckdb is not installed, or the link to a table is lost, the header
+reads “First 50 of 1,234,567 rows” and the checks say “Based on the
+first 50 rows”, so a preview is never mistaken for the whole table.
+
+The code you get back stays lazy and ends in one `collect()`:
+
+`visits_db`` ``|>`` `` ``dplyr``::`[`filter`](https://dplyr.tidyverse.org/reference/filter.html)`(``sbp`` ``>`` ``140``)`` ``|>`` `` ``dplyr``::`[`left_join`](https://dplyr.tidyverse.org/reference/mutate-joins.html)`(``patients``, by ``=`` ``"id"``, copy ``=`` ``TRUE``)`` ``|>`` `` ``dplyr``::`[`collect`](https://dplyr.tidyverse.org/reference/compute.html)`(``)`
+
+If **Run in R** fails on a step that needs data in R, move `collect()`
+above it.
+
+Known differences from an in-memory table:
+
+- “Contains” on a number matches its text. A double is `"130.0"` in
+  duckdb and `"130"` in R, and float noise or scientific notation can
+  differ. The filter is a literal match,
+  `stringr::str_detect(col, "<escaped literal>")`.
+- A POSIXct value at exactly midnight, and `-0`, can print differently.
+- Join keys of different types compare as text, and double keys compare
+  exactly.
+- Arrow time-zone offsets are computed for 1900 to 2100, and duckdb
+  `TIMESTAMPTZ` columns show in UTC.
+- Joining arrow with duckdb copies the arrow side into a duckdb
+  temporary table, which uses memory.
+- duckdb 1.4.3 can crash on an arrow factor column that contains `NA`.
+  If generated code that uses
+  [`arrow::to_duckdb()`](https://arrow.apache.org/docs/r/reference/to_duckdb.html)
+  hits it, convert the factor to character first.
+- The codebook adds a `rows_profiled` column next to `n`; for a
+  preview-only card it is 50 while `n` is the true row count.
+
 ## Find any card or column
 
 ![Search dialog listing the patients card and every patient_id

@@ -1041,3 +1041,56 @@ test_that("sv_codebook shares one private connection and always closes it", {
   expect_identical(closes, 1L)
   expect_null(envs[[1]]$con)
 })
+
+test_that("join check on 1M-row duckdb tables is under 5 s", {
+  skip_on_cran()
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  # synthetic keys: ids overlap by 80%, with repeats, a text key and a few NAs
+  DBI::dbExecute(con, "CREATE TABLE big_x AS SELECT CAST(range AS BIGINT) AS id,
+    'k' || CAST(range % 250000 AS VARCHAR) AS code,
+    CASE WHEN range % 1000 = 0 THEN NULL ELSE range % 97 END AS v
+    FROM range(1000000)")
+  DBI::dbExecute(con, "CREATE TABLE big_y AS SELECT CAST(range + 200000 AS BIGINT) AS id,
+    'k' || CAST(range % 300000 AS VARCHAR) AS code,
+    range % 13 AS w
+    FROM range(1000000)")
+  x <- dplyr::tbl(con, "big_x")
+  y <- dplyr::tbl(con, "big_y")
+  elapsed <- system.time(
+    res_id <- sv_join_diagnostics(x, y, by = "id", x_name = "big_x", y_name = "big_y")
+  )[["elapsed"]]
+  elapsed_code <- system.time(
+    res_code <- sv_join_diagnostics(x, y, by = "code", x_name = "big_x", y_name = "big_y")
+  )[["elapsed"]]
+  message(sprintf("join check, 1M x 1M: id %.2f s, code %.2f s", elapsed, elapsed_code))
+  expect_identical(res_id$n_x, 1000000L)
+  expect_identical(res_id$n_y, 1000000L)
+  expect_identical(res_id$matched_x, 800000L)
+  expect_lt(elapsed, 5)
+  expect_lt(elapsed_code, 5)
+})
+
+test_that("BIGINT, HUGEINT and DECIMAL columns work in the join check, profile and row window", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  # duckdb hands a BIGINT to R as a double, but dbplyr's is.nan() would PRINTF it
+  DBI::dbExecute(con, "CREATE TABLE ints AS SELECT CAST(range AS BIGINT) AS a,
+    CAST(range AS HUGEINT) AS b, CAST(range AS DECIMAL(10,2)) AS d FROM range(25)")
+  tb <- dplyr::tbl(con, "ints")
+  df <- dplyr::collect(tb)
+  for (cn in c("a", "b", "d")) {
+    expect_equal(sv_join_diagnostics(tb, tb, by = cn)[c("n_x", "matched_x", "distinct_x")],
+                 sv_join_diagnostics(df, df, by = cn)[c("n_x", "matched_x", "distinct_x")], tolerance = 1e-12)
+    expect_equal(sv_column_profile(tb, column = cn), sv_column_profile(df[[cn]]), tolerance = 1e-12)
+    for (op in c("contains", "gt", "equals")) {
+      req <- list(offset = 0L, limit = 30L, sort = list(col = cn, dir = "desc"),
+                  filter = list(col = cn, op = op, value = "2"), version = 1L)
+      expect_equal(sv_lazy_rows_window(tb, req, new.env())$total, sv_rows_window(df, req, new.env())$total)
+    }
+  }
+})

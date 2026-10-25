@@ -44,6 +44,21 @@ rstudio bridge: R/rstudio.R
 - `sideview_code_update` carries `source`: `event` (echo of a client step; ignored), `auto_clean`
   (appended as a custom step), `copilot` (offered in the chat bubble only), `ai`/absent (replaces the pipeline).
 - Keep this list in sync when adding inputs/messages.
+- **Lazy (arrow / duckdb) cards:** `new_sideview_card()` keeps the user's object as `source` (plus `code_ref`,
+  `is_lazy`, `lazy_source`); `card$data` stays the 50-row preview and `dims[1]` the true row count. **`source` is
+  never serialised**: not in widget JSON, state or card attributes (test-lazy.R checks this). All lazy logic is
+  in `R/lazy.R`: the `sv_lazy_*` functions are twins of the in-memory ones (`sv_lazy_rows_window` /
+  `sv_rows_window`, `sv_lazy_join_diagnostics`, `sv_lazy_column_profile`), and test-lazy.R holds them to the data
+  frame result with `expect_equal(tolerance = 1e-12)` over duckdb and arrow fixtures. Change a twin together
+  with its in-memory function. Lazy tables are never collected: only summaries, row windows and
+  `collect(head(tbl, 0))` (for R classes) come back. One private duckdb connection per Shiny session
+  (`sv_lazy_env()`), closed in `onSessionEnded`; a user's connection is left clean. A lost link or a missing
+  duckdb falls back to the preview with one `sideview_toast`. Do not use `is.nan()`/`is.infinite()` in lazy
+  expressions (dbplyr turns them into `PRINTF('%f', col)`, which fails on integer types): use `isnan()`/`isinf()`.
+  Lazy "contains" is `str_detect(col, "<escaped literal>")`, never `stringr::fixed()`.
+- **Codebook:** `sv_codebook()` has a `rows_profiled` column after `n` (`n` = true row count, `rows_profiled` =
+  rows profiled; equal except for a preview-only card). `SideviewPipeline.codebookRow()`/`codebookCsv()` write the
+  same column, so the byte-equal CSV test still holds.
 - **Join diagnostics:** `sv_join_diagnostics()` (R/diagnostics.R) and `SideviewPipeline.joinDiagnostics()`
   (sv-pipeline.js) are twins with the same snake_case fields; `test-diagnostics.R` checks parity and that row
   counts equal dplyr (NA matches NA, as `na_matches = "na"`). The gadget asks R (`join_diagnostics_request`,

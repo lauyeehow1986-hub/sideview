@@ -12,7 +12,8 @@ sv_code_recode(
   crosswalk,
   default = NULL,
   method = c("case_when", "case_match", "fct_recode"),
-  pipe = FALSE
+  pipe = FALSE,
+  lazy = FALSE
 )
 ```
 
@@ -53,6 +54,12 @@ sv_code_recode(
 - pipe:
 
   Logical; if TRUE, uses pipe syntax `df %>% dplyr::mutate(...)`.
+
+- lazy:
+
+  Logical; TRUE for a table that lives in arrow or duckdb. `case_when()`
+  then closes with a `TRUE ~ <col>` arm instead of `.default = <col>`,
+  which arrow cannot take.
 
 ## Value
 

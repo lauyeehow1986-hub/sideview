@@ -62,6 +62,39 @@ sv_find_tables <- function(env = parent.frame()) {
 #'   **Done**, or `NULL` after **Cancel** or closing the window.
 #'   If `run = FALSE`, returns a `shiny.appobj` with the normalized cards attached.
 #'
+#' @section Big tables (arrow and duckdb):
+#' Arrow tables, datasets and queries and duckdb tables (`dplyr::tbl()`) go on
+#' the canvas as cards that show a 50-row preview. When the duckdb, dbplyr and
+#' DBI packages are installed, sorting, filtering, scrolling, the join check,
+#' the column inspector and the codebook use the whole table: duckdb runs them
+#' and only summaries and row windows come back into R. The table is never
+#' collected. Without duckdb, or when the link to a table is lost, the card
+#' says "First 50 of N rows" and the checks use the preview.
+#'
+#' Generated code stays lazy and ends in one `collect()`. Known differences
+#' from an in-memory card:
+#' \itemize{
+#'   \item "Contains" on a number matches its text; for doubles duckdb writes
+#'     `"130.0"` where R writes `"130"`, and float noise or scientific
+#'     notation can differ. The generated filter is a literal match,
+#'     `stringr::str_detect(col, "<escaped literal>")`.
+#'   \item POSIXct values at exactly midnight, and `-0`, can print differently.
+#'   \item Join keys of different types compare as text, and double keys
+#'     compare exactly.
+#'   \item Arrow time-zone offsets are computed for 1900 to 2100; local times
+#'     outside that range may be off. duckdb `TIMESTAMPTZ` columns show in UTC.
+#'   \item Joining arrow with duckdb copies the arrow side into a duckdb
+#'     temporary table (`arrow::to_duckdb()` then `dplyr::compute()`), which
+#'     costs memory; a data frame joined into duckdb is copied as
+#'     `sideview_<table>`.
+#'   \item duckdb 1.4.3 can crash when it scans an arrow factor column that
+#'     contains `NA`. sideview decodes such columns itself, but generated code
+#'     that calls `arrow::to_duckdb()` on one may hit it: convert the factor to
+#'     character first.
+#' }
+#' If **Run in R** fails on a lazy pipeline, the message suggests moving
+#' `collect()` above the step that needs R.
+#'
 #' @section Keyboard and navigation:
 #' Single-key shortcuts work when the canvas has the keyboard and you are not
 #' typing: `F` fit all cards, `0` reset zoom, `+`/`-` zoom, `M` show or hide

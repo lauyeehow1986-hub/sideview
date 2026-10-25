@@ -33,11 +33,38 @@
     </div>
 
     <div class="section level2">
-<h2 class="pkg-version" data-toc-text="development version" id="sideview-development-version">sideview (development version)<a class="anchor" aria-label="anchor" href="#sideview-development-version"></a></h2>
+<h2 class="pkg-version" data-toc-text="0.4.0" id="sideview-040-development">sideview 0.4.0 (development)<a class="anchor" aria-label="anchor" href="#sideview-040-development"></a></h2>
+<div class="section level3">
+<h3 id="big-tables-full-data-for-arrow-and-duckdb-cards-0-4-0">Big tables: full data for arrow and duckdb cards<a class="anchor" aria-label="anchor" href="#big-tables-full-data-for-arrow-and-duckdb-cards-0-4-0"></a></h3>
+<p>Arrow tables, datasets and queries and duckdb tables (<code><a href="https://dplyr.tidyverse.org/reference/tbl.html" class="external-link">dplyr::tbl()</a></code>) used to keep only their first 50 rows, so a sort, a join check or a codebook looked complete when it was not. They now use the whole table.</p>
+<ul><li>
+<strong>Sort, filter and scroll</strong> run in duckdb on the whole table. The header shows the true row count.</li>
+<li>
+<strong>Join check, column inspector and codebook</strong> profile the whole table in duckdb; only summaries come back into R, and the table is never collected. Results equal the in-memory ones. <code><a href="../reference/sv_join_diagnostics.html">sv_join_diagnostics()</a></code> accepts duckdb and Arrow tables, <code><a href="../reference/sv_column_profile.html">sv_column_profile()</a></code> has a new <code>column</code> argument for them, and <code><a href="../reference/sv_codebook.html">sv_codebook()</a></code> accepts them and has a <code>progress</code> argument. Arrow tables go through a private duckdb connection that closes with the session.</li>
+<li>
+<strong>The codebook has a new column, <code>rows_profiled</code>,</strong> after <code>n</code>. <code>n</code> is the table’s true row count and <code>rows_profiled</code> is how many rows the profile used. They are equal except for a preview-only card.</li>
+<li>
+<strong>The canvas says what it used.</strong> Without duckdb, or when the link to a table is lost, the card header reads “First 50 of N rows” and the checks say “Based on the first 50 rows”. A toast explains a lost link, and a codebook shows its progress (“Profiling visits_db: column 40 of 200”).</li>
+<li>
+<strong>Generated code stays lazy</strong> and ends in one <code>collect()</code>. Joins across duckdb, arrow and data frames are written so they run, a “contains” filter is <code>stringr::str_detect(col, "&lt;escaped literal&gt;")</code> (stringr is in Suggests), and a reshape on arrow collects first. If <strong>Run in R</strong> fails, the message adds “This step may need data in R: move collect() above it.”</li>
+<li>Auto Map, the Discrepancy tab’s value comparison and the copilot’s schema summary still use the preview (the copilot is told the true row count). Nothing is sent to the model but the schema.</li>
+<li>Fixed: a BIGINT column (what duckdb gives <code>count()</code> and <code><a href="https://rdrr.io/r/base/range.html" class="external-link">range()</a></code>) made the lazy join check, filters and “contains” fail.</li>
+</ul><p>Known differences from an in-memory card:</p>
+<ul><li>“Contains” on a number matches its text. For doubles duckdb writes <code>"130.0"</code> where R writes <code>"130"</code>, and float noise or scientific notation can differ.</li>
+<li>A POSIXct value at exactly midnight, and <code>-0</code>, can print differently.</li>
+<li>Join keys of different types compare as text; double keys compare exactly; an in-memory POSIXct key is compared as text where a database key is compared as an instant.</li>
+<li>Arrow time-zone offsets are computed for 1900 to 2100, so local times outside that range may be off. duckdb <code>TIMESTAMPTZ</code> columns show in UTC. duckdb ordered factors report class <code>"factor"</code>.</li>
+<li>Joining arrow with duckdb copies the arrow side into a duckdb temporary table (<code><a href="https://arrow.apache.org/docs/r/reference/to_duckdb.html" class="external-link">arrow::to_duckdb()</a></code> then <code><a href="https://dplyr.tidyverse.org/reference/compute.html" class="external-link">dplyr::compute()</a></code>), which uses memory. A data frame joined into duckdb is copied as <code>sideview_&lt;table&gt;</code>.</li>
+<li>duckdb 1.4.3 can crash when it scans an arrow factor column that contains <code>NA</code>. sideview decodes these columns itself, but generated code that calls <code><a href="https://arrow.apache.org/docs/r/reference/to_duckdb.html" class="external-link">arrow::to_duckdb()</a></code> on one may hit it: convert the factor to character first.</li>
+<li>Two duckdb tables on different connections cannot be join-checked. A saved or embedded widget has no R session, so lazy cards there show the preview.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="other-changes-0-4-0">Other changes<a class="anchor" aria-label="anchor" href="#other-changes-0-4-0"></a></h3>
 <ul><li>The copilot chat keeps a reply in order: text written after the code now appears below the code instead of above it.</li>
 <li>A join step in the Pipeline tab keeps its join type, move and delete buttons on one line in a narrow drawer; the key check stays on the line below.</li>
 <li>The column inspector shows summary numbers to about four significant digits (5.338, not 5.33789). The profile and the codebook keep full precision.</li>
 </ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.3.0" id="sideview-030">sideview 0.3.0<a class="anchor" aria-label="anchor" href="#sideview-030"></a></h2>
 <p>A full pass over the user interface, tested in a real browser and in RStudio (dialog, Viewer pane, external browser, the addin, a saved HTML file and a Quarto page), plus new features for clinical data work.</p>

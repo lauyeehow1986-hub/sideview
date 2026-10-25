@@ -444,13 +444,13 @@ test_that("lazy pipelines run: every join of the design equals the data-frame jo
         expect_parses(code, label)
         env <- lazy_env(list(visits = k[[1]], patients = k[[2]]))
         # the duckdb handles the card code names
-        env$`%>%` <- magrittr::`%>%`
+        env$`%>%` <- dplyr::`%>%`
         got <- tryCatch(run_code(code, env), error = function(e) {
           fail(paste0(label, ": ", conditionMessage(e), "\n", code)); NULL
         })
         if (is.null(got)) next
         want_env <- lazy_env()
-        want_env$`%>%` <- magrittr::`%>%`
+        want_env$`%>%` <- dplyr::`%>%`
         want <- run_code(compose_lazy(lazy_meta_json(), sprintf(body, type), pipe), want_env)
         expect_same_rows(got, want, info = label)
         # copy_to under the data frame's own name must not replace the database table of that name
@@ -484,13 +484,13 @@ test_that("lazy pipelines run: filter, rename, mutate, recode, arrange, summaris
         expect_parses(code, label)
         expect_equal(n_collect(code), 1L, info = label)
         env <- lazy_env(list(visits = kind))
-        env$`%>%` <- magrittr::`%>%`
+        env$`%>%` <- dplyr::`%>%`
         got <- tryCatch(run_code(code, env), error = function(e) {
           fail(paste0(label, ": ", conditionMessage(e))); NULL
         })
         if (is.null(got)) next
         want_env <- lazy_env()
-        want_env$`%>%` <- magrittr::`%>%`
+        want_env$`%>%` <- dplyr::`%>%`
         want_meta <- jsonlite::toJSON(list(visits = list(lazy = NULL, codeRef = "visits")), auto_unbox = TRUE, null = "null")
         want <- run_code(compose_lazy(want_meta, gsub("LAZY", "null", body, fixed = TRUE), pipe), want_env)
         expect_same_rows(got, want, info = label)
@@ -505,7 +505,7 @@ test_that("lazy pipelines run: a prepared lazy table, and reshape on arrow and d
                  "p.add({kind:'filter', table:'visits', conds:[P.condition('sbp', 'gt', '125', true)]});")
   want <- {
     env <- lazy_env()
-    env$`%>%` <- magrittr::`%>%`
+    env$`%>%` <- dplyr::`%>%`
     run_code(compose_lazy(lazy_meta_json(), steps), env)
   }
   for (right in c("duckdb", "arrow")) {
@@ -628,7 +628,7 @@ test_that("a contains filter added after a join into duckdb or arrow runs and eq
         fail(paste0(label, ": ", conditionMessage(e), "\n", code)); NULL
       })
       want_env <- lazy_env()
-      want_env$`%>%` <- magrittr::`%>%`
+      want_env$`%>%` <- dplyr::`%>%`
       want <- run_code(compose_lazy(lazy_meta_json(), steps[[i]]), want_env)
       if (!is.null(got)) expect_same_rows(got, want, info = label)
     }
@@ -648,7 +648,7 @@ test_that("a three-way chain across duckdb, a data frame and arrow equals the da
     "p.add({kind:'filter', table:'visits', conds:[P.condition('age', 'gte', '40', true)]});",
     "p.add({kind:'arrange', table:'visits', cols:[{col:'id'}, {col:'age'}, {col:'visit'}]});")
   want_env <- lazy_env()
-  want_env$`%>%` <- magrittr::`%>%`
+  want_env$`%>%` <- dplyr::`%>%`
   # patients and readings both repeat an id: the many-to-many join is the point, so mute dplyr's note
   want <- suppressWarnings(run_code(compose_lazy(three_meta(NULL, NULL, NULL), body), want_env))
   orders <- list(

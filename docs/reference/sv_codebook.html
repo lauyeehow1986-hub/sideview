@@ -48,7 +48,7 @@ or Excel to document a dataset or check it before analysis.</p>
 
     <div class="section level2">
     <h2 id="ref-usage">Usage<a class="anchor" aria-label="anchor" href="#ref-usage"></a></h2>
-    <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">sv_codebook</span><span class="op">(</span><span class="va">...</span>, top_n <span class="op">=</span> <span class="fl">5L</span>, file <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span></span></code></pre></div>
+    <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">sv_codebook</span><span class="op">(</span><span class="va">...</span>, top_n <span class="op">=</span> <span class="fl">5L</span>, file <span class="op">=</span> <span class="cn">NULL</span>, progress <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span></span></code></pre></div>
     </div>
 
     <div class="section level2">
@@ -56,8 +56,9 @@ or Excel to document a dataset or check it before analysis.</p>
 
 
 <dl><dt id="arg--">...<a class="anchor" aria-label="anchor" href="#arg--"></a></dt>
-<dd><p>Data frames, or one list of data frames. Names default to the
-argument expressions, as in <code><a href="sideview.html">sideview()</a></code>.</p></dd>
+<dd><p>Data frames, duckdb tables or Arrow tables, or one list of them.
+Names default to the argument expressions, as in <code><a href="sideview.html">sideview()</a></code>. A duckdb or
+Arrow table is profiled in full inside the database; it is never collected.</p></dd>
 
 
 <dt id="arg-top-n">top_n<a class="anchor" aria-label="anchor" href="#arg-top-n"></a></dt>
@@ -68,27 +69,49 @@ argument expressions, as in <code><a href="sideview.html">sideview()</a></code>.
 <dd><p>Optional path ending in <code>.csv</code> or <code>.xlsx</code> (needs the <code>writexl</code>
 package). The codebook is still returned, invisibly.</p></dd>
 
+
+<dt id="arg-progress">progress<a class="anchor" aria-label="anchor" href="#arg-progress"></a></dt>
+<dd><p>Optional <code>function(table, j, n_cols)</code>, called before each
+column is profiled.</p></dd>
+
 </dl></div>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
     <p>A data frame with columns <code>table</code>, <code>column</code>, <code>position</code>, <code>class</code>,
-<code>label</code>, <code>n</code>, <code>n_missing</code>, <code>pct_missing</code>, <code>n_distinct</code>, <code>unique_key</code>,
-<code>min</code>, <code>q1</code>, <code>median</code>, <code>q3</code>, <code>max</code> (as text, so dates fit), <code>mean</code>, <code>sd</code>,
-<code>top_values</code> and <code>issues</code>.</p>
+<code>label</code>, <code>n</code>, <code>rows_profiled</code>, <code>n_missing</code>, <code>pct_missing</code>, <code>n_distinct</code>,
+<code>unique_key</code>, <code>min</code>, <code>q1</code>, <code>median</code>, <code>q3</code>, <code>max</code> (as text, so dates fit),
+<code>mean</code>, <code>sd</code>, <code>top_values</code> and <code>issues</code>. <code>rows_profiled</code> is the number of
+rows the profile used; it equals <code>n</code> except for a preview of a larger table.</p>
+    </div>
+    <div class="section level2">
+    <h2 id="duckdb-and-arrow-tables">Duckdb and Arrow tables<a class="anchor" aria-label="anchor" href="#duckdb-and-arrow-tables"></a></h2>
+
+
+<p>Each column of a duckdb or Arrow table is profiled in full by duckdb, one
+column at a time, so <code>n</code> and <code>rows_profiled</code> are the table's row count, and
+a very wide table takes longer rather than more memory; use <code>progress</code> to
+report on it. In the gadget, a card that only has a preview (duckdb is not
+installed, or the link to the table was lost) is profiled from its first 50
+rows: <code>n</code> is still the true row count, <code>rows_profiled</code> is 50, and the other
+columns describe those rows.</p>
     </div>
 
     <div class="section level2">
     <h2 id="ref-examples">Examples<a class="anchor" aria-label="anchor" href="#ref-examples"></a></h2>
     <div class="sourceCode"><pre class="sourceCode r"><code><span class="r-in"><span><span class="va">patients</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>id <span class="op">=</span> <span class="fl">1</span><span class="op">:</span><span class="fl">4</span>, sex <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"M"</span>, <span class="st">"F"</span>, <span class="st">"f"</span>, <span class="cn">NA</span><span class="op">)</span>, age <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">40</span>, <span class="fl">51</span>, <span class="fl">62</span>, <span class="fl">999</span><span class="op">)</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="fu">sv_codebook</span><span class="op">(</span><span class="va">patients</span><span class="op">)</span></span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>      table column position     class label n n_missing pct_missing n_distinct</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1 patients     id        1   integer  &lt;NA&gt; 4         0           0          4</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 2 patients    sex        2 character  &lt;NA&gt; 4         1          25          3</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 3 patients    age        3   numeric  &lt;NA&gt; 4         0           0          4</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   unique_key  min    q1 median     q3  max  mean        sd          top_values</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1       TRUE    1  1.75    2.5   3.25    4   2.5   1.29099                &lt;NA&gt;</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 2      FALSE &lt;NA&gt;  &lt;NA&gt;   &lt;NA&gt;   &lt;NA&gt; &lt;NA&gt;    NA        NA F (1); M (1); f (1)</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 3       TRUE   40 48.25   56.5 296.25  999 288.0 474.08500                &lt;NA&gt;</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>      table column position     class label n rows_profiled n_missing</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1 patients     id        1   integer  &lt;NA&gt; 4             4         0</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 2 patients    sex        2 character  &lt;NA&gt; 4             4         1</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 3 patients    age        3   numeric  &lt;NA&gt; 4             4         0</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   pct_missing n_distinct unique_key  min    q1 median     q3  max  mean</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1           0          4       TRUE    1  1.75    2.5   3.25    4   2.5</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 2          25          3      FALSE &lt;NA&gt;  &lt;NA&gt;   &lt;NA&gt;   &lt;NA&gt; &lt;NA&gt;    NA</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 3           0          4       TRUE   40 48.25   56.5 296.25  999 288.0</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>          sd          top_values</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1   1.29099                &lt;NA&gt;</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 2        NA F (1); M (1); f (1)</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 3 474.08500                &lt;NA&gt;</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>                                                      issues</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> 1                                                      &lt;NA&gt;</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> 2 1 value differs only in case or spacing (e.g. "F" / "f").</span>

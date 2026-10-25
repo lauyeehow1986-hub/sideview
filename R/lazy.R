@@ -64,7 +64,7 @@ sv_normalize_arg <- function(val, nm, expr = NULL) {
 
 #' A fresh holder for the per-session private duckdb connection
 #'
-#' `con` is opened on first use by [sv_lazy_con()]; `tbls` caches converted
+#' `con` is opened on first use by `sv_lazy_con()`; `tbls` caches converted
 #' arrow tables by key.
 #' @return An environment with `con = NULL` and `tbls = list()`.
 #' @noRd
@@ -76,7 +76,7 @@ sv_lazy_env <- function() {
 }
 
 #' The private duckdb connection, opened on first use
-#' @param con_env An environment from [sv_lazy_env()].
+#' @param con_env An environment from `sv_lazy_env()`.
 #' @noRd
 sv_lazy_con <- function(con_env) {
   if (is.null(con_env$con)) {
@@ -143,11 +143,11 @@ sv_lazy_decode_dictionaries <- function(source) {
 #'
 #' A duckdb tbl is returned as is. An arrow object is handed to duckdb on the
 #' private connection, zero-copy except for its dictionary columns (decoded by
-#' [sv_lazy_decode_dictionaries()]), and cached under `key` when given. The time
+#' `sv_lazy_decode_dictionaries()`), and cached under `key` when given. The time
 #' zones of its timestamp columns, which duckdb does not keep, travel with the
-#' tbl as its `sv_tz` attribute (see [sv_lazy_zones()]).
+#' tbl as its `sv_tz` attribute (see `sv_lazy_zones()`).
 #' @param source A `tbl_duckdb_connection` or an Arrow table / dataset.
-#' @param con_env An environment from [sv_lazy_env()].
+#' @param con_env An environment from `sv_lazy_env()`.
 #' @param key Optional cache key (usually the card name).
 #' @noRd
 sv_lazy_tbl <- function(source, con_env, key = NULL) {
@@ -165,7 +165,7 @@ sv_lazy_counter <- new.env(parent = emptyenv())
 sv_lazy_counter$n <- 0L
 
 #' Register a data frame on a connection under a temporary name
-#' @return `list(tbl, name)`; undo with [sv_lazy_detach()].
+#' @return `list(tbl, name)`; undo with `sv_lazy_detach()`.
 #' @noRd
 sv_lazy_attach <- function(df, con) {
   # a counter, not sample(): the user's set.seed() stream must not move
@@ -175,7 +175,7 @@ sv_lazy_attach <- function(df, con) {
   list(tbl = dplyr::tbl(con, name), name = name)
 }
 
-#' Undo [sv_lazy_attach()]
+#' Undo `sv_lazy_attach()`
 #' @noRd
 sv_lazy_detach <- function(con, name) {
   try(duckdb::duckdb_unregister(con, name), silent = TRUE)
@@ -296,7 +296,7 @@ sv_lazy_bigint <- function(x) dplyr::sql(sprintf("CAST(%.0f AS BIGINT)", x))
 #' the date alone at midnight, and fractional seconds without trailing zeros. The
 #' instant (`epoch_us`, exact microseconds) is moved by the zone's offset, taken
 #' from a tree of comparisons with the zone's transitions
-#' ([sv_lazy_tz_segments()]), and formatted. `NULL` stays `NULL`.
+#' (`sv_lazy_tz_segments()`), and formatted. `NULL` stays `NULL`.
 #' @param sym A column symbol.
 #' @param tz An Olson name.
 #' @param range Optional `c(min, max)` of the column in microseconds; the offsets
@@ -373,12 +373,12 @@ sv_lazy_kind <- function(x) {
 #' `"0.30000000000000004"` here) and values like `1e+05` (R) versus `100000`
 #' differ. Whole numbers and ordinary decimals agree.
 #' A POSIXct column (`tz` given) is the wall-clock text of its zone, see
-#' [sv_lazy_tz_text_expr()].
+#' `sv_lazy_tz_text_expr()`.
 #' @param sym A column symbol.
-#' @param kind From [sv_lazy_kind()].
+#' @param kind From `sv_lazy_kind()`.
 #' @param tz Time zone of a POSIXct column, or `NULL`.
 #' @param tz_range Optional `c(min, max)` of the column in microseconds, see
-#'   [sv_lazy_tz_text_expr()].
+#'   `sv_lazy_tz_text_expr()`.
 #' @noRd
 sv_lazy_text_expr <- function(sym, kind, tz = NULL, tz_range = NULL) {
   if (!is.null(tz)) return(sv_lazy_tz_text_expr(sym, tz, tz_range))
@@ -386,9 +386,9 @@ sv_lazy_text_expr <- function(sym, kind, tz = NULL, tz_range = NULL) {
     character = sym,
     logical = rlang::expr(if_else(!!sym, "TRUE", "FALSE")),
     double = rlang::expr(case_when(
-      is.nan(!!sym) ~ "NaN",
-      is.infinite(!!sym) & !!sym > 0 ~ "Inf",
-      is.infinite(!!sym) ~ "-Inf",
+      isnan(!!sym) ~ "NaN",
+      isinf(!!sym) & !!sym > 0 ~ "Inf",
+      isinf(!!sym) ~ "-Inf",
       .default = stringr::str_replace(as.character(!!sym), "\\.0$", "")
     )),
     rlang::expr(as.character(!!sym))
@@ -397,13 +397,13 @@ sv_lazy_text_expr <- function(sym, kind, tz = NULL, tz_range = NULL) {
 
 #' Filter expression for a lazy table
 #'
-#' The twin of [sv_filter_condition()], but as a language object built from
+#' The twin of `sv_filter_condition()`, but as a language object built from
 #' symbols and values (never by parsing text), so it translates to SQL. The
 #' literal rule is the same: a numeric column compared with a number is
 #' written as a number, otherwise as a string. `contains` is a fixed
-#' (non-regex) match on the column's text as R writes it, see [sv_lazy_text_expr()].
+#' (non-regex) match on the column's text as R writes it, see `sv_lazy_text_expr()`.
 #' @inheritParams sv_filter_condition
-#' @param kind The column's kind, from [sv_lazy_kind()]; when `NULL`, `"other"`
+#' @param kind The column's kind, from `sv_lazy_kind()`; when `NULL`, `"other"`
 #'   for a numeric column and `"character"` otherwise.
 #' @param tz The time zone of a POSIXct column, else `NULL`. `contains` then
 #'   matches the wall-clock text of that zone, and the other operators compare the
@@ -426,7 +426,7 @@ sv_lazy_filter_expr <- function(col, op, value, numeric = FALSE, kind = NULL, tz
   lit <- if (num_ok) as.numeric(format(as.numeric(value), digits = 15)) else value
   # NaN is "not a number" to R (the comparison is NA, the row is dropped) but the
   # largest number to duckdb, so comparisons on doubles skip it explicitly.
-  cmp <- function(e) if (isTRUE(numeric) && double) rlang::expr(!is.nan(!!sym) & !!e) else e
+  cmp <- function(e) if (isTRUE(numeric) && double) rlang::expr(!isnan(!!sym) & !!e) else e
   switch(op,
     contains = {
       target <- sv_lazy_text_expr(sym, kind, tz, tz_range)
@@ -445,13 +445,13 @@ sv_lazy_filter_expr <- function(col, op, value, numeric = FALSE, kind = NULL, tz
 
 #' Answer a row-window request from the whole lazy table
 #'
-#' The twin of [sv_rows_window()]: the same request, the same reply, the same
+#' The twin of `sv_rows_window()`: the same request, the same reply, the same
 #' clamping, but sorted, filtered and paged by the database. Strings sort
 #' bytewise (as `arrange()` does), `NA` sorts last in both directions, and
 #' ties keep the table's own row order. Only the requested window is collected.
-#' @param tbl A duckdb tbl (see [sv_lazy_tbl()]).
+#' @param tbl A duckdb tbl (see `sv_lazy_tbl()`).
 #' @inheritParams sv_rows_window
-#' @return The same list as [sv_rows_window()].
+#' @return The same list as `sv_rows_window()`.
 #' @noRd
 sv_lazy_rows_window <- function(tbl, req, order_cache = NULL) {
   # read before any verb: dplyr drops the attribute
@@ -510,7 +510,7 @@ sv_lazy_rows_window <- function(tbl, req, order_cache = NULL) {
     sym <- rlang::sym(sort$col)
     # plain doubles only: a Date or POSIXct is a double in R, but has no NaN
     is_missing <- if (sv_lazy_kind(zero[[sort$col]]) == "double") {
-      rlang::expr(is.na(!!sym) | is.nan(!!sym))
+      rlang::expr(is.na(!!sym) | isnan(!!sym))
     } else {
       rlang::expr(is.na(!!sym))
     }
@@ -594,7 +594,7 @@ sv_lazy_names <- function(x) {
 #' given. Whatever was added to the connection is removed by `cleanup()`,
 #' which is also run here if placing the second table fails.
 #' @param x,y Data frames, duckdb tbls or Arrow objects.
-#' @param con_env An environment from [sv_lazy_env()].
+#' @param con_env An environment from `sv_lazy_env()`.
 #' @param cols_x,cols_y Optional key columns of `x` / `y`.
 #' @return `list(x, y, cleanup)`: two tbls on one connection, and a function that
 #'   undoes the placement (safe to call twice).
@@ -648,7 +648,7 @@ sv_lazy_place <- function(x, y, con_env, cols_x = NULL, cols_y = NULL) {
   list(x = tx, y = ty, cleanup = cleanup)
 }
 
-#' Names of the key columns made by [sv_lazy_join_side()]
+#' Names of the key columns made by `sv_lazy_join_side()`
 #' @noRd
 sv_lazy_key_names <- function(n) paste0(".sv_k", seq_len(n))
 
@@ -674,7 +674,7 @@ sv_lazy_fix_expr <- function(fix, e) {
 #' character keys (`chr`) only, as the in-memory hints do.
 #' @param tbl A duckdb tbl.
 #' @param cols Key column names.
-#' @param kinds [sv_lazy_kind()] of each key column.
+#' @param kinds `sv_lazy_kind()` of each key column.
 #' @param text,chr Logical per key: compare as text, is a character key.
 #' @param fix `NULL`, `"trim"`, `"case"` or `"zeros"`.
 #' @param row Add `.sv_row`, the row number in table order.
@@ -686,7 +686,7 @@ sv_lazy_join_side <- function(tbl, cols, kinds, text, chr, fix = NULL, row = FAL
   if (row) tbl <- dplyr::mutate(tbl, .sv_row = row_number())
   step1 <- Map(function(col, kind) {
     s <- rlang::sym(col)
-    if (identical(kind, "double")) rlang::expr(if_else(is.nan(!!s), NA, !!s)) else s
+    if (identical(kind, "double")) rlang::expr(if_else(isnan(!!s), NA, !!s)) else s
   }, cols, kinds)
   names(step1) <- kn
   tbl <- dplyr::mutate(tbl, !!!step1)
@@ -723,7 +723,7 @@ sv_lazy_join_keys <- function(sx, sy, nk, first = NULL) {
 #' The scalars of the join arithmetic, from one SQL aggregate
 #'
 #' Never collects the per-key counts: they can be as large as the tables.
-#' @return The list [sv_join_counts_from()] takes.
+#' @return The list `sv_join_counts_from()` takes.
 #' @noRd
 sv_lazy_join_scalars <- function(sx, sy, nk) {
   j <- sv_lazy_join_keys(sx, sy, nk)
@@ -794,11 +794,11 @@ sv_lazy_join_sample <- function(sx, sy, nk, side, n, tzs = NULL) {
 #' Join check over the whole tables, run by duckdb
 #'
 #' The twin of [sv_join_diagnostics()]: the same reply for the same data. The
-#' tables are placed on one connection (see [sv_lazy_place()]); the counts come
+#' tables are placed on one connection (see `sv_lazy_place()`); the counts come
 #' back as one aggregate row, plus at most `sample_n` unmatched keys per side.
 #' Whatever was added to a user's connection is removed again, also on error.
 #' @inheritParams sv_join_diagnostics
-#' @param con_env An environment from [sv_lazy_env()] holding the private
+#' @param con_env An environment from `sv_lazy_env()` holding the private
 #'   connection (used when neither side is a duckdb table). When omitted, a
 #'   private connection is opened for this call and closed again.
 #' @return An `sv_join_diagnostics` object.
@@ -1268,4 +1268,4 @@ sv_lazy_histogram <- function(fin, lo, hi, n_fin, bins) {
 }
 
 # Names that only exist inside the SQL translation of the verbs above.
-utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc", "cast", "nx", "ny", "fx", "fy", "trim", "regexp_replace", "regexp_full_match", "quantile_cont", "isfinite", "isnan", "lower", "epoch_us", "make_timestamp", "strftime", ".sv_v", ".sv_t", ".sv_f", ".sv_k", ".sv_n", ".sv_bin", ".sv_rn", ".sv_rk"))
+utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc", "cast", "nx", "ny", "fx", "fy", "trim", "regexp_replace", "regexp_full_match", "quantile_cont", "isfinite", "isnan", "isinf", "n", "rtrim", "sd", "lower", "epoch_us", "make_timestamp", "strftime", ".sv_v", ".sv_t", ".sv_f", ".sv_k", ".sv_n", ".sv_bin", ".sv_rn", ".sv_rk"))

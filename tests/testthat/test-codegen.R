@@ -742,7 +742,7 @@ test_that("sv_auto_clean_rules(lazy = TRUE) writes one collect() and runs on arr
   for (ref in c('dplyr::tbl(con, "vv")', "vv")) {
     env <- new.env(parent = globalenv())
     env$con <- con
-    env$`%>%` <- magrittr::`%>%`
+    env$`%>%` <- dplyr::`%>%`
     if (ref == "vv") env$vv <- arrow::arrow_table(frame)
     for (pipe in c(TRUE, FALSE)) {
       code <- sv_auto_clean_rules(disc, df_name = ref, col = "sex", pipe = pipe, lazy = TRUE,

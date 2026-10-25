@@ -111,6 +111,30 @@ Each sub-project gets its own spec, plan and build, in this order:
 
 ## Log
 
+### 2026-10-26 - Big tables (0.4.0 part 1): speed check, docs, site
+- **Speed:** new test "join check on 1M-row duckdb tables is under 5 s" (`skip_on_cran()`, two synthetic 1,000,000-row
+  duckdb tables, 80% key overlap). Measured on the dev machine (R 4.5.2, duckdb 1.4.3): **0.84 s** joining on a
+  BIGINT `id`, **1.67 s** joining on a text key (250,000 / 300,000 distinct values). Limit 5 s, not loosened.
+- **Bug found by the speed test and fixed:** a BIGINT column (duckdb `range()` / `count()`) made the lazy join check,
+  filters and "contains" fail with `Invalid type specifier "f"`. dbplyr translates `is.nan()` to `PRINTF('%f', col) = 'nan'`,
+  which duckdb rejects for integer types, and duckdb hands a BIGINT to R as a double so the column counted as a plain
+  double. R/lazy.R now uses duckdb's own `isnan()` / `isinf()`. New test covers BIGINT, HUGEINT and DECIMAL columns
+  against the in-memory functions.
+- **Docs:** roxygen for `sideview()` (new "Big tables" section with the known differences), `sv_join_diagnostics()`,
+  `sv_column_profile()` (`column`) and `sv_codebook()` (`progress`, `rows_profiled`, `n`); NEWS.md (0.4.0 section,
+  known-differences list); CLAUDE.md (lazy-card rule, `R/lazy.R` twins, `sideview_toast`, `rows_profiled`);
+  tour "Big tables" section; the design spec now says lazy "contains" is an escaped literal, not `stringr::fixed()`.
+  `stringr` was already in Suggests.
+- **Other fixes for check:** tests used `magrittr::` (not declared) - now dplyr's pipe re-export; `.superpowers` added to
+  `.Rbuildignore`; `n`, `rtrim`, `sd` added to `globalVariables`; roxygen links to internal functions inside
+  `@noRd` blocks changed to code spans (no roxygen warnings).
+- **Site:** `pkgdown::check_pkgdown()` clean; `pkgdown::build_site(preview = FALSE)` rebuilt `docs/`; `docs/CLAUDE.*` and
+  `docs/MEMORY.*` and their `sitemap.xml` / `search.json` entries removed (JSON nulls kept).
+- **Note:** MEMORY.md contains one byte 0x97 (a cp1252 dash) that is not valid UTF-8;
+  pkgdown warns about it. Harmless (the page is dropped), but worth replacing with an ASCII dash.
+- **Not done here:** the RStudio dialog walk-through (Task 10 step 4) is done by the controller and recorded separately.
+- **Verification:** `node --check` on every file in inst/www and inst/htmlwidgets. `devtools::check()` with `NOT_CRAN=true`: 0 errors, 0 warnings, 1 NOTE (''NULL'' in the check directory, environmental). 5568 test expectations passed; the one failure in that run was the live Ollama test (the local model wrote code starting with a pipe), which passed when re-run alone - a flaky live-model test, not a regression.
+
 ### 2026-10-25 - Three UI quirks from the tour fixed
 - Copilot bubble: new pure `SideviewPipeline.splitReply()` (sv-pipeline.js) splits the reply at the first
   fence; the bubble renders before-text, code, buttons, then after-text (middle prose kept, fences removed).

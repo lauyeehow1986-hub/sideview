@@ -115,6 +115,38 @@ without launching (useful for testing or embedding). Defaults to <code><a href="
 If <code>run = FALSE</code>, returns a <code>shiny.appobj</code> with the normalized cards attached.</p>
     </div>
     <div class="section level2">
+    <h2 id="big-tables-arrow-and-duckdb-">Big tables (arrow and duckdb)<a class="anchor" aria-label="anchor" href="#big-tables-arrow-and-duckdb-"></a></h2>
+
+
+<p>Arrow tables, datasets and queries and duckdb tables (<code><a href="https://dplyr.tidyverse.org/reference/tbl.html" class="external-link">dplyr::tbl()</a></code>) go on
+the canvas as cards that show a 50-row preview. When the duckdb, dbplyr and
+DBI packages are installed, sorting, filtering, scrolling, the join check,
+the column inspector and the codebook use the whole table: duckdb runs them
+and only summaries and row windows come back into R. The table is never
+collected. Without duckdb, or when the link to a table is lost, the card
+says "First 50 of N rows" and the checks use the preview.</p>
+<p>Generated code stays lazy and ends in one <code>collect()</code>. Known differences
+from an in-memory card:</p><ul><li><p>"Contains" on a number matches its text; for doubles duckdb writes
+<code>"130.0"</code> where R writes <code>"130"</code>, and float noise or scientific
+notation can differ. The generated filter is a literal match,
+<code>stringr::str_detect(col, "&lt;escaped literal&gt;")</code>.</p></li>
+<li><p>POSIXct values at exactly midnight, and <code>-0</code>, can print differently.</p></li>
+<li><p>Join keys of different types compare as text, and double keys
+compare exactly.</p></li>
+<li><p>Arrow time-zone offsets are computed for 1900 to 2100; local times
+outside that range may be off. duckdb <code>TIMESTAMPTZ</code> columns show in UTC.</p></li>
+<li><p>Joining arrow with duckdb copies the arrow side into a duckdb
+temporary table (<code><a href="https://arrow.apache.org/docs/r/reference/to_duckdb.html" class="external-link">arrow::to_duckdb()</a></code> then <code><a href="https://dplyr.tidyverse.org/reference/compute.html" class="external-link">dplyr::compute()</a></code>), which
+costs memory; a data frame joined into duckdb is copied as
+<code>sideview_&lt;table&gt;</code>.</p></li>
+<li><p>duckdb 1.4.3 can crash when it scans an arrow factor column that
+contains <code>NA</code>. sideview decodes such columns itself, but generated code
+that calls <code><a href="https://arrow.apache.org/docs/r/reference/to_duckdb.html" class="external-link">arrow::to_duckdb()</a></code> on one may hit it: convert the factor to
+character first.</p></li>
+</ul><p>If <strong>Run in R</strong> fails on a lazy pipeline, the message suggests moving
+<code>collect()</code> above the step that needs R.</p>
+    </div>
+    <div class="section level2">
     <h2 id="keyboard-and-navigation">Keyboard and navigation<a class="anchor" aria-label="anchor" href="#keyboard-and-navigation"></a></h2>
 
 

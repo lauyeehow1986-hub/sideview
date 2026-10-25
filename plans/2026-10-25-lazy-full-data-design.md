@@ -119,7 +119,9 @@ The browser sends the same requests and gets the same replies. The only new mess
   then one `LIMIT`/`OFFSET` window per request. `.sv_row` keeps the table's own scan order for ties
   and for unsorted rows (duckdb `preserve_insertion_order`, on by default).
 - The filter is built from the popover's column, operator and value with rlang, not by parsing R text.
-  "Contains" is `stringr::str_detect(col, stringr::fixed(value))`. The duckdb backend rejects
+  "Contains" is a literal match in the database (the plan first used `stringr::fixed()`, but dbplyr turns
+  it into a regex on duckdb, so `"."` matched every row). The generated code escapes the literal:
+  `stringr::str_detect(col, "<regex-escaped literal>")`. The duckdb backend rejects
   `grepl(fixed = TRUE)`; this was checked on duckdb 1.4.3 / dbplyr 2.5.1 / arrow 23. Comparisons use the
   column type from the schema, as `sv_filter_condition()` does.
 - `total` is one `count()` query, cached per sort and filter spec in the existing `order_cache`
@@ -199,8 +201,9 @@ paths then share one formatter, and the texts can't drift apart.
   | data frame | duckdb | the data frame moves into duckdb, so the left/right order and the column order stay: `dplyr::copy_to(dbplyr::remote_con(visits_db), patients, overwrite = TRUE) \|> left_join(visits_db, by = "id")` |
   | data frame | arrow | `arrow::arrow_table(patients) \|> left_join(visits_arrow, by = "id")` |
 
-- **Contains filters** on lazy cards use `stringr::str_detect(col, stringr::fixed("..."))`. Data-frame
-  cards keep `grepl(fixed = TRUE)`.
+- **Contains filters** on lazy cards use `stringr::str_detect(col, "<regex-escaped literal>")`, not
+  `stringr::fixed()` (dbplyr turns that into a regex on duckdb). Data-frame cards keep
+  `grepl(fixed = TRUE)`.
 - **Reshape on arrow:** arrow has no pivot, so `collect()` goes just before the step, with a comment
   `# reshape runs in R`, and the final `collect()` is dropped. duckdb pivots lazily (dbplyr).
 - **User-typed Mutate expressions** stay lazy. If "Run in R" fails on a lazy pipeline, the error toast

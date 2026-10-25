@@ -1,4 +1,58 @@
-# sideview (development version)
+# sideview 0.4.0 (development)
+
+## Big tables: full data for arrow and duckdb cards
+
+Arrow tables, datasets and queries and duckdb tables (`dplyr::tbl()`) used to
+keep only their first 50 rows, so a sort, a join check or a codebook looked
+complete when it was not. They now use the whole table.
+
+* **Sort, filter and scroll** run in duckdb on the whole table. The header
+  shows the true row count.
+* **Join check, column inspector and codebook** profile the whole table in
+  duckdb; only summaries come back into R, and the table is never collected.
+  Results equal the in-memory ones. `sv_join_diagnostics()` accepts duckdb and
+  Arrow tables, `sv_column_profile()` has a new `column` argument for them, and
+  `sv_codebook()` accepts them and has a `progress` argument. Arrow tables go
+  through a private duckdb connection that closes with the session.
+* **The codebook has a new column, `rows_profiled`,** after `n`. `n` is the
+  table's true row count and `rows_profiled` is how many rows the profile used.
+  They are equal except for a preview-only card.
+* **The canvas says what it used.** Without duckdb, or when the link to a table
+  is lost, the card header reads "First 50 of N rows" and the checks say "Based
+  on the first 50 rows". A toast explains a lost link, and a codebook shows its
+  progress ("Profiling visits_db: column 40 of 200").
+* **Generated code stays lazy** and ends in one `collect()`. Joins across
+  duckdb, arrow and data frames are written so they run, a "contains" filter is
+  `stringr::str_detect(col, "<escaped literal>")` (stringr is in Suggests), and
+  a reshape on arrow collects first. If **Run in R** fails, the message adds
+  "This step may need data in R: move collect() above it."
+* Auto Map, the Discrepancy tab's value comparison and the copilot's schema
+  summary still use the preview (the copilot is told the true row count).
+  Nothing is sent to the model but the schema.
+* Fixed: a BIGINT column (what duckdb gives `count()` and `range()`) made the
+  lazy join check, filters and "contains" fail.
+
+Known differences from an in-memory card:
+
+* "Contains" on a number matches its text. For doubles duckdb writes `"130.0"`
+  where R writes `"130"`, and float noise or scientific notation can differ.
+* A POSIXct value at exactly midnight, and `-0`, can print differently.
+* Join keys of different types compare as text; double keys compare exactly; an
+  in-memory POSIXct key is compared as text where a database key is compared as
+  an instant.
+* Arrow time-zone offsets are computed for 1900 to 2100, so local times outside
+  that range may be off. duckdb `TIMESTAMPTZ` columns show in UTC. duckdb
+  ordered factors report class `"factor"`.
+* Joining arrow with duckdb copies the arrow side into a duckdb temporary table
+  (`arrow::to_duckdb()` then `dplyr::compute()`), which uses memory. A data
+  frame joined into duckdb is copied as `sideview_<table>`.
+* duckdb 1.4.3 can crash when it scans an arrow factor column that contains
+  `NA`. sideview decodes these columns itself, but generated code that calls
+  `arrow::to_duckdb()` on one may hit it: convert the factor to character first.
+* Two duckdb tables on different connections cannot be join-checked. A saved
+  or embedded widget has no R session, so lazy cards there show the preview.
+
+## Other changes
 
 * The copilot chat keeps a reply in order: text written after the code now
   appears below the code instead of above it.

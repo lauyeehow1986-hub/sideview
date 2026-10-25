@@ -62,7 +62,8 @@ them by default, so <code>NA</code> matches <code>NA</code>.</p>
 
 
 <dl><dt id="arg-x-y">x, y<a class="anchor" aria-label="anchor" href="#arg-x-y"></a></dt>
-<dd><p>Data frames to join (<code>x</code> is the left table).</p></dd>
+<dd><p>Tables to join (<code>x</code> is the left table): data frames, or duckdb
+tables and Arrow tables, which are checked in full without loading them into R.</p></dd>
 
 
 <dt id="arg-by">by<a class="anchor" aria-label="anchor" href="#arg-by"></a></dt>
@@ -96,6 +97,20 @@ of <code>fix</code>, <code>label</code>, <code>extra_x</code>, <code>extra_y</co
     <h2 id="details">Details<a class="anchor" aria-label="anchor" href="#details"></a></h2>
     <p>The canvas runs this whenever two columns are connected and shows the result
 on the join step and in the Discrepancy tab.</p>
+    </div>
+    <div class="section level2">
+    <h2 id="duckdb-and-arrow-tables">Duckdb and Arrow tables<a class="anchor" aria-label="anchor" href="#duckdb-and-arrow-tables"></a></h2>
+
+
+<p>When <code>x</code> or <code>y</code> is a duckdb table or an Arrow table, the check runs inside
+duckdb on the whole table and only the counts come back into R; the result
+equals the one for the same data held in memory. If the tables are on two
+different duckdb connections the check does not run. Arrow tables are
+handed to duckdb with <code><a href="https://arrow.apache.org/docs/r/reference/to_duckdb.html" class="external-link">arrow::to_duckdb()</a></code>, and a data frame is registered
+temporarily; both are removed afterwards. Known differences from the
+in-memory check: keys of different types are compared as text, double keys
+are compared exactly, and an in-memory POSIXct key is compared as text where
+a database key is compared as an instant.</p>
     </div>
 
     <div class="section level2">

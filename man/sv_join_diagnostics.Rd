@@ -42,6 +42,19 @@ them by default, so \code{NA} matches \code{NA}.
 The canvas runs this whenever two columns are connected and shows the result
 on the join step and in the Discrepancy tab.
 }
+\section{Duckdb and Arrow tables}{
+
+When \code{x} or \code{y} is a duckdb table or an Arrow table, the check runs inside
+duckdb on the whole table and only the counts come back into R; the result
+equals the one for the same data held in memory. If the tables are on two
+different duckdb connections the check does not run. Arrow tables are
+handed to duckdb with \code{arrow::to_duckdb()}, and a data frame is registered
+temporarily; both are removed afterwards. Known differences from the
+in-memory check: keys of different types are compared as text, double keys
+are compared exactly, and an in-memory POSIXct key is compared as text where
+a database key is compared as an instant.
+}
+
 \examples{
 patients <- data.frame(id = c(1, 2, 3, 4), age = c(40, 51, 62, 33))
 visits <- data.frame(id = c(1, 1, 2, 5), visit = 1:4)

@@ -34,6 +34,16 @@ histogram for numbers, the most common values for text, and data-quality
 flags (stray spaces, values that differ only in case, numbers stored as text,
 empty strings, extreme values).
 }
+\section{Duckdb and Arrow tables}{
+
+For a duckdb table or an Arrow table, give the table as \code{x} and the column
+name as \code{column}. The database profiles the whole table in a few queries
+and only the summary comes back; the result equals the one for the same
+column held in memory. Arrow tables are profiled through a private duckdb
+connection that is closed afterwards. duckdb ordered-factor columns report
+class \code{"factor"}.
+}
+
 \examples{
 sv_column_profile(c(" Male", "male", "Female", NA))
 sv_column_profile(c(54, 61, 47, 999, NA))$issues

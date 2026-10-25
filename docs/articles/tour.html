@@ -173,6 +173,53 @@ key, quartiles or top levels, a histogram and data-quality checks.
 table (<code><a href="../reference/sv_codebook.html">sv_codebook()</a></code>).</p>
 </div>
 <div class="section level2">
+<h2 id="big-tables">Big tables<a class="anchor" aria-label="anchor" href="#big-tables"></a>
+</h2>
+<p>Arrow tables, datasets and duckdb tables go on the canvas as they
+are, for example <code>sideview(visits_db, patients)</code>. A card
+shows a 50-row preview, but when the duckdb, dbplyr and DBI packages are
+installed, <strong>sorting, filtering, the join check, the inspector and
+the codebook use the whole table</strong>. duckdb does the work and only
+summaries and row windows come back into R; sideview never collects the
+table. The card header shows the true row count, and a descending sort
+puts the true maximum first.</p>
+<p>If duckdb is not installed, or the link to a table is lost, the
+header reads “First 50 of 1,234,567 rows” and the checks say “Based on
+the first 50 rows”, so a preview is never mistaken for the whole
+table.</p>
+<p>The code you get back stays lazy and ends in one
+<code>collect()</code>:</p>
+<div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">visits_db</span> <span class="op">|&gt;</span></span>
+<span>  <span class="fu">dplyr</span><span class="fu">::</span><span class="fu"><a href="https://dplyr.tidyverse.org/reference/filter.html" class="external-link">filter</a></span><span class="op">(</span><span class="va">sbp</span> <span class="op">&gt;</span> <span class="fl">140</span><span class="op">)</span> <span class="op">|&gt;</span></span>
+<span>  <span class="fu">dplyr</span><span class="fu">::</span><span class="fu"><a href="https://dplyr.tidyverse.org/reference/mutate-joins.html" class="external-link">left_join</a></span><span class="op">(</span><span class="va">patients</span>, by <span class="op">=</span> <span class="st">"id"</span>, copy <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span> <span class="op">|&gt;</span></span>
+<span>  <span class="fu">dplyr</span><span class="fu">::</span><span class="fu"><a href="https://dplyr.tidyverse.org/reference/compute.html" class="external-link">collect</a></span><span class="op">(</span><span class="op">)</span></span></code></pre></div>
+<p>If <strong>Run in R</strong> fails on a step that needs data in R,
+move <code>collect()</code> above it.</p>
+<p>Known differences from an in-memory table:</p>
+<ul>
+<li>“Contains” on a number matches its text. A double is
+<code>"130.0"</code> in duckdb and <code>"130"</code> in R, and float
+noise or scientific notation can differ. The filter is a literal match,
+<code>stringr::str_detect(col, "&lt;escaped literal&gt;")</code>.</li>
+<li>A POSIXct value at exactly midnight, and <code>-0</code>, can print
+differently.</li>
+<li>Join keys of different types compare as text, and double keys
+compare exactly.</li>
+<li>Arrow time-zone offsets are computed for 1900 to 2100, and duckdb
+<code>TIMESTAMPTZ</code> columns show in UTC.</li>
+<li>Joining arrow with duckdb copies the arrow side into a duckdb
+temporary table, which uses memory.</li>
+<li>duckdb 1.4.3 can crash on an arrow factor column that contains
+<code>NA</code>. If generated code that uses
+<code><a href="https://arrow.apache.org/docs/r/reference/to_duckdb.html" class="external-link">arrow::to_duckdb()</a></code> hits it, convert the factor to character
+first.</li>
+<li>The codebook adds a <code>rows_profiled</code> column next to
+<code>n</code>; for a preview-only card it is 50 while <code>n</code> is
+the true row count.</li>
+</ul>
+</div>
+<div class="section level2">
 <h2 id="find-any-card-or-column">Find any card or column<a class="anchor" aria-label="anchor" href="#find-any-card-or-column"></a>
 </h2>
 <div class="float">

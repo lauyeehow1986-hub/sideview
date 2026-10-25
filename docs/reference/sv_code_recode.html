@@ -45,7 +45,8 @@
 <span>  <span class="va">crosswalk</span>,</span>
 <span>  default <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"case_when"</span>, <span class="st">"case_match"</span>, <span class="st">"fct_recode"</span><span class="op">)</span>,</span>
-<span>  pipe <span class="op">=</span> <span class="cn">FALSE</span></span>
+<span>  pipe <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  lazy <span class="op">=</span> <span class="cn">FALSE</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -80,6 +81,11 @@ If equal to <code>col</code>, emits unquoted column name <code>.default = &lt;co
 
 <dt id="arg-pipe">pipe<a class="anchor" aria-label="anchor" href="#arg-pipe"></a></dt>
 <dd><p>Logical; if TRUE, uses pipe syntax <code>df %&gt;% dplyr::mutate(...)</code>.</p></dd>
+
+
+<dt id="arg-lazy">lazy<a class="anchor" aria-label="anchor" href="#arg-lazy"></a></dt>
+<dd><p>Logical; TRUE for a table that lives in arrow or duckdb. <code>case_when()</code> then
+closes with a <code>TRUE ~ &lt;col&gt;</code> arm instead of <code>.default = &lt;col&gt;</code>, which arrow cannot take.</p></dd>
 
 </dl></div>
     <div class="section level2">

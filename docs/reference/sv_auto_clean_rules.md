@@ -15,7 +15,9 @@ sv_auto_clean_rules(
   df_name = "df",
   col = "status",
   default = col,
-  pipe = FALSE
+  pipe = FALSE,
+  lazy = FALSE,
+  df_is_code = FALSE
 )
 
 sv_code_auto_clean(
@@ -23,7 +25,9 @@ sv_code_auto_clean(
   df_name = "df",
   col = "status",
   default = col,
-  pipe = FALSE
+  pipe = FALSE,
+  lazy = FALSE,
+  df_is_code = FALSE
 )
 ```
 
@@ -56,6 +60,26 @@ sv_code_auto_clean(
 - pipe:
 
   Logical; if TRUE, emits piped syntax `df %>% dplyr::mutate(...)`.
+
+- lazy:
+
+  Logical; TRUE when `df_name` is an arrow or duckdb table. The code
+  then ends in
+  [`dplyr::collect()`](https://dplyr.tidyverse.org/reference/compute.html)
+  (the one collect of a lazy pipeline), the recode closes with
+  `TRUE ~ <col>` (arrow cannot take `.default = <col>`), and `df_name`
+  may be an expression such as `dplyr::tbl(con, "visits")` when
+  `df_is_code` is TRUE. The matching of values is done in R on the
+  values compared, so the generated code uses no
+  [`trimws()`](https://rdrr.io/r/base/trimws.html) or
+  [`tolower()`](https://rdrr.io/r/base/chartr.html).
+
+- df_is_code:
+
+  Logical; TRUE when `df_name` is R code (such as
+  `dplyr::tbl(con, "visits")`) to use as written. FALSE (the default)
+  treats it as a table name and backtick-quotes it when it is not
+  syntactic, as in `visits (2020)`. Only used when `lazy` is TRUE.
 
 ## Value
 

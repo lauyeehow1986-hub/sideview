@@ -9,14 +9,15 @@ text, empty strings, extreme values).
 ## Usage
 
 ``` r
-sv_column_profile(x, top_n = 10L, bins = 20L)
+sv_column_profile(x, top_n = 10L, bins = 20L, column = NULL)
 ```
 
 ## Arguments
 
 - x:
 
-  A vector (a data frame column).
+  A vector (a data frame column), or a lazy table (a duckdb table or an
+  Arrow table / dataset) together with `column`.
 
 - top_n:
 
@@ -25,6 +26,12 @@ sv_column_profile(x, top_n = 10L, bins = 20L)
 - bins:
 
   Number of equal-width histogram bins for numeric columns.
+
+- column:
+
+  The column to profile when `x` is a lazy table. The whole table is
+  profiled by the database, and the result equals the one for the same
+  column held in memory. Not used for a vector.
 
 ## Value
 
@@ -35,6 +42,15 @@ if any), `n`, `n_missing`, `pct_missing`, `n_distinct` (non-missing),
 and `mean`, `sd` for numbers), `histogram` (`breaks`, `counts`), `top`
 (data frame of `value`, `n`), `n_other` (distinct values not in `top`)
 and `issues` (character).
+
+## Duckdb and Arrow tables
+
+For a duckdb table or an Arrow table, give the table as `x` and the
+column name as `column`. The database profiles the whole table in a few
+queries and only the summary comes back; the result equals the one for
+the same column held in memory. Arrow tables are profiled through a
+private duckdb connection that is closed afterwards. duckdb
+ordered-factor columns report class `"factor"`.
 
 ## Examples
 

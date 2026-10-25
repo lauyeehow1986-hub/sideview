@@ -53,7 +53,9 @@ discrepancies, and fuzzy string distance variations (Levenshtein distance &lt;= 
 <span>  df_name <span class="op">=</span> <span class="st">"df"</span>,</span>
 <span>  col <span class="op">=</span> <span class="st">"status"</span>,</span>
 <span>  default <span class="op">=</span> <span class="va">col</span>,</span>
-<span>  pipe <span class="op">=</span> <span class="cn">FALSE</span></span>
+<span>  pipe <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  lazy <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  df_is_code <span class="op">=</span> <span class="cn">FALSE</span></span>
 <span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu">sv_code_auto_clean</span><span class="op">(</span></span>
@@ -61,7 +63,9 @@ discrepancies, and fuzzy string distance variations (Levenshtein distance &lt;= 
 <span>  df_name <span class="op">=</span> <span class="st">"df"</span>,</span>
 <span>  col <span class="op">=</span> <span class="st">"status"</span>,</span>
 <span>  default <span class="op">=</span> <span class="va">col</span>,</span>
-<span>  pipe <span class="op">=</span> <span class="cn">FALSE</span></span>
+<span>  pipe <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  lazy <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  df_is_code <span class="op">=</span> <span class="cn">FALSE</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -91,6 +95,21 @@ records via <code>.default = &lt;col&gt;</code>. Set to <code>NULL</code> to omi
 
 <dt id="arg-pipe">pipe<a class="anchor" aria-label="anchor" href="#arg-pipe"></a></dt>
 <dd><p>Logical; if TRUE, emits piped syntax <code>df %&gt;% dplyr::mutate(...)</code>.</p></dd>
+
+
+<dt id="arg-lazy">lazy<a class="anchor" aria-label="anchor" href="#arg-lazy"></a></dt>
+<dd><p>Logical; TRUE when <code>df_name</code> is an arrow or duckdb table. The code then
+ends in <code><a href="https://dplyr.tidyverse.org/reference/compute.html" class="external-link">dplyr::collect()</a></code> (the one collect of a lazy pipeline), the recode closes with
+<code>TRUE ~ &lt;col&gt;</code> (arrow cannot take <code>.default = &lt;col&gt;</code>), and <code>df_name</code> may be an
+expression such as <code>dplyr::tbl(con, "visits")</code> when <code>df_is_code</code> is TRUE. The matching of values is done in R on
+the values compared, so the generated code uses no <code><a href="https://rdrr.io/r/base/trimws.html" class="external-link">trimws()</a></code> or <code><a href="https://rdrr.io/r/base/chartr.html" class="external-link">tolower()</a></code>.</p></dd>
+
+
+<dt id="arg-df-is-code">df_is_code<a class="anchor" aria-label="anchor" href="#arg-df-is-code"></a></dt>
+<dd><p>Logical; TRUE when <code>df_name</code> is R code (such as
+<code>dplyr::tbl(con, "visits")</code>) to use as written. FALSE (the default) treats it as a
+table name and backtick-quotes it when it is not syntactic, as in <code>visits (2020)</code>.
+Only used when <code>lazy</code> is TRUE.</p></dd>
 
 </dl></div>
     <div class="section level2">

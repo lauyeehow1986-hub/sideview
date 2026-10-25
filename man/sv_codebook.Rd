@@ -32,6 +32,17 @@ distinct values, whether the column is a unique key, range and quartiles,
 mean and SD, the most common values and data-quality flags. Write it to CSV
 or Excel to document a dataset or check it before analysis.
 }
+\section{Duckdb and Arrow tables}{
+
+Each column of a duckdb or Arrow table is profiled in full by duckdb, one
+column at a time, so \code{n} and \code{rows_profiled} are the table's row count, and
+a very wide table takes longer rather than more memory; use \code{progress} to
+report on it. In the gadget, a card that only has a preview (duckdb is not
+installed, or the link to the table was lost) is profiled from its first 50
+rows: \code{n} is still the true row count, \code{rows_profiled} is 50, and the other
+columns describe those rows.
+}
+
 \examples{
 patients <- data.frame(id = 1:4, sex = c("M", "F", "f", NA), age = c(40, 51, 62, 999))
 sv_codebook(patients)

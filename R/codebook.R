@@ -6,6 +6,14 @@
 #' flags (stray spaces, values that differ only in case, numbers stored as text,
 #' empty strings, extreme values).
 #'
+#' @section Duckdb and Arrow tables:
+#' For a duckdb table or an Arrow table, give the table as `x` and the column
+#' name as `column`. The database profiles the whole table in a few queries
+#' and only the summary comes back; the result equals the one for the same
+#' column held in memory. Arrow tables are profiled through a private duckdb
+#' connection that is closed afterwards. duckdb ordered-factor columns report
+#' class `"factor"`.
+#'
 #' @param x A vector (a data frame column), or a lazy table (a duckdb table or an
 #'   Arrow table / dataset) together with `column`.
 #' @param top_n Number of most common values to keep.
@@ -209,6 +217,15 @@ sv_format_issues <- function(p, counts) {
 #' distinct values, whether the column is a unique key, range and quartiles,
 #' mean and SD, the most common values and data-quality flags. Write it to CSV
 #' or Excel to document a dataset or check it before analysis.
+#'
+#' @section Duckdb and Arrow tables:
+#' Each column of a duckdb or Arrow table is profiled in full by duckdb, one
+#' column at a time, so `n` and `rows_profiled` are the table's row count, and
+#' a very wide table takes longer rather than more memory; use `progress` to
+#' report on it. In the gadget, a card that only has a preview (duckdb is not
+#' installed, or the link to the table was lost) is profiled from its first 50
+#' rows: `n` is still the true row count, `rows_profiled` is 50, and the other
+#' columns describe those rows.
 #'
 #' @param ... Data frames, duckdb tables or Arrow tables, or one list of them.
 #'   Names default to the argument expressions, as in [sideview()]. A duckdb or

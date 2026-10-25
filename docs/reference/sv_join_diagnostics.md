@@ -18,7 +18,9 @@ sv_join_diagnostics(x, y, by, sample_n = 5L, x_name = "x", y_name = "y")
 
 - x, y:
 
-  Data frames to join (`x` is the left table).
+  Tables to join (`x` is the left table): data frames, or duckdb tables
+  and Arrow tables, which are checked in full without loading them into
+  R.
 
 - by:
 
@@ -52,6 +54,20 @@ of `fix`, `label`, `extra_x`, `extra_y`), `warnings` and `status`
 
 The canvas runs this whenever two columns are connected and shows the
 result on the join step and in the Discrepancy tab.
+
+## Duckdb and Arrow tables
+
+When `x` or `y` is a duckdb table or an Arrow table, the check runs
+inside duckdb on the whole table and only the counts come back into R;
+the result equals the one for the same data held in memory. If the
+tables are on two different duckdb connections the check does not run.
+Arrow tables are handed to duckdb with
+[`arrow::to_duckdb()`](https://arrow.apache.org/docs/r/reference/to_duckdb.html),
+and a data frame is registered temporarily; both are removed afterwards.
+Known differences from the in-memory check: keys of different types are
+compared as text, double keys are compared exactly, and an in-memory
+POSIXct key is compared as text where a database key is compared as an
+instant.
 
 ## Examples
 

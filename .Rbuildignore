@@ -16,3 +16,4 @@
 ^tests/testthat/artifacts$
 ^vignettes/articles$
 ^tools$
+^\.superpowers$
