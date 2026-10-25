@@ -1289,7 +1289,6 @@ test_that("join check on 1M-row duckdb tables is under 5 s", {
   elapsed_code <- system.time(
     res_code <- sv_join_diagnostics(x, y, by = "code", x_name = "big_x", y_name = "big_y")
   )[["elapsed"]]
-  message(sprintf("join check, 1M x 1M: id %.2f s, code %.2f s", elapsed, elapsed_code))
   expect_identical(res_id$n_x, 1000000L)
   expect_identical(res_id$n_y, 1000000L)
   expect_identical(res_id$matched_x, 800000L)
