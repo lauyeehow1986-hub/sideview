@@ -72,7 +72,8 @@ says "First 50 of N rows" and the checks use the preview.
 Generated code stays lazy and ends in one \code{collect()}. Known differences
 from an in-memory card:
 \itemize{
-\item "Contains" on a number matches its text; for doubles duckdb writes
+\item "Contains" on a number matches its text. The grid filter drops a
+trailing \code{.0}, but in generated code duckdb writes a double as
 \code{"130.0"} where R writes \code{"130"}, and float noise or scientific
 notation can differ. The generated filter is a literal match,
 \code{stringr::str_detect(col, "<escaped literal>")}.

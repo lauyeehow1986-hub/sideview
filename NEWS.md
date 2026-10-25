@@ -34,8 +34,9 @@ complete when it was not. They now use the whole table.
 
 Known differences from an in-memory card:
 
-* "Contains" on a number matches its text. For doubles duckdb writes `"130.0"`
-  where R writes `"130"`, and float noise or scientific notation can differ.
+* "Contains" on a number matches its text. The grid filter drops a trailing
+  `.0`, but in generated code duckdb writes a double as `"130.0"` where R writes
+  `"130"`, and float noise or scientific notation can differ.
 * A POSIXct value at exactly midnight, and `-0`, can print differently.
 * Join keys of different types compare as text; double keys compare exactly; an
   in-memory POSIXct key is compared as text where a database key is compared as
