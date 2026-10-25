@@ -285,7 +285,12 @@ sv_codebook <- function(..., top_n = 5L, file = NULL, progress = NULL) {
 # true row count of a table profiled from a preview: `n` reports it, `rows_profiled` the rows used.
 sv_codebook_row <- function(table, column, position, x, top_n, n_total = NULL) {
   p <- if (is.list(x) && !is.data.frame(x) && sv_is_lazy_input(x$tbl)) {
-    sv_lazy_column_profile(x$tbl, x$column, top_n = top_n, con_env = x$con_env %||% sv_lazy_env())
+    if (is.null(x$con_env)) {
+      # no shared connection: the profile opens its own and closes it
+      sv_lazy_column_profile(x$tbl, x$column, top_n = top_n)
+    } else {
+      sv_lazy_column_profile(x$tbl, x$column, top_n = top_n, con_env = x$con_env)
+    }
   } else {
     sv_column_profile(x, top_n = top_n)
   }
@@ -306,7 +311,8 @@ sv_codebook_row <- function(table, column, position, x, top_n, n_total = NULL) {
   data.frame(
     table = table, column = column, position = position, class = p$class,
     label = p$label %||% NA_character_,
-    n = n_total %||% p$n, rows_profiled = p$n,
+    # an integer (a double only past the integer range), so write.csv prints 100000, not 1e+05
+    n = if (is.null(n_total)) p$n else sv_lazy_count(n_total), rows_profiled = p$n,
     n_missing = p$n_missing, pct_missing = round(100 * p$pct_missing, 2),
     n_distinct = p$n_distinct, unique_key = p$unique_key,
     min = stat("min"), q1 = stat("q1"), median = stat("median"), q3 = stat("q3"), max = stat("max"),
@@ -327,6 +333,12 @@ sv_preview_table <- function(df, n_total) {
 }
 
 sv_write_codebook <- function(cb, file) {
+  # A row count past the integer range is a double, which write.csv would print as
+  # 3e+09; the browser writes 3000000000. Fixed notation, only when that happens.
+  if (any(vapply(cb[c("n", "rows_profiled", "n_missing", "n_distinct")], is.double, logical(1)))) {
+    old <- options(scipen = 15)
+    on.exit(options(old), add = TRUE)
+  }
   if (grepl("\\.xlsx$", file, ignore.case = TRUE)) {
     if (!requireNamespace("writexl", quietly = TRUE)) {
       stop("Writing .xlsx needs the writexl package: install.packages(\"writexl\"), or use a .csv path.",

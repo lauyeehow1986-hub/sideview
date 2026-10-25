@@ -976,3 +976,68 @@ test_that("the lazy join check shows and compares Arrow time zones as R does", {
   got <- sv_join_diagnostics(join_side(ychr, "duckdb", fx$con, "jc"), join_side(x, "arrow", fx$con, "jx"), "k")
   expect_equal(got, sv_join_diagnostics(ychr, x, "k"), tolerance = 1e-12)
 })
+
+test_that("a direct lazy codebook row closes the connection it opened", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  fx <- lazy_fixture()
+  orig <- sv_lazy_close
+  closed <- list()
+  testthat::local_mocked_bindings(sv_lazy_close = function(con_env) {
+    closed[[length(closed) + 1L]] <<- !is.null(con_env$con)
+    orig(con_env)
+  })
+  row <- sv_codebook_row("a", "grp", 2, list(tbl = arrow::arrow_table(fx$df), column = "grp"), 5)
+  expect_equal(row$n, 120)
+  # one close, and it found an open connection (the arrow table needed one)
+  expect_identical(closed, list(TRUE))
+})
+
+test_that("sv_codebook shares one private connection and always closes it", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  fx <- lazy_fixture()
+  orig_close <- sv_lazy_close
+  orig_con <- sv_lazy_con
+  orig_env <- sv_lazy_env
+  envs <- list()
+  cons <- list()
+  closes <- 0L
+  testthat::local_mocked_bindings(
+    sv_lazy_env = function() {
+      e <- orig_env()
+      envs[[length(envs) + 1L]] <<- e
+      e
+    },
+    sv_lazy_con = function(con_env) {
+      con <- orig_con(con_env)
+      cons[[length(cons) + 1L]] <<- con
+      con
+    },
+    sv_lazy_close = function(con_env) {
+      closes <<- closes + 1L
+      orig_close(con_env)
+    }
+  )
+  a <- arrow::arrow_table(fx$df)
+  b <- arrow::arrow_table(fx$df)
+  sv_codebook(a = a, b = b)
+  # one env for the whole call, one connection reused for every column of both tables
+  expect_length(envs, 1L)
+  expect_gt(length(cons), 1L)
+  expect_true(all(vapply(cons, identical, logical(1), cons[[1]])))
+  expect_identical(closes, 1L)
+  expect_null(envs[[1]]$con)
+
+  # and on an error halfway through
+  envs <- list(); cons <- list(); closes <- 0L
+  expect_error(
+    sv_codebook(a = a, b = b, progress = function(table, j, n_cols) if (table == "b") stop("boom")),
+    "boom")
+  expect_length(envs, 1L)
+  expect_gt(length(cons), 0L)
+  expect_identical(closes, 1L)
+  expect_null(envs[[1]]$con)
+})

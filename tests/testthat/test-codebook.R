@@ -293,3 +293,39 @@ test_that("the server profiles columns on the full data and exports the codebook
     expect_true(isTRUE(msgs[[length(msgs)]]$message$cancelled))
   })
 })
+
+test_that("preview sizes print as integers in R and JS alike", {
+  x <- c(3, 1, 2, NA, 5, 9, 4, 4)
+  xj <- jsonlite::toJSON(x, na = "null", digits = NA)
+  for (n_total in c(100000, 1e6, 123456)) {
+    r <- sv_codebook_row("t", "x", 1, x, 5, n_total = n_total)
+    expect_true(is.integer(r$n))
+    f <- tempfile(fileext = ".csv")
+    utils::write.csv(r, f, row.names = FALSE, na = "")
+    expected <- paste0(paste(readLines(f), collapse = "\n"), "\n")
+    unlink(f)
+    js <- run_pipeline_js(sprintf(
+      "out = P.codebookCsv([P.codebookRow('t', 'x', 1, %s, 'numeric', { nTotal: %s })]);",
+      xj, format(n_total, scientific = FALSE)))
+    expect_identical(js, expected, label = format(n_total, scientific = FALSE))
+    expect_match(expected, sprintf(",%s,8,", format(n_total, scientific = FALSE)), fixed = TRUE)
+  }
+})
+
+test_that("a preview size past the integer range prints in full in the CSV file", {
+  x <- c(3, 1, 2, NA, 5, 9, 4, 4)
+  cb <- sv_codebook(t = sv_preview_table(data.frame(x = x), 3e9))
+  expect_identical(cb$n, 3e9)
+  f <- tempfile(fileext = ".csv")
+  on.exit(unlink(f), add = TRUE)
+  sv_codebook(t = sv_preview_table(data.frame(x = x), 3e9), file = f)
+  got <- paste0(paste(readLines(f), collapse = "\n"), "\n")
+  js <- run_pipeline_js(sprintf(
+    "out = P.codebookCsv([P.codebookRow('t', 'x', 1, %s, 'numeric', { nTotal: 3000000000 })]);",
+    jsonlite::toJSON(x, na = "null", digits = NA)))
+  # the file layout is the same as the CSV the widget writes
+  expect_identical(got, js)
+  expect_match(got, ",3000000000,8,", fixed = TRUE)
+  # and the options are put back
+  expect_equal(getOption("scipen"), 0)
+})
