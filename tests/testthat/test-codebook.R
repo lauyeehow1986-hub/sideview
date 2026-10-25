@@ -99,8 +99,8 @@ test_that("sv_codebook has one row per column and writes CSV", {
   visits <- data.frame(pid = c(1, 1, 2), visit = c("v1", "v2", "v1"))
   cb <- sv_codebook(patients, visits)
   expect_s3_class(cb, "data.frame")
-  expect_identical(names(cb), c("table", "column", "position", "class", "label", "n", "n_missing",
-                                "pct_missing", "n_distinct", "unique_key", "min", "q1", "median", "q3",
+  expect_identical(names(cb), c("table", "column", "position", "class", "label", "n", "rows_profiled",
+                                "n_missing", "pct_missing", "n_distinct", "unique_key", "min", "q1", "median", "q3",
                                 "max", "mean", "sd", "top_values", "issues"))
   expect_identical(cb$table, c(rep("patients", 4), rep("visits", 2)))
   expect_identical(cb$column, c("id", "sex", "age", "enrolled", "pid", "visit"))
@@ -124,8 +124,41 @@ test_that("sv_codebook has one row per column and writes CSV", {
   expect_identical(back$top_values[2], cb$top_values[2])
 
   expect_error(sv_codebook(), "at least one")
-  expect_error(sv_codebook(1:3), "not a data frame")
+  expect_error(sv_codebook(1:3), "not a data frame or lazy table")
   expect_error(sv_codebook(patients, file = tempfile(fileext = ".txt")), ".csv or .xlsx")
+})
+
+test_that("codebook has rows_profiled after n", {
+  df <- data.frame(a = 1:7, b = letters[1:7])
+  cb <- sv_codebook(df)
+  expect_identical(names(cb)[6:7], c("n", "rows_profiled"))
+  expect_identical(cb$rows_profiled, cb$n)
+})
+
+test_that("preview codebook row reports table size", {
+  df <- data.frame(a = 1:100)
+  row <- sv_codebook_row("t", "a", 1, df$a[1:50], 5, n_total = 1000)
+  expect_equal(row$n, 1000)
+  expect_equal(row$rows_profiled, 50)
+  expect_identical(names(row)[6:7], c("n", "rows_profiled"))
+  # n_missing and the rest describe the profiled rows
+  expect_equal(row$n_missing, 0)
+  # a preview table among the inputs: n is the true size
+  cb <- sv_codebook(t = sv_preview_table(df[1:50, , drop = FALSE], 1000))
+  expect_equal(cb$n, 1000)
+  expect_equal(cb$rows_profiled, 50)
+  expect_identical(cb$table, "t")
+  # a single preview table is one table, not a list of tables
+  expect_identical(cb$column, "a")
+})
+
+test_that("codebook calls progress once per column", {
+  df <- data.frame(a = 1:3, b = 4:6)
+  seen <- list()
+  sv_codebook(x = df, y = df[1], progress = function(table, j, n_cols) {
+    seen[[length(seen) + 1L]] <<- list(table, j, n_cols)
+  })
+  expect_identical(seen, list(list("x", 1L, 2L), list("x", 2L, 2L), list("y", 1L, 1L)))
 })
 
 test_that("sv_codebook writes xlsx when writexl is installed", {
@@ -192,6 +225,26 @@ test_that("the JS codebook CSV equals write.csv of sv_codebook()", {
   }, character(1))
   js <- run_pipeline_js(sprintf("out = P.codebookCsv([%s]);", paste(rows, collapse = ", ")))
   expect_identical(js, expected)
+})
+
+test_that("the JS codebook row takes a table size like n_total", {
+  x <- c(3, 1, 2, NA, 5, 9, 4, 4)
+  r <- sv_codebook_row("t", "x", 1, x, 5, n_total = 1000)
+  f <- tempfile(fileext = ".csv")
+  on.exit(unlink(f), add = TRUE)
+  utils::write.csv(r, f, row.names = FALSE, na = "")
+  expected <- paste0(paste(readLines(f), collapse = "
+"), "
+")
+  js <- run_pipeline_js(sprintf(
+    "out = P.codebookCsv([P.codebookRow('t', 'x', 1, %s, 'numeric', { nTotal: 1000 })]);",
+    jsonlite::toJSON(x, na = "null", digits = NA)))
+  expect_identical(js, expected)
+  expect_match(expected, ",1000,8,", fixed = TRUE)
+  none <- run_pipeline_js(sprintf(
+    "out = P.codebookRow('t', 'x', 1, %s, 'numeric');", jsonlite::toJSON(x, na = "null", digits = NA)))
+  expect_equal(none$n, 8)
+  expect_equal(none$rows_profiled, 8)
 })
 
 test_that("the server profiles columns on the full data and exports the codebook", {

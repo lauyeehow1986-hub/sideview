@@ -37,7 +37,8 @@ sv_card_is_lazy <- function(card) {
 #' @noRd
 sv_is_table_list <- function(x) {
   is.list(x) && !is.data.frame(x) &&
-    !inherits(x, c("sideview_card", "tbl_lazy", "tbl_duckdb_connection", "duckdb_connection"))
+    !inherits(x, c("sideview_card", "tbl_lazy", "tbl_duckdb_connection", "duckdb_connection",
+                  "sv_preview_table"))
 }
 
 #' Deparse the expression a caller passed for a table

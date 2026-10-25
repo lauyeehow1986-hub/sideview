@@ -210,16 +210,20 @@ sv_format_issues <- function(p, counts) {
 #' mean and SD, the most common values and data-quality flags. Write it to CSV
 #' or Excel to document a dataset or check it before analysis.
 #'
-#' @param ... Data frames, or one list of data frames. Names default to the
-#'   argument expressions, as in [sideview()].
+#' @param ... Data frames, duckdb tables or Arrow tables, or one list of them.
+#'   Names default to the argument expressions, as in [sideview()]. A duckdb or
+#'   Arrow table is profiled in full inside the database; it is never collected.
 #' @param top_n Number of most common values listed in `top_values`.
 #' @param file Optional path ending in `.csv` or `.xlsx` (needs the `writexl`
 #'   package). The codebook is still returned, invisibly.
+#' @param progress Optional `function(table, j, n_cols)`, called before each
+#'   column is profiled.
 #'
 #' @return A data frame with columns `table`, `column`, `position`, `class`,
-#'   `label`, `n`, `n_missing`, `pct_missing`, `n_distinct`, `unique_key`,
-#'   `min`, `q1`, `median`, `q3`, `max` (as text, so dates fit), `mean`, `sd`,
-#'   `top_values` and `issues`.
+#'   `label`, `n`, `rows_profiled`, `n_missing`, `pct_missing`, `n_distinct`,
+#'   `unique_key`, `min`, `q1`, `median`, `q3`, `max` (as text, so dates fit),
+#'   `mean`, `sd`, `top_values` and `issues`. `rows_profiled` is the number of
+#'   rows the profile used; it equals `n` except for a preview of a larger table.
 #' @export
 #' @examples
 #' patients <- data.frame(id = 1:4, sex = c("M", "F", "f", NA), age = c(40, 51, 62, 999))
@@ -228,10 +232,10 @@ sv_format_issues <- function(p, counts) {
 #' out <- tempfile(fileext = ".csv")
 #' sv_codebook(patients, visits, file = out)
 #' unlink(out)
-sv_codebook <- function(..., top_n = 5L, file = NULL) {
+sv_codebook <- function(..., top_n = 5L, file = NULL, progress = NULL) {
   tables <- list(...)
   exprs <- as.list(substitute(list(...))[-1])
-  if (length(tables) == 1L && is.list(tables[[1]]) && !is.data.frame(tables[[1]])) {
+  if (length(tables) == 1L && sv_is_table_list(tables[[1]])) {
     tables <- tables[[1]]
     exprs <- list()
   }
@@ -242,12 +246,30 @@ sv_codebook <- function(..., top_n = 5L, file = NULL) {
       nms[i] <- if (i <= length(exprs) && is.name(exprs[[i]])) as.character(exprs[[i]]) else paste0("table_", i)
     }
   }
+  # check every input before the first (possibly slow) profile
+  for (i in seq_along(tables)) {
+    tb <- tables[[i]]
+    if (!is.data.frame(tb) && !sv_is_lazy_input(tb) && !inherits(tb, "sv_preview_table")) {
+      stop(sprintf("`%s` is not a data frame or lazy table.", nms[i]), call. = FALSE)
+    }
+  }
+  # one private connection serves every lazy table, and is closed on the way out
+  con_env <- sv_lazy_env()
+  on.exit(sv_lazy_close(con_env), add = TRUE)
   rows <- list()
   for (i in seq_along(tables)) {
-    df <- tables[[i]]
-    if (!is.data.frame(df)) stop(sprintf("`%s` is not a data frame.", nms[i]), call. = FALSE)
-    for (j in seq_along(df)) {
-      rows[[length(rows) + 1L]] <- sv_codebook_row(nms[i], names(df)[j], j, df[[j]], top_n)
+    tb <- tables[[i]]
+    n_total <- NULL
+    if (inherits(tb, "sv_preview_table")) {
+      n_total <- tb$n_total
+      tb <- tb$data
+    }
+    lazy <- sv_is_lazy_input(tb)
+    cols <- if (lazy) sv_lazy_names(tb) else names(tb)
+    for (j in seq_along(cols)) {
+      if (is.function(progress)) progress(nms[i], j, length(cols))
+      x <- if (lazy) list(tbl = tb, column = cols[j], con_env = con_env) else tb[[j]]
+      rows[[length(rows) + 1L]] <- sv_codebook_row(nms[i], cols[j], j, x, top_n, n_total = n_total)
     }
   }
   out <- do.call(rbind, rows)
@@ -259,8 +281,14 @@ sv_codebook <- function(..., top_n = 5L, file = NULL) {
   out
 }
 
-sv_codebook_row <- function(table, column, position, x, top_n) {
-  p <- sv_column_profile(x, top_n = top_n)
+# `x` is a column vector, or list(tbl, column, con_env) for a lazy table. `n_total` is the
+# true row count of a table profiled from a preview: `n` reports it, `rows_profiled` the rows used.
+sv_codebook_row <- function(table, column, position, x, top_n, n_total = NULL) {
+  p <- if (is.list(x) && !is.data.frame(x) && sv_is_lazy_input(x$tbl)) {
+    sv_lazy_column_profile(x$tbl, x$column, top_n = top_n, con_env = x$con_env %||% sv_lazy_env())
+  } else {
+    sv_column_profile(x, top_n = top_n)
+  }
   stat <- function(k) {
     v <- p$stats[[k]]
     if (is.null(v) || (is.numeric(v) && !is.finite(v))) return(NA_character_)
@@ -278,7 +306,8 @@ sv_codebook_row <- function(table, column, position, x, top_n) {
   data.frame(
     table = table, column = column, position = position, class = p$class,
     label = p$label %||% NA_character_,
-    n = p$n, n_missing = p$n_missing, pct_missing = round(100 * p$pct_missing, 2),
+    n = n_total %||% p$n, rows_profiled = p$n,
+    n_missing = p$n_missing, pct_missing = round(100 * p$pct_missing, 2),
     n_distinct = p$n_distinct, unique_key = p$unique_key,
     min = stat("min"), q1 = stat("q1"), median = stat("median"), q3 = stat("q3"), max = stat("max"),
     mean = num("mean"), sd = num("sd"),
@@ -286,6 +315,15 @@ sv_codebook_row <- function(table, column, position, x, top_n) {
     issues = if (length(p$issues)) paste(p$issues, collapse = " ") else NA_character_,
     stringsAsFactors = FALSE
   )
+}
+
+#' A table profiled from a preview, with its true size
+#'
+#' The gadget uses this for a lazy card whose source it can no longer reach:
+#' the codebook profiles the preview rows and reports `n_total` as `n`.
+#' @noRd
+sv_preview_table <- function(df, n_total) {
+  structure(list(data = df, n_total = n_total), class = "sv_preview_table")
 }
 
 sv_write_codebook <- function(cb, file) {

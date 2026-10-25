@@ -798,7 +798,10 @@
 
   function signif6(v) { return parseFloat(Number(v).toPrecision(6)); }
 
-  /** One codebook row; mirrors sv_codebook_row() in R. */
+  /**
+   * One codebook row; mirrors sv_codebook_row() in R. `opts.nTotal` is the true row count of a
+   * table profiled from a preview: `n` reports it and `rows_profiled` the rows used.
+   */
   function codebookRow(table, column, position, values, type, opts) {
     opts = opts || {};
     var p = columnProfile(values, type, { topN: opts.topN === undefined ? 5 : opts.topN, label: opts.label });
@@ -819,7 +822,8 @@
     }
     return {
       table: table, column: column, position: position, 'class': p['class'], label: p.label,
-      n: p.n, n_missing: p.n_missing, pct_missing: Math.round(10000 * p.pct_missing) / 100,
+      n: opts.nTotal === undefined || opts.nTotal === null ? p.n : opts.nTotal, rows_profiled: p.n,
+      n_missing: p.n_missing, pct_missing: Math.round(10000 * p.pct_missing) / 100,
       n_distinct: p.n_distinct, unique_key: p.unique_key,
       min: stat('min'), q1: stat('q1'), median: stat('median'), q3: stat('q3'), max: stat('max'),
       mean: num('mean'), sd: num('sd'), top_values: top,
@@ -827,7 +831,8 @@
     };
   }
 
-  var CODEBOOK_FIELDS = ['table', 'column', 'position', 'class', 'label', 'n', 'n_missing', 'pct_missing',
+  var CODEBOOK_FIELDS = ['table', 'column', 'position', 'class', 'label', 'n', 'rows_profiled', 'n_missing',
+    'pct_missing',
     'n_distinct', 'unique_key', 'min', 'q1', 'median', 'q3', 'max', 'mean', 'sd', 'top_values', 'issues'];
   var CODEBOOK_TEXT = { table: 1, column: 1, 'class': 1, label: 1, min: 1, q1: 1, median: 1, q3: 1, max: 1,
     top_values: 1, issues: 1 };

@@ -771,6 +771,31 @@ test_that("lazy column profile picks a column of a wider table", {
   expect_length(DBI::dbListTables(e$con), 0L)
 })
 
+test_that("lazy codebook equals in-memory", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  fx <- lazy_fixture()
+  lazy <- sv_codebook(v = dplyr::tbl(fx$con, "v"), a = arrow::arrow_table(fx$df))
+  expect_equal(lazy, sv_codebook(v = fx$df, a = fx$df), tolerance = 1e-12)
+  expect_identical(lazy$rows_profiled, lazy$n)
+  # one lazy table is one table, not a list of tables
+  one <- sv_codebook(dplyr::tbl(fx$con, "v"))
+  expect_identical(one$column, c("id", "grp"))
+  expect_equal(one, sv_codebook(fx$df)[, names(one)], tolerance = 1e-12, ignore_attr = TRUE)
+  # the user's connection is left as it was
+  expect_identical(DBI::dbListTables(fx$con), "v")
+  # progress, one call per column, across lazy tables
+  seen <- character(0)
+  sv_codebook(v = dplyr::tbl(fx$con, "v"), a = arrow::arrow_table(fx$df),
+              progress = function(table, j, n_cols) seen <<- c(seen, sprintf("%s %d/%d", table, j, n_cols)))
+  expect_identical(seen, c("v 1/2", "v 2/2", "a 1/2", "a 2/2"))
+  # a lazy table in the list form, next to a data frame
+  mixed <- sv_codebook(list(v = dplyr::tbl(fx$con, "v"), d = fx$df))
+  expect_identical(mixed$table, c("v", "v", "d", "d"))
+  expect_error(sv_codebook(1:3), "not a data frame or lazy table")
+})
+
 test_that("lazy input needs column", {
   skip_if_not_installed("duckdb")
   skip_if_not_installed("dbplyr")

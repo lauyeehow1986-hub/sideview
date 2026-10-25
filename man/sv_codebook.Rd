@@ -4,22 +4,27 @@
 \alias{sv_codebook}
 \title{Codebook (Data Dictionary)}
 \usage{
-sv_codebook(..., top_n = 5L, file = NULL)
+sv_codebook(..., top_n = 5L, file = NULL, progress = NULL)
 }
 \arguments{
-\item{...}{Data frames, or one list of data frames. Names default to the
-argument expressions, as in \code{\link[=sideview]{sideview()}}.}
+\item{...}{Data frames, duckdb tables or Arrow tables, or one list of them.
+Names default to the argument expressions, as in \code{\link[=sideview]{sideview()}}. A duckdb or
+Arrow table is profiled in full inside the database; it is never collected.}
 
 \item{top_n}{Number of most common values listed in \code{top_values}.}
 
 \item{file}{Optional path ending in \code{.csv} or \code{.xlsx} (needs the \code{writexl}
 package). The codebook is still returned, invisibly.}
+
+\item{progress}{Optional \verb{function(table, j, n_cols)}, called before each
+column is profiled.}
 }
 \value{
 A data frame with columns \code{table}, \code{column}, \code{position}, \code{class},
-\code{label}, \code{n}, \code{n_missing}, \code{pct_missing}, \code{n_distinct}, \code{unique_key},
-\code{min}, \code{q1}, \code{median}, \code{q3}, \code{max} (as text, so dates fit), \code{mean}, \code{sd},
-\code{top_values} and \code{issues}.
+\code{label}, \code{n}, \code{rows_profiled}, \code{n_missing}, \code{pct_missing}, \code{n_distinct},
+\code{unique_key}, \code{min}, \code{q1}, \code{median}, \code{q3}, \code{max} (as text, so dates fit),
+\code{mean}, \code{sd}, \code{top_values} and \code{issues}. \code{rows_profiled} is the number of
+rows the profile used; it equals \code{n} except for a preview of a larger table.
 }
 \description{
 One row per column across one or more tables: type, label, missingness,
