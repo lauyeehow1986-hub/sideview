@@ -75,8 +75,21 @@ test_that("source is never serialised", {
   json <- jsonlite::toJSON(w$x, auto_unbox = TRUE, force = TRUE)
   expect_false(grepl('"source"', json, fixed = TRUE))
 
-  st <- new_sideview_state(cards = w$x$cards)
-  expect_false(grepl('"source"', sv_state_json(st), fixed = TRUE))
+  # a state built from the R cards themselves, which do carry `source`
+  cards <- list(sv_normalize(dplyr::tbl(fx$con, "v"), name = "v"),
+                sv_normalize(arrow::arrow_table(fx$df), name = "a"))
+  expect_true(all(vapply(cards, function(cd) !is.null(cd$source), logical(1))))
+  st <- new_sideview_state(cards = cards)
+  txt <- sv_state_json(st)
+  expect_false(grepl('"source"', txt, fixed = TRUE))
+  expect_match(txt, '"name":"v"', fixed = TRUE)
+  rds <- withr::local_tempfile(fileext = ".rds")
+  sv_save_state(st, rds)
+  back <- readRDS(rds)
+  expect_true(all(vapply(back$cards, function(cd) is.null(cd$source), logical(1))))
+  jsn <- withr::local_tempfile(fileext = ".json")
+  sv_save_state(st, jsn)
+  expect_false(any(grepl('"source"', readLines(jsn), fixed = TRUE)))
 
   # a whole connection takes its code_ref from the argument expression
   wc <- sideview_widget(visits = fx$con)

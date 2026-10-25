@@ -82,7 +82,7 @@ sv_save_state <- function(state, file, format = NULL) {
   if (format == "json") {
     writeLines(sv_state_json(state, pretty = TRUE), file, useBytes = TRUE)
   } else {
-    saveRDS(state, file = file)
+    saveRDS(sv_state_scrub(state), file = file)
   }
 
   invisible(file)
@@ -187,8 +187,25 @@ sv_state_tables <- function(state, env = parent.frame()) {
 #' `null`/`NA` stay `null` and numbers keep full precision (card positions).
 #' @noRd
 sv_state_json <- function(state, pretty = FALSE) {
-  as.character(jsonlite::toJSON(unclass(state), auto_unbox = TRUE, null = "null", na = "null",
-                                digits = NA, pretty = pretty))
+  as.character(jsonlite::toJSON(unclass(sv_state_scrub(state)), auto_unbox = TRUE, null = "null",
+                                na = "null", digits = NA, pretty = pretty))
+}
+
+#' Drop what must never be written from a state's cards
+#'
+#' A card built by `sv_normalize()` keeps the user's lazy table as `source` (an
+#' arrow object or a live duckdb tbl): it is never serialised, so it is removed
+#' here, and the card is a plain list again.
+#' @noRd
+sv_state_scrub <- function(state) {
+  if (!is.list(state) || !is.list(state$cards)) return(state)
+  state$cards <- lapply(state$cards, function(card) {
+    if (!is.list(card)) return(card)
+    card$source <- NULL
+    if (inherits(card, "sideview_card")) card <- unclass(card)
+    card
+  })
+  state
 }
 
 #' Parse JSON text (from the canvas or a file) into a sideview_state
