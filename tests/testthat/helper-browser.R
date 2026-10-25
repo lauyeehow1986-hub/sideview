@@ -66,7 +66,7 @@ sv_start_app <- function(app_expr = "sideview(patients, visits, labs, run = FALS
   for (i in 1:120) {
     if (!proc$is_alive()) break
     ok <- tryCatch({
-      con <- url(url); on.exit(close(con), add = TRUE)
+      con <- url(url); on.exit(try(close(con), silent = TRUE), add = TRUE)
       length(readLines(con, n = 1, warn = FALSE)) > 0
     }, error = function(e) FALSE)
     if (isTRUE(ok)) break
