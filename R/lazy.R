@@ -145,18 +145,63 @@ sv_lazy_detach_arrow <- function(con, name) {
   invisible(NULL)
 }
 
+#' The kind of an R column, for the text it should be matched as
+#'
+#' `"character"`, `"logical"`, `"double"` (a plain double, which can hold NaN
+#' and Inf; a Date or POSIXct is not one) or `"other"` (integer, Date, factor...).
+#' @param x A column, typically from a 0-row `collect()`.
+#' @noRd
+sv_lazy_kind <- function(x) {
+  if (is.character(x)) "character"
+  else if (is.logical(x)) "logical"
+  else if (identical(class(x), "numeric")) "double"
+  else "other"
+}
+
+#' A column as the text R would give it, for `contains` filters
+#'
+#' R's `grepl()` matches `as.character(col)`, so the database has to produce
+#' the same text. A character column is used as is; a logical is `"TRUE"` /
+#' `"FALSE"` (duckdb says `true`); a plain double drops a trailing `.0`
+#' (duckdb says `130.0`) and spells `NaN`, `Inf` and `-Inf` as R does; any other
+#' column (integer, Date, factor / enum) is cast to text, which agrees with R.
+#'
+#' Known deviation: for doubles R uses 15 significant digits and switches to
+#' scientific notation, so float noise (`0.1 + 0.2` is `"0.3"` in R and
+#' `"0.30000000000000004"` here) and values like `1e+05` (R) versus `100000`
+#' differ. Whole numbers and ordinary decimals agree.
+#' @param sym A column symbol.
+#' @param kind From [sv_lazy_kind()].
+#' @noRd
+sv_lazy_text_expr <- function(sym, kind) {
+  switch(kind,
+    character = sym,
+    logical = rlang::expr(if_else(!!sym, "TRUE", "FALSE")),
+    double = rlang::expr(case_when(
+      is.nan(!!sym) ~ "NaN",
+      is.infinite(!!sym) & !!sym > 0 ~ "Inf",
+      is.infinite(!!sym) ~ "-Inf",
+      .default = stringr::str_replace(as.character(!!sym), "\\.0$", "")
+    )),
+    rlang::expr(as.character(!!sym))
+  )
+}
+
 #' Filter expression for a lazy table
 #'
 #' The twin of [sv_filter_condition()], but as a language object built from
 #' symbols and values (never by parsing text), so it translates to SQL. The
 #' literal rule is the same: a numeric column compared with a number is
 #' written as a number, otherwise as a string. `contains` is a fixed
-#' (non-regex) match, on `as.character(col)` for a numeric column.
+#' (non-regex) match on the column's text as R writes it, see [sv_lazy_text_expr()].
 #' @inheritParams sv_filter_condition
-#' @param double Logical; whether the column is a plain double (which can hold NaN).
+#' @param kind The column's kind, from [sv_lazy_kind()]; when `NULL`, `"other"`
+#'   for a numeric column and `"character"` otherwise.
 #' @return A language object for `dplyr::filter()`.
 #' @noRd
-sv_lazy_filter_expr <- function(col, op, value, numeric = FALSE, double = FALSE) {
+sv_lazy_filter_expr <- function(col, op, value, numeric = FALSE, kind = NULL) {
+  kind <- kind %||% (if (isTRUE(numeric)) "other" else "character")
+  double <- identical(kind, "double")
   value <- as.character(value)
   num_ok <- isTRUE(numeric) && !is.na(suppressWarnings(as.numeric(value)))
   sym <- rlang::sym(col)
@@ -165,11 +210,12 @@ sv_lazy_filter_expr <- function(col, op, value, numeric = FALSE, double = FALSE)
   lit <- if (num_ok) as.numeric(format(as.numeric(value), digits = 15)) else value
   # NaN is "not a number" to R (the comparison is NA, the row is dropped) but the
   # largest number to duckdb, so comparisons on doubles skip it explicitly.
-  cmp <- function(e) if (isTRUE(numeric) && isTRUE(double)) rlang::expr(!is.nan(!!sym) & !!e) else e
+  cmp <- function(e) if (isTRUE(numeric) && double) rlang::expr(!is.nan(!!sym) & !!e) else e
   switch(op,
     contains = {
-      target <- if (isTRUE(numeric)) rlang::expr(as.character(!!sym)) else sym
-      rlang::expr(stringr::str_detect(!!target, stringr::fixed(!!value)))
+      target <- sv_lazy_text_expr(sym, kind)
+      # not str_detect(fixed()): dbplyr turns that into a REGEXP, so "." matches everything
+      rlang::expr(contains(!!target, !!value))
     },
     equals = cmp(rlang::expr(!!lhs == !!lit)),
     not_equals = cmp(rlang::expr(!!lhs != !!lit)),
@@ -206,13 +252,15 @@ sv_lazy_rows_window <- function(tbl, req, order_cache = NULL) {
     keep <- sv_lazy_filter_expr(
       filter$col, filter$op %||% "equals", filter$val %||% "",
       numeric = is.numeric(zero[[filter$col]]),
-      double = identical(class(zero[[filter$col]]), "numeric")
+      kind = sv_lazy_kind(zero[[filter$col]])
     )
   }
   sort <- req$sort
   has_sort <- !is.null(sort) && !is.null(sort$col) && sort$col %in% cols &&
     (sort$dir %||% "none") %in% c("asc", "desc")
 
+  # row ids assume duckdb's default preserve_insertion_order = true (ROW_NUMBER() OVER ()
+  # then numbers rows in table order)
   numbered <- dplyr::mutate(tbl, .sv_row = row_number())
   if (!is.null(keep)) numbered <- dplyr::filter(numbered, !!keep)
 
@@ -234,7 +282,7 @@ sv_lazy_rows_window <- function(tbl, req, order_cache = NULL) {
   if (has_sort) {
     sym <- rlang::sym(sort$col)
     # plain doubles only: a Date or POSIXct is a double in R, but has no NaN
-    is_missing <- if (identical(class(zero[[sort$col]]), "numeric")) {
+    is_missing <- if (sv_lazy_kind(zero[[sort$col]]) == "double") {
       rlang::expr(is.na(!!sym) | is.nan(!!sym))
     } else {
       rlang::expr(is.na(!!sym))
@@ -274,4 +322,4 @@ sv_lazy_rows_window <- function(tbl, req, order_cache = NULL) {
 }
 
 # Names that only exist inside the SQL translation of the verbs above.
-utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "desc"))
+utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc"))

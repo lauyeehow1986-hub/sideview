@@ -5,6 +5,14 @@ Each entry: **date — change — why — verification**. Keep the "Open issues"
 
 ---
 
+### 2026-10-25 � lazy cards: full-table row windows (0.4.0, task 3)
+- **Change:** `sv_lazy_rows_window()` / `sv_lazy_filter_expr()` in `R/lazy.R` sort, filter and page a whole duckdb/arrow table with the same windows as `sv_rows_window()`.
+- **Decisions:** `contains` uses duckdb `contains()`, not `str_detect(fixed())` (dbplyr turns that into a regex, so `.` matched everything); text for `contains` follows R (`TRUE`/`FALSE`, trailing `.0` dropped, `NaN`/`Inf`); NA and NaN sort last via helper columns, so the result does not depend on duckdb's `default_null_order`. Known deviation: double text with float noise (0.1 + 0.2) or scientific notation (1e+05).
+- **Open:** the full parity grid on an Arrow source (about 900 scans in one R process) intermittently segfaults inside `arrow::to_duckdb`'s scan (2 of 3 runs at ~850 arrow queries; 0 of 6 once arrow runs only the first page of each request). duckdb sources never crashed. Not reproduced outside testthat.
+- **Verified:** `test-lazy.R` and the full suite (headless).
+
+---
+
 ## Open issues (from the 2026-10-24 code audit)
 
 Status: `open` · `fixed` (with commit) · `wontfix`.
