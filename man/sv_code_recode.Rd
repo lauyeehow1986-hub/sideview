@@ -10,7 +10,8 @@ sv_code_recode(
   crosswalk,
   default = NULL,
   method = c("case_when", "case_match", "fct_recode"),
-  pipe = FALSE
+  pipe = FALSE,
+  lazy = FALSE
 )
 }
 \arguments{
@@ -32,6 +33,9 @@ If equal to \code{col}, emits unquoted column name \verb{.default = <col>}.}
 (dplyr; deprecated in dplyr 1.2.0, kept for older pipelines) or "fct_recode" (forcats).}
 
 \item{pipe}{Logical; if TRUE, uses pipe syntax \code{df \%>\% dplyr::mutate(...)}.}
+
+\item{lazy}{Logical; TRUE for a table that lives in arrow or duckdb. \code{case_when()} then
+closes with a \verb{TRUE ~ <col>} arm instead of \verb{.default = <col>}, which arrow cannot take.}
 }
 \value{
 A character string of R code.

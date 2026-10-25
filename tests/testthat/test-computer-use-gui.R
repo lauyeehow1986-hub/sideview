@@ -1,12 +1,13 @@
 # Automated Computer Use & GUI Test Suite for sideview (v0.2.0 Pillar 5)
 # Follows specification from plans/2026-10-21-sideview-v0.2.0-computer-use-rstudio-qa-spec.md
-# Implements multi-tiered GUI verification across 6 core interaction scenarios:
+# Implements multi-tiered GUI verification across 7 core interaction scenarios:
 # 1. Canvas coordinate initialization, card layout, and pan/zoom transform calculation
 # 2. Card dragging simulation (mousedown -> mousemove -> mouseup) and magnetic docking
 # 3. Precision column port clicking / connection with cubic bezier SVG splines
 # 4. Suggested spline interaction (dashMove class and acceptance into active connection)
 # 5. Header sort cycling (none -> asc -> desc) and filter popover click simulation
 # 6. Action Drawer code dispatch (Insert Script, Run in R, Run & Exit, Clear)
+# 7. Eval error on a lazy (arrow / duckdb) table adds the "move collect() above it" hint
 # Diagnostic failure capture helper serializing canvas coordinates, WebSocket logs, and dumps
 
 suppressWarnings(suppressPackageStartupMessages({
@@ -250,6 +251,20 @@ test_that("Computer Use GUI: Scenario 6 - Action Drawer code dispatch (Insert Sc
   expect_true(isTRUE(s6$clear_dispatched))
   expect_true(isTRUE(s6$svg_paths_cleared))
   expect_true(isTRUE(s6$drawer_code_cleared))
+})
+
+# ==============================================================================
+# Scenario 7: an R error on a step touching an arrow / duckdb table adds the collect() hint
+# ==============================================================================
+test_that("Computer Use GUI: Scenario 7 - eval error on a lazy table points at collect()", {
+  res <- run_gui_test_scenarios()
+  s7 <- res$scenario7
+
+  expect_true(isTRUE(s7$plain_unchanged))
+  expect_true(isTRUE(s7$idle_lazy_unchanged))
+  expect_true(isTRUE(s7$hint_added))
+  expect_true(isTRUE(s7$success_unchanged))
+  expect_true(isTRUE(s7$lazy_code_collects))
 })
 
 # ==============================================================================

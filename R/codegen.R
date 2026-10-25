@@ -369,10 +369,13 @@ sv_detect_discrepancies <- function(x, y, max_distance = 2) {
 #' @param method Recoding function: "case_when" (dplyr, the default), "case_match"
 #'   (dplyr; deprecated in dplyr 1.2.0, kept for older pipelines) or "fct_recode" (forcats).
 #' @param pipe Logical; if TRUE, uses pipe syntax `df %>% dplyr::mutate(...)`.
+#' @param lazy Logical; TRUE for a table that lives in arrow or duckdb. `case_when()` then
+#'   closes with a `TRUE ~ <col>` arm instead of `.default = <col>`, which arrow cannot take.
 #' @return A character string of R code.
 #' @export
 sv_code_recode <- function(df_name, col, crosswalk, default = NULL, 
-                           method = c("case_when", "case_match", "fct_recode"), pipe = FALSE) {
+                           method = c("case_when", "case_match", "fct_recode"), pipe = FALSE,
+                           lazy = FALSE) {
   method <- match.arg(method)
   
   from_vals <- character(0)
@@ -445,7 +448,9 @@ sv_code_recode <- function(df_name, col, crosswalk, default = NULL,
         case_lines <- c(case_lines, sprintf("%s ~ %s", paste(conds, collapse = " | "), tgt_rep))
       }
     }
-    if (!is.null(default_rep)) case_lines <- c(case_lines, sprintf(".default = %s", default_rep))
+    if (!is.null(default_rep)) {
+      case_lines <- c(case_lines, if (isTRUE(lazy)) sprintf("TRUE ~ %s", default_rep) else sprintf(".default = %s", default_rep))
+    }
     expr <- sprintf("dplyr::case_when(\n    %s\n  )", paste(case_lines, collapse = ",\n    "))
   } else if (method == "case_match") {
     unique_targets <- unique(to_vals)
@@ -724,6 +729,11 @@ sv_code_group_summarize <- function(df_name = NULL, group_cols, summary_exprs, p
 #' @param default Fallback value for unmatched records. If equal to \code{col}, preserves unmatched
 #'   records via \code{.default = <col>}. Set to \code{NULL} to omit the default clause.
 #' @param pipe Logical; if TRUE, emits piped syntax \code{df \%>\% dplyr::mutate(...)}.
+#' @param lazy Logical; TRUE when \code{df_name} is an arrow or duckdb table. The code then
+#'   ends in \code{dplyr::collect()} (the one collect of a lazy pipeline), the recode closes with
+#'   \code{TRUE ~ <col>} (arrow cannot take \code{.default = <col>}), and \code{df_name} may be an
+#'   expression such as \code{dplyr::tbl(con, "visits")}. The matching of values is done in R on
+#'   the values compared, so the generated code uses no \code{trimws()} or \code{tolower()}.
 #'
 #' @return A character string of tidyverse code, or \code{NULL} if no discrepancies require cleaning.
 #' @export
@@ -731,7 +741,7 @@ sv_code_group_summarize <- function(df_name = NULL, group_cols, summary_exprs, p
 #' disc <- sv_detect_discrepancies(c("male", "Female"), c("Male", "Female"))
 #' sv_auto_clean_rules(disc, df_name = "patients", col = "gender")
 sv_auto_clean_rules <- function(discrepancy_result, df_name = "df", col = "status",
-                                default = col, pipe = FALSE) {
+                                default = col, pipe = FALSE, lazy = FALSE) {
   if (is.null(discrepancy_result) || !is.list(discrepancy_result) || length(discrepancy_result) == 0) {
     return(NULL)
   }
@@ -835,14 +845,38 @@ sv_auto_clean_rules <- function(discrepancy_result, df_name = "df", col = "statu
     stringsAsFactors = FALSE
   )
 
-  sv_code_recode(
-    df_name = df_name,
+  if (!isTRUE(lazy)) {
+    return(sv_code_recode(
+      df_name = df_name,
+      col = target_col,
+      crosswalk = crosswalk,
+      default = target_default,
+      method = "case_when",
+      pipe = pipe
+    ))
+  }
+
+  # A lazy table: the same recode, then the one collect() that ends a lazy pipeline.
+  # df_name may be an expression (dplyr::tbl(con, "t")), which must not be backtick-quoted.
+  mutate_call <- sv_code_recode(
+    df_name = NULL,
     col = target_col,
     crosswalk = crosswalk,
     default = target_default,
     method = "case_when",
-    pipe = pipe
+    pipe = FALSE,
+    lazy = TRUE
   )
+  if (is.null(df_name) || !nzchar(df_name)) {
+    return(sprintf("%s %%>%% dplyr::collect()", mutate_call))
+  }
+  ref <- if (grepl("[(]", df_name)) df_name else sv_escape_ident(df_name)
+  if (pipe) {
+    sprintf("%s %%>%% %s %%>%% dplyr::collect()", ref, mutate_call)
+  } else {
+    open <- "dplyr::mutate("
+    sprintf("dplyr::collect(%s%s, %s)", open, ref, substring(mutate_call, nchar(open) + 1L))
+  }
 }
 
 #' @rdname sv_auto_clean_rules

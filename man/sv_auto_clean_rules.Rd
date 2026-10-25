@@ -10,7 +10,8 @@ sv_auto_clean_rules(
   df_name = "df",
   col = "status",
   default = col,
-  pipe = FALSE
+  pipe = FALSE,
+  lazy = FALSE
 )
 
 sv_code_auto_clean(
@@ -18,7 +19,8 @@ sv_code_auto_clean(
   df_name = "df",
   col = "status",
   default = col,
-  pipe = FALSE
+  pipe = FALSE,
+  lazy = FALSE
 )
 }
 \arguments{
@@ -35,6 +37,12 @@ to extract from \code{discrepancy_result$from_col} or defaults to \code{"status"
 records via \code{.default = <col>}. Set to \code{NULL} to omit the default clause.}
 
 \item{pipe}{Logical; if TRUE, emits piped syntax \code{df \%>\% dplyr::mutate(...)}.}
+
+\item{lazy}{Logical; TRUE when \code{df_name} is an arrow or duckdb table. The code then
+ends in \code{dplyr::collect()} (the one collect of a lazy pipeline), the recode closes with
+\code{TRUE ~ <col>} (arrow cannot take \code{.default = <col>}), and \code{df_name} may be an
+expression such as \code{dplyr::tbl(con, "visits")}. The matching of values is done in R on
+the values compared, so the generated code uses no \code{trimws()} or \code{tolower()}.}
 }
 \value{
 A character string of tidyverse code, or \code{NULL} if no discrepancies require cleaning.

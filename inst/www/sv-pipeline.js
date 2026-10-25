@@ -54,12 +54,29 @@
 
   var NUMERIC_TYPES = { numeric: 1, integer: 1, double: 1, dbl: 1, int: 1, num: 1 };
 
-  /** One filter condition as R code; mirrors sv_filter_condition() in R. */
-  function condition(col, op, val, numeric) {
+  /** Escape the characters a regular expression gives a meaning to, so the text matches itself. */
+  function regexEscape(v) {
+    return String(v).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  /**
+   * One filter condition as R code; mirrors sv_filter_condition() in R.
+   * `lazy` (an arrow or duckdb table): grepl() has no translation there, so "contains" is
+   * stringr::str_detect(); a numeric column is cast to text first, as the rest of sideview does.
+   * The value is written as an escaped regular expression, not stringr::fixed(): dbplyr turns
+   * fixed() into a plain regex on duckdb, so fixed(".") matched every row there. An escaped
+   * pattern means the same on arrow and on duckdb (both use RE2), wherever the step ends up.
+   */
+  function condition(col, op, val, numeric, lazy) {
     var c = ident(col);
     var lit = literal(val, numeric);
     switch (op) {
-      case 'contains': return 'grepl(' + str(val) + ', ' + c + ', fixed = TRUE)';
+      case 'contains':
+        if (lazy) {
+          return 'stringr::str_detect(' + (numeric ? 'as.character(' + c + ')' : c) +
+            ', ' + str(regexEscape(val)) + ')';
+        }
+        return 'grepl(' + str(val) + ', ' + c + ', fixed = TRUE)';
       case 'equals': return c + ' == ' + lit;
       case 'not_equals': return c + ' != ' + lit;
       case 'gt': return c + ' > ' + lit;
@@ -103,13 +120,30 @@
     return a.fn === 'n' || !a.col ? 'n' : a.fn + '_' + a.col;
   }
 
-  /** The dplyr verb calls a step contributes to its table's chain. */
-  function verbs(step, refFor) {
+  /**
+   * The dplyr verb calls a step contributes to its table's chain.
+   * `ctx` (optional) describes the chain at this point: `copy` adds copy = TRUE to a join
+   * (duckdb joined to a data frame) and `kind` ('arrow' | 'duckdb') is the lazy backend.
+   */
+  function verbs(step, refFor, ctx) {
+    ctx = ctx || {};
     switch (step.kind) {
       case 'join': {
         var type = JOIN_TYPES.indexOf(step.type) >= 0 ? step.type : 'left_join';
         if (!step.by || !step.by.length) return [];
-        return ['dplyr::' + type + '(' + refFor(step.right) + ', by = ' + joinBy(step.by) + ')'];
+        return ['dplyr::' + type + '(' + refFor(step.right) + ', by = ' + joinBy(step.by) +
+          (ctx.copy ? ', copy = TRUE' : '') + ')'];
+      }
+      case 'reshape': {
+        if (step.type === 'pivot_wider') {
+          if (!step.namesFrom || !step.valuesFrom) return [];
+          return ['tidyr::pivot_wider(names_from = ' + ident(step.namesFrom) +
+            ', values_from = ' + ident(step.valuesFrom) + ')'];
+        }
+        var rcols = (step.cols || []).filter(Boolean);
+        if (!rcols.length) return [];
+        return ['tidyr::pivot_longer(cols = c(' + rcols.map(ident).join(', ') + '), names_to = ' +
+          str(step.namesTo || 'name') + ', values_to = ' + str(step.valuesTo || 'value') + ')'];
       }
       case 'filter': {
         var conds = (step.conds || []).filter(Boolean);
@@ -146,6 +180,7 @@
           byTarget[t].push(literal(m.from, step.numeric));
         });
         // case_when(): case_match() is deprecated from dplyr 1.2.0.
+        // arrow rejects `.default = <column>` (it wants one value), so a closing `TRUE ~ <column>` arm.
         var arms = targets.map(function (t) {
           var src = byTarget[t];
           var hasNA = src.indexOf('NA') >= 0;
@@ -157,7 +192,7 @@
           return tests.join(' | ') + ' ~ ' + t;
         });
         return ['dplyr::mutate(' + c + ' = dplyr::case_when(' + arms.join(', ') +
-          ', .default = ' + c + '))'];
+          (ctx.kind === 'arrow' ? ', TRUE ~ ' + c : ', .default = ' + c) + '))'];
       }
       case 'summarise': {
         var aggs = (step.aggs || []).filter(function (a) { return a && (a.fn === 'n' || a.col); });
@@ -183,6 +218,9 @@
       case 'arrange': return 'arrange ' + (step.cols || []).map(function (c) {
         return c.desc ? 'desc(' + c.col + ')' : c.col;
       }).join(', ');
+      case 'reshape': return step.type === 'pivot_wider'
+        ? 'pivot wider ' + step.namesFrom + ' / ' + step.valuesFrom
+        : 'pivot longer ' + (step.cols || []).join(', ');
       case 'rename': return 'rename ' + step.from + ' to ' + step.to;
       case 'mutate': return 'mutate ' + step.name + ' = ' + step.expr;
       case 'recode': return 'recode ' + step.col + ' (' + (step.map || []).length + ' values)';
@@ -203,7 +241,55 @@
     this.maxHistory = opts.maxHistory || 100;
     this.onChange = opts.onChange || null;
     this._seq = 0;
+    this.tables = {};
   }
+
+  var LAZY_KINDS = { arrow: 1, duckdb: 1 };
+
+  /**
+   * Tell the pipeline which tables are lazy: `meta = { <name>: { lazy: 'arrow'|'duckdb'|null,
+   * codeRef: string } }`. It decides how joins are written and whether the code ends in collect().
+   * It is not pipeline state (undo, saved workspaces): the cards carry it.
+   */
+  Pipeline.prototype.setTables = function (meta) {
+    var next = {};
+    Object.keys(meta || {}).forEach(function (name) {
+      var m = meta[name] || {};
+      next[name] = {
+        lazy: LAZY_KINDS[m.lazy] ? m.lazy : null,
+        codeRef: typeof m.codeRef === 'string' && m.codeRef !== '' ? m.codeRef : null
+      };
+    });
+    if (JSON.stringify(next) === JSON.stringify(this.tables)) return false;
+    this.tables = next;
+    this.emit('tables');
+    return true;
+  };
+
+  /** 'arrow' | 'duckdb' for a lazy table, else null. */
+  Pipeline.prototype.lazyKind = function (name) {
+    var m = this.tables[name];
+    return m && m.lazy ? m.lazy : null;
+  };
+
+  /** The R expression that names a table: a lazy table's codeRef when it differs from its name. */
+  Pipeline.prototype.refFor = function (name) {
+    var m = this.tables[name];
+    if (m && m.lazy && m.codeRef && m.codeRef !== name) return m.codeRef;
+    return ident(name);
+  };
+
+  /** True when an enabled step touches a lazy table (or custom code runs beside one). */
+  Pipeline.prototype.hasLazy = function () {
+    var self = this;
+    var anyLazy = Object.keys(this.tables).some(function (n) { return self.tables[n].lazy; });
+    if (!anyLazy) return false;
+    return this.steps.some(function (s) {
+      if (s.enabled === false) return false;
+      if (s.kind === 'custom') return true;
+      return !!(self.lazyKind(s.table) || (s.right && self.lazyKind(s.right)));
+    });
+  };
 
   Pipeline.prototype.snapshot = function () { return JSON.stringify(this.steps); };
 
@@ -371,6 +457,7 @@
   };
 
   /** Compose the enabled steps into one R script ('' when there is nothing). */
+  // Known limit: a factor column holding NA segfaults duckdb 1.4.x when an arrow table is scanned through it.
   Pipeline.prototype.compose = function () {
     var pipe = this.pipe;
     var steps = this.steps.filter(function (s) { return s.enabled !== false; });
@@ -399,25 +486,79 @@
       });
     });
 
+    var self = this;
     var out = [];
     var state = {};
     var asPrep = {};
+    var finished = {};  // t -> { kind }: the chain's lazy backend after its steps
 
     function prepName(t) { return ident(t + '_prep'); }
 
+    // What a joined table is, as a join input: its code and its lazy backend.
+    function rightInfo(r) {
+      if (asPrep[r] && finished[r]) return { ref: prepName(r), kind: finished[r].kind };
+      return { ref: self.refFor(r), kind: self.lazyKind(r) };
+    }
+
     function render(t) {
-      var verbList = [];
+      var kind = self.lazyKind(t);
+      var con = kind ? self.refFor(t) : null;  // something dbplyr::remote_con() can read
+      var lines = [self.refFor(t)];
+      // A join across backends moves the left side into the right side's engine first:
+      // wrapHead(open, rest) makes the chain so far the argument in open + <chain> + rest.
+      function wrapHead(open, rest) {
+        if (lines.length === 1) { lines = [open + lines[0] + rest]; return; }
+        lines = [open.replace(/ $/, '') + '\n  ' + lines.join(' ' + pipe + '\n    ') + rest.replace(/^, /, ',\n  ')];
+      }
+
       chains[t].forEach(function (s) {
-        verbList = verbList.concat(verbs(s, function (r) {
-          return asPrep[r] ? prepName(r) : ident(r);
-        }));
+        if (s.kind === 'join') {
+          var r = rightInfo(s.right);
+          var rightRef = r.ref;
+          var ctx = {};
+          if (kind === 'duckdb' && !r.kind) ctx.copy = true;
+          else if (kind === 'duckdb' && r.kind === 'arrow') {
+            // compute(): to_duckdb() registers a view that R's garbage collector may drop before
+            // the query runs ("Table arrow_003 does not exist"); compute() makes a real table.
+            rightRef = 'dplyr::compute(arrow::to_duckdb(' + r.ref + ', con = dbplyr::remote_con(' + con + ')))';
+          } else if (kind === 'arrow' && r.kind === 'duckdb') {
+            wrapHead('dplyr::compute(arrow::to_duckdb(', ', con = dbplyr::remote_con(' + r.ref + ')))');
+            kind = 'duckdb';
+            con = r.ref;
+          } else if (!kind && r.kind === 'duckdb') {
+            // A name of our own: copy_to(overwrite = TRUE) under the data frame's name would
+            // replace a real table of that name in the user's database.
+            wrapHead('dplyr::copy_to(dbplyr::remote_con(' + r.ref + '), ',
+              ', name = ' + str('sideview_' + t) + ', overwrite = TRUE)');
+            kind = 'duckdb';
+            con = r.ref;
+          } else if (!kind && r.kind === 'arrow') {
+            wrapHead('arrow::arrow_table(', ')');
+            kind = 'arrow';
+            con = null;
+          }
+          lines = lines.concat(verbs(s, function () { return rightRef; }, ctx));
+          return;
+        }
+        var vs = verbs(s, ident, { kind: kind });
+        if (s.kind === 'reshape' && kind === 'arrow' && vs.length) {
+          // arrow has no pivot: bring the data into R first (duckdb pivots in SQL).
+          vs.unshift('# reshape runs in R\n  dplyr::collect()');
+          kind = null;
+          con = null;
+        }
+        lines = lines.concat(vs);
       });
+
       // A chain is prepared (assigned) when a chain not yet written joins it.
       var later = Object.keys(consumers[t] || {}).some(function (c) { return state[c] !== 2; });
       asPrep[t] = later;
-      var head = (later ? prepName(t) + ' <- ' : '') + ident(t);
-      if (!verbList.length) return later ? head : '';
-      return head + ' ' + pipe + '\n  ' + verbList.join(' ' + pipe + '\n  ');
+      finished[t] = { kind: kind };
+      var head = (later ? prepName(t) + ' <- ' : '');
+      if (lines.length === 1) return later ? head + lines[0] : '';
+      // One collect() ends a lazy chain that is written out (a prepared chain stays lazy).
+      if (kind && !later) lines.push('dplyr::collect()');
+      return head + lines.join(' ' + pipe + '\n  ');
     }
 
     function visit(t) {

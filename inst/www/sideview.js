@@ -2738,6 +2738,7 @@ function sendToShiny(name, value) {
     }
     if (!isNaN(tableRowCount)) cardEl.dataset.tableRows = String(tableRowCount);
     if (isLazyCard) cardEl.dataset.lazy = String(cardData.lazy);
+    if (cardData.codeRef) cardEl.dataset.codeRef = String(cardData.codeRef);
     cardEl.dataset.rowsBasis = isLazyCard ? 'preview' : 'full';
     header.innerHTML = [
       '<div class="sideview-card-title-group">',
@@ -2829,6 +2830,25 @@ function sendToShiny(name, value) {
 
     // Setup Synchronized Scroll
     this.setupScrollSync(cardMeta);
+    this.syncTableMeta();
+  };
+
+  /**
+   * Tell the pipeline which cards are lazy (arrow / duckdb) and how R names them, from the
+   * card's data-lazy / data-code-ref: the gadget's server-rendered attributes or the widget's JSON.
+   */
+  SideviewEngine.prototype.syncTableMeta = function () {
+    var meta = {};
+    this.cards.forEach(function (c) {
+      var d = (c.element && c.element.dataset) || {};
+      meta[c.name] = { lazy: d.lazy || null, codeRef: d.codeRef || null };
+    });
+    this.pipeline.setTables(meta);
+  };
+
+  /** 'arrow' | 'duckdb' when the table is lazy, else null. */
+  SideviewEngine.prototype.tableLazyKind = function (table) {
+    return this.pipeline.lazyKind(table);
   };
 
   /**
@@ -2987,6 +3007,7 @@ function sendToShiny(name, value) {
       self.setupCardDrag(cardEl, cardMeta);
       self.setupScrollSync(cardMeta);
     });
+    this.syncTableMeta();
   };
 
   /**
@@ -4445,6 +4466,7 @@ function sendToShiny(name, value) {
   }
 
   SideviewEngine.prototype.submitBuilder = function (builder) {
+    var self = this;
     var P = global.SideviewPipeline;
     var kind = builder.dataset.builder;
     var table = fieldValue(builder, 'table');
@@ -4464,7 +4486,7 @@ function sendToShiny(name, value) {
         if (!col || (val === '' && op !== 'is_na' && op !== 'not_na')) return null;
         var t = typeOf(col);
         var numeric = t ? !!P.NUMERIC_TYPES[t] : P.literal(val, true) !== P.str(val);
-        return P.condition(col, op, val, numeric);
+        return P.condition(col, op, val, numeric, !!self.tableLazyKind(table));
       }).filter(Boolean);
       if (!conds.length) problem = 'Enter a value for at least one condition.';
       else step = { kind: 'filter', table: table, conds: conds, combine: fieldValue(builder, 'combine') };
@@ -4722,12 +4744,15 @@ function sendToShiny(name, value) {
       .replace(/\n/g, '\\n') + '"';
   }
 
-  function filterConditionCode(colName, op, val, isNumericCol) {
+  // lazy (arrow / duckdb): grepl() has no translation there; same code as SideviewPipeline.condition().
+  function filterConditionCode(colName, op, val, isNumericCol, lazy) {
     var escCol = escapeColIdentifier(colName);
     var numOk = isNumericCol && val !== '' && !isNaN(Number(val));
     var lit = numOk ? String(Number(val)) : rStringLiteral(val);
     switch (op) {
-      case 'contains': return 'grepl(' + rStringLiteral(val) + ', ' + escCol + ', fixed = TRUE)';
+      case 'contains':
+        if (lazy) return global.SideviewPipeline.condition(colName, 'contains', val, isNumericCol, lazy);
+        return 'grepl(' + rStringLiteral(val) + ', ' + escCol + ', fixed = TRUE)';
       case 'equals': return escCol + ' == ' + lit;
       case 'not_equals': return escCol + ' != ' + lit;
       case 'gt': return escCol + ' > ' + lit;
@@ -4941,7 +4966,7 @@ function sendToShiny(name, value) {
       btn.classList.add('active');
 
       var numericForCode = typeKnown ? isNumericCol : !isNaN(Number(val));
-      var condExpr = filterConditionCode(colName, op, val, numericForCode);
+      var condExpr = filterConditionCode(colName, op, val, numericForCode, !!self.tableLazyKind(cardName));
 
       // The preview holds one header filter per table, and so does the pipeline.
       cardEl.querySelectorAll('.sideview-filter-btn.active').forEach(function (b) {
@@ -5045,6 +5070,8 @@ function sendToShiny(name, value) {
     }, ttl);
   };
 
+  var LAZY_ERROR_HINT = 'This step may need data in R: move collect() above it.';
+
   SideviewEngine.prototype.registerShinyHandlers = function () {
     var self = this;
     if (typeof global.Shiny === 'undefined' || typeof global.Shiny.addCustomMessageHandler !== 'function') {
@@ -5066,7 +5093,10 @@ function sendToShiny(name, value) {
 
     global.Shiny.addCustomMessageHandler('sideview_eval_result', function (data) {
       if (data && data.message) {
-        self.showToast(data.message, data.success ? 'success' : 'danger');
+        var text = data.message;
+        // A step that works on a data frame may have no arrow / duckdb translation.
+        if (!data.success && self.pipeline.hasLazy()) text += ' ' + LAZY_ERROR_HINT;
+        self.showToast(text, data.success ? 'success' : 'danger');
       }
     });
 

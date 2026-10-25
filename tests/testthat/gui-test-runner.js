@@ -401,6 +401,7 @@ function runAllScenarios() {
     scenario4: {},
     scenario5: {},
     scenario6: {},
+    scenario7: {},
     diagnostics: {}
   };
 
@@ -437,10 +438,12 @@ function runAllScenarios() {
   };
 
   // Shiny message sink
+  const shinyHandlers = {};
   global.Shiny = {
     setInputValue(name, value, opts) {
       wsMessages.push({ event: name, value: value, priority: opts ? opts.priority : null, timestamp: Date.now() });
-    }
+    },
+    addCustomMessageHandler(type, fn) { shinyHandlers[type] = fn; }
   };
 
   // Panzoom Mock
@@ -707,6 +710,33 @@ function runAllScenarios() {
     clear_dispatched: !!s6_clear_msg,
     svg_paths_cleared: svg.querySelectorAll('.sideview-connector-path').length === 0,
     drawer_code_cleared: engine.generatedCode === ''
+  };
+
+  // Scenario 7: an R error on a step that touches an arrow / duckdb table says where to look.
+  const s7_toasts = [];
+  const s7_showToast = engine.showToast;
+  engine.showToast = function (text, type) { s7_toasts.push({ text: text, type: type }); };
+  const s7_hint = 'This step may need data in R: move collect() above it.';
+  const s7_fire = function (message, success) { shinyHandlers.sideview_eval_result({ success: success, message: message }); };
+  engine.pipeline.clear();
+  engine.pipeline.setTables({});
+  s7_fire('Error in x: boom', false);                  // no lazy table: the message is untouched
+  engine.pipeline.setTables({ lazy_tbl: { lazy: 'duckdb', codeRef: 'dplyr::tbl(con, "lazy_tbl")' } });
+  s7_fire('Error in x: boom', false);                  // a lazy table, but no step touches it
+  engine.pipeline.add({ kind: 'filter', table: 'lazy_tbl', conds: ['x > 1'] });
+  s7_fire('Error in x: boom', false);                  // a step touches it: the hint is added
+  s7_fire('Ran fine', true);                           // success: never changed
+  const s7_code = engine.pipeline.compose();
+  engine.pipeline.clear();
+  engine.pipeline.setTables({});
+  engine.showToast = s7_showToast;
+
+  results.scenario7 = {
+    plain_unchanged: s7_toasts[0].text === 'Error in x: boom',
+    idle_lazy_unchanged: s7_toasts[1].text === 'Error in x: boom',
+    hint_added: s7_toasts[2].text === 'Error in x: boom ' + s7_hint && s7_toasts[2].type === 'danger',
+    success_unchanged: s7_toasts[3].text === 'Ran fine' && s7_toasts[3].type === 'success',
+    lazy_code_collects: /dplyr::collect\(\)$/.test(s7_code) && s7_code.indexOf('dplyr::tbl(con, "lazy_tbl")') === 0
   };
 
   // DIAGNOSTIC FAILURE CAPTURE HELPER

@@ -713,3 +713,50 @@ test_that("sv_code_recode case_when handles NA sources, multi-value targets and 
   # The legacy case_match() method is still available on request.
   expect_match(sv_code_recode("df", "sex", c(m = "Male"), method = "case_match"), "dplyr::case_match(", fixed = TRUE)
 })
+
+test_that("a lazy recode closes with a TRUE arm, not .default, and runs on arrow and duckdb", {
+  code <- sv_code_recode("t", "sex", c(f = "F"), default = "sex", lazy = TRUE)
+  expect_match(code, "TRUE ~ sex", fixed = TRUE)
+  expect_false(grepl(".default", code, fixed = TRUE))
+  expect_silent(parse(text = code))
+  # unchanged for data frames
+  expect_match(sv_code_recode("t", "sex", c(f = "F"), default = "sex"), ".default = sex", fixed = TRUE)
+  expect_identical(sv_code_recode("t", "sex", c(f = "F"), default = "sex"),
+                   sv_code_recode("t", "sex", c(f = "F"), default = "sex", lazy = FALSE))
+})
+
+test_that("sv_auto_clean_rules(lazy = TRUE) writes one collect() and runs on arrow and duckdb", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("DBI")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("withr")
+  disc <- sv_detect_discrepancies(c("male", "Female", " Done "), c("Male", "Female", "Done"))
+  expect_false(is.null(disc))
+  frame <- data.frame(sex = c("male", "Female", "Male", NA, " Done "), n = 1:5, stringsAsFactors = FALSE)
+  want <- eval(parse(text = sv_auto_clean_rules(disc, df_name = "vv", col = "sex")), list(vv = frame))
+
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbWriteTable(con, "vv", frame)
+  for (ref in c('dplyr::tbl(con, "vv")', "vv")) {
+    env <- new.env(parent = globalenv())
+    env$con <- con
+    env$`%>%` <- magrittr::`%>%`
+    if (ref == "vv") env$vv <- arrow::arrow_table(frame)
+    for (pipe in c(TRUE, FALSE)) {
+      code <- sv_auto_clean_rules(disc, df_name = ref, col = "sex", pipe = pipe, lazy = TRUE)
+      expect_silent(parse(text = code))
+      expect_equal(lengths(regmatches(code, gregexpr("collect(", code, fixed = TRUE))), 1L)
+      expect_false(grepl(".default", code, fixed = TRUE))
+      got <- as.data.frame(eval(parse(text = code), envir = env))
+      expect_equal(got$sex, want$sex, info = paste(ref, pipe))
+      expect_equal(got$n, want$n, info = paste(ref, pipe))
+    }
+  }
+  # data frames: still no collect()
+  expect_false(grepl("collect", sv_auto_clean_rules(disc, df_name = "vv", col = "sex"), fixed = TRUE))
+  expect_false(grepl("collect", sv_auto_clean_rules(disc, df_name = "vv", col = "sex", lazy = FALSE), fixed = TRUE))
+  # a bare name or no name still works
+  expect_match(sv_auto_clean_rules(disc, df_name = NULL, col = "sex", lazy = TRUE), "dplyr::collect()", fixed = TRUE)
+})
