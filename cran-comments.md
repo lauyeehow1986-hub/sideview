@@ -13,7 +13,7 @@ does not create it.
 ## Test environments
 
 * local Windows 11, R 4.5.2: `R CMD check --as-cran`
-* win-builder: R-devel and R-release
+* win-builder: R-devel and R-release (1 note each: new submission)
 * GitHub Actions (`--as-cran`, `NOT_CRAN=false`): Ubuntu R-devel, R-release and
   R-oldrel; macOS and Windows R-release
 

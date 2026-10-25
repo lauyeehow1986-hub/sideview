@@ -66,7 +66,15 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 
 ## Log
 
-### 2026-10-25 - CRAN readiness (0.3.0, not yet submitted)
+### 2026-10-25 - Submitted 0.3.0 to CRAN
+- win-builder R-release (4.6.1) and R-devel (r90762): 1 note each (new submission). GitHub Actions
+  `--as-cran` on Ubuntu (devel/release/oldrel), macOS, Windows: OK. mac-builder failed on its own missing deps.
+- Uploaded without prompts: `pkgbuild::build(manual = TRUE)` then `devtools:::upload_cran()`; CRAN said
+  "Package submission successful". `flag_release()` skips git worktrees (`.git` is a file), so
+  `CRAN-SUBMISSION` was written by hand.
+- Pending: maintainer clicks the CRAN confirmation email (lauyeehow1986@gmail.com); tag `v0.3.0` once accepted.
+
+### 2026-10-25 - CRAN readiness (0.3.0)
 - `R CMD check --as-cran` (R 4.5.2, Windows, incoming + remote URL checks): 0 errors, 0 warnings, 2 notes.
   "New submission" is expected. `''NULL''` in the check dir is local only: check sets `R_LIBS_USER='NULL'`
   and R 4.5 on Windows creates a missing user library at startup (`Rscript --vanilla -e 1` reproduces it).
@@ -78,8 +86,6 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 - Examples: `\dontrun` file writes became `tempfile()` (`sv_codebook`) and `\donttest` (`save_sideview`).
 - DESCRIPTION: CRAN-style Title and Description (quoted software names, LLM spelled out); dropped the
   placeholder "sideview contributors" ctb entry. Added `cran-comments.md` (build-ignored with `CRAN-SUBMISSION`).
-- Still to do before submitting: win-builder (devel/release) and mac-builder, then `devtools::submit_cran()`;
-  the maintainer must click the confirmation link CRAN emails.
 
 ### 2026-10-24 - Maintainer email fixed; site and logo workflow published as skills
 - DESCRIPTION maintainer email was `lauyeehow1986@gmail.com.sg` (typo). It is now `lauyeehow1986@gmail.com`.
