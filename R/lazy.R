@@ -619,7 +619,7 @@ sv_lazy_rows_window <- function(tbl, req, order_cache = NULL) {
     win$.sv_row <- integer(0)
   } else if (is.null(keep) && !has_sort) {
     # rows offset + 1 to offset + limit in table order: the scan stops after them
-    first <- dplyr::mutate(utils::head(tbl, offset + limit), .sv_row = row_number())
+    first <- dplyr::mutate(utils::head(tbl, as.numeric(offset) + limit), .sv_row = row_number())
     win <- dplyr::collect(dplyr::filter(first, .sv_row > !!offset))
   } else {
     # row ids assume duckdb's default preserve_insertion_order = true (ROW_NUMBER() OVER ()

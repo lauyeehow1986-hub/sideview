@@ -857,7 +857,7 @@ function sendToShiny(name, value) {
   // A lazy card holds a preview of a larger table. The gadget asks R for the whole table
   // (data-rows-basis="full") unless the link was lost ("preview"); the widget never can.
 
-  function fmtCount(n) { return Number(n).toLocaleString('en-US'); }
+  function fmtCount(n) { return n == null || !isFinite(Number(n)) ? '?' : Number(n).toLocaleString('en-US'); }
 
   function previewBadgeText(shown, total) {
     return 'First ' + fmtCount(shown) + ' of ' + fmtCount(total) + ' rows';

@@ -268,6 +268,11 @@ test_that("a saved widget labels a lazy card as a preview and says so in the ins
   # a data frame card's badge has thousands separators (M4)
   expect_identical(sv_js(b, sprintf("%s.querySelector('.sideview-badge-dims').textContent", sv_card_js("wide"))),
                    "12,345 × 1")
+  # an unknown row count (R NA, sent as null) shows "?", not "0"
+  expect_identical(sv_js(b, "(() => { const eng = document.querySelector('.sideview-container')._sideviewInstance;
+    eng.addCard({ id: 'unknown_rows', name: 'unknown_rows', dims: [null, 2], columns: [], data: {} }, 9);
+    return document.querySelector('.sideview-card[data-card-id=\"unknown_rows\"] .sideview-badge-dims').textContent; })()"),
+    "? × 2")
 
   # The codebook of a lazy card reports the whole table's size and the rows profiled (I4).
   csv <- sv_js(b, "(() => { const eng = document.querySelector('.sideview-container')._sideviewInstance;

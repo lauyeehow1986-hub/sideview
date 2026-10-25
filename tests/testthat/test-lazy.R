@@ -542,6 +542,11 @@ test_that("a lazy row total past the integer range stays a number", {
   expect_identical(w$total, 3e9)
   expect_identical(w$row_ids, 0:2)
   expect_identical(w$columns$id, c("0", "1", "2"))
+  # a window near row 2^31: the offset + limit sum must not overflow
+  w <- expect_no_warning(sv_lazy_rows_window(dplyr::tbl(con, "huge"),
+                                             list(offset = 2147483000, limit = 2000L)))
+  expect_length(w$row_ids, 2000L)
+  expect_identical(w$columns$id[1], "2147483000")
 })
 
 big_rows_table <- function(con, n = 5e6) {

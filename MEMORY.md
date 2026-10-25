@@ -106,6 +106,10 @@ Each sub-project gets its own spec, plan and build, in this order:
 - Validation rules (ranges, allowed values, ID uniqueness) exporting `pointblank`-style checks.
 - PHI/PII column tagging that excludes tagged columns from the LLM schema context.
 - Export the pipeline as a reproducible Quarto report.
+- Arrow Dataset factor levels: `sv_lazy_tbl()` reads every batch of each dictionary column once per card
+  (on the first probe) to collect levels; read them only when a factor column is sorted or compared, and test
+  the level union across Dataset batches against `as.data.frame()`. (Final re-review, 0.4.0 part 1.)
+- Card names containing `"` or `\` are still bare R identifiers in some generated code (not `code_ref`).
 
 ---
 
@@ -167,6 +171,10 @@ Each sub-project gets its own spec, plan and build, in this order:
   Also fixed the browser test helper: a failed startup probe threw "invalid connection" from `on.exit(close())`
   and made the app look dead (seen as flaky starts). Every fix was run red against BASE 7993636 first.
   Whole-table discrepancy and Auto Map stay deferred.
+- **Re-review of the fix wave:** all findings addressed. Two Minors fixed after it: the unsorted window's
+  `head(offset + limit)` overflowed near row 2^31 (now `as.numeric(offset)`; test on a 3e9-row view), and the widget
+  badge showed "0" for an unknown row count (now "?", as the print method; browser test). Verified with
+  test_file() on both tests (headless Chrome).
 
 ### 2026-10-25 - Three UI quirks from the tour fixed
 - Copilot bubble: new pure `SideviewPipeline.splitReply()` (sv-pipeline.js) splits the reply at the first
