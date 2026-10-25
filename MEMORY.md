@@ -29,7 +29,7 @@ Each entry: **date — change — why — verification**. Keep the "Open issues"
 
 ---
 
-### 2026-10-25 � lazy cards: full-table row windows (0.4.0, task 3)
+### 2026-10-25 - lazy cards: full-table row windows (0.4.0, task 3)
 - **Change:** `sv_lazy_rows_window()` / `sv_lazy_filter_expr()` in `R/lazy.R` sort, filter and page a whole duckdb/arrow table with the same windows as `sv_rows_window()`.
 - **Decisions:** `contains` uses duckdb `contains()`, not `str_detect(fixed())` (dbplyr turns that into a regex, so `.` matched everything); text for `contains` follows R (`TRUE`/`FALSE`, trailing `.0` dropped, `NaN`/`Inf`); NA and NaN sort last via helper columns, so the result does not depend on duckdb's `default_null_order`. Known deviation: double text with float noise (0.1 + 0.2) or scientific notation (1e+05).
 - **Crash (fixed):** the full arrow parity grid segfaulted R in about half of the runs. The open note said it happened inside `arrow::to_duckdb`'s scan. **Root cause:** a duckdb 1.4.3 heap over-read on Arrow dictionary columns with NULLs (the factor `f` with `NA`). duckdb points the NULL rows at the slot one past the end of the dictionary, which it never allocates. Its branchless VARCHAR heap-size loop (`duckdb.dll+0xa0d5f2`, which materialises rows for `ROW_NUMBER()`) loads that `string_t` before it checks validity. R crashes when the 48-byte dictionary buffer ends at an uncommitted page. Evidence from an in-process exception logger: the read is on the main thread, at a page-aligned address, at index 3, and the 48 bytes before it are `u`, `uv`, `v`. Not threads (every arrow callback ran on the main thread), not GC (duckdb keeps the registered table alive). **Fix:** `sv_lazy_decode_dictionaries()` casts dictionary columns to their value type as a lazy arrow query before `to_duckdb()`. Nothing is materialised, and duckdb returned these columns as character anyway. The offset-0 workaround is removed and the full grid is back. Details: `.superpowers/sdd/2026-10-25-lazy-full-data-implementation/task-3-crash-report.md`. Still exposed: a user's own `to_duckdb()` on a factor with NA, and dictionaries nested in struct/list columns (not decoded). Worth reporting to duckdb upstream.
@@ -130,9 +130,23 @@ Each sub-project gets its own spec, plan and build, in this order:
   `@noRd` blocks changed to code spans (no roxygen warnings).
 - **Site:** `pkgdown::check_pkgdown()` clean; `pkgdown::build_site(preview = FALSE)` rebuilt `docs/`; `docs/CLAUDE.*` and
   `docs/MEMORY.*` and their `sitemap.xml` / `search.json` entries removed (JSON nulls kept).
-- **Note:** MEMORY.md contains one byte 0x97 (a cp1252 dash) that is not valid UTF-8;
-  pkgdown warns about it. Harmless (the page is dropped), but worth replacing with an ASCII dash.
+- **Note:** MEMORY.md had one byte 0x97 (a cp1252 dash) that was not valid UTF-8, and pkgdown warned about it.
+  It is now an ASCII dash.
 - **Not done here:** the RStudio dialog walk-through (Task 10 step 4) is done by the controller and recorded separately.
+- **RStudio check (Task 10 step 4, controller, RStudio 2025.05.1, R 4.5.1):** a synthetic 1,000,000-row parquet Dataset
+  (`visit_id`, `patient_id` "P%05d" over 2,000 ids, `sbp`) written with `arrow::write_dataset()` to the scratchpad, plus a
+  2,500-row `patients` data frame; `sideview(ds, patients, viewer = "dialog")`. Card badge "1000000 x 3" (no thousands
+  separator: parked for the final review). Click-to-connect on `patient_id` -> Discrepancy tab join check on the whole
+  table: many-to-one, ds rows matched 1,000,000 of 1,000,000, patients rows matched 2,000 of 2,500, left 1,000,000,
+  inner 1,000,000, full 1,000,500, right 1,000,500, semi 1,000,000, anti 0, "Not in ds: P02001 ...". All correct for the
+  data. Inspector on `sbp`: rows 1,000,000, 167 distinct, min 32, median 130, max 227, SD 18.03, histogram, 3-IQR
+  outlier check. Done returned `ds %>% dplyr::left_join(patients, by = "patient_id") %>% dplyr::collect()`; run at the
+  console it gave a 1,000,000 x 5 tibble in 0.07 s. The discrepancy summary under the join check ("49 matched / 2451 diff")
+  still compares the 50-row preview (the discrepancy tab was outside this sub-project): parked.
+- **RStudio quirk found (not a sideview bug):** when a script is `source()`d, the lines after a dialog gadget returns are
+  skipped silently. RStudio interrupts R within a second of the dialog closing. A plain `shiny::runGadget()` with
+  `dialogViewer()` and a Done button does the same (its `Sys.sleep(1)` line never finished). Typing the next line at the
+  console works. Screenshots and logs are in the session scratchpad only.
 - **Verification:** `node --check` on every file in inst/www and inst/htmlwidgets. `devtools::check()` with `NOT_CRAN=true`: 0 errors, 0 warnings, 1 NOTE (''NULL'' in the check directory, environmental). 5568 test expectations passed; the one failure in that run was the live Ollama test (the local model wrote code starting with a pipe), which passed when re-run alone - a flaky live-model test, not a regression.
 
 ### 2026-10-25 - Three UI quirks from the tour fixed
