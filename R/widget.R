@@ -70,8 +70,7 @@ sideview_widget <- function(...,
   dots_vals <- list(...)
   
   # Flatten if a single list was passed
-  if (length(dots_vals) == 1 && is.list(dots_vals[[1]]) &&
-      !is.data.frame(dots_vals[[1]]) && !inherits(dots_vals[[1]], "sideview_card")) {
+  if (length(dots_vals) == 1 && sv_is_table_list(dots_vals[[1]])) {
     dots_vals <- dots_vals[[1]]
     if (!is.null(names(dots_vals))) {
       dots_exprs <- as.list(names(dots_vals))
@@ -100,7 +99,7 @@ sideview_widget <- function(...,
     card <- if (inherits(val, "sideview_card")) {
       val
     } else {
-      sv_normalize(val, name = nm)
+      sv_normalize_arg(val, nm, sv_expr_string(if (i <= length(dots_exprs)) dots_exprs[[i]]))
     }
     
     if (!is.null(card)) {
@@ -115,6 +114,14 @@ sideview_widget <- function(...,
       }
       if (!is.null(card$col_types) && is.character(card$col_types)) {
         card$col_types <- as.list(card$col_types)
+      }
+      # The R source object stays in R; the browser only learns that the card is lazy.
+      card$source <- NULL
+      card$lazy <- if (isTRUE(card$is_lazy)) card$lazy_source else NULL
+      card$codeRef <- card$code_ref
+      total <- card$dims[1]
+      if (length(total) == 1L && !is.na(total)) {
+        card$totalRows <- if (total == round(total) && abs(total) < .Machine$integer.max) as.integer(total) else total
       }
       card_list[[length(card_list) + 1]] <- card
     }

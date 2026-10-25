@@ -36,7 +36,9 @@ new_sideview_card <- function(id = NULL,
                               col_types = NULL,
                               widget = NULL,
                               is_lazy = FALSE,
-                              lazy_source = NULL) {
+                              lazy_source = NULL,
+                              source = NULL,
+                              code_ref = NULL) {
   type <- match.arg(type)
 
   if (is.null(id) || length(id) == 0L || is.na(id[1]) || !nzchar(as.character(id[1]))) {
@@ -60,6 +62,12 @@ new_sideview_card <- function(id = NULL,
     }
   }
 
+  if (is.null(code_ref) || length(code_ref) == 0L || is.na(code_ref[1]) || !nzchar(as.character(code_ref[1]))) {
+    code_ref <- name
+  } else {
+    code_ref <- as.character(code_ref[1])
+  }
+
   structure(
     list(
       id = id,
@@ -71,7 +79,9 @@ new_sideview_card <- function(id = NULL,
       col_types = col_types,
       widget = widget,
       is_lazy = isTRUE(is_lazy),
-      lazy_source = lazy_source
+      lazy_source = lazy_source,
+      source = source,
+      code_ref = code_ref
     ),
     class = c("sideview_card", "list")
   )
@@ -294,7 +304,8 @@ normalize_arrow_object <- function(x, name = NULL, id = NULL, default_name = "Ar
     dims = dims,
     col_types = col_types,
     is_lazy = TRUE,
-    lazy_source = "arrow"
+    lazy_source = "arrow",
+    source = x
   )
 }
 
@@ -410,12 +421,13 @@ sv_normalize.tbl_duckdb_connection <- function(x, name = NULL, id = NULL, ...) {
     dims = dims,
     col_types = col_types,
     is_lazy = TRUE,
-    lazy_source = "duckdb"
+    lazy_source = "duckdb",
+    source = x
   )
 }
 
 #' @export
-sv_normalize.duckdb_connection <- function(x, name = NULL, id = NULL, ...) {
+sv_normalize.duckdb_connection <- function(x, name = NULL, id = NULL, expr = NULL, ...) {
   if (!requireNamespace("duckdb", quietly = TRUE)) {
     stop("Package 'duckdb' must be installed to normalize DuckDB objects.", call. = FALSE)
   }
@@ -460,7 +472,12 @@ sv_normalize.duckdb_connection <- function(x, name = NULL, id = NULL, ...) {
     tbl_obj <- tryCatch(dplyr::tbl(x, tbl_name), error = function(e) NULL)
     if (!is.null(tbl_obj)) {
       display_name <- if (!is.null(name) && nzchar(name)) name else tbl_name
-      return(sv_normalize(tbl_obj, name = display_name, id = id, ...))
+      card <- sv_normalize(tbl_obj, name = display_name, id = id, ...)
+      card$source <- tbl_obj
+      card$code_ref <- sprintf('dplyr::tbl(%s, "%s")',
+                               if (is.null(expr) || !nzchar(expr)) card$name else expr,
+                               tbl_name)
+      return(card)
     }
   }
 
