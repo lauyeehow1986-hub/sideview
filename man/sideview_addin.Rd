@@ -17,7 +17,8 @@ sideview_addin(
 )
 }
 \arguments{
-\item{env}{Environment to search for tables (defaults to \code{.GlobalEnv}).}
+\item{env}{Environment to search for tables, and where \strong{Run in R} stores
+its result (defaults to \code{.GlobalEnv}, where RStudio addins run).}
 
 \item{viewer}{Shiny viewer gadget display mode, or character shorthand
 (\code{"browser"}, \code{"dialog"}, or \code{"pane"}). Default is \code{shiny::dialogViewer()}

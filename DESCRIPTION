@@ -1,12 +1,18 @@
 Package: sideview
-Title: Multi-Table 2D Infinite Canvas for R
+Title: Explore and Join Many Tables on a Zoomable Canvas
 Version: 0.3.0
 Authors@R: c(
-    person("Yee How", "Lau", email = "lauyeehow1986@gmail.com", role = c("aut", "cre", "cph")),
-    person("sideview", "contributors", role = "ctb")
+    person("Yee How", "Lau", email = "lauyeehow1986@gmail.com", role = c("aut", "cre", "cph"))
   )
-Description: An interactive 2D infinite canvas for multi-table exploration,
-    interactive field mapping, and LLM-assisted tidyverse code generation.
+Description: Lays out many data frames side by side as cards on a pan-and-zoom
+    canvas, either as a 'shiny' gadget for 'RStudio' or as an 'htmlwidgets'
+    widget for 'R Markdown' and 'Quarto' pages. Drawing a line between two
+    columns writes the 'dplyr' join and checks it first: match rates, unmatched
+    keys and the key relationship. Sorts, filters and other steps build up a
+    readable pipeline of R code, and a column inspector exports a data
+    dictionary. An optional large language model (LLM) assistant, using
+    'Ollama' or an 'OpenAI'-compatible service, suggests 'tidyverse' code from
+    the table schema only, never the data rows.
 URL: https://lauyeehow1986-hub.github.io/sideview/, https://github.com/lauyeehow1986-hub/sideview
 BugReports: https://github.com/lauyeehow1986-hub/sideview/issues
 License: MIT + file LICENSE

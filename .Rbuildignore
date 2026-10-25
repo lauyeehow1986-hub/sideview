@@ -1,4 +1,6 @@
 ^CLAUDE\.md$
+^cran-comments\.md$
+^CRAN-SUBMISSION$
 ^CONTRIBUTORS\.md$
 ^\.git$
 ^MEMORY\.md$

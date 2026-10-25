@@ -59,6 +59,7 @@ find_runner_js <- function() {
 .gui_test_cache <- new.env(parent = emptyenv())
 
 run_gui_test_scenarios <- function() {
+  skip_on_cran() # needs Node.js, which CRAN machines may not have
   if (exists("results", envir = .gui_test_cache)) {
     return(get("results", envir = .gui_test_cache))
   }

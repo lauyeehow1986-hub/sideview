@@ -30,7 +30,8 @@ or Excel to document a dataset or check it before analysis.
 \examples{
 patients <- data.frame(id = 1:4, sex = c("M", "F", "f", NA), age = c(40, 51, 62, 999))
 sv_codebook(patients)
-\dontrun{
-sv_codebook(patients, visits, file = "codebook.xlsx")
-}
+visits <- data.frame(id = c(1, 1, 2, 5), sbp = c(120, 135, 128, 141))
+out <- tempfile(fileext = ".csv")
+sv_codebook(patients, visits, file = out)
+unlink(out)
 }

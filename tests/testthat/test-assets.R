@@ -128,7 +128,7 @@ test_that("sideview.js contains required functions, event handlers, and Shiny in
 
   # Syntax validation via node if installed
   node_path <- Sys.which("node")
-  if (nzchar(node_path)) {
+  if (nzchar(node_path) && identical(Sys.getenv("NOT_CRAN"), "true")) {
     js_path <- find_asset("sideview.js")
     status <- system2(node_path, c("-c", shQuote(js_path)), stdout = TRUE, stderr = TRUE)
     attr_status <- attr(status, "status")
@@ -187,7 +187,7 @@ test_that("sideview.js and sideview.css implement DOM virtualization for high ro
 
   # Node syntax check
   node_path <- Sys.which("node")
-  if (nzchar(node_path)) {
+  if (nzchar(node_path) && identical(Sys.getenv("NOT_CRAN"), "true")) {
     js_path <- find_asset("sideview.js")
     status <- system2(node_path, c("-c", shQuote(js_path)), stdout = TRUE, stderr = TRUE)
     attr_status <- attr(status, "status")
@@ -198,6 +198,7 @@ test_that("sideview.js and sideview.css implement DOM virtualization for high ro
 
 
 test_that("VirtualTable JavaScript engine executes 100k row virtualization correctly in Node runtime", {
+  skip_on_cran()
   node_path <- Sys.which("node")
   skip_if(!nzchar(node_path), "Node.js not available for JavaScript runtime verification")
 
@@ -345,7 +346,7 @@ test_that("sideview.js and sideview.css support suggested splines and auto-clean
 
   # JavaScript syntax check with Node
   node_path <- Sys.which("node")
-  if (nzchar(node_path)) {
+  if (nzchar(node_path) && identical(Sys.getenv("NOT_CRAN"), "true")) {
     js_path <- find_asset("sideview.js")
     status <- system2(node_path, c("-c", shQuote(js_path)), stdout = TRUE, stderr = TRUE)
     attr_status <- attr(status, "status")

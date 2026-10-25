@@ -304,7 +304,9 @@ test_that("sideview_server handles inject_script and send_console events", {
     list(success = TRUE, destination = "console", code = code, message = "OK")
   }
 
-  shiny::testServer(sideview_server(cards, insert_fn = fake_insert, console_fn = fake_console), {
+  run_env <- new.env()
+  shiny::testServer(sideview_server(cards, insert_fn = fake_insert, console_fn = fake_console,
+                                    run_env = run_env), {
     # Test inject_script
     session$setInputs(inject_script = list(code = "df %>% dplyr::mutate(y = x * 2)"))
     expect_equal(injected_code, "df %>% dplyr::mutate(y = x * 2)")
@@ -319,8 +321,8 @@ test_that("sideview_server handles inject_script and send_console events", {
     
     # Test eval_env
     session$setInputs(eval_env = list(code = "test_var_sv <- 42; data.frame(a = test_var_sv)"))
-    expect_equal(get("test_var_sv", envir = .GlobalEnv), 42)
-    if (exists("test_var_sv", envir = .GlobalEnv)) rm("test_var_sv", envir = .GlobalEnv)
+    expect_equal(get("test_var_sv", envir = run_env), 42)
+    expect_false(exists("test_var_sv", envir = globalenv(), inherits = FALSE))
   })
 })
 

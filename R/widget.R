@@ -172,8 +172,10 @@ sideview_widget <- function(...,
 #' @return The normalized path to the saved file (invisibly).
 #' @export
 #' @examples
-#' \dontrun{
-#' save_sideview(mtcars, file = "cars_sideview.html")
+#' \donttest{
+#' out <- tempfile(fileext = ".html")
+#' save_sideview(mtcars, file = out)
+#' unlink(out)
 #' }
 save_sideview <- function(widget,
                           file,

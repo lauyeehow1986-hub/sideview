@@ -102,21 +102,32 @@ test_that("sideview() builds a gadget page with Done and Cancel", {
 
 test_that("Run in R keeps the result as sv_result (or a chosen name)", {
   card <- sv_normalize(data.frame(a = 1:3), name = "t")
-  on.exit(suppressWarnings(rm(list = c("sv_result", "my_out"), envir = .GlobalEnv)), add = TRUE)
-  shiny::testServer(sideview_server(list(card)), {
+  run_env <- new.env()
+  shiny::testServer(sideview_server(list(card), run_env = run_env), {
     session$setInputs(eval_env = list(code = "data.frame(x = 1:4)"))
-    expect_equal(nrow(get("sv_result", envir = .GlobalEnv)), 4L)
+    expect_equal(nrow(get("sv_result", envir = run_env)), 4L)
     msg <- utils::tail(msgs_of(session, "sideview_eval_result"), 1)[[1]]$message
     expect_true(msg$success)
     expect_match(msg$message, "saved as `sv_result`", fixed = TRUE)
 
     session$setInputs(eval_env = list(code = "1 + 1", assign_to = "my_out"))
-    expect_equal(get("my_out", envir = .GlobalEnv), 2)
+    expect_equal(get("my_out", envir = run_env), 2)
 
     # An invalid target name falls back to sv_result instead of erroring
     session$setInputs(eval_env = list(code = "3", assign_to = "bad name; rm()"))
-    expect_equal(get("sv_result", envir = .GlobalEnv), 3)
+    expect_equal(get("sv_result", envir = run_env), 3)
   })
+  expect_false(exists("sv_result", envir = globalenv(), inherits = FALSE))
+})
+
+test_that("sideview() runs code in the environment it is called from", {
+  caller <- function() {
+    app <- sideview(data.frame(a = 1:2), run = FALSE)
+    shiny::testServer(app, session$setInputs(eval_env = list(code = "nrow(data.frame(a = 1:5))")))
+    get0("sv_result", envir = environment(), inherits = FALSE)
+  }
+  expect_equal(caller(), 5L)
+  expect_false(exists("sv_result", envir = globalenv(), inherits = FALSE))
 })
 
 test_that("AI failures keep the current code and explain the fix", {

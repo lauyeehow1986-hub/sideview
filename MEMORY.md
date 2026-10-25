@@ -66,6 +66,21 @@ Status: `open` · `fixed` (with commit) · `wontfix`.
 
 ## Log
 
+### 2026-10-25 - CRAN readiness (0.3.0, not yet submitted)
+- `R CMD check --as-cran` (R 4.5.2, Windows, incoming + remote URL checks): 0 errors, 0 warnings, 2 notes.
+  "New submission" is expected. `''NULL''` in the check dir is local only: check sets `R_LIBS_USER='NULL'`
+  and R 4.5 on Windows creates a missing user library at startup (`Rscript --vanilla -e 1` reproduces it).
+  Bisected: examples stage only; a debug `.onLoad` task callback showed it exists right after load.
+- Run in R no longer defaults to `globalenv()` (CRAN policy): `sideview(env = parent.frame())`,
+  `sideview_server(run_env = parent.frame())`, `sideview_addin()` passes its `env`. Both `force()` the default:
+  a lazy `parent.frame()` forced after `sideview()` returns falls back to the global env (a new test caught it).
+- Tests use a local env for Run in R; Node.js-based tests now `skip_on_cran()`.
+- Examples: `\dontrun` file writes became `tempfile()` (`sv_codebook`) and `\donttest` (`save_sideview`).
+- DESCRIPTION: CRAN-style Title and Description (quoted software names, LLM spelled out); dropped the
+  placeholder "sideview contributors" ctb entry. Added `cran-comments.md` (build-ignored with `CRAN-SUBMISSION`).
+- Still to do before submitting: win-builder (devel/release) and mac-builder, then `devtools::submit_cran()`;
+  the maintainer must click the confirmation link CRAN emails.
+
 ### 2026-10-24 - Maintainer email fixed; site and logo workflow published as skills
 - DESCRIPTION maintainer email was `lauyeehow1986@gmail.com.sg` (typo). It is now `lauyeehow1986@gmail.com`.
 - The dicomtk-style site procedure and the AI-image-to-hex-logo script are now reusable, agent-agnostic skills in

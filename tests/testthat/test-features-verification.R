@@ -267,7 +267,9 @@ test_that("Feature 6: Action Drawer execution actions (Insert, Run & Exit, Run i
     list(success = TRUE, destination = "console", code = code, message = "OK")
   }
 
-  shiny::testServer(sideview_server(cards, insert_fn = mock_insert, console_fn = mock_console), {
+  run_env <- new.env()
+  shiny::testServer(sideview_server(cards, insert_fn = mock_insert, console_fn = mock_console,
+                                    run_env = run_env), {
     # 1. Insert Script
     test_code_1 <- "my_table %>% dplyr::mutate(z = x + y)"
     session$setInputs(inject_script = list(code = test_code_1))
@@ -286,9 +288,8 @@ test_that("Feature 6: Action Drawer execution actions (Insert, Run & Exit, Run i
     # 4. Run in R (eval_env)
     eval_script <- "calculated_output_df <- data.frame(total = 30L)"
     session$setInputs(eval_env = list(code = eval_script))
-    expect_true(exists("calculated_output_df", envir = .GlobalEnv))
-    expect_equal(get("calculated_output_df", envir = .GlobalEnv)$total, 30L)
-    rm("calculated_output_df", envir = .GlobalEnv)
+    expect_true(exists("calculated_output_df", envir = run_env))
+    expect_equal(get("calculated_output_df", envir = run_env)$total, 30L)
   })
 
   # Verify UI contains all Action Drawer buttons and Auto-clear toggle

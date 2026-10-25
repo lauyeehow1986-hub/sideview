@@ -9,4 +9,4 @@ Thank you to everyone who has contributed to the development of `sideview`!
 ## Contributions
 
 Contributions, feature ideas, bug reports, and pull requests are warmly welcomed at:  
-https://github.com/lauyeehow1986-hub/r_split
+https://github.com/lauyeehow1986-hub/sideview

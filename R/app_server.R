@@ -598,7 +598,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     stop_gadget()
   }, ignoreInit = FALSE)
 
-  # 6c. Run in R: evaluate in `run_env` (the global environment by default)
+  # 6c. Run in R: evaluate in `run_env` (the caller's environment by default)
   shiny::observeEvent(input$eval_env, {
     evt <- input$eval_env
     if (is.null(evt)) return()
@@ -655,7 +655,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
 #'   when embedding the server in your own multi-user Shiny app.
 #' @param run_env Environment where **Run in R** evaluates the pipeline and
 #'   stores its result (as `sv_result` unless another name is given). Defaults
-#'   to the global environment, so the result is there after the gadget closes.
+#'   to the environment `sideview_server()` is called from.
 #'
 #' @return A Shiny server function `function(input, output, session)`.
 #' @export
@@ -665,7 +665,8 @@ sideview_server <- function(cards = list(),
                             insert_fn = sv_insert_code,
                             console_fn = sv_send_to_console,
                             gadget = FALSE,
-                            run_env = globalenv()) {
+                            run_env = parent.frame()) {
+  force(run_env) # parent.frame() is lazy: resolve it while the caller is on the stack
   dots <- list(...)
   # If invoked directly as sideview_server(input, output, session, ...)
   if (length(dots) >= 2 && inherits(dots[[2]], c("ShinySession", "MockShinySession"))) {

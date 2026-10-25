@@ -12,6 +12,7 @@ sv_node_bin <- function() {
 # Run a JS snippet with `P` bound to the SideviewPipeline API; the snippet must
 # assign a JSON-serialisable value to `out`.
 run_pipeline_js <- function(body) {
+  testthat::skip_on_cran() # CRAN machines may not have Node.js; keep external processes off them
   node <- sv_node_bin()
   lib <- system.file("www", "sv-pipeline.js", package = "sideview")
   if (!nzchar(node) || !nzchar(lib)) skip("Node.js or sv-pipeline.js not available")

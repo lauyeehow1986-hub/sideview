@@ -50,6 +50,10 @@ sv_find_tables <- function(env = parent.frame()) {
 #'   **Save** button or [sv_save_state()]. Card positions and sizes, zoom and
 #'   pan, sorts, filters, joins and the pipeline come back; cards are matched
 #'   to tables by name.
+#' @param env Environment where **Run in R** evaluates the generated code and
+#'   stores its result (as `sv_result` unless you name it). Defaults to the
+#'   environment `sideview()` is called from, which is your workspace when you
+#'   call it from the console.
 #' @param run Logical; if `TRUE`, launches the interactive gadget via
 #'   `shiny::runGadget()`. If `FALSE`, returns the `shiny.appobj` definition
 #'   without launching (useful for testing or embedding). Defaults to `interactive()`.
@@ -102,7 +106,9 @@ sideview <- function(...,
                      },
                      theme = "auto",
                      state = NULL,
+                     env = parent.frame(),
                      run = interactive()) {
+  force(env) # parent.frame() is lazy: resolve it before sideview() returns
   state <- sv_as_state(state)
   # Normalize character shorthand for viewer ("browser", "dialog", "pane")
   if (is.character(viewer) && length(viewer) == 1L) {
@@ -159,7 +165,7 @@ sideview <- function(...,
   # Build Shiny application object
   ui <- sideview_ui(card_list, title = title, gadget = TRUE,
                     theme = sv_resolve_theme(theme, rstudio = TRUE), state = state)
-  server <- sideview_server(card_list, gadget = TRUE)
+  server <- sideview_server(card_list, gadget = TRUE, run_env = env)
   app <- shiny::shinyApp(ui = ui, server = server)
   
   # Attach cards metadata
@@ -180,7 +186,8 @@ sideview <- function(...,
 #' Automatically discovers tabular datasets in the user's active environment
 #' and launches the Sideview interactive multi-table canvas gadget.
 #'
-#' @param env Environment to search for tables (defaults to `.GlobalEnv`).
+#' @param env Environment to search for tables, and where **Run in R** stores
+#'   its result (defaults to `.GlobalEnv`, where RStudio addins run).
 #' @param viewer Shiny viewer gadget display mode, or character shorthand
 #'   (`"browser"`, `"dialog"`, or `"pane"`). Default is `shiny::dialogViewer()`
 #'   (width 1400, height 900) when RStudio is available, otherwise `shiny::paneViewer()`.
@@ -217,7 +224,7 @@ sideview_addin <- function(env = .GlobalEnv,
     )
   }
   
-  res <- sideview(tables, title = "Sideview Canvas", viewer = viewer, run = run)
+  res <- sideview(tables, title = "Sideview Canvas", viewer = viewer, env = env, run = run)
   # RStudio calls the addin at top level: don't print NULL (Cancel) or the code
   # it already inserted. Without `run` the Shiny app object is returned visibly.
   if (isTRUE(run)) invisible(res) else res

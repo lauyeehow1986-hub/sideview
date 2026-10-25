@@ -36,7 +36,9 @@ Exports a \code{sideview} htmlwidget or table objects to a self-contained HTML f
 with all styles, fonts, and JavaScript embedded.
 }
 \examples{
-\dontrun{
-save_sideview(mtcars, file = "cars_sideview.html")
+\donttest{
+out <- tempfile(fileext = ".html")
+save_sideview(mtcars, file = out)
+unlink(out)
 }
 }

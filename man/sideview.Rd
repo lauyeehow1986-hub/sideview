@@ -16,6 +16,7 @@ sideview(
  },
   theme = "auto",
   state = NULL,
+  env = parent.frame(),
   run = interactive()
 )
 }
@@ -38,6 +39,11 @@ theme), \code{"light"}, \code{"dark"}, an \code{\link[=sv_theme]{sv_theme()}} or
 \strong{Save} button or \code{\link[=sv_save_state]{sv_save_state()}}. Card positions and sizes, zoom and
 pan, sorts, filters, joins and the pipeline come back; cards are matched
 to tables by name.}
+
+\item{env}{Environment where \strong{Run in R} evaluates the generated code and
+stores its result (as \code{sv_result} unless you name it). Defaults to the
+environment \code{sideview()} is called from, which is your workspace when you
+call it from the console.}
 
 \item{run}{Logical; if \code{TRUE}, launches the interactive gadget via
 \code{shiny::runGadget()}. If \code{FALSE}, returns the \code{shiny.appobj} definition
