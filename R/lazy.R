@@ -144,3 +144,134 @@ sv_lazy_detach_arrow <- function(con, name) {
   try(duckdb::duckdb_unregister_arrow(con, name), silent = TRUE)
   invisible(NULL)
 }
+
+#' Filter expression for a lazy table
+#'
+#' The twin of [sv_filter_condition()], but as a language object built from
+#' symbols and values (never by parsing text), so it translates to SQL. The
+#' literal rule is the same: a numeric column compared with a number is
+#' written as a number, otherwise as a string. `contains` is a fixed
+#' (non-regex) match, on `as.character(col)` for a numeric column.
+#' @inheritParams sv_filter_condition
+#' @param double Logical; whether the column is a plain double (which can hold NaN).
+#' @return A language object for `dplyr::filter()`.
+#' @noRd
+sv_lazy_filter_expr <- function(col, op, value, numeric = FALSE, double = FALSE) {
+  value <- as.character(value)
+  num_ok <- isTRUE(numeric) && !is.na(suppressWarnings(as.numeric(value)))
+  sym <- rlang::sym(col)
+  # a numeric column with a non-numeric value compares as text, as R would
+  lhs <- if (isTRUE(numeric) && !num_ok) rlang::expr(as.character(!!sym)) else sym
+  lit <- if (num_ok) as.numeric(format(as.numeric(value), digits = 15)) else value
+  # NaN is "not a number" to R (the comparison is NA, the row is dropped) but the
+  # largest number to duckdb, so comparisons on doubles skip it explicitly.
+  cmp <- function(e) if (isTRUE(numeric) && isTRUE(double)) rlang::expr(!is.nan(!!sym) & !!e) else e
+  switch(op,
+    contains = {
+      target <- if (isTRUE(numeric)) rlang::expr(as.character(!!sym)) else sym
+      rlang::expr(stringr::str_detect(!!target, stringr::fixed(!!value)))
+    },
+    equals = cmp(rlang::expr(!!lhs == !!lit)),
+    not_equals = cmp(rlang::expr(!!lhs != !!lit)),
+    gt = cmp(rlang::expr(!!lhs > !!lit)),
+    gte = cmp(rlang::expr(!!lhs >= !!lit)),
+    lt = cmp(rlang::expr(!!lhs < !!lit)),
+    lte = cmp(rlang::expr(!!lhs <= !!lit)),
+    stop("Unknown filter operator: ", op)
+  )
+}
+
+#' Answer a row-window request from the whole lazy table
+#'
+#' The twin of [sv_rows_window()]: the same request, the same reply, the same
+#' clamping, but sorted, filtered and paged by the database. Strings sort
+#' bytewise (as `arrange()` does), `NA` sorts last in both directions, and
+#' ties keep the table's own row order. Only the requested window is collected.
+#' @param tbl A duckdb tbl (see [sv_lazy_tbl()]).
+#' @inheritParams sv_rows_window
+#' @return The same list as [sv_rows_window()].
+#' @noRd
+sv_lazy_rows_window <- function(tbl, req, order_cache = NULL) {
+  spec_key <- paste(
+    unlist(req$sort %||% list()), "|", unlist(req$filter %||% list()),
+    collapse = "\u001f"
+  )
+  # 0 rows: the column classes and names, nothing else
+  zero <- dplyr::collect(utils::head(tbl, 0L))
+  cols <- names(zero)
+
+  keep <- NULL
+  filter <- req$filter
+  if (!is.null(filter) && !is.null(filter$col) && filter$col %in% cols) {
+    keep <- sv_lazy_filter_expr(
+      filter$col, filter$op %||% "equals", filter$val %||% "",
+      numeric = is.numeric(zero[[filter$col]]),
+      double = identical(class(zero[[filter$col]]), "numeric")
+    )
+  }
+  sort <- req$sort
+  has_sort <- !is.null(sort) && !is.null(sort$col) && sort$col %in% cols &&
+    (sort$dir %||% "none") %in% c("asc", "desc")
+
+  numbered <- dplyr::mutate(tbl, .sv_row = row_number())
+  if (!is.null(keep)) numbered <- dplyr::filter(numbered, !!keep)
+
+  total <- NULL
+  if (!is.null(order_cache) && identical(order_cache$key, spec_key)) total <- order_cache$total
+  if (is.null(total)) {
+    total <- as.integer(dplyr::pull(dplyr::count(numbered), "n"))
+    if (!is.null(order_cache)) {
+      order_cache$key <- spec_key
+      order_cache$total <- total
+    }
+  }
+
+  # Sorting: dbplyr's window_order() takes bare columns only, so two helper
+  # columns carry the rules of dplyr::arrange() whatever the database's own
+  # defaults are: missing values (and NaN, which R treats as missing) go last in
+  # both directions, and the key is NULL for them so they tie by row order.
+  keys <- list()
+  if (has_sort) {
+    sym <- rlang::sym(sort$col)
+    # plain doubles only: a Date or POSIXct is a double in R, but has no NaN
+    is_missing <- if (identical(class(zero[[sort$col]]), "numeric")) {
+      rlang::expr(is.na(!!sym) | is.nan(!!sym))
+    } else {
+      rlang::expr(is.na(!!sym))
+    }
+    numbered <- dplyr::mutate(
+      numbered,
+      .sv_na = !!is_missing,
+      .sv_key = if_else(.sv_na, NA, !!sym)
+    )
+    key <- rlang::sym(".sv_key")
+    keys <- list(
+      rlang::sym(".sv_na"),
+      if (identical(sort$dir, "desc")) rlang::expr(desc(!!key)) else key
+    )
+  }
+
+  offset <- max(0L, as.integer(req$offset %||% 0L))
+  limit <- max(1L, min(2000L, as.integer(req$limit %||% 200L)))
+
+  if (total <= offset) {
+    win <- zero
+    win$.sv_row <- integer(0)
+  } else {
+    ranked <- dbplyr::window_order(numbered, !!!keys, .sv_row)
+    ranked <- dplyr::mutate(ranked, .sv_rank = row_number())
+    ranked <- dplyr::filter(ranked, .sv_rank > !!offset, .sv_rank <= !!(offset + limit))
+    ranked <- dplyr::arrange(ranked, .sv_rank)
+    win <- dplyr::collect(ranked)
+  }
+
+  list(
+    offset = offset,
+    total = total,
+    row_ids = as.integer(win$.sv_row - 1L),
+    columns = lapply(win[cols], sv_format_cells)
+  )
+}
+
+# Names that only exist inside the SQL translation of the verbs above.
+utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "desc"))

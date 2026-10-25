@@ -42,6 +42,8 @@ Suggests:
     withr,
     bslib,
     dbplyr,
+    stringr,
+    rlang,
     callr,
     chromote,
     httpuv,

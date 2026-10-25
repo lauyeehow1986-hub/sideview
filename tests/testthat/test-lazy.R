@@ -191,3 +191,150 @@ test_that("attach names do not touch the user's RNG stream", {
   sv_lazy_detach(fx$con, a1$name)
   sv_lazy_detach(fx$con, a2$name)
 })
+
+# ---- full-table row windows -------------------------------------------------
+
+rows_fixture <- function() {
+  set.seed(42)
+  n <- 300L
+  nm <- c(NA, " a", "A", "a", "b\t", "ab", "Ba", "b", "c1")
+  x <- round(rnorm(n), 1)
+  x[c(5, 17, 80, 250)] <- NA
+  x[c(10, 11, 12)] <- 0.5
+  x[c(30, 31)] <- NaN # R treats NaN as missing, duckdb as the largest number
+  x[40] <- -Inf
+  data.frame(
+    id = seq_len(n),
+    name = nm[(seq_len(n) - 1L) %% length(nm) + 1L],
+    x = x,
+    d = as.Date("2020-01-01") + (seq_len(n) * 7L) %% 90L,
+    stringsAsFactors = FALSE
+  )
+}
+
+rows_specs <- function() {
+  sorts <- c(list(NULL), unlist(lapply(c("id", "name", "x", "d"), function(cn) {
+    list(list(col = cn, dir = "asc"), list(col = cn, dir = "desc"))
+  }), recursive = FALSE))
+  filters <- list(
+    NULL,
+    list(col = "name", op = "contains", val = "a"),
+    list(col = "id", op = "contains", val = "1"),
+    list(col = "x", op = "equals", val = "0.5"),
+    list(col = "x", op = "not_equals", val = "0.5"),
+    list(col = "x", op = "gt", val = "0.5"),
+    list(col = "x", op = "gte", val = "0.5"),
+    list(col = "x", op = "lt", val = "0.5"),
+    list(col = "x", op = "lte", val = "0.5"),
+    list(col = "name", op = "equals", val = ""),
+    list(col = "id", op = "gt", val = "250"),
+    list(col = "id", op = "equals", val = "7"),
+    list(col = "x", op = "equals", val = "abc")
+  )
+  offsets <- c(0L, 10L, 295L)
+  specs <- list()
+  for (s in sorts) for (f in filters) for (o in offsets) {
+    specs[[length(specs) + 1L]] <- list(sort = s, filter = f, offset = o, limit = 20L)
+  }
+  specs
+}
+
+test_that("lazy row windows equal in-memory windows", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  df <- rows_fixture()
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  con <- sv_lazy_con(e)
+  DBI::dbWriteTable(con, "rw", df)
+  sources <- list(
+    duckdb = sv_lazy_tbl(dplyr::tbl(con, "rw"), e),
+    arrow = sv_lazy_tbl(arrow::arrow_table(df), e)
+  )
+  for (specs_name in names(sources)) {
+    tbl <- sources[[specs_name]]
+    for (req in rows_specs()) {
+      got <- sv_lazy_rows_window(tbl, req)
+      want <- sv_rows_window(df, req)
+      label <- paste(specs_name, jsonlite::toJSON(req, auto_unbox = TRUE, null = "null"))
+      expect_equal(got, want, tolerance = 1e-12, label = label)
+    }
+  }
+})
+
+test_that("lazy sorts do not depend on the database's null order", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("stringr")
+  df <- rows_fixture()
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  con <- sv_lazy_con(e)
+  DBI::dbWriteTable(con, "rw", df)
+  DBI::dbExecute(con, "SET default_null_order = 'NULLS_FIRST'")
+  tbl <- dplyr::tbl(con, "rw")
+  for (cn in c("name", "x", "d")) for (dir in c("asc", "desc")) {
+    req <- list(sort = list(col = cn, dir = dir), offset = 0L, limit = 300L)
+    expect_equal(sv_lazy_rows_window(tbl, req), sv_rows_window(df, req), tolerance = 1e-12,
+                 label = paste(cn, dir))
+  }
+})
+
+test_that("lazy row windows clamp and memoise like the in-memory path", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("stringr")
+  df <- rows_fixture()
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  con <- sv_lazy_con(e)
+  DBI::dbWriteTable(con, "rw", df)
+  tbl <- dplyr::tbl(con, "rw")
+
+  for (req in list(list(offset = -5, limit = 0), list(offset = 3, limit = 99999),
+                   list(), list(offset = "7", limit = "4"),
+                   list(sort = list(col = "nope", dir = "asc"),
+                        filter = list(col = "nope", op = "equals", val = "1")))) {
+    expect_equal(sv_lazy_rows_window(tbl, req), sv_rows_window(df, req), tolerance = 1e-12)
+  }
+
+  cache <- new.env()
+  req <- list(filter = list(col = "x", op = "gt", val = "0.5"), offset = 0L, limit = 10L)
+  w1 <- sv_lazy_rows_window(tbl, req, cache)
+  expect_equal(cache$total, w1$total)
+  cache$total <- 12345L # a memoised total is trusted for the same spec
+  w2 <- sv_lazy_rows_window(tbl, utils::modifyList(req, list(offset = 10L)), cache)
+  expect_equal(w2$total, 12345L)
+  w3 <- sv_lazy_rows_window(tbl, list(offset = 0L, limit = 10L), cache)
+  expect_equal(w3$total, nrow(df))
+})
+
+test_that("lazy row windows handle zero-row tables", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("stringr")
+  df <- rows_fixture()[0, ]
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  con <- sv_lazy_con(e)
+  DBI::dbWriteTable(con, "rw0", df)
+  tbl <- dplyr::tbl(con, "rw0")
+  for (req in list(list(offset = 0L, limit = 20L),
+                   list(sort = list(col = "x", dir = "desc"),
+                        filter = list(col = "name", op = "contains", val = "a"),
+                        offset = 0L, limit = 20L))) {
+    got <- sv_lazy_rows_window(tbl, req)
+    expect_identical(got$total, 0L)
+    expect_identical(got$row_ids, integer(0))
+    expect_equal(got, sv_rows_window(df, req), tolerance = 1e-12)
+  }
+})
+
+test_that("lazy filter expressions are language objects that parse", {
+  ex <- sv_lazy_filter_expr("a b", "contains", "x\"y", numeric = FALSE)
+  expect_true(is.language(ex))
+  expect_true(!is.null(parse(text = paste(deparse(ex), collapse = " "))))
+  expect_error(sv_lazy_filter_expr("a", "bogus", "1", FALSE), "Unknown filter operator")
+})
