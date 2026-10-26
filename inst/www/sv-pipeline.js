@@ -217,11 +217,25 @@
     return [];
   }
 
-  function describe(step) {
+  /**
+   * One line for a step. `ctx` is optional: a Pipeline, whose tables decide a date rule's wording
+   * (days or the column's own unit) and whether the rule still holds ("Rule needs fixing").
+   */
+  function describe(step, ctx) {
     switch (step.kind) {
-      case 'join':
-        return (step.type || 'left_join').replace('_', ' ') + ' ' + step.right + ' on ' +
+      case 'join': {
+        var text = (step.type || 'left_join').replace('_', ' ') + ' ' + step.right + ' on ' +
           (step.by || []).map(function (p) { return p.left === p.right ? p.left : p.left + ' = ' + p.right; }).join(', ');
+        if (step.rule) {
+          if (ctx && typeof ctx.joinRuleProblem === 'function' && ctx.joinRuleProblem(step)) {
+            return text + ' · Rule needs fixing';
+          }
+          var tx = ctx && ctx.tables && ctx.tables[step.table];
+          var kx = tx && tx.kinds ? tx.kinds[step.rule.xCol || step.rule.xFrom] : null;
+          return text + ' · ' + ruleLabel(step.rule, kx);
+        }
+        return text;
+      }
       case 'filter': return 'filter ' + (step.conds || []).join(step.combine === 'or' ? ' | ' : ', ');
       case 'arrange': return 'arrange ' + (step.cols || []).map(function (c) {
         return c.desc ? 'desc(' + c.col + ')' : c.col;
@@ -250,13 +264,15 @@
     this.onChange = opts.onChange || null;
     this._seq = 0;
     this.tables = {};
+    this.checks = {};   // join-check results by joinSig(): not state (no undo, never saved)
   }
 
   var LAZY_KINDS = { arrow: 1, duckdb: 1 };
 
   /**
    * Tell the pipeline which tables are lazy: `meta = { <name>: { lazy: 'arrow'|'duckdb'|null,
-   * codeRef: string } }`. It decides how joins are written and whether the code ends in collect().
+   * codeRef: string, kinds: { <column>: 'Date'|'date-time'|'numeric'|... } } }`. It decides how joins
+   * are written and whether the code ends in collect(); `kinds` lets a date rule be checked.
    * It is not pipeline state (undo, saved workspaces): the cards carry it.
    */
   Pipeline.prototype.setTables = function (meta) {
@@ -265,7 +281,8 @@
       var m = meta[name] || {};
       next[name] = {
         lazy: LAZY_KINDS[m.lazy] ? m.lazy : null,
-        codeRef: typeof m.codeRef === 'string' && m.codeRef !== '' ? m.codeRef : null
+        codeRef: typeof m.codeRef === 'string' && m.codeRef !== '' ? m.codeRef : null,
+        kinds: tableKinds(m.kinds)
       };
     });
     if (JSON.stringify(next) === JSON.stringify(this.tables)) return false;
@@ -1015,6 +1032,193 @@
     return { before: s.slice(0, m.index).trim(), after: after, hasCode: true };
   }
 
+  // ---- date rules on join steps -----------------------------------------------
+  // A join step may carry `rule` (a date condition between the two tables) and `strict`
+  // (stop on a problem the join check finds). Both are optional step fields: they travel in
+  // the workspace state (schema v0.3.0) and an old state without them loads unchanged.
+
+  var RULE_SHAPES = ['between', 'window', 'before', 'after', 'overlaps'];
+  var RULE_SLOTS = {
+    between: [['xCol', 'x'], ['yFrom', 'y'], ['yTo', 'y']],
+    window: [['xCol', 'x'], ['yCol', 'y']],
+    before: [['xCol', 'x'], ['yCol', 'y']],
+    after: [['xCol', 'x'], ['yCol', 'y']],
+    overlaps: [['xFrom', 'x'], ['xTo', 'x'], ['yFrom', 'y'], ['yTo', 'y']]
+  };
+  var RULE_KINDS = { 'Date': 1, 'date-time': 1, 'numeric': 1 };
+  var RULE_MAX_DAYS = 3650;
+
+  function ruleSlots(shape) {
+    var slots = Object.prototype.hasOwnProperty.call(RULE_SLOTS, shape) ? RULE_SLOTS[shape] : [];
+    return slots.map(function (p) { return { slot: p[0], side: p[1] }; });
+  }
+
+  /** A column-to-kind map with every kind in keyKind() names; non-text entries are dropped. */
+  function tableKinds(kinds) {
+    var out = {};
+    if (kinds && typeof kinds === 'object') {
+      Object.keys(kinds).forEach(function (c) {
+        if (typeof kinds[c] === 'string' && kinds[c] !== '') out[c] = keyKind(kinds[c]);
+      });
+    }
+    return out;
+  }
+
+  /** A whole number from a number or a numeric string; null for anything else (range not checked). */
+  function wholeNumber(v) {
+    if (typeof v === 'number') return isFinite(v) && Math.floor(v) === v ? v : null;
+    if (typeof v === 'string' && /^\s*[-+]?\d+\s*$/.test(v)) return parseInt(v, 10);
+    return null;
+  }
+
+  /**
+   * The first problem with a date rule, or null. `kindsX` / `kindsY` map column to kind for the
+   * left (`table`) and right (`right`) side; `type` is the join type.
+   */
+  function ruleProblem(rule, kindsX, kindsY, type) {
+    if (!rule || RULE_SHAPES.indexOf(rule.shape) < 0) return 'Unknown date rule.';
+    var slots = ruleSlots(rule.shape);
+    var i;
+    for (i = 0; i < slots.length; i++) {
+      var v = rule[slots[i].slot];
+      if (typeof v !== 'string' || v === '') return 'Pick a column for every slot.';
+    }
+    var cols = slots.map(function (sl) {
+      var map = (sl.side === 'x' ? kindsX : kindsY) || {};
+      var name = rule[sl.slot];
+      return { col: name, kind: Object.prototype.hasOwnProperty.call(map, name) ? keyKind(map[name]) : null };
+    });
+    for (i = 0; i < cols.length; i++) {
+      if (!cols[i].kind || !RULE_KINDS[cols[i].kind]) return cols[i].col + ' is not a date, date-time or number.';
+    }
+    for (i = 1; i < cols.length; i++) {
+      if (cols[i].kind !== cols[0].kind) {
+        return cols[0].col + ' is ' + cols[0].kind + ' but ' + cols[i].col + ' is ' + cols[i].kind +
+          ': both sides of a date rule need the same kind.';
+      }
+    }
+    if (rule.shape === 'window') {
+      var from = wholeNumber(rule.from), to = wholeNumber(rule.to);
+      if (from === null || to === null || Math.abs(from) > RULE_MAX_DAYS || Math.abs(to) > RULE_MAX_DAYS) {
+        return 'Window bounds must be whole numbers from -3650 to 3650.';
+      }
+      if (from > to) return 'The window start must not be after its end.';
+    }
+    if ((rule.shape === 'before' || rule.shape === 'after') && (type === 'right_join' || type === 'full_join')) {
+      return 'A nearest-match rule works with left, inner, semi and anti joins only.';
+    }
+    return null;
+  }
+
+  function signedOffset(n) {
+    n = Number(n);
+    return n > 0 ? '+' + n : String(n);
+  }
+
+  /** The rule as words, without a leading separator. `kindX` decides days or the column's own unit. */
+  function ruleLabel(rule, kindX) {
+    if (!rule) return '';
+    switch (rule.shape) {
+      case 'window':
+        return rule.yCol + ' within ' + signedOffset(rule.from) + '..' + signedOffset(rule.to) +
+          (kindX === 'numeric' ? '' : ' days') + ' of ' + rule.xCol;
+      case 'before':
+        return 'last ' + rule.yCol + (rule.inclusive === false ? ' before ' : ' on or before ') + rule.xCol;
+      case 'after':
+        return 'first ' + rule.yCol + (rule.inclusive === false ? ' after ' : ' on or after ') + rule.xCol;
+      case 'between':
+        return rule.xCol + ' between ' + rule.yFrom + ' and ' + rule.yTo;
+      case 'overlaps':
+        return rule.xFrom + '..' + rule.xTo + ' overlaps ' + rule.yFrom + '..' + rule.yTo;
+    }
+    return '';
+  }
+
+  /** A rule as it is stored: its shape and slots, window bounds as numbers, inclusive as a boolean. */
+  function normalizeRule(rule) {
+    var out = { shape: rule.shape };
+    ruleSlots(rule.shape).forEach(function (sl) {
+      out[sl.slot] = typeof rule[sl.slot] === 'string' ? rule[sl.slot] : '';
+    });
+    if (rule.shape === 'window') {
+      ['from', 'to'].forEach(function (k) {
+        var n = wholeNumber(rule[k]);
+        // anything that is not a whole number is kept as typed, and ruleProblem says why
+        if (n !== null) out[k] = n;
+        else if (rule[k] !== undefined && rule[k] !== null) out[k] = rule[k];
+      });
+    }
+    if (rule.shape === 'before' || rule.shape === 'after') out.inclusive = rule.inclusive !== false;
+    return out;
+  }
+
+  /** Set or clear (null) the date rule of a join step. One undo restores the rule and any type change. */
+  Pipeline.prototype.setJoinRule = function (id, rule) {
+    var self = this;
+    var step = this.find(id);
+    if (!step || step.kind !== 'join') return false;
+    if (rule && RULE_SHAPES.indexOf(rule.shape) < 0) return false;
+    return this.change('rule', function () {
+      var s = self.find(id);
+      if (!rule) { delete s.rule; return; }
+      s.rule = normalizeRule(rule);
+      // a nearest match keeps the left rows only: right and full joins become a left join
+      if ((s.rule.shape === 'before' || s.rule.shape === 'after') &&
+          (s.type === 'right_join' || s.type === 'full_join')) s.type = 'left_join';
+    });
+  };
+
+  /** Turn the Strict flag of a join step on or off. */
+  Pipeline.prototype.setJoinStrict = function (id, strict) {
+    var self = this;
+    var step = this.find(id);
+    if (!step || step.kind !== 'join') return false;
+    return this.change('strict', function () {
+      var s = self.find(id);
+      if (strict) s.strict = true; else delete s.strict;
+    });
+  };
+
+  /** The first problem with a join step's rule, from the tables' column kinds; null when fine or absent. */
+  Pipeline.prototype.joinRuleProblem = function (step) {
+    if (!step || !step.rule) return null;
+    var tx = this.tables[step.table], ty = this.tables[step.right];
+    return ruleProblem(step.rule, tx ? tx.kinds : {}, ty ? ty.kinds : {}, step.type || 'left_join');
+  };
+
+  /** One line for a step, with this pipeline's tables behind a rule's wording. */
+  Pipeline.prototype.describe = function (step) { return describe(step, this); };
+
+  /** What identifies a join for the join check: the tables, the key pairs and the rule. */
+  Pipeline.prototype.joinSig = function (step) {
+    return JSON.stringify([step.table, step.right,
+      (step.by || []).map(function (p) { return [p.left, p.right]; }), step.rule || null]);
+  };
+
+  /**
+   * Remember what the join check found for a join signature (null forgets it). Not pipeline state:
+   * no undo, never saved. Emits 'checks' only when the stored value changed.
+   */
+  Pipeline.prototype.setJoinCheck = function (sig, strictArgs) {
+    var had = Object.prototype.hasOwnProperty.call(this.checks, sig);
+    if (strictArgs === null || strictArgs === undefined) {
+      if (!had) return false;
+      delete this.checks[sig];
+    } else {
+      if (had && JSON.stringify(this.checks[sig]) === JSON.stringify(strictArgs)) return false;
+      this.checks[sig] = clone(strictArgs);
+    }
+    this.emit('checks');
+    return true;
+  };
+
+  Pipeline.prototype.clearJoinChecks = function () {
+    if (!Object.keys(this.checks).length) return false;
+    this.checks = {};
+    this.emit('checks');
+    return true;
+  };
+
   var api = {
     Pipeline: Pipeline,
     splitReply: splitReply,
@@ -1030,6 +1234,10 @@
     condition: condition,
     verbs: verbs,
     describe: describe,
+    RULE_SHAPES: RULE_SHAPES,
+    ruleSlots: ruleSlots,
+    ruleProblem: ruleProblem,
+    ruleLabel: ruleLabel,
     isSyntactic: isSyntactic,
     NUMERIC_TYPES: NUMERIC_TYPES,
     JOIN_TYPES: JOIN_TYPES,
