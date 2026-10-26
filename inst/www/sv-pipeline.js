@@ -104,6 +104,64 @@
     }).join(', ') + ')';
   }
 
+  /**
+   * dplyr::join_by(...) for the key pairs plus one rule expression (null: keys only).
+   * Equal-named pairs are written bare, the others as `l == r`; every name goes through ident().
+   */
+  function joinByCall(pairs, ruleExpr) {
+    var parts = (pairs || []).map(function (p) {
+      return p.left === p.right ? ident(p.left) : ident(p.left) + ' == ' + ident(p.right);
+    });
+    if (ruleExpr) parts.push(ruleExpr);
+    return 'dplyr::join_by(' + parts.join(', ') + ')';
+  }
+
+  /** `col + n` / `col - n` (a date-time moves by days), or the column alone for 0. */
+  function offsetExpr(col, n, kind) {
+    var c = ident(col);
+    n = Number(n);
+    if (n === 0) return c;
+    var amount = Math.abs(n) + '';
+    if (kind === 'date-time') amount = 'as.difftime(' + amount + ', units = "days")';
+    return c + (n < 0 ? ' - ' : ' + ') + amount;
+  }
+
+  /**
+   * How a (valid) date rule is written for an in-memory join: `pre` verbs before the join,
+   * the `expr` inside join_by(), and `post` verbs after it. The helper columns .sv_lo / .sv_hi
+   * exist only for a window and are dropped again by `post`.
+   */
+  function ruleParts(rule, kindOf) {
+    var r = rule;
+    var strict = r.inclusive === false;
+    switch (r.shape) {
+      case 'between':
+        return { pre: [], post: [],
+          expr: 'between(' + ident(r.xCol) + ', ' + ident(r.yFrom) + ', ' + ident(r.yTo) + ')' };
+      case 'window': {
+        var k = kindOf ? kindOf(r.xCol) : null;
+        // The window is a column of x, so between() needs its arguments qualified: y comes first.
+        return {
+          pre: ['dplyr::mutate(.sv_lo = ' + offsetExpr(r.xCol, r.from, k) + ', .sv_hi = ' +
+            offsetExpr(r.xCol, r.to, k) + ')'],
+          expr: 'between(y$' + ident(r.yCol) + ', x$.sv_lo, x$.sv_hi)',
+          post: ['dplyr::select(-.sv_lo, -.sv_hi)']
+        };
+      }
+      case 'before':
+        return { pre: [], post: [],
+          expr: 'closest(' + ident(r.xCol) + (strict ? ' > ' : ' >= ') + ident(r.yCol) + ')' };
+      case 'after':
+        return { pre: [], post: [],
+          expr: 'closest(' + ident(r.xCol) + (strict ? ' < ' : ' <= ') + ident(r.yCol) + ')' };
+      case 'overlaps':
+        return { pre: [], post: [],
+          expr: 'overlaps(' + ident(r.xFrom) + ', ' + ident(r.xTo) + ', ' + ident(r.yFrom) + ', ' +
+            ident(r.yTo) + ')' };
+    }
+    return null;
+  }
+
   var AGG_FNS = { n: 1, n_distinct: 1, mean: 1, median: 1, sd: 1, min: 1, max: 1, sum: 1, first: 1, last: 1 };
 
   function aggExpr(a) {
@@ -131,6 +189,16 @@
       case 'join': {
         var type = JOIN_TYPES.indexOf(step.type) >= 0 ? step.type : 'left_join';
         if (!step.by || !step.by.length) return [];
+        // A valid date rule is written as join_by() with na_matches = "never". ctx.rule is set only
+        // where it applies: in memory today. A lazy chain (arrow / duckdb) keeps the key join here
+        // until its own forms are added.
+        if (ctx.rule && step.rule) {
+          var parts = ruleParts(step.rule, ctx.kindOf);
+          if (parts) {
+            return parts.pre.concat(['dplyr::' + type + '(' + refFor(step.right) + ', by = ' +
+              joinByCall(step.by, parts.expr) + ', na_matches = "never")'], parts.post);
+          }
+        }
         return ['dplyr::' + type + '(' + refFor(step.right) + ', by = ' + joinBy(step.by) +
           (ctx.copy ? ', copy = TRUE' : '') + ')'];
       }
@@ -541,6 +609,7 @@
           var r = rightInfo(s.right);
           var rightRef = r.ref;
           var ctx = {};
+          var hasRule = !!s.rule && !self.joinRuleProblem(s);
           if (kind === 'duckdb' && !r.kind) ctx.copy = true;
           else if (kind === 'duckdb' && r.kind === 'arrow') {
             // compute(): to_duckdb() registers a view that R's garbage collector may drop before
@@ -561,6 +630,15 @@
             wrapHead('arrow::arrow_table(', ')');
             kind = 'arrow';
             con = null;
+          }
+          // The branch point for rule forms: `kind` is the chain's backend now that any
+          // cross-backend move above has happened. In memory (null) a valid rule writes join_by().
+          if (hasRule && !kind) {
+            ctx.rule = true;
+            ctx.kindOf = function (col) {
+              var tx = self.tables[s.table];
+              return tx && tx.kinds ? tx.kinds[col] : null;
+            };
           }
           lines = lines.concat(verbs(s, function () { return rightRef; }, ctx));
           return;

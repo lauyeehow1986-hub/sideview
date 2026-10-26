@@ -23,7 +23,7 @@ Imports:
     shiny,
     htmltools,
     htmlwidgets,
-    dplyr,
+    dplyr (>= 1.1.0),
     rlang,
     httr2,
     jsonlite,

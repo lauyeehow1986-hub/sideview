@@ -29,3 +29,8 @@ run_pipeline_js <- function(body) {
   if (!is.null(status) && status != 0) stop(paste(res, collapse = "\n"))
   jsonlite::fromJSON(paste(res, collapse = "\n"), simplifyVector = FALSE)
 }
+
+# The code parses as R (used on the code the pipeline composes).
+expect_parses <- function(code, label = code) {
+  expect_no_error(parse(text = code), message = label)
+}

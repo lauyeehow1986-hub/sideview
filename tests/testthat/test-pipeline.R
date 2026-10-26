@@ -2,10 +2,6 @@
 # The composer runs under Node; every script it produces must parse() in R and,
 # for the core verbs, give the same result as hand-written dplyr.
 
-expect_parses <- function(code, label = code) {
-  expect_no_error(parse(text = code), message = label)
-}
-
 test_that("every step kind composes into code that parses", {
   out <- run_pipeline_js("
     const p = new P.Pipeline();
