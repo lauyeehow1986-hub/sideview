@@ -403,13 +403,16 @@ sv_lazy_tz_text_expr <- function(sym, tz, range = NULL) {
 #'
 #' R reads a string compared with a POSIXct with `as.POSIXct()` (the session
 #' zone) and compares instants; a string it cannot read raises an error, which
-#' the in-memory window turns into "no rows". The column is compared as exact
-#' microseconds since the epoch.
+#' the in-memory window turns into "no rows". The column is compared as
+#' microseconds since the epoch, against a DOUBLE: DuckDB 2.0 rewrites
+#' `epoch_us(col) > <BIGINT>` into a timestamp range that it pushes into an
+#' arrow scan, which then matches no rows. A DOUBLE is not rewritten, and it is
+#' exact for every instant within about 285 years of 1970 (|us| < 2^53).
 #' @noRd
 sv_lazy_tz_cmp_expr <- function(sym, op, value) {
   t <- tryCatch(as.POSIXct(value), error = function(e) NULL)
   if (is.null(t) || length(t) != 1L || is.na(t)) return(rlang::expr(FALSE))
-  lit <- sv_lazy_bigint(round(as.numeric(t) * 1e6))
+  lit <- dplyr::sql(sprintf("CAST(%.0f AS DOUBLE)", round(as.numeric(t) * 1e6)))
   us <- rlang::expr(epoch_us(!!sym))
   switch(op,
     equals = rlang::expr(!!us == !!lit),

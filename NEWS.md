@@ -34,6 +34,9 @@ complete when it was not. They now use the whole table.
 * Fixed: the gadget toolbar now has the **Auto Map** button (R answered the
   request, but there was no button). The saved widget drops it, since it needs
   R. When nothing is found, a toast says "No suggested joins found".
+* Fixed: with duckdb 2.0, a `>`, `>=`, `<`, `<=` or `=` filter on an Arrow
+  date-time column with a time zone matched no rows. duckdb 2.0 turns that
+  comparison into a filter inside the Arrow scan, which loses every row.
 * Fixed: a BIGINT column (what duckdb gives `count()` and `range()`) made the
   lazy join check, filters and "contains" fail.
 * Fixed: an Arrow factor sorts by its levels, not its text, and keeps its class

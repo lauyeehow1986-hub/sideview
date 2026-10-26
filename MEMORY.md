@@ -115,6 +115,12 @@ Each sub-project gets its own spec, plan and build, in this order:
 
 ## Log
 
+### 2026-10-26 - CI fix: Arrow time-zone filters under duckdb 2.0
+- **Bug:** R-CMD-check on 27290e9 (run 40244887020) failed on windows-latest and ubuntu release/oldrel-1/devel (macOS passed): 12 failures at test-lazy.R:1101, gt/gte filters on an Arrow POSIXct column with a time zone gave 0 rows. CI had arrow 26.0.0, duckdb 2.0.0, dbplyr 2.6.0; locally arrow 23 / duckdb 1.4.3 / dbplyr 2.5.1 passed.
+- **Root cause:** `sv_lazy_tz_cmp_expr()` wrote `epoch_us(t) > CAST(<us> AS BIGINT)`. duckdb 2.0's optimizer rewrites `epoch_us(col) <op> <integer>` into `t >= '<ts>'::TIMESTAMPTZ AND t < 'infinity'` and pushes it into ARROW_SCAN (seen in EXPLAIN), and the arrow scan then returns no rows; `<` and `=` were wrong too. The same expression in SELECT gave TRUE, and a duckdb-native table was unaffected. A DOUBLE literal is not rewritten. `t > make_timestamptz(<us>)` also works on 2.0, but duckdb 1.4.3 needs the `icu` extension for it (an autoload, so a network download): not used.
+- **Fix:** the literal is `CAST(<us> AS DOUBLE)`; exact for |us| < 2^53 (about 1685 to 2255). Possibly a duckdb bug worth reporting upstream.
+- **Verified:** with the CI versions in a scratch library, `devtools::test(filter = 'lazy')` went from 10 failures (all line 1101) to 0, browser tests included (`NOT_CRAN=true`); local versions 0 failures; full `NOT_CRAN=true devtools::test()`: 0 failures, 0 skips.
+
 ### 2026-10-26 - Big tables (0.4.0 part 1): speed check, docs, site
 - **Speed:** new test "join check on 1M-row duckdb tables is under 5 s" (`skip_on_cran()`, two synthetic 1,000,000-row
   duckdb tables, 80% key overlap). Measured on the dev machine (R 4.5.2, duckdb 1.4.3): **0.84 s** joining on a
