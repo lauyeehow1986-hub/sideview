@@ -300,6 +300,8 @@ compose_rule_cases <- function(cases, kinds = rule_kinds) {
       });
       p.setTables(m);
       if (c.rule) p.setJoinRule(p.steps[0].id, c.rule);
+      // c.then: [[right, xCol, yCol]] key joins of c.left added after the rule join
+      (c.then || []).forEach(b => p.addJoinKey(c.left, b[0], b[1], b[2], 'left_join'));
       return p.compose();
     });
     require('fs').writeFileSync(%s, JSON.stringify(codes));
@@ -843,4 +845,54 @@ test_that("same-named rule columns run on duckdb", {
       expect_equal(norm_rule_rows(got), norm_rule_rows(refs[[i]]), tolerance = 1e-12, label = label)
     }
   }
+})
+
+test_that("an arrow rule chain moves onto the connection of a later duckdb join", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("dbplyr")
+  tabs <- rule_fixture()
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbWriteTable(con, "dose", tabs$dose)
+  refs <- rule_refs(tabs)
+  specs <- rule_specs()
+  cases <- list()
+  for (combo in list(c("arrow", "df"), c("arrow", "arrow"), c("df", "arrow"))) {
+    for (nm in c("window Date", "window date-time zero", "before Date", "after numeric")) {
+      sp <- specs[[nm]]
+      lazy <- lazy_rule_map(sp[[1]], sp[[2]], combo)
+      lazy$dose <- "duckdb"
+      for (pipe in c("%>%", "|>")) {
+        cases[[length(cases) + 1]] <- list(label = paste(nm, paste(combo, collapse = "x"), pipe), name = nm,
+                                           left = sp[[1]], right = sp[[2]], rule = sp[[3]], lazy = lazy,
+                                           then = list(list("dose", "id", "id")), pipe = pipe)
+      }
+    }
+  }
+  code <- compose_rule_cases(cases)
+  base_tables <- DBI::dbListTables(con)
+  for (i in seq_along(cases)) {
+    cs <- cases[[i]]
+    expect_parses(code[[i]], cs$label)
+    # the rule chain starts on the user's connection, so the duckdb join shares its src
+    expect_true(grepl('con = dbplyr::remote_con(dplyr::tbl(con, "dose"))', code[[i]], fixed = TRUE),
+                label = cs$label)
+    env <- lazy_rule_env(tabs, cs$lazy, con)
+    got <- tryCatch(run_lazy_rule(code[[i]], env), error = function(e) {
+      fail(paste0(cs$label, ": ", conditionMessage(e), "
+", code[[i]])); NULL
+    })
+    if (is.null(got)) next
+    want <- dplyr::left_join(refs[[cs$name]](dplyr::left_join), tabs$dose, by = "id")
+    expect_equal(norm_rule_rows(got), norm_rule_rows(want), tolerance = 1e-12, label = cs$label)
+    expect_false(any(grepl("^\\.sv_", names(got))), label = cs$label)
+  }
+  # What the code leaves on the user's connection: no arrow registration once the result is gone, and
+  # no new permanent table (compute() and copy = TRUE make TEMPORARY dbplyr_* tables, dropped on close).
+  rm(env, got)
+  invisible(gc())
+  expect_length(duckdb::duckdb_list_arrow(con), 0)
+  perm <- DBI::dbGetQuery(con, "select table_name from duckdb_tables() where not temporary")$table_name
+  expect_setequal(perm, base_tables)
 })

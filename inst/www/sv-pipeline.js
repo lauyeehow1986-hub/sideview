@@ -627,6 +627,18 @@
 
     function prepName(t) { return ident(t + '_prep'); }
 
+    // The first duckdb card the steps use. An arrow rule chain moves onto its connection, so a later
+    // join to a duckdb card shares the src (a chain on arrow's own duckdb connection does not).
+    var duckRef = null;
+    steps.some(function (s) {
+      return [s.table, s.right].some(function (n) {
+        if (n && self.lazyKind(n) === 'duckdb') { duckRef = self.refFor(n); return true; }
+        return false;
+      });
+    });
+    // con = for arrow::to_duckdb() in a rule move: the user's connection, else arrow's default one.
+    var moveCon = duckRef ? ', con = dbplyr::remote_con(' + duckRef + ')' : '';
+
     // What a joined table is, as a join input: its code and its lazy backend.
     function rightInfo(r) {
       if (asPrep[r] && finished[r]) return { ref: prepName(r), kind: finished[r].kind };
@@ -651,23 +663,24 @@
           var ctx = {};
           var hasRule = !!s.rule && !self.joinRuleProblem(s);
           if (hasRule && kind === 'arrow' && r.kind !== 'duckdb') {
-            // arrow has no inequality join: a rule join runs in duckdb. Without con = both sides
-            // land on arrow's default duckdb connection, so they share one.
-            wrapHead('dplyr::compute(arrow::to_duckdb(', '))');
-            if (r.kind === 'arrow') rightRef = 'dplyr::compute(arrow::to_duckdb(' + r.ref + '))';
+            // arrow has no inequality join: a rule join runs in duckdb. Both sides move onto one
+            // connection: a duckdb card's (moveCon) or, with none, arrow's default one.
+            wrapHead('dplyr::compute(arrow::to_duckdb(', moveCon + '))');
+            if (r.kind === 'arrow') rightRef = 'dplyr::compute(arrow::to_duckdb(' + r.ref + moveCon + '))';
             else ctx.copy = true;
             kind = 'duckdb';
-            con = null;
+            con = duckRef;
           } else if (hasRule && !kind && r.kind === 'arrow') {
-            wrapHead('dplyr::compute(arrow::to_duckdb(arrow::arrow_table(', ')))');
-            rightRef = 'dplyr::compute(arrow::to_duckdb(' + r.ref + '))';
+            wrapHead('dplyr::compute(arrow::to_duckdb(arrow::arrow_table(', ')' + moveCon + '))');
+            rightRef = 'dplyr::compute(arrow::to_duckdb(' + r.ref + moveCon + '))';
             kind = 'duckdb';
-            con = null;
+            con = duckRef;
           } else if (kind === 'duckdb' && !r.kind) ctx.copy = true;
           else if (kind === 'duckdb' && r.kind === 'arrow') {
             // compute(): to_duckdb() registers a view that R's garbage collector may drop before
             // the query runs ("Table arrow_003 does not exist"); compute() makes a real table.
-            // con is null after a rule join moved arrow into arrow's default duckdb connection.
+            // con is null after a rule join moved arrow into arrow's default duckdb connection
+            // (no duckdb card in the steps).
             rightRef = 'dplyr::compute(arrow::to_duckdb(' + r.ref +
               (con ? ', con = dbplyr::remote_con(' + con + ')' : '') + '))';
           } else if (kind === 'arrow' && r.kind === 'duckdb') {
