@@ -4,7 +4,15 @@
 \alias{sv_join_diagnostics}
 \title{Join Diagnostics}
 \usage{
-sv_join_diagnostics(x, y, by, sample_n = 5L, x_name = "x", y_name = "y")
+sv_join_diagnostics(
+  x,
+  y,
+  by,
+  sample_n = 5L,
+  x_name = "x",
+  y_name = "y",
+  rule = NULL
+)
 }
 \arguments{
 \item{x, y}{Tables to join (\code{x} is the left table): data frames, or duckdb
@@ -18,6 +26,15 @@ both sides.}
 \item{sample_n}{Number of unmatched keys to list for each side.}
 
 \item{x_name, y_name}{Table names used in messages.}
+
+\item{rule}{Optional date rule for the join, a list with the fields of a join
+step's rule: \code{shape} (\code{"between"}, \code{"window"}, \code{"before"}, \code{"after"} or
+\code{"overlaps"}) and its columns (\code{xCol}, \code{yCol}, \code{yFrom}, \code{yTo}, \code{xFrom}, \code{xTo}), a
+window's whole-number \code{from} and \code{to} (days, -3650 to 3650) and, for
+\code{"before"}/\code{"after"}, \code{inclusive}. The check then counts the rows the rule
+keeps, with \code{na_matches = "never"}: under a rule a missing key matches
+nothing. A rule that does not hold (see the message) is an error. Only for
+data frames.}
 }
 \value{
 An object of class \code{sv_join_diagnostics}: a list with \code{by}
@@ -27,8 +44,18 @@ An object of class \code{sv_join_diagnostics}: a list with \code{by}
 \code{dup_keys_x}, \code{dup_keys_y} (keys that occur more than once),
 \code{relationship}, \code{rows} (named list of row counts per join type),
 \code{unmatched_x}, \code{unmatched_y} (sample keys), \code{type_issues}, \code{hints} (list
-of \code{fix}, \code{label}, \code{extra_x}, \code{extra_y}), \code{warnings} and \code{status}
-(\code{"ok"}, \code{"warn"} or \code{"error"}).
+of \code{fix}, \code{label}, \code{extra_x}, \code{extra_y}), \code{strict_args}, \code{warnings} and
+\code{status} (\code{"ok"}, \code{"warn"} or \code{"error"}).
+
+\code{strict_args} is a named list with an entry per join type (\code{left_join},
+\code{inner_join}, \code{right_join}, \code{full_join}) holding the arguments a Strict
+join writes (\code{relationship}, and \code{unmatched = "error"} when every row of
+the checked side has a partner); an entry is absent when Strict would write
+nothing for that type (no matches; right and full joins under a nearest-match
+rule). With a \code{rule} the result also has \code{rule}, \code{rule_kind} (the kind of the
+rule's first \code{x} column), \code{rule_dropped_x} and \code{rule_dropped_y} (rows that have a
+key partner but no pair that satisfies the rule), and \code{rows$right_join} /
+\code{rows$full_join} are \code{NA} under a nearest-match rule.
 }
 \description{
 Checks a join before you run it: how many rows match in each direction, the

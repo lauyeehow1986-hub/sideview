@@ -1036,6 +1036,7 @@ sv_lazy_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_na
     }
   }
 
+  out$strict_args <- sv_join_strict_args(core, n_x, n_y)
   out$warnings <- sv_join_warnings(out, x_name, y_name)
   out$status <- if (length(out$type_issues)) "error" else if (length(out$warnings)) "warn" else "ok"
   structure(out, class = "sv_join_diagnostics")
