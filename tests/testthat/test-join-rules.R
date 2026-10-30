@@ -291,7 +291,14 @@ compose_rule_cases <- function(cases, kinds = rule_kinds) {
     const codes = input.cases.map(c => {
       const p = new P.Pipeline({pipe: c.pipe});
       c.by.forEach(b => p.addJoinKey(c.left, c.right, b[0], b[1], c.type));
-      p.setTables(meta);
+      // c.lazy: {table: 'duckdb'|'arrow'}; a duckdb card's code is dplyr::tbl(con, <name>)
+      const m = {};
+      Object.keys(meta).forEach(t => {
+        const k = c.lazy ? c.lazy[t] : null;
+        m[t] = k ? Object.assign({lazy: k, codeRef: k === 'duckdb' ? 'dplyr::tbl(con, \"' + t + '\")' : t},
+          meta[t]) : meta[t];
+      });
+      p.setTables(m);
       if (c.rule) p.setJoinRule(p.steps[0].id, c.rule);
       return p.compose();
     });
@@ -432,13 +439,9 @@ rule_fixture <- function() {
   list(visits = visits, labs = labs, dose = dose, ae = ae)
 }
 
-test_that("rule joins run like join_by on data frames", {
-  tabs <- rule_fixture()
-  jf <- list(left_join = dplyr::left_join, inner_join = dplyr::inner_join,
-             semi_join = dplyr::semi_join, anti_join = dplyr::anti_join)
-
-  # Hand-written references: j is the dplyr join, the rest is written out literally per shape.
-  refs <- list(
+# Hand-written data-frame references: j is the dplyr join, the rest is written out literally per shape.
+rule_refs <- function(tabs) {
+  list(
     `between Date` = function(j) j(tabs$visits, tabs$dose,
       by = dplyr::join_by(id, between(vdate, start, end)), na_matches = "never"),
     `between date-time` = function(j) j(tabs$visits, tabs$dose,
@@ -460,6 +463,10 @@ test_that("rule joins run like join_by on data frames", {
                     .sv_hi = vtime - as.difftime(2, units = "days")) |>
       j(tabs$labs, by = dplyr::join_by(id, between(y$ltime, x$.sv_lo, x$.sv_hi)), na_matches = "never") |>
       dplyr::select(-.sv_lo, -.sv_hi),
+    `window date-time zero` = function(j) tabs$visits |>
+      dplyr::mutate(.sv_lo = vtime, .sv_hi = vtime + as.difftime(3, units = "days")) |>
+      j(tabs$labs, by = dplyr::join_by(id, between(y$ltime, x$.sv_lo, x$.sv_hi)), na_matches = "never") |>
+      dplyr::select(-.sv_lo, -.sv_hi),
     `window numeric` = function(j) tabs$visits |>
       dplyr::mutate(.sv_lo = vday - 7, .sv_hi = vday + 7) |>
       j(tabs$labs, by = dplyr::join_by(id, between(y$lday, x$.sv_lo, x$.sv_hi)), na_matches = "never") |>
@@ -477,8 +484,12 @@ test_that("rule joins run like join_by on data frames", {
     `after numeric` = function(j) j(tabs$visits, tabs$labs,
       by = dplyr::join_by(id, closest(vday <= lday)), na_matches = "never")
   )
+}
+
+# The rule of each reference: list(left, right, rule).
+rule_specs <- function() {
   rl <- function(...) list(...)
-  specs <- list(
+  list(
     `between Date` = list("visits", "dose", rl(shape = "between", xCol = "vdate", yFrom = "start", yTo = "end")),
     `between date-time` = list("visits", "dose", rl(shape = "between", xCol = "vtime", yFrom = "tstart", yTo = "tend")),
     `between numeric` = list("visits", "dose", rl(shape = "between", xCol = "vday", yFrom = "nlo", yTo = "nhi")),
@@ -487,6 +498,7 @@ test_that("rule joins run like join_by on data frames", {
     `window Date` = list("visits", "labs", rl(shape = "window", xCol = "vdate", yCol = "ldate", from = -7, to = 7)),
     `window Date zero` = list("visits", "labs", rl(shape = "window", xCol = "vdate", yCol = "ldate", from = 0, to = 3)),
     `window date-time` = list("visits", "labs", rl(shape = "window", xCol = "vtime", yCol = "ltime", from = -10, to = -2)),
+    `window date-time zero` = list("visits", "labs", rl(shape = "window", xCol = "vtime", yCol = "ltime", from = 0, to = 3)),
     `window numeric` = list("visits", "labs", rl(shape = "window", xCol = "vday", yCol = "lday", from = -7, to = 7)),
     `before Date` = list("visits", "labs", rl(shape = "before", xCol = "vdate", yCol = "ldate", inclusive = TRUE)),
     `before Date strict` = list("visits", "labs", rl(shape = "before", xCol = "vdate", yCol = "ldate", inclusive = FALSE)),
@@ -495,6 +507,15 @@ test_that("rule joins run like join_by on data frames", {
     `after Date strict` = list("visits", "labs", rl(shape = "after", xCol = "vdate", yCol = "ldate", inclusive = FALSE)),
     `after numeric` = list("visits", "labs", rl(shape = "after", xCol = "vday", yCol = "lday", inclusive = TRUE))
   )
+}
+
+test_that("rule joins run like join_by on data frames", {
+  tabs <- rule_fixture()
+  jf <- list(left_join = dplyr::left_join, inner_join = dplyr::inner_join,
+             semi_join = dplyr::semi_join, anti_join = dplyr::anti_join)
+
+  refs <- rule_refs(tabs)
+  specs <- rule_specs()
   # left, inner, semi and anti for every shape: the four types a nearest match allows
   cases <- list()
   for (nm in names(specs)) for (type in names(jf)) for (pipe in c("%>%", "|>")) {
@@ -586,4 +607,235 @@ test_that("an invalid rule falls back to the key join", {
   expect_true(grepl("join_by", code[[2]], fixed = TRUE))
   expect_parses(bad[[1]])
   expect_parses(bad[[2]])
+})
+
+# ---- rule joins on lazy (duckdb / arrow) chains -----------------------------------------------
+
+# The chain matrix: left x right backends ("df" is a data frame).
+lazy_rule_combos <- list(c("df", "duckdb"), c("duckdb", "df"), c("duckdb", "duckdb"), c("duckdb", "arrow"),
+                         c("arrow", "duckdb"), c("arrow", "df"), c("arrow", "arrow"), c("df", "arrow"))
+lazy_rule_map <- function(left, right, combo) {
+  m <- list()
+  if (combo[[1]] != "df") m[[left]] <- combo[[1]]
+  if (combo[[2]] != "df") m[[right]] <- combo[[2]]
+  if (length(m)) m else NULL
+}
+n_collects <- function(x) lengths(regmatches(x, gregexpr("collect()", x, fixed = TRUE)))
+
+test_that("lazy rule joins parse", {
+  kc <- list(
+    Date = list(x = "vdate", y = "ldate", lo = "start", hi = "end", axlo = "ae_start", axhi = "ae_end"),
+    `date-time` = list(x = "vtime", y = "ltime", lo = "tstart", hi = "tend", axlo = "ae_tstart", axhi = "ae_tend"),
+    numeric = list(x = "vday", y = "lday", lo = "nlo", hi = "nhi", axlo = "ae_nlo", axhi = "ae_nhi")
+  )
+  cases <- list()
+  for (combo in lazy_rule_combos) for (pipe in c("%>%", "|>")) for (kind in names(kc)) {
+    k <- kc[[kind]]
+    cb <- paste(combo, collapse = "x")
+    add <- function(label, left, right, ...) {
+      cases[[length(cases) + 1]] <<- list(label = paste(label, kind, cb, pipe), shape = label, kind = kind,
+                                          combo = cb, pipe = pipe, left = left, right = right,
+                                          lazy = lazy_rule_map(left, right, combo), ...)
+    }
+    add("between", "visits", "dose", rule = list(shape = "between", xCol = k$x, yFrom = k$lo, yTo = k$hi))
+    add("overlaps", "ae", "dose",
+        rule = list(shape = "overlaps", xFrom = k$axlo, xTo = k$axhi, yFrom = k$lo, yTo = k$hi))
+    for (o in list(c(-7, 7), c(0, 3), c(-10, -2))) {
+      add(paste0("window", o[1], "_", o[2]), "visits", "labs",
+          rule = list(shape = "window", xCol = k$x, yCol = k$y, from = o[1], to = o[2]))
+    }
+    for (shape in c("before", "after")) for (incl in c(TRUE, FALSE)) {
+      for (type in c("left_join", "inner_join", "semi_join", "anti_join")) {
+        add(paste(shape, incl, type), "visits", "labs", type = type,
+            rule = list(shape = shape, xCol = k$x, yCol = k$y, inclusive = incl))
+      }
+    }
+  }
+  code <- compose_rule_cases(cases)
+  for (i in seq_along(code)) {
+    cs <- cases[[i]]
+    cd <- code[[i]]
+    expect_parses(cd, cs$label)
+    expect_match(cd, 'na_matches = "never"', fixed = TRUE, label = cs$label)
+    expect_equal(n_collects(cd), 1L, label = cs$label)
+    expect_true(endsWith(cd, "dplyr::collect()"), label = cs$label)
+    expect_false(grepl("closest(", cd, fixed = TRUE), label = cs$label)
+    expect_false(grepl("by = c(", cd, fixed = TRUE), label = cs$label)
+    near <- grepl("^(before|after)", cs$shape)
+    if (near && grepl("(left|inner)_join$", cs$shape)) {
+      expect_match(cd, "dplyr::mutate(.sv_row = dplyr::row_number())", fixed = TRUE, label = cs$label)
+      expect_match(cd, "dplyr::select(-.sv_row, -.sv_yd)", fixed = TRUE, label = cs$label)
+    } else if (grepl("^window", cs$shape)) {
+      expect_match(cd, "dplyr::select(-.sv_lo, -.sv_hi)", fixed = TRUE, label = cs$label)
+    } else {
+      expect_false(grepl(".sv_", cd, fixed = TRUE), label = cs$label)
+    }
+    if (cs$kind == "date-time" && grepl("^window", cs$shape)) {
+      expect_false(grepl("difftime", cd, fixed = TRUE), label = cs$label)
+      expect_match(cd, "as.POSIXct(vtime) ", fixed = TRUE, label = cs$label)
+    }
+    # copy = TRUE only where a data frame meets the database
+    expect_identical(grepl("copy = TRUE", cd, fixed = TRUE), cs$combo %in% c("duckdbxdf", "arrowxdf"),
+                     label = cs$label)
+  }
+
+  at <- function(label) code[[match(label, vapply(cases, function(cs) cs$label, ""))]]
+  tv <- 'dplyr::tbl(con, "visits")'
+  tl <- 'dplyr::tbl(con, "labs")'
+  # the nearest match, emulated (closest() has no SQL translation)
+  expect_identical(at("before TRUE left_join Date duckdbxduckdb %>%"), paste0(
+    tv, " %>%\n",
+    "  dplyr::mutate(.sv_row = dplyr::row_number()) %>%\n",
+    "  dplyr::left_join(dplyr::mutate(", tl, ", .sv_yd = ldate), by = dplyr::join_by(id, vdate >= .sv_yd), ",
+    'na_matches = "never") %>%\n',
+    "  dplyr::group_by(.sv_row) %>%\n",
+    "  dplyr::filter(is.na(.sv_yd) | .sv_yd == max(.sv_yd, na.rm = TRUE)) %>%\n",
+    "  dplyr::ungroup() %>%\n",
+    "  dplyr::select(-.sv_row, -.sv_yd) %>%\n",
+    "  dplyr::collect()"))
+  expect_match(at("after FALSE inner_join Date duckdbxdf |>"),
+               'dplyr::inner_join(dplyr::mutate(labs, .sv_yd = ldate), by = dplyr::join_by(id, vdate < .sv_yd), na_matches = "never", copy = TRUE)',
+               fixed = TRUE)
+  expect_match(at("after FALSE inner_join Date duckdbxdf |>"),
+               "dplyr::filter(.sv_yd == min(.sv_yd, na.rm = TRUE))", fixed = TRUE)
+  expect_match(at("before FALSE semi_join numeric duckdbxduckdb %>%"),
+               paste0("dplyr::semi_join(", tl, ', by = dplyr::join_by(id, vday > lday), na_matches = "never")'),
+               fixed = TRUE)
+  expect_match(at("after TRUE anti_join Date arrowxdf %>%"),
+               'dplyr::anti_join(labs, by = dplyr::join_by(id, vdate <= ldate), na_matches = "never", copy = TRUE)',
+               fixed = TRUE)
+  # a date-time window on duckdb: TIMESTAMP via as.POSIXct(), days via lubridate::days()
+  expect_match(at("window-7_7 date-time duckdbxdf %>%"),
+               "dplyr::mutate(.sv_lo = as.POSIXct(vtime) - lubridate::days(7), .sv_hi = as.POSIXct(vtime) + lubridate::days(7))",
+               fixed = TRUE)
+  expect_match(at("window0_3 date-time arrowxarrow |>"),
+               "dplyr::mutate(.sv_lo = vtime, .sv_hi = as.POSIXct(vtime) + lubridate::days(3))", fixed = TRUE)
+  # a Date window on duckdb moves by an integer: 7 would be written 7.0, and DATE - DECIMAL fails
+  expect_match(at("window-7_7 Date duckdbxduckdb %>%"), "dplyr::mutate(.sv_lo = vdate - 7L, .sv_hi = vdate + 7L)",
+               fixed = TRUE)
+  expect_match(at("window-7_7 numeric duckdbxduckdb %>%"), "dplyr::mutate(.sv_lo = vday - 7, .sv_hi = vday + 7)",
+               fixed = TRUE)
+  expect_match(at("between Date duckdbxduckdb %>%"),
+               paste0("dplyr::left_join(dplyr::tbl(con, \"dose\"), by = dplyr::join_by(id, between(vdate, start, end)), ",
+                      'na_matches = "never")'), fixed = TRUE)
+  # the matrix: arrow moves into duckdb for a rule join
+  expect_match(at("between Date arrowxdf %>%"),
+               "dplyr::compute(arrow::to_duckdb(visits)) %>%\n  dplyr::left_join(dose, by = dplyr::join_by(", fixed = TRUE)
+  expect_match(at("between Date arrowxarrow %>%"),
+               "dplyr::compute(arrow::to_duckdb(visits)) %>%\n  dplyr::left_join(dplyr::compute(arrow::to_duckdb(dose)), by = ",
+               fixed = TRUE)
+  expect_match(at("between Date dfxarrow |>"),
+               "dplyr::compute(arrow::to_duckdb(arrow::arrow_table(visits))) |>\n  dplyr::left_join(dplyr::compute(arrow::to_duckdb(dose)), by = ",
+               fixed = TRUE)
+  expect_match(at("between Date dfxduckdb %>%"),
+               'dplyr::copy_to(dbplyr::remote_con(dplyr::tbl(con, "dose")), visits, name = "sideview_visits", overwrite = TRUE)',
+               fixed = TRUE)
+  expect_match(at("between Date duckdbxarrow %>%"),
+               "dplyr::compute(arrow::to_duckdb(dose, con = dbplyr::remote_con(dplyr::tbl(con, \"visits\"))))", fixed = TRUE)
+  expect_match(at("between Date arrowxduckdb %>%"),
+               "dplyr::compute(arrow::to_duckdb(visits, con = dbplyr::remote_con(dplyr::tbl(con, \"dose\"))))", fixed = TRUE)
+})
+
+# Bind the cases' tables: a duckdb table on `con`, an arrow table, or a data frame.
+lazy_rule_env <- function(tabs, lazy, con) {
+  env <- new.env(parent = globalenv())
+  env$`%>%` <- dplyr::`%>%`
+  env$con <- con
+  for (nm in names(tabs)) {
+    k <- lazy[[nm]]
+    if (identical(k, "arrow")) env[[nm]] <- arrow::arrow_table(tabs[[nm]])
+    else if (!identical(k, "duckdb")) env[[nm]] <- tabs[[nm]]
+  }
+  env
+}
+# Build the query, run the garbage collector (a to_duckdb() view nothing holds is dropped), collect.
+run_lazy_rule <- function(code, env) {
+  invisible(gc())
+  q <- eval(parse(text = sub("\\s*(%>%|\\|>)\\s*dplyr::collect\\(\\)\\s*$", "", code)), envir = env)
+  invisible(gc())
+  dplyr::collect(q)
+}
+# Rows and columns sorted; a date-time compared as numeric seconds.
+norm_rule_rows <- function(x) {
+  x <- as.data.frame(x)
+  x[] <- lapply(x, function(col) if (inherits(col, "POSIXct")) as.numeric(col) else col)
+  x <- x[, sort(names(x)), drop = FALSE]
+  x[do.call(order, unname(as.list(x))), , drop = FALSE] |> `rownames<-`(NULL)
+}
+
+test_that("lazy rule joins return the in-memory rows", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("dbplyr")
+  tabs <- rule_fixture()
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  for (nm in names(tabs)) DBI::dbWriteTable(con, nm, tabs[[nm]])
+  jf <- list(left_join = dplyr::left_join, inner_join = dplyr::inner_join,
+             semi_join = dplyr::semi_join, anti_join = dplyr::anti_join)
+  refs <- rule_refs(tabs)
+  specs <- rule_specs()
+  cases <- list()
+  for (combo in lazy_rule_combos) for (nm in names(specs)) for (type in names(jf)) {
+    sp <- specs[[nm]]
+    cases[[length(cases) + 1]] <- list(label = paste(nm, type, paste(combo, collapse = "x")), name = nm,
+                                       type = type, left = sp[[1]], right = sp[[2]], rule = sp[[3]],
+                                       lazy = lazy_rule_map(sp[[1]], sp[[2]], combo),
+                                       pipe = if (length(cases) %% 2) "|>" else "%>%")
+  }
+  code <- compose_rule_cases(cases)
+  got_by_label <- list()
+  for (i in seq_along(cases)) {
+    cs <- cases[[i]]
+    env <- lazy_rule_env(tabs, if (is.null(cs$lazy)) list() else cs$lazy, con)
+    got <- tryCatch(run_lazy_rule(code[[i]], env), error = function(e) {
+      fail(paste0(cs$label, ": ", conditionMessage(e), "\n", code[[i]])); NULL
+    })
+    if (is.null(got)) next
+    want <- refs[[cs$name]](jf[[cs$type]])
+    expect_equal(norm_rule_rows(got), norm_rule_rows(want), tolerance = 1e-12, label = cs$label)
+    expect_false(any(grepl("^\\.sv_", names(got))), label = cs$label)
+    got_by_label[[cs$label]] <- got
+  }
+  # the tie (two labs on 2024-01-12) appears twice for the visit of 2024-02-01
+  for (cb in c("duckdbxduckdb", "arrowxdf", "dfxarrow")) {
+    before <- got_by_label[[paste("before Date left_join", cb)]]
+    expect_equal(sum(before$id == 1 & before$vdate == as.Date("2024-02-01"), na.rm = TRUE), 2L, label = cb)
+    expect_equal(nrow(before), 6L, label = cb)
+  }
+})
+
+test_that("same-named rule columns run on duckdb", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("dbplyr")
+  a <- data.frame(id = 1:3, date = as.Date(c("2024-01-10", "2024-02-01", NA)))
+  b <- data.frame(id = c(1, 1, 2), date = as.Date(c("2024-01-01", "2024-01-05", "2024-01-20")), z = 1:3)
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbWriteTable(con, "a", a)
+  DBI::dbWriteTable(con, "b", b)
+  kinds <- list(a = list(date = "Date"), b = list(date = "Date"))
+  before <- list(shape = "before", xCol = "date", yCol = "date", inclusive = TRUE)
+  window <- list(shape = "window", xCol = "date", yCol = "date", from = -7, to = 7)
+  refs <- list(
+    before = dplyr::left_join(a, b, by = dplyr::join_by(id, closest(date >= date)), na_matches = "never"),
+    window = a |> dplyr::mutate(.sv_lo = date - 7, .sv_hi = date + 7) |>
+      dplyr::left_join(b, by = dplyr::join_by(id, between(y$date, x$.sv_lo, x$.sv_hi)), na_matches = "never") |>
+      dplyr::select(-.sv_lo, -.sv_hi)
+  )
+  for (combo in list(c("duckdb", "duckdb"), c("duckdb", "df"), c("arrow", "df"))) {
+    lazy <- lazy_rule_map("a", "b", combo)
+    cases <- list(list(left = "a", right = "b", rule = before, lazy = lazy),
+                  list(left = "a", right = "b", rule = window, lazy = lazy, pipe = "|>"))
+    code <- compose_rule_cases(cases, kinds)
+    env <- lazy_rule_env(list(a = a, b = b), lazy, con)
+    for (i in 1:2) {
+      label <- paste(names(refs)[i], paste(combo, collapse = "x"))
+      expect_parses(code[[i]], label)
+      got <- run_lazy_rule(code[[i]], env)
+      expect_true(all(c("date.x", "date.y") %in% names(got)), label = label)
+      expect_equal(norm_rule_rows(got), norm_rule_rows(refs[[i]]), tolerance = 1e-12, label = label)
+    }
+  }
 })

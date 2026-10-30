@@ -116,22 +116,38 @@
     return 'dplyr::join_by(' + parts.join(', ') + ')';
   }
 
-  /** `col + n` / `col - n` (a date-time moves by days), or the column alone for 0. */
-  function offsetExpr(col, n, kind) {
+  /**
+   * `col + n` / `col - n` (a date-time moves by days), or the column alone for 0. On duckdb
+   * (`lazy`) a Date moves by an integer (`col - 7L`), and a date-time is
+   * `as.POSIXct(col) +/- lubridate::days(n)`: an arrow date-time arrives
+   * as TIMESTAMP WITH TIME ZONE, and without duckdb's ICU extension TIMESTAMPTZ +/- INTERVAL has
+   * no function, so the column is cast to TIMESTAMP first (dbplyr: CAST(col AS TIMESTAMP)).
+   */
+  function offsetExpr(col, n, kind, lazy) {
     var c = ident(col);
     n = Number(n);
     if (n === 0) return c;
     var amount = Math.abs(n) + '';
-    if (kind === 'date-time') amount = 'as.difftime(' + amount + ', units = "days")';
+    if (kind === 'date-time') {
+      if (lazy) {
+        c = 'as.POSIXct(' + c + ')';
+        amount = 'lubridate::days(' + amount + ')';
+      } else {
+        amount = 'as.difftime(' + amount + ', units = "days")';
+      }
+    } else if (kind === 'Date' && lazy) {
+      // dbplyr writes 7 as 7.0 and duckdb has no DATE +/- DECIMAL; 7L is written 7 (DATE +/- INTEGER).
+      amount += 'L';
+    }
     return c + (n < 0 ? ' - ' : ' + ') + amount;
   }
 
   /**
-   * How a (valid) date rule is written for an in-memory join: `pre` verbs before the join,
+   * How a (valid) date rule is written for a join (`lazy`: on duckdb): `pre` verbs before the join,
    * the `expr` inside join_by(), and `post` verbs after it. The helper columns .sv_lo / .sv_hi
    * exist only for a window and are dropped again by `post`.
    */
-  function ruleParts(rule, kindOf) {
+  function ruleParts(rule, kindOf, lazy) {
     var r = rule;
     var strict = r.inclusive === false;
     switch (r.shape) {
@@ -142,8 +158,8 @@
         var k = kindOf ? kindOf(r.xCol) : null;
         // The window is a column of x, so between() needs its arguments qualified: y comes first.
         return {
-          pre: ['dplyr::mutate(.sv_lo = ' + offsetExpr(r.xCol, r.from, k) + ', .sv_hi = ' +
-            offsetExpr(r.xCol, r.to, k) + ')'],
+          pre: ['dplyr::mutate(.sv_lo = ' + offsetExpr(r.xCol, r.from, k, lazy) + ', .sv_hi = ' +
+            offsetExpr(r.xCol, r.to, k, lazy) + ')'],
           expr: 'between(y$' + ident(r.yCol) + ', x$.sv_lo, x$.sv_hi)',
           post: ['dplyr::select(-.sv_lo, -.sv_hi)']
         };
@@ -189,14 +205,36 @@
       case 'join': {
         var type = JOIN_TYPES.indexOf(step.type) >= 0 ? step.type : 'left_join';
         if (!step.by || !step.by.length) return [];
-        // A valid date rule is written as join_by() with na_matches = "never". ctx.rule is set only
-        // where it applies: in memory today. A lazy chain (arrow / duckdb) keeps the key join here
-        // until its own forms are added.
+        // A valid date rule is written as join_by() with na_matches = "never". compose() sets
+        // ctx.rule for a valid rule, in memory (ctx.kind null) or on duckdb (arrow moves there first).
         if (ctx.rule && step.rule) {
-          var parts = ruleParts(step.rule, ctx.kindOf);
+          var lazy = ctx.kind === 'duckdb';
+          var tail = ', na_matches = "never"' + (ctx.copy ? ', copy = TRUE' : '') + ')';
+          var rr = step.rule;
+          if (lazy && (rr.shape === 'before' || rr.shape === 'after')) {
+            // dbplyr has no closest(): join on the inequality, then keep the nearest y per x row
+            // (all of them on a tie). A semi / anti join only asks whether any y matches.
+            var op = (rr.shape === 'before' ? '>' : '<') + (rr.inclusive === false ? '' : '=');
+            var cond = ident(rr.xCol) + ' ' + op + ' ';
+            if (type === 'semi_join' || type === 'anti_join') {
+              return ['dplyr::' + type + '(' + refFor(step.right) + ', by = ' +
+                joinByCall(step.by, cond + ident(rr.yCol)) + tail];
+            }
+            return [
+              'dplyr::mutate(.sv_row = dplyr::row_number())',
+              'dplyr::' + type + '(dplyr::mutate(' + refFor(step.right) + ', .sv_yd = ' + ident(rr.yCol) +
+                '), by = ' + joinByCall(step.by, cond + '.sv_yd') + tail,
+              'dplyr::group_by(.sv_row)',
+              'dplyr::filter(' + (type === 'left_join' ? 'is.na(.sv_yd) | ' : '') + '.sv_yd == ' +
+                (rr.shape === 'before' ? 'max' : 'min') + '(.sv_yd, na.rm = TRUE))',
+              'dplyr::ungroup()',
+              'dplyr::select(-.sv_row, -.sv_yd)'
+            ];
+          }
+          var parts = ruleParts(rr, ctx.kindOf, lazy);
           if (parts) {
             return parts.pre.concat(['dplyr::' + type + '(' + refFor(step.right) + ', by = ' +
-              joinByCall(step.by, parts.expr) + ', na_matches = "never")'], parts.post);
+              joinByCall(step.by, parts.expr) + tail], parts.post);
           }
         }
         return ['dplyr::' + type + '(' + refFor(step.right) + ', by = ' + joinBy(step.by) +
@@ -610,11 +648,26 @@
           var rightRef = r.ref;
           var ctx = {};
           var hasRule = !!s.rule && !self.joinRuleProblem(s);
-          if (kind === 'duckdb' && !r.kind) ctx.copy = true;
+          if (hasRule && kind === 'arrow' && r.kind !== 'duckdb') {
+            // arrow has no inequality join: a rule join runs in duckdb. Without con = both sides
+            // land on arrow's default duckdb connection, so they share one.
+            wrapHead('dplyr::compute(arrow::to_duckdb(', '))');
+            if (r.kind === 'arrow') rightRef = 'dplyr::compute(arrow::to_duckdb(' + r.ref + '))';
+            else ctx.copy = true;
+            kind = 'duckdb';
+            con = null;
+          } else if (hasRule && !kind && r.kind === 'arrow') {
+            wrapHead('dplyr::compute(arrow::to_duckdb(arrow::arrow_table(', ')))');
+            rightRef = 'dplyr::compute(arrow::to_duckdb(' + r.ref + '))';
+            kind = 'duckdb';
+            con = null;
+          } else if (kind === 'duckdb' && !r.kind) ctx.copy = true;
           else if (kind === 'duckdb' && r.kind === 'arrow') {
             // compute(): to_duckdb() registers a view that R's garbage collector may drop before
             // the query runs ("Table arrow_003 does not exist"); compute() makes a real table.
-            rightRef = 'dplyr::compute(arrow::to_duckdb(' + r.ref + ', con = dbplyr::remote_con(' + con + ')))';
+            // con is null after a rule join moved arrow into arrow's default duckdb connection.
+            rightRef = 'dplyr::compute(arrow::to_duckdb(' + r.ref +
+              (con ? ', con = dbplyr::remote_con(' + con + ')' : '') + '))';
           } else if (kind === 'arrow' && r.kind === 'duckdb') {
             wrapHead('dplyr::compute(arrow::to_duckdb(', ', con = dbplyr::remote_con(' + r.ref + ')))');
             kind = 'duckdb';
@@ -631,10 +684,11 @@
             kind = 'arrow';
             con = null;
           }
-          // The branch point for rule forms: `kind` is the chain's backend now that any
-          // cross-backend move above has happened. In memory (null) a valid rule writes join_by().
-          if (hasRule && !kind) {
+          // The rule forms: `kind` is the chain's backend now that any cross-backend move above has
+          // happened, so with a rule it is null (in memory) or 'duckdb'.
+          if (hasRule) {
             ctx.rule = true;
+            ctx.kind = kind;
             ctx.kindOf = function (col) {
               var tx = self.tables[s.table];
               return tx && tx.kinds ? tx.kinds[col] : null;
