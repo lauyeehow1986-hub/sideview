@@ -145,6 +145,8 @@ test_that("the JS twin gives the same diagnostics as R", {
     expect_identical(unlist(js$warnings) %||% character(0), r$warnings)
     expect_identical(js$status, r$status)
     expect_equal(vapply(js$hints, `[[`, character(1), "fix"), vapply(r$hints, `[[`, character(1), "fix"))
+    expect_identical(js$strict_args, r$strict_args)
+    expect_null(js$rule)
   }
   js <- run_pipeline_js("out = P.describeDiagnostics({relationship: 'one-to-many', match_rate_x: 0.975,
     rows: {left_join: 1240}}, 'left_join', 'patients');")
@@ -420,4 +422,196 @@ test_that("sv_join_rule_problem and sv_join_rule_label match the browser", {
                    "visit_date between start and end")
   expect_identical(L(list(shape = "overlaps", xFrom = "ae_start", xTo = "ae_end", yFrom = "start", yTo = "end"), "Date"),
                    "ae_start..ae_end overlaps start..end")
+})
+
+# ---- the JS twin with a rule ------------------------------------------------------
+
+# Columns as the browser holds them: Dates and POSIXct as format() text (UTC fixtures).
+rule_js_col <- function(v) I(if (inherits(v, c("Date", "POSIXt"))) format(v) else v)
+
+# Run P.joinDiagnostics() once over many cases (each a list of x, y, by, rule).
+rule_js_check <- function(cases) {
+  payload <- lapply(cases, function(cs) {
+    by_x <- if (is.null(names(cs$by))) cs$by else ifelse(nzchar(names(cs$by)), names(cs$by), cs$by)
+    list(
+      x = lapply(cs$x, rule_js_col), y = lapply(cs$y, rule_js_col),
+      by = lapply(seq_along(cs$by), function(i) list(left = by_x[i], right = unname(cs$by[i]))),
+      rule = cs$rule,
+      xTypes = lapply(cs$x, function(v) class(v)[1]), yTypes = lapply(cs$y, function(v) class(v)[1])
+    )
+  })
+  json <- jsonlite::toJSON(payload, auto_unbox = TRUE, na = "null", null = "null", digits = NA)
+  run_pipeline_js(sprintf(
+    "const cases = %s; out = cases.map(c => P.joinDiagnostics(c.x, c.y, c.by,
+       {rule: c.rule, sampleN: 50, xName: 'x', yName: 'y', xTypes: c.xTypes, yTypes: c.yTypes}));", json))
+}
+
+expect_rule_twin <- function(js, r, lab) {
+  num <- c("n_x", "n_y", "distinct_x", "distinct_y", "distinct_matched", "matched_x", "matched_y",
+           "match_rate_x", "match_rate_y", "na_x", "na_y", "dup_keys_x", "dup_keys_y",
+           "rule_dropped_x", "rule_dropped_y")
+  for (f in num) expect_equal(js[[f]], r[[f]], label = paste(lab, f))
+  expect_identical(js$relationship, r$relationship, label = lab)
+  expect_identical(js$rule_kind, r$rule_kind, label = lab)
+  expect_equal(js$rule, r$rule, label = lab)
+  rows <- Filter(Negate(is.na), r$rows)
+  expect_identical(names(js$rows), names(rows), label = lab)
+  expect_equal(unlist(js$rows), unlist(rows), label = lab)
+  none <- function(s) if (length(s)) s else list()
+  expect_identical(none(js$strict_args), none(r$strict_args), label = lab)
+  expect_setequal(as.character(unlist(js$unmatched_x)), r$unmatched_x)
+  expect_setequal(as.character(unlist(js$unmatched_y)), r$unmatched_y)
+  hint <- function(h) lapply(h, function(e) list(fix = e$fix, extra_x = as.numeric(e$extra_x),
+                                                  extra_y = as.numeric(e$extra_y)))
+  expect_identical(hint(js$hints), hint(r$hints), label = lab)
+  expect_identical(as.character(unlist(js$warnings)), r$warnings, label = lab)
+  expect_identical(js$status, r$status, label = lab)
+}
+
+test_that("the JS twin gives the same rule check as R", {
+  rules <- list(
+    list(shape = "between", xCol = "xd", yFrom = "ys", yTo = "ye"),
+    list(shape = "overlaps", xFrom = "xd", xTo = "xe", yFrom = "ys", yTo = "ye"),
+    list(shape = "window", xCol = "xd", yCol = "yd", from = -7, to = 7),
+    list(shape = "window", xCol = "xd", yCol = "yd", from = 0, to = 3),
+    list(shape = "window", xCol = "xd", yCol = "yd", from = -10, to = -2),
+    list(shape = "before", xCol = "xd", yCol = "yd", inclusive = TRUE),
+    list(shape = "before", xCol = "xd", yCol = "yd", inclusive = FALSE),
+    list(shape = "after", xCol = "xd", yCol = "yd", inclusive = TRUE),
+    list(shape = "after", xCol = "xd", yCol = "yd", inclusive = FALSE)
+  )
+  cases <- list()
+  for (kind in c("Date", "date-time", "numeric")) for (seed in 1:5) for (rule in rules) {
+    t <- rule_tables(kind, seed)
+    cases[[length(cases) + 1L]] <- list(x = t$x[c("id", "xd", "xe")], y = t$y, by = "id", rule = rule,
+                                        lab = paste(kind, seed, rule$shape, rule$from, rule$inclusive))
+  }
+
+  # Edge cases: ties, date-times across midnight, empty tables, an all-NA rule column, text keys
+  # that a fix would match, two keys, NA keys.
+  d0 <- as.Date("2024-01-10")
+  bef <- list(shape = "before", xCol = "xd", yCol = "yd", inclusive = TRUE)
+  aft <- list(shape = "after", xCol = "xd", yCol = "yd", inclusive = FALSE)
+  win <- list(shape = "window", xCol = "xd", yCol = "yd", from = -1, to = 1)
+  tie_x <- data.frame(id = c(1, 1, 2), xd = d0 + c(0, 3, 0))
+  tie_y <- data.frame(id = c(1, 1, 1, 1, 1, 2), yd = d0 + c(-2, -2, 0, 0, 4, 1))
+  at <- function(s) as.POSIXct(s, tz = "UTC")
+  dt_x <- data.frame(id = c(1, 1, 2), xd = at(c("2024-01-01 23:30:00", "2024-01-03 00:10:00", "2024-01-01 12:00:00")))
+  dt_y <- data.frame(id = c(1, 1, 1, 2, 2),
+                     yd = at(c("2024-01-02 00:15:00", "2024-01-01 23:45:00", "2024-01-03 23:30:01",
+                               "2024-01-02 12:00:00", "2024-01-02 12:00:01")))
+  empty_x <- data.frame(id = numeric(0), xd = as.Date(character(0)))
+  na_y <- data.frame(id = c(1, 2), yd = as.Date(c(NA, NA)))
+  txt_x <- data.frame(id = c("a", " b", "C", "007", NA), xd = d0 + c(0, 1, 2, 3, 4), stringsAsFactors = FALSE)
+  txt_y <- data.frame(id = c("a", "b", "c", "7", NA), yd = d0 + c(0, 1, 2, 3, 4), stringsAsFactors = FALSE)
+  two_x <- data.frame(id = c(1, 1, 2, NA), site = c("a", "b", "a", "a"), xd = d0 + c(0, 0, 5, 0),
+                      stringsAsFactors = FALSE)
+  two_y <- data.frame(id = c(1, 1, 2, 2), site = c("a", "a", "a", NA), yd = d0 + c(-1, 1, 5, 5),
+                      stringsAsFactors = FALSE)
+  edge <- list(
+    list(x = tie_x, y = tie_y, rule = bef, lab = "tie before"),
+    list(x = tie_x, y = tie_y, rule = modifyList(bef, list(inclusive = FALSE)), lab = "tie before strict"),
+    list(x = tie_x, y = tie_y, rule = aft, lab = "tie after strict"),
+    list(x = tie_x, y = tie_y, rule = modifyList(aft, list(inclusive = TRUE)), lab = "tie after"),
+    list(x = dt_x, y = dt_y, rule = win, lab = "midnight window"),
+    list(x = dt_x, y = dt_y, rule = modifyList(win, list(from = 0, to = 0)), lab = "midnight window 0"),
+    list(x = dt_x, y = dt_y, rule = bef, lab = "midnight before"),
+    list(x = dt_x, y = dt_y, rule = aft, lab = "midnight after"),
+    list(x = empty_x, y = tie_y, rule = win, lab = "empty x"),
+    list(x = tie_x, y = tie_y[0, , drop = FALSE], rule = bef, lab = "empty y"),
+    list(x = tie_x, y = na_y, rule = win, lab = "all-NA dates"),
+    list(x = txt_x, y = txt_y, rule = win, lab = "text keys window"),
+    list(x = txt_x, y = txt_y, rule = bef, lab = "text keys before"),
+    list(x = two_x, y = two_y, by = c("id", "site"), rule = win, lab = "two keys")
+  )
+  cases <- c(cases, lapply(edge, function(cs) modifyList(list(by = "id"), cs)))
+
+  js <- rule_js_check(cases)
+  expect_length(js, length(cases))
+  for (i in seq_along(cases)) {
+    cs <- cases[[i]]
+    r <- sv_join_diagnostics(cs$x, cs$y, cs$by, sample_n = 50, rule = cs$rule)
+    expect_rule_twin(js[[i]], r, cs$lab)
+  }
+  expect_equal(length(cases), 135L + length(edge))
+
+  # the edge cases do what they are for
+  r <- sv_join_diagnostics(tie_x, tie_y, "id", rule = bef)
+  expect_equal(r$rows$inner_join, 4)          # both id-1 visits keep the two tied labs at d0
+  expect_identical(r$relationship, "many-to-many")
+  r <- sv_join_diagnostics(txt_x, txt_y, "id", rule = win)
+  expect_identical(vapply(r$hints, `[[`, character(1), "fix"), c("trim", "case", "zeros"))
+  r <- sv_join_diagnostics(dt_x, dt_y, "id", rule = win)
+  expect_equal(c(r$matched_x, r$matched_y), c(3, 4))   # 12:00:01 is one second past the window
+
+  # a rule that does not hold comes back as the error R stops with
+  bad <- run_pipeline_js("out = P.joinDiagnostics({id: [1], xd: ['2024-01-01']}, {id: [1], yd: [1]},
+    [{left: 'id', right: 'id'}], {rule: {shape: 'window', xCol: 'xd', yCol: 'yd', from: 0, to: 1},
+    xTypes: {id: 'numeric', xd: 'Date'}, yTypes: {id: 'numeric', yd: 'numeric'}});")
+  expect_error(sv_join_diagnostics(data.frame(id = 1, xd = as.Date("2024-01-01")), data.frame(id = 1, yd = 1), "id",
+                                   rule = list(shape = "window", xCol = "xd", yCol = "yd", from = 0, to = 1)),
+               bad$error, fixed = TRUE)
+})
+
+test_that("P.strictArgs() and P.ruleValue() follow R", {
+  js <- run_pipeline_js("out = {
+    full: P.strictArgs({relationship: 'one-to-many', matched_x: 2, matched_y: 3, n_x: 2, n_y: 3}, null),
+    near: P.strictArgs({relationship: 'one-to-one', matched_x: 2, matched_y: 3, n_x: 2, n_y: 3},
+                       {shape: 'before', xCol: 'a', yCol: 'b'}),
+    none: P.strictArgs({relationship: 'no matches', matched_x: 0, matched_y: 0, n_x: 2, n_y: 3}, null),
+    v: [P.ruleValue('1970-01-02', 'Date'), P.ruleValue('2024-02-30', 'Date'), P.ruleValue('x', 'Date'),
+        P.ruleValue(null, 'Date'), P.ruleValue('1970-01-01 00:00:01.5', 'date-time'),
+        P.ruleValue('1970-01-02T01:00', 'date-time'), P.ruleValue('1970-01-02', 'date-time'),
+        P.ruleValue(3.5, 'numeric'), P.ruleValue('3', 'numeric')].map(v => isNaN(v) ? 'NaN' : v)
+  };")
+  core <- list(relationship = "one-to-many", matched_x = 2, matched_y = 3)
+  expect_identical(js$full, sv_join_strict_args(core, 2, 3))
+  core$relationship <- "one-to-one"
+  expect_identical(js$near, sv_join_strict_args(core, 2, 3, list(shape = "before")))
+  expect_length(js$none, 0)
+  expect_equal(js$v, list(1, "NaN", "NaN", "NaN", 1500, 90000000, 86400000, 3.5, "NaN"))
+})
+
+test_that("rule labels and problems are the same in R and the browser", {
+  kx <- c(a = "Date", n = "numeric", t = "date-time", c = "character")
+  ky <- c(b = "Date", n2 = "numeric", t2 = "date-time")
+  w <- function(...) modifyList(list(shape = "window", xCol = "a", yCol = "b", from = -7, to = 7), list(...))
+  problems <- list(
+    list(rule = w()), list(rule = list(shape = "zig")), list(rule = NULL), list(rule = w(yCol = "")),
+    list(rule = list(shape = "between", xCol = "a", yFrom = "b")), list(rule = w(xCol = "c")),
+    list(rule = w(yCol = "zzz")), list(rule = w(yCol = "t2")), list(rule = w(yCol = "n2")),
+    list(rule = w(from = "7.5")), list(rule = w(from = -3651)), list(rule = w(to = 3651)),
+    list(rule = utils::modifyList(w(), list(to = NULL))), list(rule = w(from = "abc")),
+    list(rule = w(from = 8, to = 7)), list(rule = w(from = "-7", to = "7")), list(rule = w(from = -3650, to = 3650)),
+    list(rule = list(shape = "before", xCol = "a", yCol = "b"), type = "right_join"),
+    list(rule = list(shape = "after", xCol = "a", yCol = "b"), type = "full_join"),
+    list(rule = list(shape = "after", xCol = "a", yCol = "b"), type = "semi_join"),
+    list(rule = w(), type = "right_join"),
+    list(rule = list(shape = "overlaps", xFrom = "t", xTo = "t", yFrom = "t2", yTo = "b"))
+  )
+  labels <- list(
+    list(rule = list(shape = "window", xCol = "v", yCol = "l", from = 0, to = 3), kind = "Date"),
+    list(rule = list(shape = "window", xCol = "v", yCol = "l", from = -10, to = -2), kind = "date-time"),
+    list(rule = list(shape = "window", xCol = "v", yCol = "l", from = -7, to = 7), kind = "numeric"),
+    list(rule = list(shape = "before", xCol = "v", yCol = "l"), kind = "Date"),
+    list(rule = list(shape = "before", xCol = "v", yCol = "l", inclusive = FALSE), kind = "Date"),
+    list(rule = list(shape = "after", xCol = "v", yCol = "l", inclusive = TRUE), kind = "Date"),
+    list(rule = list(shape = "after", xCol = "v", yCol = "l", inclusive = FALSE), kind = "Date"),
+    list(rule = list(shape = "between", xCol = "v", yFrom = "s", yTo = "e"), kind = "Date"),
+    list(rule = list(shape = "overlaps", xFrom = "a", xTo = "b", yFrom = "s", yTo = "e"), kind = "Date")
+  )
+  json <- function(v) jsonlite::toJSON(v, auto_unbox = TRUE, null = "null")
+  js <- run_pipeline_js(sprintf(
+    "const kx = %s, ky = %s, probs = %s, labs = %s;
+     out = {probs: probs.map(c => P.ruleProblem(c.rule, kx, ky, c.type || 'left_join')),
+            labs: labs.map(c => P.ruleLabel(c.rule, c.kind))};",
+    json(as.list(kx)), json(as.list(ky)), json(problems), json(labels)))
+  for (i in seq_along(problems)) {
+    pr <- problems[[i]]
+    expect_identical(js$probs[[i]], sv_join_rule_problem(pr$rule, kx, ky, pr$type %||% "left_join"),
+                     label = paste("problem", i))
+  }
+  for (i in seq_along(labels)) {
+    expect_identical(js$labs[[i]], sv_join_rule_label(labels[[i]]$rule, labels[[i]]$kind), label = paste("label", i))
+  }
 })

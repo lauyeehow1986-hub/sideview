@@ -852,11 +852,101 @@
     return Number(n).toLocaleString('en-US');
   }
 
+  // ---- a date rule in the join check (twin of R/join_rules.R) ----
+  // Under a rule a missing key or rule value matches nothing (na_matches = "never").
+
+  var RULE_SCALE = { 'Date': 1, 'date-time': 86400000, 'numeric': 1 };
+  var RULE_DATE = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(\.\d+)?)?Z?)?$/;
+
+  /**
+   * A rule value as a number: a Date in days since 1970-01-01, a date-time in ms since the epoch
+   * read as UTC wall clock (a DST change can differ from R by an hour), a number as it is.
+   * NaN, which never matches, when missing or unparseable.
+   */
+  function ruleValue(v, kind) {
+    if (isMissing(v)) return NaN;
+    if (kind === 'numeric') return typeof v === 'number' ? v : NaN;
+    var m = typeof v === 'string' ? RULE_DATE.exec(v.trim()) : null;
+    if (!m || (kind === 'Date' && m[4] !== undefined) || (kind !== 'Date' && kind !== 'date-time')) return NaN;
+    var y = +m[1], mo = +m[2] - 1, d = +m[3];
+    var t = new Date(0);
+    t.setUTCFullYear(y, mo, d);
+    if (t.getUTCFullYear() !== y || t.getUTCMonth() !== mo || t.getUTCDate() !== d) return NaN;
+    if (kind === 'Date') return t.getTime() / 86400000;
+    var h = +(m[4] || 0), mi = +(m[5] || 0), s = +(m[6] || 0);
+    if (h > 23 || mi > 59 || s > 59) return NaN;
+    return t.getTime() + ((h * 60 + mi) * 60 + s) * 1000 + (m[7] ? Number(m[7]) * 1000 : 0);
+  }
+
+  /**
+   * How many rule pairs each row is in: px[i] / py[j] for x row i / y row j, n in all. `kx` / `ky`
+   * are row keys (null: a missing key); `v` holds the rule values xa, xb, ya, yb (window bounds
+   * already in xa..xb). A nearest match keeps every y row at the nearest value (ties).
+   */
+  function rulePairs(kx, ky, v, rule) {
+    var px = [], py = [], n = 0, i, j, k;
+    for (i = 0; i < kx.length; i++) px.push(0);
+    for (j = 0; j < ky.length; j++) py.push(0);
+    var groups = new Map();
+    for (j = 0; j < ky.length; j++) {
+      if (ky[j] === null) continue;
+      if (!groups.has(ky[j])) groups.set(ky[j], []);
+      groups.get(ky[j]).push(j);
+    }
+    var shape = rule.shape, strict = rule.inclusive === false;
+    var before = shape === 'before', nearest = before || shape === 'after';
+    for (i = 0; i < kx.length; i++) {
+      var g = kx[i] === null ? null : groups.get(kx[i]);
+      if (!g) continue;
+      var a = v.xa[i], b = v.xb ? v.xb[i] : NaN, hits = [], best = NaN;
+      for (k = 0; k < g.length; k++) {
+        j = g[k];
+        var ya = v.ya[j];
+        if (nearest) {
+          // comparisons with NaN are false, so a missing value never matches
+          if (!(before ? (strict ? ya < a : ya <= a) : (strict ? ya > a : ya >= a))) continue;
+          if (hits.length && ya !== best) {
+            if (before ? ya < best : ya > best) continue;
+            hits = [];
+          }
+          best = ya;
+          hits.push(j);
+        } else if (shape === 'between' ? ya <= a && a <= v.yb[j] :
+                   shape === 'overlaps' ? a <= v.yb[j] && b >= ya : a <= ya && ya <= b) {
+          hits.push(j);
+        }
+      }
+      for (k = 0; k < hits.length; k++) { px[i]++; py[hits[k]]++; n++; }
+    }
+    return { px: px, py: py, n: n };
+  }
+
+  /**
+   * What Strict writes into a join, per join type (twin of sv_join_strict_args()): an entry is absent
+   * when it would write nothing. `unmatched = "error"` only when every row of the checked side matches.
+   */
+  function strictArgs(d, rule) {
+    var out = {};
+    if (d.relationship === 'no matches') return out;
+    var nearest = !!rule && (rule.shape === 'before' || rule.shape === 'after');
+    var allX = d.matched_x === d.n_x, allY = d.matched_y === d.n_y;
+    ['left_join', 'inner_join', 'right_join', 'full_join'].forEach(function (type) {
+      if (nearest && (type === 'right_join' || type === 'full_join')) return;
+      var args = { relationship: d.relationship };
+      if (type === 'left_join' ? allY : type === 'right_join' ? allX : type === 'inner_join' && allX && allY) {
+        args.unmatched = 'error';
+      }
+      out[type] = args;
+    });
+    return out;
+  }
+
   /**
    * Diagnose a join before running it.
-   * @param xCols,yCols column arrays keyed by name ({ id: [...], ... })
+   * @param xCols,yCols column arrays keyed by name ({ id: [...], ... }); with a rule, the rule columns too
    * @param by [{ left, right }] key pairs
-   * @param opts { sampleN, xName, yName, xTypes, yTypes } (types are R class names)
+   * @param opts { rule, sampleN, xName, yName, xTypes, yTypes } (types are R class names). A rule that
+   *   does not hold gives { error } with the message R stops with.
    */
   function joinDiagnostics(xCols, yCols, by, opts) {
     opts = opts || {};
@@ -866,16 +956,92 @@
     var byY = by.map(function (p) { return p.right; });
     var kindsX = byX.map(function (c) { return keyKind((opts.xTypes || {})[c] || guessKind(xCols[c])); });
     var kindsY = byY.map(function (c) { return keyKind((opts.yTypes || {})[c] || guessKind(yCols[c])); });
+    var rule = opts.rule || null, ruleKind = null;
+    if (rule) {
+      var colKinds = function (cols, types) {
+        var m = {};
+        Object.keys(cols).forEach(function (c) { m[c] = keyKind((types || {})[c] || guessKind(cols[c])); });
+        return m;
+      };
+      var kmX = colKinds(xCols, opts.xTypes);
+      var problem = ruleProblem(rule, kmX, colKinds(yCols, opts.yTypes), 'left_join');
+      if (problem) return { error: problem };
+      rule = normalizeRule(rule);
+      ruleKind = kmX[rule[ruleSlots(rule.shape)[0].slot]];
+    }
     var kx = joinKeys(xCols, byX, kindsX), ky = joinKeys(yCols, byY, kindsY);
     var core = joinCounts(kx, ky);
     var nX = kx.length, nY = ky.length;
+    var rowNa = function (cols, names, i) {
+      return names.some(function (c) { return isMissing(cols[c][i]); });
+    };
     var anyNa = function (cols, names) {
       var n = 0;
       for (var i = 0; i < (names.length ? cols[names[0]].length : 0); i++) {
-        if (names.some(function (c) { return isMissing(cols[c][i]); })) n++;
+        if (rowNa(cols, names, i)) n++;
       }
       return n;
     };
+    var rp = null, ruleKeys = null, ruleVals = null, ruleDropped = null;
+    if (rule) {
+      // keys with null for a row with a missing key part (it matches nothing under a rule)
+      ruleKeys = function (fn) {
+        var rx = joinKeys(xCols, byX, kindsX, fn), ry = joinKeys(yCols, byY, kindsY, fn);
+        return {
+          x: rx.map(function (k, i) { return rowNa(xCols, byX, i) ? null : k; }),
+          y: ry.map(function (k, j) { return rowNa(yCols, byY, j) ? null : k; })
+        };
+      };
+      var scale = RULE_SCALE[ruleKind];
+      var vals = function (cols, col, n, off) {
+        var out = [];
+        for (var i = 0; i < n; i++) out.push(ruleValue(cols[col][i], ruleKind) + (off ? off * scale : 0));
+        return out;
+      };
+      var sh = rule.shape;
+      if (sh === 'window') {
+        ruleVals = { xa: vals(xCols, rule.xCol, nX, rule.from), xb: vals(xCols, rule.xCol, nX, rule.to),
+                     ya: vals(yCols, rule.yCol, nY) };
+      } else if (sh === 'between') {
+        ruleVals = { xa: vals(xCols, rule.xCol, nX), ya: vals(yCols, rule.yFrom, nY), yb: vals(yCols, rule.yTo, nY) };
+      } else if (sh === 'overlaps') {
+        ruleVals = { xa: vals(xCols, rule.xFrom, nX), xb: vals(xCols, rule.xTo, nX),
+                     ya: vals(yCols, rule.yFrom, nY), yb: vals(yCols, rule.yTo, nY) };
+      } else {
+        ruleVals = { xa: vals(xCols, rule.xCol, nX), ya: vals(yCols, rule.yCol, nY) };
+      }
+      var rk = ruleKeys(null);
+      rp = rulePairs(rk.x, rk.y, ruleVals, rule);
+      var matched = function (p) { return p.filter(function (c) { return c > 0; }).length; };
+      var mX = matched(rp.px), mY = matched(rp.py);
+      var many = function (p) { return p.some(function (c) { return c > 1; }); };
+      var manyX = many(rp.py), manyY = many(rp.px);
+      // rows with a key partner (a missing key has none) but no rule pair
+      var setX = new Set(rk.x.filter(function (k) { return k !== null; }));
+      var setY = new Set(rk.y.filter(function (k) { return k !== null; }));
+      var partners = function (keys, other) {
+        return keys.filter(function (k) { return k !== null && other.has(k); }).length;
+      };
+      ruleDropped = { x: partners(rk.x, setY) - mX, y: partners(rk.y, setX) - mY };
+      var unmatched = function (keys, p) {
+        var seen = new Set(), out = [];
+        p.forEach(function (c, i) { if (!c && !seen.has(keys[i])) { seen.add(keys[i]); out.push(keys[i]); } });
+        return out;
+      };
+      core.matched_x = mX;
+      core.matched_y = mY;
+      core.relationship = !rp.n ? 'no matches' : manyX && manyY ? 'many-to-many' :
+        manyY ? 'one-to-many' : manyX ? 'many-to-one' : 'one-to-one';
+      core.rows = {
+        left_join: rp.n + (nX - mX), inner_join: rp.n,
+        full_join: rp.n + (nX - mX) + (nY - mY), right_join: rp.n + (nY - mY),
+        semi_join: mX, anti_join: nX - mX
+      };
+      // a nearest match has no right or full row count
+      if (sh === 'before' || sh === 'after') { delete core.rows.full_join; delete core.rows.right_join; }
+      core.unmatched_x = unmatched(kx, rp.px);
+      core.unmatched_y = unmatched(ky, rp.py);
+    }
     var d = {
       by: by.map(function (p) { return { left: p.left, right: p.right }; }),
       n_x: nX, n_y: nY,
@@ -896,6 +1062,13 @@
           ': dplyr will refuse this join until both sides have the same type.');
       }
     });
+    d.strict_args = strictArgs(d, rule);
+    if (rule) {
+      d.rule = rule;
+      d.rule_kind = ruleKind;
+      d.rule_dropped_x = ruleDropped.x;
+      d.rule_dropped_y = ruleDropped.y;
+    }
     if (core.matched_x < nX || core.matched_y < nY) {
       var fixes = [
         { fix: 'trim', label: 'trimming whitespace', fn: function (s) { return s.trim(); } },
@@ -903,7 +1076,14 @@
         { fix: 'zeros', label: 'dropping leading zeros', fn: function (s) { return s.replace(/^0+(?=[0-9])/, ''); } }
       ];
       fixes.forEach(function (f) {
-        var alt = joinCounts(joinKeys(xCols, byX, kindsX, f.fn), joinKeys(yCols, byY, kindsY, f.fn));
+        var alt;
+        if (rule) {
+          var ak = ruleKeys(f.fn), ap = rulePairs(ak.x, ak.y, ruleVals, rule);
+          var hit = function (p) { return p.filter(function (c) { return c > 0; }).length; };
+          alt = { matched_x: hit(ap.px), matched_y: hit(ap.py) };
+        } else {
+          alt = joinCounts(joinKeys(xCols, byX, kindsX, f.fn), joinKeys(yCols, byY, kindsY, f.fn));
+        }
         var ex = alt.matched_x - core.matched_x, ey = alt.matched_y - core.matched_y;
         if (ex > 0 || ey > 0) d.hints.push({ fix: f.fix, label: f.label, extra_x: ex, extra_y: ey });
       });
@@ -919,8 +1099,9 @@
       w.push('Only ' + Math.round(100 * d.match_rate_x) + '% of ' + xName + ' rows have a match in ' + yName + '.');
     }
     if (d.na_x || d.na_y) {
-      w.push('Missing keys (' + fmtN(d.na_x) + ' in ' + xName + ', ' + fmtN(d.na_y) + ' in ' + yName +
-        '): dplyr matches NA to NA by default (na_matches = "na").');
+      w.push('Missing keys (' + fmtN(d.na_x) + ' in ' + xName + ', ' + fmtN(d.na_y) + ' in ' + yName + '): ' +
+        (rule ? 'with a date rule they match nothing (na_matches = "never").' :
+          'dplyr matches NA to NA by default (na_matches = "na").'));
     }
     d.warnings = w;
     d.status = d.type_issues.length ? 'error' : w.length ? 'warn' : 'ok';
@@ -1370,6 +1551,8 @@
     Pipeline: Pipeline,
     splitReply: splitReply,
     joinDiagnostics: joinDiagnostics,
+    strictArgs: strictArgs,
+    ruleValue: ruleValue,
     describeDiagnostics: describeDiagnostics,
     columnProfile: columnProfile,
     codebookRow: codebookRow,

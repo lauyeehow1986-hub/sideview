@@ -27,7 +27,9 @@ run_pipeline_js <- function(body) {
   res <- suppressWarnings(system2(node, shQuote(script), stdout = TRUE, stderr = TRUE))
   status <- attr(res, "status")
   if (!is.null(status) && status != 0) stop(paste(res, collapse = "\n"))
-  jsonlite::fromJSON(paste(res, collapse = "\n"), simplifyVector = FALSE)
+  # JSON.stringify() writes one line, but Windows system2() splits long lines (8095 characters):
+  # join the pieces back without a newline, which would break a string.
+  jsonlite::fromJSON(paste(res, collapse = ""), simplifyVector = FALSE)
 }
 
 # The code parses as R (used on the code the pipeline composes).
