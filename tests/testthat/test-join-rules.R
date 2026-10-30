@@ -708,8 +708,13 @@ test_that("lazy rule joins parse", {
   expect_match(at("window-7_7 date-time duckdbxdf %>%"),
                "dplyr::mutate(.sv_lo = as.POSIXct(vtime) - lubridate::days(7), .sv_hi = as.POSIXct(vtime) + lubridate::days(7))",
                fixed = TRUE)
+  # a zero bound is cast too, so both bounds are TIMESTAMP; Date and numeric zero stay the bare column
   expect_match(at("window0_3 date-time arrowxarrow |>"),
-               "dplyr::mutate(.sv_lo = vtime, .sv_hi = as.POSIXct(vtime) + lubridate::days(3))", fixed = TRUE)
+               "dplyr::mutate(.sv_lo = as.POSIXct(vtime), .sv_hi = as.POSIXct(vtime) + lubridate::days(3))", fixed = TRUE)
+  expect_match(at("window0_3 Date duckdbxduckdb |>"), "dplyr::mutate(.sv_lo = vdate, .sv_hi = vdate + 3L)",
+               fixed = TRUE)
+  expect_match(at("window0_3 numeric duckdbxduckdb |>"), "dplyr::mutate(.sv_lo = vday, .sv_hi = vday + 3)",
+               fixed = TRUE)
   # a Date window on duckdb moves by an integer: 7 would be written 7.0, and DATE - DECIMAL fails
   expect_match(at("window-7_7 Date duckdbxduckdb %>%"), "dplyr::mutate(.sv_lo = vdate - 7L, .sv_hi = vdate + 7L)",
                fixed = TRUE)

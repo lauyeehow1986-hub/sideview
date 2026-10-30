@@ -126,7 +126,8 @@
   function offsetExpr(col, n, kind, lazy) {
     var c = ident(col);
     n = Number(n);
-    if (n === 0) return c;
+    // On duckdb a zero bound of a date-time is cast as well, so both bounds have one type.
+    if (n === 0) return kind === 'date-time' && lazy ? 'as.POSIXct(' + c + ')' : c;
     var amount = Math.abs(n) + '';
     if (kind === 'date-time') {
       if (lazy) {
@@ -221,6 +222,7 @@
                 joinByCall(step.by, cond + ident(rr.yCol)) + tail];
             }
             return [
+              // .sv_row is only a per-row tag, so ROW_NUMBER() OVER () needs no ORDER BY.
               'dplyr::mutate(.sv_row = dplyr::row_number())',
               'dplyr::' + type + '(dplyr::mutate(' + refFor(step.right) + ', .sv_yd = ' + ident(rr.yCol) +
                 '), by = ' + joinByCall(step.by, cond + '.sv_yd') + tail,
