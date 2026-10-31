@@ -392,8 +392,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
         sv_write_codebook(cb, path)
         if (isTRUE(module)) {
           # a deployed app has no file dialog: the browser saves the text
-          csv <- paste(readLines(path, warn = FALSE, encoding = "UTF-8"), collapse = "
-")
+          csv <- paste(readLines(path, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
           unlink(path)
           list(csv = csv,
                filename = "codebook.csv", n_tables = length(tables))
