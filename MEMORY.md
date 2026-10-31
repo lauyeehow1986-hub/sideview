@@ -132,6 +132,19 @@ Each sub-project gets its own spec, plan and build, in this order:
 
 ## Log
 
+### 2026-11-01 - Shiny module and proxy: RStudio check (0.4.0, task 7)
+- **Viewer pane, `runApp("inst/examples/proxy")`:** both canvases start with their cards; a real drag joins `visits.id` to
+  `labs.id` and `$code()` shows `visits %>% dplyr::left_join(labs, by = "id")`; canvas B has no connector and no step
+  badge. Refresh with same columns, drop `lab_date` and no rows: card position kept, spline re-anchored to the `labs.id`
+  port, the zero-row card is empty (`0 x 4`) with the key-check toast. Add card, Remove added card, Highlight labs
+  columns, and Save / restore workspace (toast, then restore) all work. The page scrolls past the canvases.
+- **Gadget, `sideview(v, l)` in the default dialog:** connect, Done returned `v %>% dplyr::left_join(l, by = "id")`, which
+  parses.
+- **Not checked:** the external browser for the example app; the disabled-step toast (needs a step on the dropped
+  column; the real-browser test covers it).
+- **Environment note:** after an interrupted gadget the console hung and the dialog sat behind a maximised RStudio. A
+  restart fixed it; not a package bug. Keep RStudio un-maximised for dialog checks.
+
 ### 2026-10-31 - Shiny module and proxy: example app, real-browser tests, docs (0.4.0, task 6)
 - **Example:** `inst/examples/proxy/app.R`: two canvases (`a`, `b`) on a `bslib::page_fillable(fillable = FALSE)` (plain
   `fluidPage` without bslib), synthetic `visits` / `labs`, buttons `add`, `replace`, `remove`, `state`, `highlight` on
