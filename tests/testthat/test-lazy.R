@@ -883,6 +883,77 @@ test_that("the lazy rule check equals the in-memory one", {
     }
   }
   expect_equal(n_checked, 2L * 9L * (2L + 3L + 2L))
+  # on plain tables the samples also come in the in-memory order (first row), cut at sample_n
+  t <- rule_tables("Date", 1)
+  x <- t$x[c("id", "xd", "xe")]
+  for (rule in rule_cases()[c(1, 2, 3, 8)]) {
+    want <- sv_join_diagnostics(x, t$y, "id", sample_n = 3L, rule = rule)
+    for (cb in list(c("duckdb", "duckdb"), c("arrow", "arrow"))) {
+      gc()
+      got <- sv_join_diagnostics(join_side(x, cb[1], fx$con, "rx"), join_side(t$y, cb[2], fx$con, "ry"),
+                                 "id", sample_n = 3L, rule = rule)
+      expect_equal(got, want, tolerance = 1e-12, label = paste("ordered", rule$shape, cb[1], "x", cb[2]))
+    }
+  }
+})
+
+# A derived lazy table (a join) is numbered by ROW_NUMBER() OVER () in a different order in
+# each query, so the check must never match row tags across two queries.
+rule_derived <- function(con, df, name) {
+  df$.j <- seq_len(nrow(df))
+  DBI::dbWriteTable(con, paste0(name, "_a"), df, overwrite = TRUE)
+  DBI::dbWriteTable(con, paste0(name, "_b"), data.frame(.j = df$.j, z = 1L), overwrite = TRUE)
+  dplyr::select(dplyr::inner_join(dplyr::tbl(con, paste0(name, "_a")), dplyr::tbl(con, paste0(name, "_b")), by = ".j"),
+                dplyr::all_of(setdiff(names(df), ".j")))
+}
+
+test_that("the lazy rule check of a derived (joined) table equals the in-memory one", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  fx <- lazy_fixture()
+  for (kind in c("Date", "date-time")) {
+    t <- rule_tables(kind, 1)
+    x <- t$x[c("id", "xd", "xe")]
+    xl <- rule_derived(fx$con, x, "dx")
+    yl <- rule_derived(fx$con, t$y, "dy")
+    rules <- if (kind == "Date") rule_cases() else rule_cases()[c(3, 6, 9)]
+    for (rule in rules) {
+      want <- sv_join_diagnostics(x, t$y, "id", sample_n = 50L, rule = rule)
+      got <- sv_join_diagnostics(xl, yl, "id", sample_n = 50L, rule = rule)
+      expect_equal(rule_check_sorted(got), rule_check_sorted(want), tolerance = 1e-12,
+                   label = paste("derived", kind, rule$shape, rule$from, rule$inclusive))
+    }
+  }
+})
+
+test_that("a big derived table lists only unmatched keys, run in parallel (slow)", {
+  skip_on_cran()
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  # 2M rows on 8 threads: enough for a join's row order to change between queries
+  con <- DBI::dbConnect(duckdb::duckdb())
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+  DBI::dbExecute(con, "SET threads = 8")
+  n <- 2e6
+  set.seed(1)
+  d0 <- as.Date("2020-01-01")
+  x <- data.frame(id = sprintf("p%07d", seq_len(n)), d = d0 + sample(0:2000, n, TRUE))
+  y <- data.frame(id = x$id, e = x$d + sample(c(-30:30, 100, -100), n, TRUE))
+  xl <- rule_derived(con, x, "bx")
+  yl <- rule_derived(con, y, "by")
+  gap <- as.numeric(y$e - x$d)
+  # one row per id on each side, so a row is unmatched exactly when its own pair fails the rule
+  cases <- list(
+    list(rule = list(shape = "window", xCol = "d", yCol = "e", from = -38, to = 38), lone = abs(gap) > 38),
+    list(rule = list(shape = "before", xCol = "d", yCol = "e"), lone = gap > 0)
+  )
+  for (cs in cases) {
+    truth <- sort(x$id[cs$lone])
+    got <- sv_join_diagnostics(xl, yl, "id", sample_n = length(truth) + 10L, rule = cs$rule)
+    expect_equal(got$matched_x, n - length(truth))
+    expect_identical(sort(got$unmatched_x), truth)
+    expect_identical(sort(got$unmatched_y), truth)
+  }
 })
 
 test_that("the lazy rule check keeps nearest-match ties, never matches NA and lists samples in order", {

@@ -79,9 +79,9 @@ temporarily; both are removed afterwards. Known differences from the
 in-memory check: keys of different types are compared as text, double keys
 are compared exactly, and an in-memory POSIXct key is compared as text where
 a database key is compared as an instant. A date rule runs in duckdb too; its
-date-time columns are compared as instants (\code{TIMESTAMP}), and a date-time
-window adds whole days, which with duckdb's ICU extension loaded can be an
-hour off across a daylight-saving change.
+date-time columns are compared as UTC instants (taken with \code{epoch_us()}, so
+the session \code{TimeZone} and the ICU extension play no part), and a date-time
+window adds whole days of 24 hours, as the in-memory check does.
 }
 
 \examples{
