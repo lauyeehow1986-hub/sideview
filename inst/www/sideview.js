@@ -668,6 +668,7 @@ function sendToShiny(name, value) {
     if (!global.SideviewPipeline) {
       throw new Error('sideview: sv-pipeline.js must be loaded before sideview.js');
     }
+    this.ruleDraft = null;
     this.pipeline = new global.SideviewPipeline.Pipeline({
       pipe: this.options.pipe,
       onChange: function () { self.renderPipeline(); }
@@ -741,6 +742,7 @@ function sendToShiny(name, value) {
     folderOpen: '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
     search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
     map: '<path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z"/><path d="M15 5.764v15"/><path d="M9 3.236v15"/>',
+    calendar: '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>',
     keyboard: '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/>'
   };
 
@@ -1577,7 +1579,7 @@ function sendToShiny(name, value) {
     [['T'], 'Switch light / dark theme'],
     [['/'], 'Type an AI prompt'],
     [['Ctrl+Z', 'Ctrl+Y'], 'Undo / redo a pipeline step'],
-    [['Ctrl+Enter'], 'Add the step in a builder tab'],
+    [['Ctrl+Enter'], 'Add the step in a builder tab, or apply a date rule'],
     [['Esc'], 'Cancel a connection, close a popover, or restore a card'],
     [['?'], 'Show or hide this list']
   ];
@@ -2592,6 +2594,8 @@ function sendToShiny(name, value) {
         return;
       }
       if (self.closeActivePopover && self.closeActivePopover()) return;
+      // an open date-rule row closes and keeps the code as it was
+      if (self.ruleDraft && self.ownsKeyboard() && self.closeRuleRow()) return;
       var maxed = self.overlay ? self.overlay.querySelector('.sideview-card.is-maximized') : null;
       if (maxed) {
         self.toggleMaximizeCard(maxed, maxed.querySelector('[data-action="maximize-card"]'));
@@ -3649,6 +3653,267 @@ function sendToShiny(name, value) {
     if (this.pipeline.redo()) this.showToast('Redid pipeline change', 'info');
   };
 
+  // ---- the date-rule row and Strict on a join step ----------------------------------
+
+  var RULE_SHAPE_CHOICES = [
+    ['none', 'No rule'], ['between', 'Between'], ['window', 'Window'],
+    ['before', 'Nearest before'], ['after', 'Nearest after'], ['overlaps', 'Overlaps']
+  ];
+  var RULE_PICK_KINDS = { 'Date': 1, 'date-time': 1, 'numeric': 1 };
+  var STRICT_TITLE = 'Add relationship and unmatched checks from the join check';
+  var STRICT_LAZY_TITLE = 'Strict runs in R only: duckdb rejects relationship and unmatched, and arrow ignores them';
+  var NEAREST_TOAST = 'Nearest-match rules need a left, inner, semi or anti join: switched to left join.';
+
+  function isNearestShape(shape) { return shape === 'before' || shape === 'after'; }
+
+  /** A table's column-to-kind map as the pipeline holds it ({} for an unknown table). */
+  SideviewEngine.prototype.tableKinds = function (name) {
+    var t = this.pipeline.tables[name];
+    return (t && t.kinds) || {};
+  };
+
+  /** The join-type select, the rule button and the Strict checkbox of a join step. */
+  SideviewEngine.prototype.joinOptionsHtml = function (s) {
+    var P = global.SideviewPipeline;
+    var p = this.pipeline;
+    var nearest = !!s.rule && isNearestShape(s.rule.shape);
+    var sel = '<select class="sideview-step-jointype" aria-label="Join type">' +
+      P.JOIN_TYPES.map(function (j) {
+        var off = nearest && (j === 'right_join' || j === 'full_join');
+        return '<option value="' + j + '"' + (j === s.type ? ' selected' : '') + (off ? ' disabled' : '') + '>' +
+          j.replace('_join', '') + '</option>';
+      }).join('') + '</select>';
+    var open = !!this.ruleDraft && this.ruleDraft.stepId === s.id;
+    var bad = !!s.rule && !!p.joinRuleProblem(s);
+    var btn = '<button type="button" class="sideview-step-rule' + (s.rule ? ' has-rule' : '') + (open ? ' is-open' : '') +
+      (bad ? ' is-invalid' : '') + '" data-step-action="rule" aria-label="Date rule" title="Date rule" aria-expanded="' +
+      (open ? 'true' : 'false') + '">' + icon('calendar') +
+      (bad ? '<span class="sideview-step-rule-label is-invalid">Rule needs fixing</span>' : '') + '</button>';
+    var lazy = !!(p.lazyKind(s.table) || p.lazyKind(s.right));
+    var strict = '<label class="sideview-step-strict-label"><input type="checkbox" class="sideview-step-strict"' +
+      (s.strict ? ' checked' : '') +
+      (lazy ? ' disabled title="' + STRICT_LAZY_TITLE + '"' : ' title="' + STRICT_TITLE + '"') +
+      ' aria-label="Strict" /> Strict</label>';
+    return '<div class="sideview-step-joinopts">' + sel + btn + strict + '</div>';
+  };
+
+  /** The columns a rule slot may pick: date, date-time or number, and the same kind as the left pick. */
+  SideviewEngine.prototype.ruleColumnChoices = function (step, rule, slot) {
+    var P = global.SideviewPipeline;
+    var slots = P.ruleSlots(rule.shape);
+    var mine = slots.filter(function (sl) { return sl.slot === slot; })[0];
+    if (!mine) return [];
+    var kinds = this.tableKinds(mine.side === 'x' ? step.table : step.right);
+    var want = null;
+    if (mine.side === 'y') {
+      var kx = this.tableKinds(step.table);
+      slots.forEach(function (sl) {
+        if (!want && sl.side === 'x' && rule[sl.slot] && kx[rule[sl.slot]]) want = kx[rule[sl.slot]];
+      });
+    }
+    var out = Object.keys(kinds).filter(function (c) {
+      return RULE_PICK_KINDS[kinds[c]] && (!want || kinds[c] === want);
+    });
+    // a pick that no longer qualifies stays visible, so the message can say why
+    if (rule[slot] && out.indexOf(rule[slot]) < 0) out.unshift(rule[slot]);
+    return out;
+  };
+
+  /** Keep a rule's slots to columns that exist and, on the right, to the left pick's kind. */
+  SideviewEngine.prototype.pruneRule = function (step, rule) {
+    var self = this;
+    var slots = global.SideviewPipeline.ruleSlots(rule.shape);
+    var kx = this.tableKinds(step.table), ky = this.tableKinds(step.right);
+    var want = null;
+    slots.forEach(function (sl) {
+      if (!want && sl.side === 'x' && rule[sl.slot] && kx[rule[sl.slot]]) want = kx[rule[sl.slot]];
+    });
+    slots.forEach(function (sl) {
+      if (sl.side !== 'y' || !rule[sl.slot]) return;
+      var k = ky[rule[sl.slot]];
+      if (!k || (want && k !== want)) rule[sl.slot] = '';
+    });
+    return rule;
+  };
+
+  /** The draft rule for another shape: compatible picks stay, window and inclusive keep their values. */
+  SideviewEngine.prototype.ruleForShape = function (step, old, shape) {
+    var out = { shape: shape };
+    if (shape === 'none') return out;
+    global.SideviewPipeline.ruleSlots(shape).forEach(function (sl) {
+      out[sl.slot] = typeof old[sl.slot] === 'string' ? old[sl.slot] : '';
+    });
+    if (shape === 'window') {
+      out.from = old.from !== undefined && old.from !== null ? old.from : -7;
+      out.to = old.to !== undefined && old.to !== null ? old.to : 7;
+    }
+    if (isNearestShape(shape)) out.inclusive = old.inclusive !== false;
+    return this.pruneRule(step, out);
+  };
+
+  var RULE_SLOT_WORDS = {
+    xCol: 'date', yCol: 'date', xFrom: 'start', xTo: 'end', yFrom: 'start', yTo: 'end'
+  };
+
+  /** The open rule row of a join step ('' when it is closed). Values are filled in by syncRuleRows(). */
+  SideviewEngine.prototype.ruleRowHtml = function (s) {
+    var d = this.ruleDraft;
+    if (!d || d.stepId !== s.id) return '';
+    var P = global.SideviewPipeline;
+    var self = this;
+    var rule = d.rule;
+    var html = '<div class="sideview-rule-row" role="group" aria-label="Date rule">' +
+      '<label class="sideview-rule-field"><span class="sideview-rule-name">Rule</span>' +
+      '<select class="sideview-rule-shape" aria-label="Rule shape">' +
+      RULE_SHAPE_CHOICES.map(function (c) {
+        return '<option value="' + c[0] + '">' + c[1] + '</option>';
+      }).join('') + '</select></label>';
+    P.ruleSlots(rule.shape).forEach(function (sl) {
+      var tname = sl.side === 'x' ? s.table : s.right;
+      var word = RULE_SLOT_WORDS[sl.slot];
+      html += '<label class="sideview-rule-field"><span class="sideview-rule-name" title="' + escapeHtml(tname) + '">' +
+        escapeHtml(tname) + ' ' + word + '</span>' +
+        '<select class="sideview-rule-col" data-slot="' + sl.slot + '" aria-label="' + escapeHtml(tname + ' ' + word) + '">' +
+        '<option value="">Pick a column</option>' +
+        self.ruleColumnChoices(s, rule, sl.slot).map(function (c) {
+          return '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>';
+        }).join('') + '</select></label>';
+    });
+    if (rule.shape === 'window') {
+      html += '<label class="sideview-rule-field"><span class="sideview-rule-name">From</span>' +
+        '<input type="number" class="sideview-rule-from" step="1" min="-3650" max="3650" aria-label="Window start" /></label>' +
+        '<label class="sideview-rule-field"><span class="sideview-rule-name">To</span>' +
+        '<input type="number" class="sideview-rule-to" step="1" min="-3650" max="3650" aria-label="Window end" /></label>';
+    }
+    if (isNearestShape(rule.shape)) {
+      html += '<label class="sideview-rule-check"><input type="checkbox" class="sideview-rule-inclusive" /> ' +
+        '<span>same day counts</span></label>';
+    }
+    html += '<span class="sideview-rule-msg" role="alert"></span>' +
+      '<span class="sideview-rule-actions"><button type="button" class="sideview-rule-apply">Apply</button>' +
+      '<button type="button" class="sideview-rule-cancel">Cancel</button></span></div>';
+    return html;
+  };
+
+  /** Put the draft's values into the open row's controls (properties, not attributes), then its message. */
+  SideviewEngine.prototype.syncRuleRows = function () {
+    var d = this.ruleDraft;
+    if (!d) return;
+    var li = this.container.querySelector('.sideview-step[data-step-id="' + cssEscape(d.stepId) + '"]');
+    var row = li && li.querySelector('.sideview-rule-row');
+    if (!row) return;
+    var rule = d.rule;
+    row.querySelector('.sideview-rule-shape').value = rule.shape;
+    var cols = row.querySelectorAll('.sideview-rule-col');
+    for (var i = 0; i < cols.length; i++) cols[i].value = rule[cols[i].dataset.slot] || '';
+    var from = row.querySelector('.sideview-rule-from'), to = row.querySelector('.sideview-rule-to');
+    if (from) from.value = rule.from === undefined || rule.from === null ? '' : String(rule.from);
+    if (to) to.value = rule.to === undefined || rule.to === null ? '' : String(rule.to);
+    var inc = row.querySelector('.sideview-rule-inclusive');
+    if (inc) inc.checked = rule.inclusive !== false;
+    this.updateRuleRow(li);
+  };
+
+  /** The first problem with the draft rule as it would be applied; null when fine or "none". */
+  SideviewEngine.prototype.ruleDraftProblem = function (step) {
+    var d = this.ruleDraft;
+    if (!d || d.rule.shape === 'none') return null;
+    // Apply turns a right or full join into a left join for a nearest match, so that is not a problem here
+    var type = isNearestShape(d.rule.shape) ? 'left_join' : (step.type || 'left_join');
+    return global.SideviewPipeline.ruleProblem(d.rule, this.tableKinds(step.table), this.tableKinds(step.right), type);
+  };
+
+  /** Refresh the message and Apply button of the open row without redrawing it. */
+  SideviewEngine.prototype.updateRuleRow = function (li) {
+    var d = this.ruleDraft;
+    var row = li && li.querySelector ? li.querySelector('.sideview-rule-row') : null;
+    var step = d ? this.pipeline.find(d.stepId) : null;
+    if (!row || !step) return;
+    var problem = this.ruleDraftProblem(step);
+    var msg = row.querySelector('.sideview-rule-msg');
+    if (msg) msg.textContent = problem || '';
+    var apply = row.querySelector('.sideview-rule-apply');
+    if (apply) {
+      apply.disabled = !!problem;
+      if (problem) apply.setAttribute('aria-disabled', 'true'); else apply.removeAttribute('aria-disabled');
+    }
+  };
+
+  SideviewEngine.prototype.focusRuleControl = function (stepId, selector) {
+    var li = this.container.querySelector('.sideview-step[data-step-id="' + cssEscape(stepId) + '"]');
+    var el = li && li.querySelector(selector);
+    if (el && el.focus) el.focus();
+  };
+
+  /** Open the rule row of a join step on its current rule, or close it when it is already open. */
+  SideviewEngine.prototype.toggleRuleRow = function (id) {
+    var step = this.pipeline.find(id);
+    if (!step || step.kind !== 'join') return;
+    if (this.ruleDraft && this.ruleDraft.stepId === id) { this.closeRuleRow(); return; }
+    var rule = step.rule ? JSON.parse(JSON.stringify(step.rule)) : { shape: 'none' };
+    this.ruleDraft = { stepId: id, rule: rule };
+    this.renderPipeline();
+    this.focusRuleControl(id, '.sideview-rule-shape');
+  };
+
+  SideviewEngine.prototype.closeRuleRow = function () {
+    var d = this.ruleDraft;
+    if (!d) return false;
+    this.ruleDraft = null;
+    this.renderPipeline();
+    this.focusRuleControl(d.stepId, '.sideview-step-rule');
+    return true;
+  };
+
+  /** Apply the draft: "none" clears the rule; a nearest match on a right or full join becomes a left join. */
+  SideviewEngine.prototype.applyRule = function () {
+    var d = this.ruleDraft;
+    if (!d) return;
+    var step = this.pipeline.find(d.stepId);
+    if (!step) { this.ruleDraft = null; this.renderPipeline(); return; }
+    if (this.ruleDraftProblem(step)) return;
+    var rule = d.rule.shape === 'none' ? null : JSON.parse(JSON.stringify(d.rule));
+    var switched = !!rule && isNearestShape(rule.shape) && (step.type === 'right_join' || step.type === 'full_join');
+    var id = d.stepId;
+    this.ruleDraft = null;
+    if (!this.pipeline.setJoinRule(id, rule)) this.renderPipeline();
+    if (switched) this.showToast(NEAREST_TOAST, 'info');
+    this.focusRuleControl(id, '.sideview-step-rule');
+  };
+
+  /** A change in one of the open row's controls: update the draft, redraw when the choices change. */
+  SideviewEngine.prototype.onRuleControl = function (t) {
+    var d = this.ruleDraft;
+    if (!d || !t || !t.classList) return false;
+    var li = t.closest ? t.closest('[data-step-id]') : null;
+    if (!li || li.dataset.stepId !== d.stepId) return false;
+    var step = this.pipeline.find(d.stepId);
+    if (!step) return false;
+    if (t.classList.contains('sideview-rule-shape')) {
+      d.rule = this.ruleForShape(step, d.rule, t.value);
+      this.renderPipeline();
+      this.focusRuleControl(d.stepId, '.sideview-rule-shape');
+    } else if (t.classList.contains('sideview-rule-col')) {
+      var slot = t.dataset.slot;
+      d.rule[slot] = t.value;
+      this.pruneRule(step, d.rule);
+      this.renderPipeline();
+      this.focusRuleControl(d.stepId, '.sideview-rule-col[data-slot="' + slot + '"]');
+    } else if (t.classList.contains('sideview-rule-from')) {
+      d.rule.from = t.value;
+      this.updateRuleRow(li);
+    } else if (t.classList.contains('sideview-rule-to')) {
+      d.rule.to = t.value;
+      this.updateRuleRow(li);
+    } else if (t.classList.contains('sideview-rule-inclusive')) {
+      d.rule.inclusive = !!t.checked;
+      this.updateRuleRow(li);
+    } else {
+      return false;
+    }
+    return true;
+  };
+
   SideviewEngine.prototype.renderPipeline = function () {
     var self = this;
     var P = global.SideviewPipeline;
@@ -3658,6 +3923,8 @@ function sendToShiny(name, value) {
     var codeText = this.container.querySelector('.sideview-code-text');
     if (codeText) codeText.textContent = code || CODE_PLACEHOLDER;
 
+    // an open rule row belongs to a step that still exists
+    if (this.ruleDraft && !p.find(this.ruleDraft.stepId)) this.ruleDraft = null;
     var n = p.steps.length;
     var list = this.container.querySelector('.sideview-step-list');
     if (list) {
@@ -3670,15 +3937,15 @@ function sendToShiny(name, value) {
           var label = P.describe(s);
           var title = s.kind === 'custom' ? String(s.code || '').split('\n')[0] : label;
           var join = '';
+          var ruleRow = '';
           var diag = '';
           if (s.kind === 'join') {
-            join = '<select class="sideview-step-jointype" aria-label="Join type">' +
-              P.JOIN_TYPES.map(function (j) {
-                return '<option value="' + j + '"' + (j === s.type ? ' selected' : '') + '>' + j.replace('_join', '') + '</option>';
-              }).join('') + '</select>';
+            join = self.joinOptionsHtml(s);
+            ruleRow = self.ruleRowHtml(s);
             diag = self.joinDiagLine(s);
           }
           return '<li class="sideview-step' + (on ? '' : ' is-disabled') + (diag ? ' has-diag' : '') +
+            (s.kind === 'join' ? ' is-join' : '') + (ruleRow ? ' has-rule-row' : '') +
             '" data-step-id="' + escapeHtml(s.id) + '">' +
             '<input type="checkbox" class="sideview-step-toggle"' + (on ? ' checked' : '') +
             ' aria-label="Include step ' + (i + 1) + '" />' +
@@ -3690,9 +3957,10 @@ function sendToShiny(name, value) {
             '<button type="button" class="sideview-icon-btn" data-step-action="down" aria-label="Move step down"' +
             (i === n - 1 ? ' disabled' : '') + '>' + icon('chevronDown') + '</button>' +
             '<button type="button" class="sideview-icon-btn" data-step-action="delete" aria-label="Delete step">' +
-            icon('trash') + '</button>' + diag + '</li>';
+            icon('trash') + '</button>' + ruleRow + diag + '</li>';
         }).join('');
       }
+      this.syncRuleRows();
     }
     var count = this.container.querySelector('.sideview-step-count');
     if (count) count.textContent = n === 1 ? '1 step' : n + ' steps';
@@ -4618,6 +4886,12 @@ function sendToShiny(name, value) {
     // Ctrl/Cmd+Enter inside a builder tab adds its step.
     this.container.addEventListener('keydown', function (e) {
       if (e.key !== 'Enter' || !(e.ctrlKey || e.metaKey)) return;
+      // ... and inside an open date-rule row it applies the rule
+      if (e.target && e.target.closest && e.target.closest('.sideview-rule-row')) {
+        e.preventDefault();
+        self.applyRule();
+        return;
+      }
       var builder = e.target && e.target.closest ? e.target.closest('.sideview-builder') : null;
       var submit = builder ? builder.querySelector('[data-builder-action="submit"]') : null;
       if (!submit) return;
@@ -4625,6 +4899,8 @@ function sendToShiny(name, value) {
       submit.click();
     });
     this.container.addEventListener('click', function (e) {
+      if (e.target.closest('.sideview-rule-apply')) { self.applyRule(); return; }
+      if (e.target.closest('.sideview-rule-cancel')) { self.closeRuleRow(); return; }
       var stepBtn = e.target.closest('[data-step-action]');
       if (stepBtn) {
         var li = stepBtn.closest('[data-step-id]');
@@ -4634,6 +4910,7 @@ function sendToShiny(name, value) {
         else if (id && act === 'down') self.pipeline.move(id, 1);
         else if (id && act === 'delete') self.pipeline.remove(id);
         else if (id && act === 'diag') self.showJoinCheck(id);
+        else if (id && act === 'rule') self.toggleRuleRow(id);
         return;
       }
       var bBtn = e.target.closest('[data-builder-action]');
@@ -4668,7 +4945,10 @@ function sendToShiny(name, value) {
       var t = e.target;
       if (!t || !t.classList) return;
       var li = t.closest ? t.closest('[data-step-id]') : null;
-      if (t.classList.contains('sideview-step-toggle') && li) {
+      if (self.onRuleControl(t)) return;
+      if (t.classList.contains('sideview-step-strict') && li) {
+        self.pipeline.setJoinStrict(li.dataset.stepId, !!t.checked);
+      } else if (t.classList.contains('sideview-step-toggle') && li) {
         self.pipeline.update(li.dataset.stepId, { enabled: !!t.checked });
       } else if (t.classList.contains('sideview-step-jointype') && li) {
         self.pipeline.update(li.dataset.stepId, { type: t.value });
@@ -4684,6 +4964,14 @@ function sendToShiny(name, value) {
       } else if (t.dataset && t.dataset.field === 'table') {
         var builder = t.closest('.sideview-builder');
         if (builder) self.renderBuilder(builder.dataset.builder, t.value);
+      }
+    });
+
+    // typing in a number box of the rule row checks it as you go (the change event waits for blur)
+    this.container.addEventListener('input', function (e) {
+      var t = e.target;
+      if (t && t.classList && (t.classList.contains('sideview-rule-from') || t.classList.contains('sideview-rule-to'))) {
+        self.onRuleControl(t);
       }
     });
 

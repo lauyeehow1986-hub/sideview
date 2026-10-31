@@ -1261,6 +1261,7 @@ html.sv-standalone body {
 }
 
 .sideview-container .sideview-step-diag {
+  order: 3;
   flex: 1 0 100%;
   display: flex;
   align-items: center;
@@ -1303,6 +1304,188 @@ html.sv-standalone body {
 
 .sideview-container .sideview-step-diag.is-pending {
   cursor: default;
+}
+
+/* Join step options (join type, date rule, Strict) and the inline date-rule row */
+.sideview-container .sideview-step.is-join {
+  flex-wrap: wrap;
+}
+
+/* A join step: the label and its buttons on the first line, its options and the rule row below */
+.sideview-container .sideview-step-joinopts {
+  order: 1;
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sideview-container .sideview-step-rule {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--sv-radius-sm);
+  background: none;
+  color: var(--sv-text-muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sideview-container .sideview-step-rule:hover {
+  background: var(--sv-hover-overlay);
+}
+
+.sideview-container .sideview-step-rule.has-rule,
+.sideview-container .sideview-step-rule.is-open {
+  color: var(--sv-primary-text);
+  background: var(--sv-primary-subtle);
+}
+
+.sideview-container .sideview-step-rule.is-invalid {
+  color: var(--sv-danger-text);
+  background: var(--sv-danger-subtle);
+}
+
+.sideview-container .sideview-step-rule svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.sideview-container .sideview-step-rule-label {
+  white-space: nowrap;
+}
+
+.sideview-container .sideview-step-strict-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--sv-text);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sideview-container .sideview-step-strict:disabled {
+  cursor: not-allowed;
+}
+
+.sideview-container .sideview-rule-row {
+  flex: 1 0 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 6px 8px;
+  order: 2;
+  margin-top: 2px;
+  padding: 6px;
+  border: 1px solid var(--sv-border-light);
+  border-radius: var(--sv-radius-sm);
+  background: var(--sv-surface-secondary);
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-rule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 11px;
+}
+
+.sideview-container .sideview-rule-name {
+  max-width: 14em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sv-text-muted);
+}
+
+.sideview-container .sideview-rule-row select,
+.sideview-container .sideview-rule-row input[type="number"] {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+  font-size: 12px;
+  padding: 2px 4px;
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-sm);
+  background: var(--sv-surface);
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-rule-row input[type="number"] {
+  width: 5em;
+}
+
+.sideview-container .sideview-rule-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.sideview-container .sideview-rule-msg {
+  order: 3;
+  flex: 1 0 100%;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--sv-danger-text);
+  overflow-wrap: anywhere;
+}
+
+.sideview-container .sideview-rule-msg:empty {
+  margin-top: -6px;
+}
+
+.sideview-container .sideview-rule-actions {
+  order: 2;
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.sideview-container .sideview-rule-apply,
+.sideview-container .sideview-rule-cancel {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-sm);
+  background: var(--sv-surface);
+  color: var(--sv-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sideview-container .sideview-rule-apply {
+  background: var(--sv-primary);
+  border-color: var(--sv-primary);
+  color: var(--sv-text-inverse);
+}
+
+.sideview-container .sideview-rule-apply:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sideview-container .sideview-rule-row :focus-visible,
+.sideview-container .sideview-step-rule:focus-visible,
+.sideview-container .sideview-step-strict:focus-visible {
+  outline: 2px solid var(--sv-focus-ring);
+  outline-offset: 1px;
 }
 
 .sideview-container .sideview-joincheck {

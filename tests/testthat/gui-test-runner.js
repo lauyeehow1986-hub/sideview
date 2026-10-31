@@ -402,6 +402,7 @@ function runAllScenarios() {
     scenario5: {},
     scenario6: {},
     scenario7: {},
+    scenario8: {},
     diagnostics: {}
   };
 
@@ -737,6 +738,173 @@ function runAllScenarios() {
     hint_added: s7_toasts[2].text === 'Error in x: boom ' + s7_hint && s7_toasts[2].type === 'danger',
     success_unchanged: s7_toasts[3].text === 'Ran fine' && s7_toasts[3].type === 'success',
     lazy_code_collects: /dplyr::collect\(\)$/.test(s7_code) && s7_code.indexOf('dplyr::tbl(con, "lazy_tbl")') === 0
+  };
+
+  // Scenario 8: the rule row and the Strict checkbox on a join step.
+  const s8_toasts = [];
+  const s8_showToast = engine.showToast;
+  engine.showToast = function (text, type) { s8_toasts.push({ text: text, type: type }); };
+  engine.pipeline.clear();
+  const s8_tables = function (visitKind) {
+    return {
+      patients: { kinds: { patient_id: 'character', admit_date: 'Date', age: 'numeric' } },
+      visits: { kinds: { patient_id: 'character', visit_date: visitKind, cost: 'numeric' } }
+    };
+  };
+  engine.pipeline.setTables(s8_tables('Date'));
+  engine.pipeline.add({
+    kind: 'join', table: 'patients', right: 'visits', type: 'left_join',
+    by: [{ left: 'patient_id', right: 'patient_id' }]
+  }, 'join');
+  const s8_id = engine.pipeline.steps[0].id;
+  const s8_li = function () { return container.querySelector('.sideview-step[data-step-id="' + s8_id + '"]'); };
+  const s8_cur = function () { return engine.pipeline.find(s8_id); };
+  const s8_fire = function (el, type, props) {
+    const ev = new MockEvent(type, { bubbles: true });
+    Object.assign(ev, props || {});
+    el.dispatchEvent(ev);
+  };
+  const s8_set = function (sel, value) {
+    const el = s8_li().querySelector(sel);
+    el.value = String(value);
+    s8_fire(el, 'change');
+    return el;
+  };
+  const s8_row = function () { return s8_li().querySelector('.sideview-rule-row'); };
+  const s8_apply = function () { return s8_li().querySelector('.sideview-rule-apply'); };
+  const s8_open = function () { s8_li().querySelector('.sideview-step-rule').click(); };
+
+  const s8_ruleBtn = s8_li().querySelector('.sideview-step-rule');
+  const s8_hasBtn = !!s8_ruleBtn && s8_ruleBtn.dataset.stepAction === 'rule' &&
+    s8_ruleBtn.getAttribute('aria-label') === 'Date rule';
+  const s8_closedAtFirst = !s8_row();
+  s8_open();
+  const s8_opened = !!s8_row();
+  const s8_shapeOptions = s8_row().querySelector('.sideview-rule-shape')
+    .querySelectorAll('option').map(o => o.getAttribute('value'));
+  s8_set('.sideview-rule-shape', 'window');
+  const s8_colOptions = function (slot) {
+    return s8_li().querySelector('.sideview-rule-col[data-slot="' + slot + '"]')
+      .querySelectorAll('option').map(o => o.getAttribute('value')).filter(v => v !== '');
+  };
+  const s8_xOptions = s8_colOptions('xCol');
+  s8_set('.sideview-rule-col[data-slot="xCol"]', 'admit_date');
+  const s8_yOptions = s8_colOptions('yCol');
+  s8_set('.sideview-rule-col[data-slot="yCol"]', 'visit_date');
+  s8_set('.sideview-rule-from', 8);
+  s8_set('.sideview-rule-to', 7);
+  const s8_bad = {
+    disabled: !!s8_apply().disabled,
+    msg: s8_li().querySelector('.sideview-rule-msg').textContent
+  };
+  s8_set('.sideview-rule-from', -7);
+  const s8_fixedEnabled = !s8_apply().disabled;
+  s8_apply().click();
+  const s8_code = engine.generatedCode;
+  const s8_rule = s8_cur().rule;
+  const s8_closedAfterApply = !s8_row();
+
+  // Ctrl+Z removes the rule
+  s8_fire(document, 'keydown', { key: 'z', ctrlKey: true });
+  const s8_undone = !s8_cur().rule && engine.generatedCode.indexOf('.sv_lo') < 0;
+
+  // Esc closes the row and keeps the code
+  s8_open();
+  const s8_reopened = !!s8_row();
+  s8_set('.sideview-rule-shape', 'window');
+  s8_set('.sideview-rule-col[data-slot="xCol"]', 'admit_date');
+  s8_set('.sideview-rule-col[data-slot="yCol"]', 'visit_date');
+  s8_apply().click();
+  const s8_codeBefore = engine.generatedCode;
+  s8_open();
+  s8_fire(document, 'keydown', { key: 'Escape' });
+  const s8_escClosed = !s8_row() && engine.generatedCode === s8_codeBefore && !!s8_cur().rule;
+
+  // "none" with Apply (here by Ctrl+Enter) clears the rule
+  s8_open();
+  s8_set('.sideview-rule-shape', 'none');
+  const s8_noneEnabled = !s8_apply().disabled;
+  s8_fire(s8_li().querySelector('.sideview-rule-shape'), 'keydown', { key: 'Enter', ctrlKey: true });
+  const s8_noneApplied = !s8_cur().rule && !s8_row();
+
+  // Before on a right join switches to a left join and raises the toast
+  engine.pipeline.update(s8_id, { type: 'right_join' });
+  s8_open();
+  s8_set('.sideview-rule-shape', 'before');
+  s8_set('.sideview-rule-col[data-slot="xCol"]', 'admit_date');
+  s8_set('.sideview-rule-col[data-slot="yCol"]', 'visit_date');
+  const s8_beforeEnabled = !s8_apply().disabled;
+  s8_toasts.length = 0;
+  s8_apply().click();
+  const s8_typeSwitched = s8_cur().type === 'left_join';
+  const s8_toast = s8_toasts.some(t => t.type === 'info' &&
+    t.text === 'Nearest-match rules need a left, inner, semi or anti join: switched to left join.');
+  const s8_disabledTypes = s8_li().querySelector('.sideview-step-jointype').querySelectorAll('option')
+    .filter(o => o.hasAttribute('disabled')).map(o => o.getAttribute('value')).sort();
+  engine.pipeline.setJoinRule(s8_id, null);
+
+  // Strict toggles step.strict
+  const s8_strictBox = function () { return s8_li().querySelector('.sideview-step-strict'); };
+  s8_strictBox().checked = true;
+  s8_fire(s8_strictBox(), 'change');
+  const s8_strictOn = s8_cur().strict === true;
+  s8_strictBox().checked = false;
+  s8_fire(s8_strictBox(), 'change');
+  const s8_strictOff = !s8_cur().strict;
+
+  // A column that changes kind leaves the rule needing a fix
+  engine.pipeline.setJoinRule(s8_id, { shape: 'window', xCol: 'admit_date', yCol: 'visit_date', from: -7, to: 7 });
+  const s8_okLabel = s8_li().textContent.indexOf('Rule needs fixing') < 0;
+  engine.pipeline.setTables(s8_tables('character'));
+  const s8_fixLabel = s8_li().querySelector('.sideview-step-rule').querySelector('.is-invalid');
+  const s8_needsFix = s8_li().textContent.indexOf('Rule needs fixing') >= 0 && !!s8_fixLabel &&
+    s8_fixLabel.textContent === 'Rule needs fixing';
+
+  // Strict is off on a lazy chain, with the reason
+  engine.pipeline.setTables(Object.assign(s8_tables('Date'), {
+    visits: { lazy: 'duckdb', codeRef: 'dplyr::tbl(con, "visits")', kinds: { patient_id: 'character', visit_date: 'Date' } }
+  }));
+  const s8_lazyDisabled = s8_strictBox().hasAttribute('disabled') && s8_strictBox().getAttribute('title') ===
+    'Strict runs in R only: duckdb rejects relationship and unmatched, and arrow ignores them';
+
+  // The ? list names the new use of Ctrl+Enter
+  engine.toggleShortcuts(true);
+  const s8_scrim = container.querySelector('.sideview-shortcuts-scrim');
+  const s8_listed = !!s8_scrim && s8_scrim.textContent.indexOf('Add the step in a builder tab, or apply a date rule') >= 0;
+  engine.toggleShortcuts(false);
+
+  engine.pipeline.clear();
+  engine.pipeline.setTables({});
+  engine.ruleDraft = null;
+  engine.showToast = s8_showToast;
+
+  results.scenario8 = {
+    rule_button: s8_hasBtn,
+    closed_at_first: s8_closedAtFirst,
+    row_opens: s8_opened,
+    shape_options: JSON.stringify(s8_shapeOptions) === JSON.stringify(['none', 'between', 'window', 'before', 'after', 'overlaps']),
+    x_columns_by_kind: JSON.stringify(s8_xOptions.slice().sort()) === JSON.stringify(['admit_date', 'age']),
+    y_columns_follow_x: JSON.stringify(s8_yOptions) === JSON.stringify(['visit_date']),
+    bad_window_blocked: s8_bad.disabled === true,
+    bad_window_message: s8_bad.msg === 'The window start must not be after its end.',
+    fixed_window_enabled: s8_fixedEnabled,
+    apply_writes_code: s8_code.indexOf('.sv_lo') >= 0 && !!s8_rule && s8_rule.shape === 'window' && s8_rule.from === -7 && s8_rule.to === 7,
+    apply_closes_row: s8_closedAfterApply,
+    undo_removes_rule: s8_undone,
+    reopens: s8_reopened,
+    esc_closes_keeps_code: s8_escClosed,
+    none_enabled: s8_noneEnabled,
+    ctrl_enter_applies_none: s8_noneApplied,
+    before_enabled_on_right: s8_beforeEnabled,
+    before_switches_type: s8_typeSwitched,
+    before_toast: s8_toast,
+    right_full_disabled_under_before: JSON.stringify(s8_disabledTypes) === JSON.stringify(['full_join', 'right_join']),
+    strict_on: s8_strictOn,
+    strict_off: s8_strictOff,
+    rule_ok_label_absent: s8_okLabel,
+    rule_needs_fixing: s8_needsFix,
+    strict_disabled_on_lazy: s8_lazyDisabled,
+    shortcut_listed: s8_listed
   };
 
   // DIAGNOSTIC FAILURE CAPTURE HELPER

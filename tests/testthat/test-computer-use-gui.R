@@ -268,6 +268,19 @@ test_that("Computer Use GUI: Scenario 7 - eval error on a lazy table points at c
 })
 
 # ==============================================================================
+# Scenario 8: the rule row and the Strict checkbox on a join step
+# ==============================================================================
+test_that("Computer Use GUI: Scenario 8 - the date-rule row and Strict on a join step", {
+  res <- run_gui_test_scenarios()
+  s8 <- res$scenario8
+
+  expect_gt(length(s8), 0)
+  for (nm in names(s8)) {
+    expect_true(isTRUE(s8[[nm]]), info = nm)
+  }
+})
+
+# ==============================================================================
 # Diagnostic failure capture helper test
 # ==============================================================================
 test_that("Computer Use GUI: Diagnostic failure capture generates serialized artifacts and report on failure", {
