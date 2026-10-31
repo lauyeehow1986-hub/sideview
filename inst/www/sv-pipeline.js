@@ -199,6 +199,7 @@
    * The dplyr verb calls a step contributes to its table's chain.
    * `ctx` (optional) describes the chain at this point: `copy` adds copy = TRUE to a join
    * (duckdb joined to a data frame) and `kind` ('arrow' | 'duckdb') is the lazy backend.
+   * `strict` ({ relationship, unmatched? }, from the join check) is written into an in-memory join.
    */
   function verbs(step, refFor, ctx) {
     ctx = ctx || {};
@@ -206,11 +207,18 @@
       case 'join': {
         var type = JOIN_TYPES.indexOf(step.type) >= 0 ? step.type : 'left_join';
         if (!step.by || !step.by.length) return [];
+        // Strict: the arguments the join check found, only on a join in memory (dbplyr and arrow
+        // joins have no relationship / unmatched). They come after na_matches and before copy.
+        var strictTail = '';
+        if (ctx.strict && ctx.kind == null) {
+          strictTail = ', relationship = ' + str(ctx.strict.relationship) +
+            (ctx.strict.unmatched ? ', unmatched = ' + str(ctx.strict.unmatched) : '');
+        }
         // A valid date rule is written as join_by() with na_matches = "never". compose() sets
         // ctx.rule for a valid rule, in memory (ctx.kind null) or on duckdb (arrow moves there first).
         if (ctx.rule && step.rule) {
           var lazy = ctx.kind === 'duckdb';
-          var tail = ', na_matches = "never"' + (ctx.copy ? ', copy = TRUE' : '') + ')';
+          var tail = ', na_matches = "never"' + strictTail + (ctx.copy ? ', copy = TRUE' : '') + ')';
           var rr = step.rule;
           if (lazy && (rr.shape === 'before' || rr.shape === 'after')) {
             // dbplyr has no closest(): join on the inequality, then keep the nearest y per x row
@@ -240,7 +248,7 @@
           }
         }
         return ['dplyr::' + type + '(' + refFor(step.right) + ', by = ' + joinBy(step.by) +
-          (ctx.copy ? ', copy = TRUE' : '') + ')'];
+          strictTail + (ctx.copy ? ', copy = TRUE' : '') + ')'];
       }
       case 'reshape': {
         if (step.type === 'pivot_wider') {
@@ -708,6 +716,14 @@
               var tx = self.tables[s.table];
               return tx && tx.kinds ? tx.kinds[col] : null;
             };
+          }
+          // Strict: the join check's arguments for this join type, when the chain is in memory here
+          // (kind is null after any move above) and a rule, if any, holds.
+          if (s.strict && !kind && (!s.rule || hasRule)) {
+            var chk = self.checks[self.joinSig(s)];
+            var jt = JOIN_TYPES.indexOf(s.type) >= 0 ? s.type : 'left_join';
+            var sa = chk && Object.prototype.hasOwnProperty.call(chk, jt) ? chk[jt] : null;
+            if (sa && typeof sa.relationship === 'string') ctx.strict = sa;
           }
           lines = lines.concat(verbs(s, function () { return rightRef; }, ctx));
           return;

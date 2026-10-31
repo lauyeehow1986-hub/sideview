@@ -896,3 +896,177 @@ test_that("an arrow rule chain moves onto the connection of a later duckdb join"
   perm <- DBI::dbGetQuery(con, "select table_name from duckdb_tables() where not temporary")$table_name
   expect_setequal(perm, base_tables)
 })
+
+# ---- Strict in the generated code ------------------------------------------------------------
+
+# Synthetic tables for Strict: one patient row per id, labs with several rows per patient.
+strict_tables <- function() {
+  list(
+    patients = data.frame(id = 1:4, pdate = as.Date(c("2024-01-10", "2024-02-01", "2024-01-15", "2024-03-01"))),
+    labs = data.frame(id = c(1, 1, 2, 3, 4, 4), lval = 1:6,
+                      ldate = as.Date(c("2024-01-08", "2024-01-12", "2024-01-20", "2024-02-01", "2024-02-25",
+                                        "2024-03-02")))
+  )
+}
+
+# Compose the code of join cases with a join check: list(type, pipe, rule, lazy, strict, args).
+# `args` is the strict_args map for the join (NULL: no check was made). One Node run for all.
+compose_strict_cases <- function(cases, labs_kind = "Date") {
+  cases <- lapply(cases, function(cs) {
+    if (is.null(cs$pipe)) cs$pipe <- "%>%"
+    if (is.null(cs$type)) cs$type <- "left_join"
+    if (is.null(cs$strict)) cs$strict <- TRUE
+    cs
+  })
+  json <- jsonlite::toJSON(cases, auto_unbox = TRUE, null = "null")
+  file <- tempfile(fileext = ".json")
+  on.exit(unlink(file), add = TRUE)
+  run_pipeline_js(sprintf("
+    const cases = %s;
+    const kinds = {patients: {pdate: 'Date'}, labs: {ldate: %s}};
+    const codes = cases.map(c => {
+      const p = new P.Pipeline({pipe: c.pipe});
+      p.addJoinKey('patients', 'labs', 'id', 'id', c.type);
+      const m = {};
+      Object.keys(kinds).forEach(t => {
+        const k = c.lazy ? c.lazy[t] : null;
+        m[t] = k ? Object.assign({lazy: k, codeRef: k === 'duckdb' ? 'dplyr::tbl(con, \"' + t + '\")' : t},
+          {kinds: kinds[t]}) : {kinds: kinds[t]};
+      });
+      p.setTables(m);
+      const id = p.steps[0].id;
+      if (c.rule) p.setJoinRule(id, c.rule);
+      if (c.args) p.setJoinCheck(p.joinSig(p.find(id)), c.args);
+      if (c.strict) p.setJoinStrict(id, true);
+      return p.compose();
+    });
+    require('fs').writeFileSync(%s, JSON.stringify(codes));
+    out = codes.length;
+  ", json, jsonlite::toJSON(labs_kind, auto_unbox = TRUE),
+  jsonlite::toJSON(normalizePath(file, winslash = "/", mustWork = FALSE), auto_unbox = TRUE)))
+  vapply(jsonlite::fromJSON(file, simplifyVector = FALSE), as.character, "")
+}
+
+# strict_args as the R join check gives them, in the shape JSON carries them.
+strict_args_json <- function(x, y, rule = NULL) {
+  d <- sv_join_diagnostics(x, y, "id", rule = rule)
+  jsonlite::fromJSON(jsonlite::toJSON(d$strict_args, auto_unbox = TRUE), simplifyVector = FALSE)
+}
+
+test_that("strict writes the checked arguments", {
+  tabs <- strict_tables()
+  # every lab has a patient and every patient has a lab: left, inner and right joins can say "error"
+  args <- strict_args_json(tabs$patients, tabs$labs)
+  expect_identical(args$left_join$relationship, "one-to-many")
+  expect_identical(args$left_join$unmatched, "error")
+  # a lab of a patient who is not in the table: a left (or inner) join has no unmatched argument
+  orphan <- tabs$labs
+  orphan$id[6] <- 9
+  args_orphan <- strict_args_json(tabs$patients, orphan)
+  expect_null(args_orphan$left_join$unmatched)
+
+  cases <- list()
+  for (pipe in c("%>%", "|>")) for (type in c("left_join", "inner_join", "right_join", "full_join",
+                                              "semi_join", "anti_join")) {
+    cases[[length(cases) + 1]] <- list(label = paste(type, pipe), type = type, pipe = pipe, args = args)
+    cases[[length(cases) + 1]] <- list(label = paste(type, "orphan", pipe), type = type, pipe = pipe,
+                                       args = args_orphan)
+  }
+  code <- compose_strict_cases(cases)
+  for (i in seq_along(code)) {
+    cs <- cases[[i]]
+    expect_parses(code[[i]], cs$label)
+    words <- strsplit(cs$label, " ")[[1]]
+    if (cs$type %in% c("semi_join", "anti_join")) {
+      # a filtering join has no relationship argument
+      expect_false(grepl("relationship", code[[i]], fixed = TRUE), label = cs$label)
+      expect_false(grepl("unmatched", code[[i]], fixed = TRUE), label = cs$label)
+      next
+    }
+    expect_match(code[[i]], 'relationship = "one-to-many"', fixed = TRUE, label = cs$label)
+    # unmatched = "error" needs every row of the checked side to match: the right side (labs) for a
+    # left join, the left side (patients) for a right join, both for an inner join; never a full join
+    want_unmatched <- if ("orphan" %in% words) {
+      cs$type == "right_join"
+    } else {
+      cs$type %in% c("left_join", "inner_join", "right_join")
+    }
+    expect_identical(grepl('unmatched = "error"', code[[i]], fixed = TRUE), want_unmatched, label = cs$label)
+  }
+  at <- function(label) code[[match(label, vapply(cases, function(cs) cs$label, ""))]]
+  expect_identical(at("left_join %>%"),
+                   'patients %>%\n  dplyr::left_join(labs, by = "id", relationship = "one-to-many", unmatched = "error")')
+  expect_identical(at("left_join |>"),
+                   'patients |>\n  dplyr::left_join(labs, by = "id", relationship = "one-to-many", unmatched = "error")')
+  expect_identical(at("left_join orphan %>%"),
+                   'patients %>%\n  dplyr::left_join(labs, by = "id", relationship = "one-to-many")')
+
+  # no check yet, a check for another join type, or Strict off: the code is the plain join
+  plain <- 'patients %>%\n  dplyr::left_join(labs, by = "id")'
+  more <- compose_strict_cases(list(
+    list(args = NULL),
+    list(args = list(inner_join = list(relationship = "one-to-many"))),
+    list(args = args, strict = FALSE)
+  ))
+  expect_identical(more, rep(plain, 3))
+
+  # a rule join: the arguments come after na_matches
+  rule <- list(shape = "window", xCol = "pdate", yCol = "ldate", from = -7, to = 7)
+  rargs <- strict_args_json(tabs$patients, tabs$labs, rule = rule)
+  rc <- compose_strict_cases(list(
+    list(rule = rule, args = rargs), list(rule = rule, args = rargs, pipe = "|>")
+  ))
+  for (cd in rc) {
+    expect_parses(cd)
+    expect_match(cd, 'na_matches = "never", relationship = "', fixed = TRUE)
+  }
+
+  # a duckdb chain, or an arrow chain that moves onto duckdb, writes neither argument
+  lazy_cases <- list(
+    list(label = "duckdb", lazy = list(patients = "duckdb", labs = "duckdb"), args = args),
+    list(label = "duckdb x df", lazy = list(patients = "duckdb", labs = NULL), args = args),
+    list(label = "df x duckdb", lazy = list(patients = NULL, labs = "duckdb"), args = args),
+    list(label = "arrow", lazy = list(patients = "arrow", labs = "arrow"), args = args),
+    list(label = "arrow rule", lazy = list(patients = "arrow", labs = "arrow"), rule = rule, args = rargs),
+    list(label = "duckdb rule", lazy = list(patients = "duckdb", labs = "duckdb"), rule = rule, args = rargs)
+  )
+  lc <- compose_strict_cases(lazy_cases)
+  for (i in seq_along(lc)) {
+    expect_parses(lc[[i]], lazy_cases[[i]]$label)
+    expect_false(grepl("relationship", lc[[i]], fixed = TRUE), label = lazy_cases[[i]]$label)
+    expect_false(grepl("unmatched", lc[[i]], fixed = TRUE), label = lazy_cases[[i]]$label)
+  }
+})
+
+test_that("an invalid rule does not write the arguments of its check", {
+  tabs <- strict_tables()
+  rule <- list(shape = "window", xCol = "pdate", yCol = "ldate", from = -7, to = 7)
+  rargs <- strict_args_json(tabs$patients, tabs$labs, rule = rule)
+  # the rule does not hold for the column kinds: the join falls back to the key join
+  code <- compose_strict_cases(list(list(rule = rule, args = rargs)), labs_kind = "character")
+  expect_identical(code, 'patients %>%\n  dplyr::left_join(labs, by = "id")')
+})
+
+test_that("a strict join fails when the data change", {
+  tabs <- strict_tables()
+  args <- strict_args_json(tabs$patients, tabs$labs)
+  code <- compose_strict_cases(list(list(args = args), list(args = args, pipe = "|>")))
+  new_env <- function(patients, labs) {
+    env <- new.env(parent = globalenv())
+    env$`%>%` <- dplyr::`%>%`
+    env$patients <- patients
+    env$labs <- labs
+    env
+  }
+  # the data the check saw: the join runs and keeps every lab
+  for (cd in code) {
+    got <- eval(parse(text = cd), envir = new_env(tabs$patients, tabs$labs))
+    expect_equal(nrow(got), nrow(tabs$labs))
+  }
+  # one extra patient row with a duplicate id: the join is now many-to-many
+  dup <- new_env(rbind(tabs$patients, tabs$patients[1, ]), tabs$labs)
+  for (cd in code) expect_error(eval(parse(text = cd), envir = dup), "relationship|many|must match at most")
+  # a lab with no patient: unmatched = "error" stops the left join
+  lost <- new_env(tabs$patients[-4, ], tabs$labs)
+  for (cd in code) expect_error(eval(parse(text = cd), envir = lost), "unmatched|match")
+})
