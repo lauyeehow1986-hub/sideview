@@ -1097,6 +1097,203 @@ function runAllScenarios() {
   s10_dEngine.destroy();
   results.scenario10.destroy_unregisters = !s10_registry['b-'] && !s10_registry['a-'] && !s10_registry['d-'];
 
+  // SCENARIO 11: add / replace / remove cards, state and highlight from R; ready and snapshot (module)
+  const s11_labsCard = function (cols, extra) {
+    const data = {};
+    cols.forEach(function (c) { data[c] = ['a', 'b']; });
+    const types = {};
+    cols.forEach(function (c) { types[c] = 'character'; });
+    return Object.assign({ id: 'card_l1', name: 'labs', type: 'grid', x: 10, y: 10, dims: [2, cols.length],
+      data: data, col_types: types, totalRows: 2 }, extra || {});
+  };
+  const s11_visitsCard = function () {
+    return { id: 'card_v1', name: 'visits', type: 'grid', x: 400, y: 10, dims: [2, 2],
+      data: { id: ['a', 'b'], visit_dt: ['x', 'y'] }, col_types: { id: 'character', visit_dt: 'character' } };
+  };
+  const s11_make = function (ns, cards) {
+    const el = new MockElement('DIV');
+    el.className = 'sideview-container';
+    document.body.appendChild(el);
+    return { el: el, engine: global.Sideview.init(el, { ns: ns, mode: 'embedded', cards: cards }) };
+  };
+  const s11_ws = function (name) { return wsMessages.filter(function (m) { return m.event === name; }); };
+  const s11_toastTexts = function (m) {
+    return m.el.querySelectorAll('.sideview-toast').map(function (t) { return t.textContent; });
+  };
+  const s11_connect = function (e, t1, c1, t2, c2) {
+    const from = e.findPortElement(t1, c1), to = e.findPortElement(t2, c2);
+    e.addConnection({ fromCard: from.closest('.sideview-card').dataset.cardId, fromTable: t1, fromCol: c1, fromElement: from,
+      toCard: to.closest('.sideview-card').dataset.cardId, toTable: t2, toCol: c2, toElement: to, type: 'left_join' });
+  };
+  const s11_byName = function (m, name) {
+    return Array.from(m.engine.cards.values()).filter(function (c) { return c.name === name; })[0];
+  };
+  const s11_r = {};
+  const s11_origWarn = console.warn;
+  const s11_warns = [];
+  console.warn = function () { s11_warns.push(Array.prototype.slice.call(arguments).join(' ')); };
+
+  // ready, and a remote card added from R
+  const s11_a = s11_make('m-', [s11_labsCard(['id', 'lab_dt', 'val']), s11_visitsCard()]);
+  s11_r.module_sends_ready = s11_ws('m-sideview_ready').length === 1 && s11_ws('sideview_ready').length === 0;
+  const s11_big = { id: 'card_big', name: 'big', type: 'grid', dims: [5000, 1], totalRows: 5000, remote: true,
+    data: { k: Array.from({ length: 500 }, function (_, i) { return i; }) }, col_types: { k: 'integer' } };
+  shinyHandlers.sideview_card_add({ ns: 'm-', card: s11_big });
+  const s11_bigMeta = s11_byName(s11_a, 'big');
+  const s11_bigVt = s11_bigMeta && s11_bigMeta.element._virtualTable;
+  s11_r.card_add_remote = !!s11_bigVt && !!s11_bigVt.remote && s11_bigVt.remote.total === 5000 &&
+    s11_bigVt.remote.active === true && s11_bigMeta.element.dataset.totalRows === '5000';
+  s11_a.engine.destroy();
+
+  // replace: geometry, disabled steps, toast, join checks
+  const s11_b = s11_make('m-', [s11_labsCard(['id', 'lab_dt', 'val']), s11_visitsCard()]);
+  const s11_be = s11_b.engine;
+  const s11_lm = s11_byName(s11_b, 'labs');
+  s11_lm.element.style.left = '300px';
+  s11_lm.element.style.top = '200px';
+  s11_lm.x = 300; s11_lm.y = 200;
+  s11_be.pipeline.add({ kind: 'filter', table: 'labs', conds: ['lab_dt > 1'], condCols: ['lab_dt'] });
+  s11_be.joinDiag = { stale: { id: 'stale' } };
+  shinyHandlers.sideview_card_replace({ ns: 'm-', card: s11_labsCard(['id', 'val']) });
+  const s11_lm2 = s11_byName(s11_b, 'labs');
+  s11_r.replace_keeps_geometry = !!s11_lm2 && parseFloat(s11_lm2.element.style.left) === 300 &&
+    parseFloat(s11_lm2.element.style.top) === 200 && s11_lm2.element !== s11_lm.element &&
+    s11_be.cards.size === 2 && !s11_lm.element.parentNode;
+  s11_r.replace_disables_step = s11_be.pipeline.steps[0].enabled === false;
+  s11_r.replace_toast = s11_toastTexts(s11_b).indexOf('labs refreshed: 1 step disabled (lab_dt not found)') >= 0;
+  s11_r.replace_clears_join_checks = !('stale' in s11_be.joinDiag);
+
+  // a spline on a dropped column goes, visually only
+  const s11_c = s11_make('m-', [s11_labsCard(['id', 'lab_dt', 'val']), s11_visitsCard()]);
+  const s11_ce = s11_c.engine;
+  s11_connect(s11_ce, 'labs', 'lab_dt', 'visits', 'visit_dt');
+  s11_connect(s11_ce, 'labs', 'id', 'visits', 'id');
+  const s11_connBefore = s11_ce.connections.length;
+  const s11_discC0 = s11_ws('m-column_disconnected').length;
+  shinyHandlers.sideview_card_replace({ ns: 'm-', card: s11_labsCard(['id', 'val']) });
+  s11_r.replace_removes_spline_visually = s11_connBefore === 2 && s11_ce.connections.length === 1 &&
+    s11_ce.connections[0].fromCol === 'id' &&
+    s11_ws('m-column_disconnected').length === s11_discC0 &&
+    s11_ce.svg.querySelectorAll('.sideview-connector-path').length === 1 &&
+    s11_ce.hitSvg.querySelectorAll('.sideview-connector-hit').length === 1;
+
+  // remove
+  const s11_d = s11_make('m-', [s11_labsCard(['id', 'lab_dt', 'val']), s11_visitsCard()]);
+  s11_connect(s11_d.engine, 'labs', 'id', 'visits', 'id');
+  const s11_discD0 = s11_ws('m-column_disconnected').length;
+  shinyHandlers.sideview_card_remove({ ns: 'm-', name: 'labs' });
+  s11_r.remove_card = s11_d.engine.cards.size === 1 && !s11_byName(s11_d, 'labs') &&
+    s11_d.engine.pipeline.steps.length === 1 && s11_d.engine.pipeline.steps[0].enabled === false &&
+    s11_d.engine.connections.length === 0 && s11_ws('m-column_disconnected').length === s11_discD0 &&
+    s11_toastTexts(s11_d).indexOf('labs removed: 1 step disabled') >= 0;
+
+  // a card name with markup and quotes stays text and is found by replace / remove
+  const s11_hostile = 'a"b <i>x</i>';
+  const s11_hcard = function (v) {
+    return { id: 'card_h1', name: s11_hostile, type: 'grid', dims: [2, 1], data: { c: v }, col_types: { c: 'numeric' } };
+  };
+  const s11_e = s11_make('m-', [s11_labsCard(['id', 'val'])]);
+  shinyHandlers.sideview_card_add({ ns: 'm-', card: s11_hcard([1, 2]) });
+  const s11_hm = function () { return s11_byName(s11_e, s11_hostile); };
+  const s11_hTitle = s11_hm() && s11_hm().element.querySelector('.sideview-card-title');
+  // the mock DOM keeps entities as typed; a browser decodes them, so decode here to compare
+  const s11_decode = function (t) {
+    return t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  };
+  const s11_textOk = !!s11_hTitle && s11_decode(s11_hTitle.textContent) === s11_hostile &&
+    !s11_hm().element.querySelector('.sideview-card-title i');
+  const s11_hEl = s11_hm() && s11_hm().element;
+  shinyHandlers.sideview_card_replace({ ns: 'm-', card: s11_hcard([3, 4]) });
+  const s11_replaced = !!s11_hm() && s11_hm().element !== s11_hEl;
+  shinyHandlers.sideview_card_remove({ ns: 'm-', name: s11_hostile });
+  s11_r.hostile_name = s11_textOk && s11_replaced && !s11_hm() && s11_e.engine.cards.size === 1;
+
+  // unknown card, highlight, state
+  s11_warns.length = 0;
+  let s11_threw = false;
+  try {
+    shinyHandlers.sideview_card_replace({ ns: 'm-', card: { name: 'nope', type: 'grid', data: { a: [1] } } });
+    shinyHandlers.sideview_card_remove({ ns: 'm-', name: 'nope' });
+    shinyHandlers.sideview_highlight({ ns: 'm-', name: 'nope', cols: ['a'] });
+  } catch (err) { s11_threw = true; }
+  s11_r.unknown_card_warns = !s11_threw && s11_warns.length >= 3;
+  shinyHandlers.sideview_highlight({ ns: 'm-', name: 'labs', cols: ['val', 'not_a_col'] });
+  const s11_lvt = s11_byName(s11_e, 'labs').element._virtualTable;
+  s11_r.highlight_columns = s11_lvt.highlightedColumns.get('val') === 'blue' && !s11_lvt.highlightedColumns.has('not_a_col');
+  s11_e.engine.selectedColor = 'green';
+  shinyHandlers.sideview_highlight({ ns: 'm-', name: 'labs', cols: ['id'] });
+  s11_r.highlight_uses_swatch = s11_lvt.highlightedColumns.get('id') === 'green';
+  const s11_st = { version: '0.3.0', canvas: { zoom: 1, pan_x: 0, pan_y: 0 },
+    cards: [{ name: 'labs', x: 123, y: 77 }], connections: [],
+    pipeline: { steps: [{ id: 's_x', kind: 'filter', table: 'labs', conds: ['id == 1'], enabled: true }], pipe: '%>%' } };
+  s11_e.engine.pipeline.add({ kind: 'arrange', table: 'labs', cols: [{ col: 'id', dir: 'asc' }] });
+  shinyHandlers.sideview_state_set({ ns: 'm-', state: JSON.stringify(s11_st) });
+  s11_r.state_set = parseFloat(s11_byName(s11_e, 'labs').element.style.left) === 123 &&
+    s11_e.engine.pipeline.steps.length === 1 && s11_e.engine.pipeline.steps[0].kind === 'filter' &&
+    !s11_e.engine.pipeline.canUndo();
+
+  // Save / Open / codebook in a module
+  const s11_sv0 = s11_ws('m-state_save').length;
+  s11_e.engine.saveWorkspace();
+  s11_r.module_save_is_browser = s11_ws('m-state_save').length === s11_sv0 && s11_ws('state_save').length === 0 &&
+    typeof s11_e.engine.lastStateJson === 'string';
+  s11_e.engine.exportCodebook();
+  s11_r.module_codebook_asks_r = s11_ws('m-codebook_export').length === 1;
+  shinyHandlers.sideview_codebook_saved({ ns: 'm-', csv: 'a,b\n1,2', filename: 'codebook.csv' });
+  s11_r.codebook_csv_downloads = s11_e.engine.lastCodebookCsv === 'a,b\n1,2';
+
+  // a pruned (disconnected) engine is destroyed, not just forgotten
+  const s11_p = s11_make('p-', [s11_labsCard(['id'])]);
+  let s11_pDestroyed = false;
+  const s11_pOld = s11_p.engine.destroy;
+  s11_p.engine.destroy = function () { s11_pDestroyed = true; return s11_pOld.apply(this, arguments); };
+  s11_p.el.isConnected = false;
+  shinyHandlers.sideview_toast({ ns: 'm-', text: 'x' });
+  s11_r.prune_destroys_engine = s11_pDestroyed && !global.__sideviewEngines['p-'];
+
+  console.warn = s11_origWarn;
+  results.scenario11 = s11_r;
+  s11_c.engine.destroy();
+  s11_d.engine.destroy();
+  s11_b.engine.destroy();
+
+  // snapshots wait for the debounce, so they finish after the synchronous scenarios
+  results.__later = function () {
+    const sleep = function (ms) { return new Promise(function (res) { setTimeout(res, ms); }); };
+    const f = s11_make('s-', [s11_labsCard(['id', 'val']), s11_visitsCard()]);
+    return sleep(400).then(function () {
+      const base = s11_ws('s-sideview_snapshot').length;
+      f.engine.pipeline.add({ kind: 'filter', table: 'labs', conds: ['id == 1'], condCols: ['id'] });
+      f.engine.pipeline.add({ kind: 'arrange', table: 'labs', cols: [{ col: 'id', dir: 'asc' }] });
+      f.engine.pipeline.setJoinCheck('sig', { relationship: 'one-to-one' });
+      return sleep(100).then(function () {
+        f.engine.pipeline.add({ kind: 'arrange', table: 'visits', cols: [{ col: 'id', dir: 'asc' }] });
+        return sleep(350);
+      }).then(function () {
+        const snaps = s11_ws('s-sideview_snapshot').slice(base);
+        const v = snaps.length ? snaps[snaps.length - 1].value : null;
+        let st = null, steps = null;
+        try { st = JSON.parse(v.state); steps = JSON.parse(v.pipeline); } catch (err) {}
+        results.scenario11.snapshot_debounced = snaps.length === 1 && !!st && st.cards.length === 2 &&
+          Array.isArray(steps) && steps.length === 3 && typeof v.code === 'string' && v.code.indexOf('arrange') >= 0 &&
+          JSON.stringify(v.cards) === JSON.stringify(['labs', 'visits']);
+        const n = s11_ws('s-sideview_snapshot').length;
+        f.engine.pipeline.setJoinCheck('sig2', { relationship: 'one-to-one' });
+        return sleep(400).then(function () {
+          results.scenario11.snapshot_skips_checks = s11_ws('s-sideview_snapshot').length === n;
+          f.engine.pipeline.clear();
+          return sleep(400);
+        }).then(function () {
+          const last = s11_ws('s-sideview_snapshot').pop().value;
+          results.scenario11.snapshot_empty_code = last.code === '';
+          f.engine.destroy();
+          results.scenario11.gadget_no_snapshot = s11_ws('sideview_snapshot').length === 0 &&
+            s11_ws('sideview_ready').length === 0;
+        });
+      });
+    });
+  };
+
   // DIAGNOSTIC FAILURE CAPTURE HELPER
   function captureDiagnostics(testName, errorMsg) {
     const canvasDump = {
@@ -1148,4 +1345,8 @@ function runAllScenarios() {
 }
 
 const out = runAllScenarios();
-console.log(JSON.stringify(out, null, 2));
+const later = out.__later;
+delete out.__later;
+Promise.resolve(later ? later() : null).then(function () {
+  console.log(JSON.stringify(out, null, 2));
+});

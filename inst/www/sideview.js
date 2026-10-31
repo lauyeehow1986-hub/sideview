@@ -680,7 +680,11 @@ function sendToShiny(name, value) {
     this.ruleDraft = null;
     this.pipeline = new global.SideviewPipeline.Pipeline({
       pipe: this.options.pipe,
-      onChange: function () { self.renderPipeline(); }
+      onChange: function (_p, label) {
+        self.renderPipeline();
+        // a join check result is not a change of the work; everything else is
+        if (label !== 'checks') self.scheduleSnapshot();
+      }
     });
 
     this.initDOM();
@@ -716,6 +720,13 @@ function sendToShiny(name, value) {
     this.registerShinyHandlers();
     this.initMinimap();
     this.initLayoutObserver();
+
+    // A module tells R it is ready (R then sends its cards) and reports its work back.
+    this._constructed = true;
+    if (typeof this.options.ns === 'string') {
+      this.sendReady(0);
+      this.scheduleSnapshot();
+    }
   }
 
   // ---- icons ----------------------------------------------------------------
@@ -1004,7 +1015,11 @@ function sendToShiny(name, value) {
       var reg = global.__sideviewEngines || {};
       Object.keys(reg).forEach(function (k) {
         var c = reg[k] && reg[k].container;
-        if (c && c.isConnected === false) delete reg[k];
+        if (c && c.isConnected === false) {
+          var gone = reg[k];
+          delete reg[k];
+          try { if (typeof gone.destroy === 'function') gone.destroy(); } catch (e) {}
+        }
       });
       var key = (data && typeof data.ns === 'string') ? data.ns : '';
       var target = reg[key];
@@ -1064,6 +1079,7 @@ function sendToShiny(name, value) {
       if (self._needsInitialLayout && self.container.clientWidth > 0) {
         self._needsInitialLayout = false;
         if (self.arrangeCards(true) && !self._restoredView) self.fitAll({ maxScale: 1, minScale: READABLE_SCALE });
+        self.scheduleSnapshot();
       }
       self.scheduleConnectorUpdate();
     };
@@ -1545,6 +1561,8 @@ function sendToShiny(name, value) {
 
   SideviewEngine.prototype.destroy = function () {
     this.unregisterEngine();
+    if (this._snapshotTimer) { clearTimeout(this._snapshotTimer); this._snapshotTimer = null; }
+    if (this._cardResizeObserver) { this._cardResizeObserver.disconnect(); this._cardResizeObserver = null; }
     this._globalListeners.forEach(function (l) {
       try { l[0].removeEventListener(l[1], l[2], l[3]); } catch (e) {}
     });
@@ -1748,6 +1766,7 @@ function sendToShiny(name, value) {
     }
     if (!minimized && card._virtualTable && card._virtualTable.render) card._virtualTable.render();
     this.scheduleConnectorUpdate();
+    this.scheduleSnapshot();
   };
 
   // Maximize moves the card out of the transformed viewport into the overlay
@@ -2344,19 +2363,7 @@ function sendToShiny(name, value) {
         var cardId = cardEl ? cardEl.dataset.cardId : null;
         var colName = th.dataset.colName;
 
-        if (table && table._virtualTable) {
-          table._virtualTable.setColumnHighlight(colName, self.selectedColor);
-        } else if (table) {
-          var highlightClass = self.selectedColor === 'clear' ? '' : 'sv-highlight-' + self.selectedColor;
-          var allCellsInCol = table.querySelectorAll('tbody tr td:nth-child(' + (colIdx + 1) + ')');
-
-          allCellsInCol.forEach(function (cell) {
-            cell.className = cell.className.replace(/sv-highlight-\w+/g, '').replace('sideview-cell-highlight', '').trim();
-            if (highlightClass) {
-              cell.classList.add(highlightClass, 'sideview-cell-highlight');
-            }
-          });
-        }
+        if (table) self.highlightColumnIn(table, colIdx, colName, self.selectedColor);
 
         self.send('sideview_highlight_changed', {
           card_id: cardId,
@@ -2927,6 +2934,15 @@ function sendToShiny(name, value) {
     // Setup Synchronized Scroll
     this.setupScrollSync(cardMeta);
     this.syncTableMeta();
+
+    // R pages the rest of a remote card: the preview is what the card holds.
+    if (cardData.remote && cardEl._virtualTable) {
+      if (!isNaN(tableRowCount)) cardEl.dataset.totalRows = String(tableRowCount);
+      cardMeta.virtualTable = cardEl._virtualTable;
+      this.attachRemoteRows(cardEl, cardId, cardName, cardEl._virtualTable);
+    }
+    this.observeCardSize(cardEl);
+    this.scheduleSnapshot();
   };
 
   /**
@@ -3064,6 +3080,7 @@ function sendToShiny(name, value) {
           x: cardMeta.x,
           y: cardMeta.y
         });
+        self.scheduleSnapshot();
       }
 
       document.addEventListener(moveType, onPointerMove);
@@ -3416,6 +3433,268 @@ function sendToShiny(name, value) {
       to_table: connData.toTable,
       to_col: connData.toCol,
       join_type: connData.type || 'left_join'
+    });
+  };
+
+  // ---- cards, state and highlights driven from R (a module's proxy) -------------
+
+  SideviewEngine.prototype.cardMetaByName = function (name) {
+    var found = null;
+    this.cards.forEach(function (m) { if (m.name === name) found = m; });
+    return found;
+  };
+
+  function warnNoCard(name) {
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[Sideview] no card named "' + name + '"');
+    }
+  }
+
+  // The port element of a column, found without building a selector from table text.
+  function portOf(meta, col) {
+    var ports = meta.element.querySelectorAll('.sideview-col-port');
+    for (var i = 0; i < ports.length; i++) {
+      if (ports[i].dataset && ports[i].dataset.colName === col) return ports[i];
+    }
+    return null;
+  }
+
+  /** A card sent by R: placed to the right of the others unless it brings a position. */
+  SideviewEngine.prototype.addCardFromR = function (card) {
+    if (!card || !card.name) return;
+    // R re-sends every card on each ready: a name already on the canvas is refreshed, not doubled
+    if (this.cardMetaByName(card.name)) { this.replaceCard(card); return; }
+    var data = Object.assign({}, card);
+    if (!data.type && data.data) data.type = 'grid';
+    if (!data.id || this.cards.has(data.id)) {
+      var n = this.cards.size + 1;
+      while (this.cards.has('card_r' + n)) n++;
+      data.id = 'card_r' + n;
+    }
+    var placed = data.x != null || data.y != null;
+    if (!placed && this.cards.size) {
+      var right = 0;
+      this.cards.forEach(function (m) {
+        var el = m.element;
+        right = Math.max(right, (parseFloat(el.style.left) || 0) + (el.offsetWidth || 340));
+      });
+      data.x = right + 24;
+      data.y = 60;
+      placed = true;
+    }
+    this.addCard(data, this.cards.size);
+    var meta = this.cards.get(data.id);
+    if (meta && placed) delete meta.element.dataset.autoPlace;
+    this.scheduleConnectorUpdate();
+  };
+
+  // Take a connection off the canvas only: the join step is disabled by the pipeline, and R
+  // is not told (the work did not change, the data under it did).
+  SideviewEngine.prototype.dropConnectionVisually = function (conn) {
+    var i = this.connections.indexOf(conn);
+    if (i < 0) return;
+    if (conn.path && conn.path.parentNode) conn.path.parentNode.removeChild(conn.path);
+    this.connections.splice(i, 1);
+    pruneHitPaths(this);
+  };
+
+  // What a refresh or removal invalidates: join checks and column profiles are rebuilt on demand.
+  SideviewEngine.prototype.resetDataCaches = function () {
+    this.pipeline.clearJoinChecks();
+    this.joinDiag = {};
+    this.joinDiagPending = {};
+    this.colProfiles = {};
+    this.colProfilePending = {};
+    this.joinCheckStepId = null;
+    this.renderPipeline();
+    this.renderJoinCheck();
+    this.renderInspector();
+  };
+
+  function stepsPhrase(n) { return n + ' step' + (n === 1 ? '' : 's') + ' disabled'; }
+
+  /**
+   * Rebuild a card from new data under the same name, keeping where it is and how big.
+   * Steps that need a column the new data lacks are disabled; splines on a dropped column go.
+   * Returns { disabled, missing }, or null when no card has that name.
+   */
+  SideviewEngine.prototype.replaceCard = function (cardData) {
+    var name = cardData && cardData.name;
+    var meta = this.cardMetaByName(name);
+    if (!meta) { warnNoCard(name); return null; }
+    var el = meta.element;
+    if (el.classList.contains('is-maximized')) {
+      this.toggleMaximizeCard(el, el.querySelector('[data-action="maximize-card"]'));
+    }
+    var minimized = el.classList.contains('is-minimized');
+    var geo = {
+      x: parseFloat(el.style.left) || 0,
+      y: parseFloat(el.style.top) || 0,
+      width: el.style.width || '',
+      height: minimized ? (el._svRestoreHeight || '') : (el.style.height || ''),
+      sized: el.classList.contains('sv-sized'),
+      auto: el.dataset.autoPlace
+    };
+    var oldVt = el._virtualTable;
+    var highlights = [];
+    if (oldVt && oldVt.highlightedColumns) {
+      oldVt.highlightedColumns.forEach(function (color, col) { highlights.push([col, color]); });
+    }
+    if (oldVt && oldVt.destroy) oldVt.destroy();
+    if (this._cardResizeObserver) this._cardResizeObserver.unobserve(el);
+    if (el.parentNode) el.parentNode.removeChild(el);
+    this.syncScrollCards.delete(meta.id);
+
+    var data = Object.assign({}, cardData, { id: meta.id, x: geo.x, y: geo.y });
+    if (!data.type && data.data) data.type = 'grid';
+    this.addCard(data, 0);
+    var next = this.cards.get(meta.id);
+    var nel = next.element;
+    if (geo.width) nel.style.width = geo.width;
+    if (geo.height) nel.style.height = geo.height;
+    if (geo.sized) nel.classList.add('sv-sized');
+    if (geo.auto === undefined) delete nel.dataset.autoPlace;
+    if (minimized) this.toggleMinimizeCard(nel, nel.querySelector('[data-action="minimize-card"]'));
+
+    var columns = Object.keys(cardData.data || {});
+    var nvt = nel._virtualTable;
+    if (nvt) {
+      highlights.forEach(function (h) { if (columns.indexOf(h[0]) >= 0) nvt.highlightedColumns.set(h[0], h[1]); });
+      if (highlights.length) nvt.render();
+    }
+
+    // Splines: drop those on a column that is gone; point the rest at the new ports.
+    var self = this;
+    this.connections.slice().forEach(function (c) {
+      var touchesFrom = c.fromTable === name, touchesTo = c.toTable === name;
+      if (!touchesFrom && !touchesTo) return;
+      if ((touchesFrom && columns.indexOf(c.fromCol) < 0) || (touchesTo && columns.indexOf(c.toCol) < 0)) {
+        self.dropConnectionVisually(c);
+        return;
+      }
+      if (touchesFrom) c.fromElement = portOf(next, c.fromCol) || c.fromElement;
+      if (touchesTo) c.toElement = portOf(next, c.toCol) || c.toElement;
+    });
+
+    var out = this.pipeline.disableMissing(name, columns);
+    this.resetDataCaches();
+    if (out.disabled.length) {
+      this.showToast(name + ' refreshed: ' + stepsPhrase(out.disabled.length) +
+        ' (' + out.missing.join(', ') + ' not found)', 'warning');
+    }
+    this.scheduleConnectorUpdate();
+    this.scheduleSnapshot();
+    return out;
+  };
+
+  /** Take a card off the canvas; its steps and joins are disabled, not deleted. */
+  SideviewEngine.prototype.removeCard = function (name) {
+    var meta = this.cardMetaByName(name);
+    if (!meta) { warnNoCard(name); return null; }
+    var self = this;
+    this.connections.slice().forEach(function (c) {
+      if (c.fromTable === name || c.toTable === name) self.dropConnectionVisually(c);
+    });
+    var el = meta.element;
+    if (el.classList.contains('is-maximized')) {
+      this.toggleMaximizeCard(el, el.querySelector('[data-action="maximize-card"]'));
+    }
+    var vt = el._virtualTable;
+    if (vt && vt.destroy) vt.destroy();
+    if (this._cardResizeObserver) this._cardResizeObserver.unobserve(el);
+    if (el.parentNode) el.parentNode.removeChild(el);
+    this.cards.delete(meta.id);
+    this.syncScrollCards.delete(meta.id);
+    this.syncTableMeta();
+
+    var out = this.pipeline.disableMissing(name, null);
+    this.resetDataCaches();
+    if (out.disabled.length) {
+      this.showToast(name + ' removed: ' + stepsPhrase(out.disabled.length), 'warning');
+    }
+    this.scheduleConnectorUpdate();
+    this.scheduleSnapshot();
+    return out;
+  };
+
+  /** Highlight a column of a table the way a header click does (one swatch colour). */
+  SideviewEngine.prototype.highlightColumnIn = function (table, colIdx, colName, color) {
+    if (table._virtualTable) {
+      table._virtualTable.setColumnHighlight(colName, color);
+      return;
+    }
+    var cls = color === 'clear' ? '' : 'sv-highlight-' + color;
+    var cells = table.querySelectorAll('tbody tr td:nth-child(' + (colIdx + 1) + ')');
+    cells.forEach(function (cell) {
+      cell.className = cell.className.replace(/sv-highlight-\w+/g, '').replace('sideview-cell-highlight', '').trim();
+      if (cls) cell.classList.add(cls, 'sideview-cell-highlight');
+    });
+  };
+
+  /**
+   * Set the highlighted columns of a card from R: those listed (and present) take the selected
+   * swatch, or blue when none is selected or it is "clear"; any other column is unhighlighted.
+   */
+  SideviewEngine.prototype.highlightColumns = function (name, cols) {
+    var meta = this.cardMetaByName(name);
+    if (!meta) { warnNoCard(name); return; }
+    var table = meta.element.querySelector('.sideview-table');
+    if (!table) return;
+    var color = (this.selectedColor && this.selectedColor !== 'clear') ? this.selectedColor : 'blue';
+    var want = asArray(cols).map(String);
+    var ths = table.querySelectorAll('thead th');
+    for (var i = 0; i < ths.length; i++) {
+      var col = ths[i].dataset.colName;
+      if (col === undefined) continue;
+      this.highlightColumnIn(table, ths[i].cellIndex !== undefined ? ths[i].cellIndex : i, col,
+        want.indexOf(col) >= 0 ? color : 'clear');
+    }
+  };
+
+  // ---- module readiness and snapshot -------------------------------------------
+
+  // Tell R this canvas is on the page (it answers with its cards). Shiny.setInputValue appears
+  // only once the session connects: retry until then.
+  SideviewEngine.prototype.sendReady = function (attempt) {
+    var self = this;
+    if (this.send('sideview_ready', { nonce: Date.now() })) return;
+    if (attempt >= 120 || !this.container.isConnected) return;
+    setTimeout(function () { self.sendReady(attempt + 1); }, 250);
+  };
+
+  // A card resized by hand (CSS resize) changes the saved view: report it, debounced.
+  SideviewEngine.prototype.observeCardSize = function (cardEl) {
+    if (typeof this.options.ns !== 'string' || typeof global.ResizeObserver !== 'function') return;
+    var self = this;
+    if (!this._cardResizeObserver) {
+      this._cardResizeObserver = new global.ResizeObserver(function () { self.scheduleSnapshot(); });
+    }
+    this._cardResizeObserver.observe(cardEl);
+  };
+
+  var SNAPSHOT_DELAY = 300;
+
+  /** Module only: send the pipeline, code and workspace to R once changes have settled. */
+  SideviewEngine.prototype.scheduleSnapshot = function () {
+    if (typeof this.options.ns !== 'string' || !this._constructed) return;
+    var self = this;
+    if (this._snapshotTimer) clearTimeout(this._snapshotTimer);
+    this._snapshotTimer = setTimeout(function () {
+      self._snapshotTimer = null;
+      self.sendSnapshot();
+    }, SNAPSHOT_DELAY);
+  };
+
+  SideviewEngine.prototype.sendSnapshot = function () {
+    if (this.container.isConnected === false) return;
+    var code = this.pipeline.compose();
+    var names = [];
+    this.cards.forEach(function (m) { names.push(m.name); });
+    this.send('sideview_snapshot', {
+      code: isNoCode(code) ? '' : code,
+      pipeline: JSON.stringify(this.pipeline.steps),
+      state: JSON.stringify(this.getState()),
+      cards: names
     });
   };
 
@@ -4557,7 +4836,8 @@ function sendToShiny(name, value) {
 
   /** Export codebook: R writes the file in the gadget; the widget downloads a CSV. */
   SideviewEngine.prototype.exportCodebook = function () {
-    if (this.isGadget()) {
+    // a module is R-backed too (lazy tables, full data) but downloads the CSV in the browser
+    if (this.isGadget() || (typeof this.options.ns === 'string' && this.hasR())) {
       if (!this.send('codebook_export', Date.now())) this.showToast('The R session is not connected.', 'warning');
       return;
     }
@@ -5697,6 +5977,34 @@ function sendToShiny(name, value) {
       }
     });
 
+    // Cards, state and highlights driven from R (a module's sideview_proxy)
+    self.onMessage('sideview_card_add', function (data) {
+      if (!data || !data.card) return;
+      self.addCardFromR(data.card);
+    });
+    self.onMessage('sideview_card_replace', function (data) {
+      if (data && data.card) self.replaceCard(data.card);
+    });
+    self.onMessage('sideview_card_remove', function (data) {
+      if (data) self.removeCard(data.name);
+    });
+    self.onMessage('sideview_state_set', function (data) {
+      if (!data || data.state === undefined || data.state === null) return;
+      var state;
+      try { state = typeof data.state === 'string' ? JSON.parse(data.state) : data.state; } catch (err) {
+        self.showToast('State not applied: ' + err.message, 'danger');
+        return;
+      }
+      self.clearOperations(true);
+      var out = self.applyState(state);
+      self.pipeline.undoStack = [];
+      self.pipeline.redoStack = [];
+      if (out.missing.length) self.showToast(stateSummary(out), 'warning');
+    });
+    self.onMessage('sideview_highlight', function (data) {
+      if (data) self.highlightColumns(data.name, data.cols);
+    });
+
     // A short notice from R (the preview fallback, codebook progress). showToast uses textContent.
     self.onMessage('sideview_toast', function (data) {
       if (!data || !data.text) return;
@@ -5708,8 +6016,19 @@ function sendToShiny(name, value) {
     // Codebook written by R (reply to codebook_export)
     self.onMessage('sideview_codebook_saved', function (data) {
       if (!data || data.cancelled) return;
-      if (data.error) self.showToast('Codebook not saved: ' + data.error, 'danger');
-      else self.showToast('Codebook saved to ' + data.path, 'success');
+      if (data.error) { self.showToast('Codebook not saved: ' + data.error, 'danger'); return; }
+      if (typeof data.csv === 'string') {
+        // a module: R sends the text, the browser saves it
+        self.lastCodebookCsv = data.csv;
+        try {
+          downloadText(data.csv, String(data.filename || 'codebook.csv'), 'text/csv');
+          self.showToast('Codebook downloaded.', 'success');
+        } catch (err) {
+          self.showToast('Download blocked: ' + err.message, 'danger');
+        }
+        return;
+      }
+      self.showToast('Codebook saved to ' + data.path, 'success');
     });
 
     // Join diagnostics computed in R on the full data (reply to join_diagnostics_request)

@@ -393,3 +393,21 @@ test_that("Computer Use GUI: Programmatic browser test via shinytest2 (Tier 2)",
     app$stop()
   }
 })
+
+# ==============================================================================
+# Scenario 11: cards, state and highlight from R; ready and snapshot (module)
+# ==============================================================================
+test_that("Computer Use GUI: Scenario 11 - a module canvas takes cards, state and highlights from R", {
+  res <- run_gui_test_scenarios()
+  s11 <- res$scenario11
+
+  expect_gt(length(s11), 0)
+  for (nm in c("module_sends_ready", "card_add_remote", "replace_keeps_geometry", "replace_disables_step",
+               "replace_toast", "replace_clears_join_checks", "replace_removes_spline_visually", "remove_card",
+               "hostile_name", "unknown_card_warns", "highlight_columns", "highlight_uses_swatch", "state_set",
+               "module_save_is_browser", "module_codebook_asks_r", "codebook_csv_downloads",
+               "prune_destroys_engine", "snapshot_debounced", "snapshot_skips_checks", "snapshot_empty_code",
+               "gadget_no_snapshot")) {
+    expect_true(isTRUE(s11[[nm]]), info = nm)
+  }
+})
