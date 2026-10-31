@@ -897,12 +897,32 @@ sv_lazy_join_scalars <- function(sx, sy, nk) {
 #' Row count and rows with a missing key, for one side
 #' @noRd
 sv_lazy_join_side_counts <- function(side, nk) {
-  any_na <- Reduce(function(a, b) rlang::expr((!!a) | (!!b)),
-                   lapply(rlang::syms(sv_lazy_key_names(nk)), function(s) rlang::expr(is.na(!!s))))
+  any_na <- sv_lazy_any_na_expr(nk)
   r <- dplyr::collect(dplyr::summarise(
     side, n = n(), na = sum(if_else(!!any_na, 1, 0), na.rm = TRUE)
   ))
   list(n = as.numeric(r$n), na = if (is.na(r$na)) 0 else as.numeric(r$na))
+}
+
+#' Is any key part missing? (an expression over `.sv_k1`, `.sv_k2`, ...)
+#' @noRd
+sv_lazy_any_na_expr <- function(nk) {
+  Reduce(function(a, b) rlang::expr((!!a) | (!!b)),
+         lapply(rlang::syms(sv_lazy_key_names(nk)), function(s) rlang::expr(is.na(!!s))))
+}
+
+#' Collected keys as the check shows them
+#'
+#' A POSIXct key is shown in its own zone, as the in-memory check does.
+#' @param keys A data frame of the key columns.
+#' @param tzs Time zone of each key, `NA` if it has none.
+#' @noRd
+sv_lazy_decode_keys <- function(keys, tzs = NULL) {
+  if (!nrow(keys)) return(character(0))
+  for (i in seq_along(keys)) {
+    if (!is.null(tzs) && !is.na(tzs[i]) && inherits(keys[[i]], "POSIXct")) attr(keys[[i]], "tzone") <- tzs[[i]]
+  }
+  sv_join_decode(sv_join_keys(keys))
 }
 
 #' Up to `n` keys of one side that the other side lacks, as the check shows them
@@ -920,12 +940,140 @@ sv_lazy_join_sample <- function(sx, sy, nk, side, n, tzs = NULL) {
     dplyr::arrange(dplyr::filter(j, is.na(nx)), fy)
   }
   keys <- dplyr::collect(utils::head(dplyr::select(j, dplyr::all_of(kn)), n))
-  if (!nrow(keys)) return(character(0))
-  # a POSIXct key is shown in its own zone, as the in-memory check does
-  for (i in seq_len(nk)) {
-    if (!is.null(tzs) && !is.na(tzs[i]) && inherits(keys[[i]], "POSIXct")) attr(keys[[i]], "tzone") <- tzs[[i]]
+  sv_lazy_decode_keys(keys, tzs)
+}
+
+#' One side of a rule check: keys, row tag and the rule's columns of that side
+#'
+#' The twin of the columns `sv_join_rule_pairs()` puts on its two tables. `x`
+#' gets `.sv_rx` and `.sv_xa` (with `.sv_xb` for an overlap or a window, whose
+#' bounds are the window's ends), `y` gets `.sv_ry` and `.sv_ya` (with `.sv_yb`
+#' for between and overlaps). A date-time is cast to `TIMESTAMP`, so a duckdb
+#' table and an Arrow table (`TIMESTAMPTZ`) compare as instants; a window adds
+#' whole days to it (`days()`; `TIMESTAMPTZ - INTERVAL` has no binding without
+#' ICU) and integer days to a Date (`DATE - DECIMAL` has none either). A plain
+#' double has NaN made NULL, as R counts it missing.
+#' @param side From `sv_lazy_join_side(row = TRUE)`.
+#' @param rule A normalised, valid rule.
+#' @param which `"x"` or `"y"`.
+#' @param kind The rule's kind: `"Date"`, `"date-time"` or `"numeric"`.
+#' @param dbl Named logical: which rule columns of this side are plain doubles.
+#' @param nk Number of key columns.
+#' @noRd
+sv_lazy_rule_side <- function(side, rule, which, kind, dbl, nk) {
+  val <- function(col) {
+    s <- rlang::sym(col)
+    if (identical(kind, "date-time")) {
+      rlang::expr(as.POSIXct(!!s))
+    } else if (isTRUE(dbl[col])) {
+      rlang::expr(if_else(isnan(!!s), NA, !!s))
+    } else {
+      s
+    }
   }
-  sv_join_decode(sv_join_keys(keys))
+  shift <- function(col, n) {
+    v <- val(col)
+    if (n == 0) return(v)
+    amount <- switch(kind,
+      Date = as.integer(abs(n)),
+      `date-time` = rlang::expr(days(!!as.integer(abs(n)))),
+      sv_lazy_lit(abs(n)))
+    if (n < 0) rlang::expr(!!v - !!amount) else rlang::expr(!!v + !!amount)
+  }
+  cols <- if (identical(which, "x")) {
+    switch(rule$shape,
+      overlaps = list(.sv_xa = val(rule$xFrom), .sv_xb = val(rule$xTo)),
+      window = list(.sv_xa = shift(rule$xCol, rule$from), .sv_xb = shift(rule$xCol, rule$to)),
+      list(.sv_xa = val(rule$xCol)))
+  } else {
+    switch(rule$shape,
+      between = ,
+      overlaps = list(.sv_ya = val(rule$yFrom), .sv_yb = val(rule$yTo)),
+      list(.sv_ya = val(rule$yCol)))
+  }
+  side <- dplyr::mutate(side, !!!cols)
+  row <- stats::setNames(".sv_row", if (identical(which, "x")) ".sv_rx" else ".sv_ry")
+  dplyr::select(side, dplyr::all_of(c(sv_lazy_key_names(nk), row, names(cols))))
+}
+
+#' The row pairs a date rule joins, as a lazy tbl of `(.rx, .ry)`
+#'
+#' The twin of `sv_join_rule_pairs()`, run by duckdb. The keys are joined with
+#' `na_matches = "never"` (a missing key, or a missing date, matches nothing)
+#' and the rule's conditions are the ones `join_by()` expands `between()`,
+#' `overlaps()` and the window into. dbplyr has no `closest()`, so a nearest
+#' match joins on the inequality and keeps, per x row, the y rows at the latest
+#' (before) or earliest (after) date: all of them on a tie, as `closest()` does.
+#' @param side_x,side_y From `sv_lazy_rule_side()`.
+#' @param nk Number of key columns.
+#' @param rule A normalised, valid rule.
+#' @noRd
+sv_lazy_rule_pairs <- function(side_x, side_y, nk, rule) {
+  keys <- lapply(rlang::syms(sv_lazy_key_names(nk)), function(k) rlang::expr(!!k == !!k))
+  strict <- identical(rule$inclusive, FALSE)
+  conds <- switch(rule$shape,
+    between = rlang::exprs(.sv_xa >= .sv_ya, .sv_xa <= .sv_yb),
+    overlaps = rlang::exprs(.sv_xa <= .sv_yb, .sv_xb >= .sv_ya),
+    window = rlang::exprs(.sv_xa <= .sv_ya, .sv_xb >= .sv_ya),
+    before = if (strict) rlang::exprs(.sv_xa > .sv_ya) else rlang::exprs(.sv_xa >= .sv_ya),
+    after = if (strict) rlang::exprs(.sv_xa < .sv_ya) else rlang::exprs(.sv_xa <= .sv_ya))
+  by <- rlang::inject(dplyr::join_by(!!!c(keys, conds)))
+  p <- dplyr::inner_join(side_x, side_y, by = by, na_matches = "never")
+  if (rule$shape %in% c("before", "after")) {
+    near <- if (rule$shape == "before") rlang::expr(max(.sv_ya, na.rm = TRUE)) else rlang::expr(min(.sv_ya, na.rm = TRUE))
+    p <- dplyr::ungroup(dplyr::filter(dplyr::group_by(p, .sv_rx), .sv_ya == !!near))
+  }
+  dplyr::select(p, .rx = .sv_rx, .ry = .sv_ry)
+}
+
+#' The scalars `sv_join_rule_core()` takes, from one aggregate over the pairs
+#' @param pairs From `sv_lazy_rule_pairs()`.
+#' @noRd
+sv_lazy_rule_scalars <- function(pairs) {
+  counted <- dplyr::group_by(pairs, .rx)
+  counted <- dplyr::mutate(counted, .sv_cx = n())
+  counted <- dplyr::mutate(dplyr::group_by(dplyr::ungroup(counted), .ry), .sv_cy = n())
+  r <- dplyr::collect(dplyr::summarise(
+    dplyr::ungroup(counted),
+    matched_x = n_distinct(.rx), matched_y = n_distinct(.ry),
+    max_cx = max(.sv_cx, na.rm = TRUE), max_cy = max(.sv_cy, na.rm = TRUE),
+    inner = n()
+  ))
+  list(
+    matched_x = sv_lazy_count(sv_lazy_num0(r$matched_x)), matched_y = sv_lazy_count(sv_lazy_num0(r$matched_y)),
+    # an x row with several pairs makes y the "many" side, and the reverse
+    many_x = sv_lazy_num0(r$max_cy) > 1, many_y = sv_lazy_num0(r$max_cx) > 1,
+    inner = sv_lazy_num0(r$inner)
+  )
+}
+
+#' Up to `n` keys of the rows of one side without a rule pair, in order of first row
+#' @param side That side from `sv_lazy_join_side(row = TRUE)`.
+#' @param pairs From `sv_lazy_rule_pairs()`.
+#' @param which `"x"` or `"y"`.
+#' @param tzs Time zone of each key, `NA` if it has none.
+#' @noRd
+sv_lazy_rule_sample <- function(side, pairs, nk, which, n, tzs = NULL) {
+  kn <- sv_lazy_key_names(nk)
+  paired <- dplyr::distinct(dplyr::select(pairs, .sv_row = dplyr::all_of(if (identical(which, "x")) ".rx" else ".ry")))
+  lone <- dplyr::anti_join(side, paired, by = ".sv_row")
+  first <- dplyr::summarise(dplyr::group_by(lone, !!!rlang::syms(kn)), .sv_first = min(.sv_row, na.rm = TRUE),
+                            .groups = "drop")
+  # LIMIT right after ORDER BY (a select in between would drop the order); sorted again in R
+  keys <- dplyr::collect(utils::head(dplyr::arrange(first, .sv_first), n))
+  keys <- as.data.frame(keys)[order(keys$.sv_first), kn, drop = FALSE]
+  sv_lazy_decode_keys(keys, tzs)
+}
+
+#' The R classes of some columns of a table of any origin, from 0 rows
+#'
+#' Columns that are not in the table are left out.
+#' @noRd
+sv_lazy_zero <- function(x, cols) {
+  cols <- intersect(unique(cols), sv_lazy_names(x))
+  if (is.data.frame(x)) return(x[0L, cols, drop = FALSE])
+  if (!length(cols)) return(data.frame())
+  dplyr::collect(utils::head(dplyr::select(x, dplyr::all_of(cols)), 0L))
 }
 
 #' Join check over the whole tables, run by duckdb
@@ -934,14 +1082,19 @@ sv_lazy_join_sample <- function(sx, sy, nk, side, n, tzs = NULL) {
 #' tables are placed on one connection (see `sv_lazy_place()`); the counts come
 #' back as one aggregate row, plus at most `sample_n` unmatched keys per side.
 #' Whatever was added to a user's connection is removed again, also on error.
+#'
+#' With a `rule`, the row pairs are joined in duckdb (`sv_lazy_rule_pairs()`)
+#' and only one aggregate over them, plus the unmatched samples, come back.
 #' @inheritParams sv_join_diagnostics
 #' @param con_env An environment from `sv_lazy_env()` holding the private
 #'   connection (used when neither side is a duckdb table). When omitted, a
 #'   private connection is opened for this call and closed again.
+#' @param rule Optional date rule, as for [sv_join_diagnostics()]; checked with
+#'   `sv_join_rule_problem()` before anything is placed.
 #' @return An `sv_join_diagnostics` object.
 #' @noRd
 sv_lazy_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_name = "y",
-                                     con_env = sv_lazy_env()) {
+                                     con_env = sv_lazy_env(), rule = NULL) {
   own_env <- missing(con_env)
   force(con_env)
   if (own_env) on.exit(sv_lazy_close(con_env), add = TRUE)
@@ -953,7 +1106,31 @@ sv_lazy_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_na
   if (length(miss_x)) stop(sprintf("Not in %s: %s", x_name, paste(miss_x, collapse = ", ")), call. = FALSE)
   if (length(miss_y)) stop(sprintf("Not in %s: %s", y_name, paste(miss_y, collapse = ", ")), call. = FALSE)
 
-  placed <- sv_lazy_place(x, y, con_env, cols_x = by_x, cols_y = by_y)
+  rule_x <- rule_y <- character(0)
+  if (!is.null(rule)) {
+    # the rule's columns, as far as they are strings, for their kinds (0 rows, nothing placed yet)
+    slot_cols <- function(side) {
+      if (!is.list(rule) || !isTRUE(rule$shape %in% sv_rule_shapes)) return(character(0))
+      v <- unlist(lapply(sv_rule_slots(rule$shape), function(s) {
+        if (sv_rule_slot_side(s) == side && is.character(rule[[s]]) && length(rule[[s]]) == 1L) rule[[s]]
+      }))
+      as.character(unique(v[!is.na(v)]))
+    }
+    zx_rule <- sv_lazy_zero(x, slot_cols("x"))
+    zy_rule <- sv_lazy_zero(y, slot_cols("y"))
+    problem <- sv_join_rule_problem(rule, vapply(zx_rule, sv_key_kind, character(1)),
+                                    vapply(zy_rule, sv_key_kind, character(1)))
+    if (!is.null(problem)) stop(problem, call. = FALSE)
+    rule <- sv_join_rule_normalize(rule)
+    rule_x <- slot_cols("x")
+    rule_y <- slot_cols("y")
+    rule_kind <- sv_key_kind(zx_rule[[rule[[sv_rule_slots(rule$shape)[1L]]]]])
+    is_dbl <- function(z) vapply(z, function(v) identical(sv_lazy_kind(v), "double"), logical(1))
+    dbl_x <- is_dbl(zx_rule)
+    dbl_y <- is_dbl(zy_rule)
+  }
+
+  placed <- sv_lazy_place(x, y, con_env, cols_x = c(by_x, rule_x), cols_y = c(by_y, rule_y))
   on.exit(placed$cleanup(), add = TRUE, after = FALSE)
 
   # the R classes of the key columns, from 0 rows
@@ -988,17 +1165,43 @@ sv_lazy_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_na
   n_y <- cnt_y$n
   s <- sv_lazy_join_scalars(side_x(), side_y(), nk)
   core <- sv_join_counts_from(s, n_x, n_y)
-
   n_show <- max(0L, as.integer(sample_n))
-  unmatched_x <- if (n_show && s$distinct_x > s$distinct_matched) {
-    sv_lazy_join_sample(side_x(row = TRUE), side_y(), nk, "x", n_show, tz_x)
+
+  if (is.null(rule)) {
+    unmatched_x <- if (n_show && s$distinct_x > s$distinct_matched) {
+      sv_lazy_join_sample(side_x(row = TRUE), side_y(), nk, "x", n_show, tz_x)
+    } else {
+      character(0)
+    }
+    unmatched_y <- if (n_show && s$distinct_y > s$distinct_matched) {
+      sv_lazy_join_sample(side_x(), side_y(row = TRUE), nk, "y", n_show, tz_y)
+    } else {
+      character(0)
+    }
   } else {
-    character(0)
-  }
-  unmatched_y <- if (n_show && s$distinct_y > s$distinct_matched) {
-    sv_lazy_join_sample(side_x(), side_y(row = TRUE), nk, "y", n_show, tz_y)
-  } else {
-    character(0)
+    pairs_for <- function(fix = NULL) {
+      sv_lazy_rule_pairs(sv_lazy_rule_side(side_x(fix, row = TRUE), rule, "x", rule_kind, dbl_x, nk),
+                         sv_lazy_rule_side(side_y(fix, row = TRUE), rule, "y", rule_kind, dbl_y, nk),
+                         nk, rule)
+    }
+    pairs <- pairs_for()
+    core <- sv_join_rule_core(sv_lazy_rule_scalars(pairs), n_x, n_y, core,
+                              rule$shape %in% c("before", "after"))
+    # rows with a key partner (a missing key has none) but no rule pair
+    no_na <- function(side) dplyr::filter(side, !(!!sv_lazy_any_na_expr(nk)))
+    partner <- sv_lazy_join_scalars(no_na(side_x()), no_na(side_y()), nk)
+    rule_dropped_x <- partner$matched_x - core$matched_x
+    rule_dropped_y <- partner$matched_y - core$matched_y
+    unmatched_x <- if (n_show && core$matched_x < n_x) {
+      sv_lazy_rule_sample(side_x(row = TRUE), pairs, nk, "x", n_show, tz_x)
+    } else {
+      character(0)
+    }
+    unmatched_y <- if (n_show && core$matched_y < n_y) {
+      sv_lazy_rule_sample(side_y(row = TRUE), pairs, nk, "y", n_show, tz_y)
+    } else {
+      character(0)
+    }
   }
 
   out <- list(
@@ -1018,14 +1221,26 @@ sv_lazy_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_na
     type_issues = type_issues,
     hints = list()
   )
+  out$strict_args <- sv_join_strict_args(core, n_x, n_y, rule)
+  if (!is.null(rule)) {
+    out$rule <- rule
+    out$rule_kind <- rule_kind
+    out$rule_dropped_x <- rule_dropped_x
+    out$rule_dropped_y <- rule_dropped_y
+  }
 
-  # Fixes that would match more rows, each measured on its own against the raw keys.
-  # Only character keys change, so a join without one has nothing to fix.
+  # Fixes that would match more rows, each measured on its own against the raw keys
+  # (with the rule applied, when there is one). Only character keys change, so a join
+  # without one has nothing to fix.
   if ((core$matched_x < n_x || core$matched_y < n_y) &&
       any(c(kind_x, kind_y) == "character")) {
     labels <- c(trim = "trimming whitespace", case = "ignoring case", zeros = "dropping leading zeros")
     for (nm in names(labels)) {
-      alt <- sv_lazy_join_scalars(side_x(nm), side_y(nm), nk)
+      alt <- if (is.null(rule)) {
+        sv_lazy_join_scalars(side_x(nm), side_y(nm), nk)
+      } else {
+        sv_lazy_rule_scalars(pairs_for(nm))
+      }
       extra_x <- alt$matched_x - core$matched_x
       extra_y <- alt$matched_y - core$matched_y
       if (extra_x > 0 || extra_y > 0) {
@@ -1036,7 +1251,6 @@ sv_lazy_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_na
     }
   }
 
-  out$strict_args <- sv_join_strict_args(core, n_x, n_y)
   out$warnings <- sv_join_warnings(out, x_name, y_name)
   out$status <- if (length(out$type_issues)) "error" else if (length(out$warnings)) "warn" else "ok"
   structure(out, class = "sv_join_diagnostics")
@@ -1397,4 +1611,4 @@ sv_lazy_histogram <- function(fin, lo, hi, n_fin, bins) {
 }
 
 # Names that only exist inside the SQL translation of the verbs above.
-utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc", "cast", "nx", "ny", "fx", "fy", "trim", "regexp_replace", "regexp_full_match", "quantile_cont", "isfinite", "isnan", "isinf", "n", "rtrim", "sd", "lower", "epoch_us", "make_timestamp", "strftime", ".sv_v", ".sv_t", ".sv_f", ".sv_k", ".sv_n", ".sv_bin", ".sv_rn", ".sv_rk"))
+utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc", "cast", "nx", "ny", "fx", "fy", "trim", "regexp_replace", "regexp_full_match", "quantile_cont", "isfinite", "isnan", "isinf", "n", "rtrim", "sd", "lower", "epoch_us", "make_timestamp", "strftime", ".sv_v", ".sv_t", ".sv_f", ".sv_k", ".sv_n", ".sv_bin", ".sv_rn", ".sv_rk", ".rx", ".ry", ".sv_cx", ".sv_cy", ".sv_first", "n_distinct", "days"))

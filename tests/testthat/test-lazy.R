@@ -849,6 +849,106 @@ test_that("the join check on private tables leaves the shared connection empty",
   expect_false(sv_is_lazy_input(df))
 })
 
+# ---- join check with a date rule (sideview 0.4.0) ---------------------------------
+
+# The unmatched samples as sets: with sample_n above their length both list every key.
+rule_check_sorted <- function(d) {
+  d$unmatched_x <- sort(d$unmatched_x)
+  d$unmatched_y <- sort(d$unmatched_y)
+  d
+}
+
+test_that("the lazy rule check equals the in-memory one", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  fx <- lazy_fixture()
+  n_checked <- 0L
+  for (kind in c("Date", "date-time", "numeric")) for (seed in 1:2) {
+    t <- rule_tables(kind, seed)
+    x <- t$x[c("id", "xd", "xe")]
+    combos <- list(c("duckdb", "duckdb"), c("arrow", "arrow"))
+    # date-times reach duckdb as TIMESTAMP (a duckdb table) and TIMESTAMPTZ (Arrow, tz = "UTC")
+    if (kind == "date-time") combos <- c(combos, list(c("duckdb", "arrow")))
+    for (rule in rule_cases()) {
+      want <- sv_join_diagnostics(x, t$y, "id", sample_n = 50L, rule = rule)
+      for (cb in combos) {
+        gc()
+        got <- sv_join_diagnostics(join_side(x, cb[1], fx$con, "rx"), join_side(t$y, cb[2], fx$con, "ry"),
+                                   "id", sample_n = 50L, rule = rule)
+        lab <- paste(kind, seed, rule$shape, rule$from, rule$inclusive, cb[1], "x", cb[2])
+        expect_equal(rule_check_sorted(got), rule_check_sorted(want), tolerance = 1e-12, label = lab)
+        n_checked <- n_checked + 1L
+      }
+    }
+  }
+  expect_equal(n_checked, 2L * 9L * (2L + 3L + 2L))
+})
+
+test_that("the lazy rule check keeps nearest-match ties, never matches NA and lists samples in order", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  fx <- lazy_fixture()
+  d0 <- as.Date("2024-01-10")
+  # visit "a " needs trimming; NA key and NA date never match; a and d each tie on their nearest lab
+  visits <- data.frame(id = c("a", "a ", "b", NA, "c", "d", "e", "f", "g"),
+                       visit_date = d0 + c(0, 1, 0, 0, NA, 5, 0, 0, 0), stringsAsFactors = FALSE)
+  labs <- data.frame(id = c("a", "a", "a", "b", NA, "c", "d", "d", "h"),
+                     lab_date = d0 + c(-3, -3, -9, NA, 0, 0, 5, 5, 0), stringsAsFactors = FALSE)
+  before <- list(shape = "before", xCol = "visit_date", yCol = "lab_date")
+  win <- list(shape = "window", xCol = "visit_date", yCol = "lab_date", from = -4, to = 0)
+  as_time <- function(df, col) {
+    df[[col]] <- as.POSIXct(as.character(df[[col]]), tz = "UTC") + 8 * 3600
+    df
+  }
+  want <- sv_join_diagnostics(visits, labs, "id", rule = before)
+  # the ties are kept: visit a gets both labs of day -3, visit d both of day 5
+  expect_identical(want$relationship, "one-to-many")
+  expect_equal(c(want$matched_x, want$matched_y, want$rows$inner_join), c(2, 4, 4))
+  expect_identical(want$unmatched_x, c("a ", "b", "NA", "c", "e"))
+  expect_identical(vapply(want$hints, `[[`, "", "fix"), "trim")
+  for (rule in list(before, win)) for (tm in c(FALSE, TRUE)) {
+    v <- if (tm) as_time(visits, "visit_date") else visits
+    l <- if (tm) as_time(labs, "lab_date") else labs
+    want <- sv_join_diagnostics(v, l, "id", rule = rule, x_name = "visits", y_name = "labs")
+    for (cb in list(c("duckdb", "duckdb"), c("arrow", "arrow"), c("df", "duckdb"), c("arrow", "duckdb"))) {
+      gc()
+      got <- sv_join_diagnostics(join_side(v, cb[1], fx$con, "rv"), join_side(l, cb[2], fx$con, "rl"), "id",
+                                 rule = rule, x_name = "visits", y_name = "labs")
+      expect_equal(got, want, tolerance = 1e-12, label = paste(rule$shape, tm, cb[1], "x", cb[2]))
+    }
+  }
+})
+
+test_that("a lazy rule check refuses a bad rule and leaves the user's connection clean", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  fx <- lazy_fixture()
+  d0 <- as.Date("2024-01-10")
+  visits <- data.frame(id = 1:3, visit_date = d0)
+  labs <- data.frame(id = c(1, 1, 2), lab_date = d0 + c(-2, 2, 40))
+  DBI::dbWriteTable(fx$con, "visits", visits)
+  tv <- dplyr::tbl(fx$con, "visits")
+  win7 <- list(shape = "window", xCol = "visit_date", yCol = "lab_date", from = -7, to = 7)
+  bad <- function(...) utils::modifyList(win7, list(...))
+  for (r in list(bad(from = 7.5), bad(from = 9, to = 7), bad(yCol = "nope"), list(shape = "zig"))) {
+    msg <- tryCatch(sv_join_diagnostics(visits, labs, "id", rule = r), error = conditionMessage)
+    expect_error(sv_join_diagnostics(tv, labs, "id", rule = r), msg, fixed = TRUE)
+    expect_error(sv_join_diagnostics(visits, arrow::arrow_table(labs), "id", rule = r), msg, fixed = TRUE)
+  }
+  before <- sort(DBI::dbListTables(fx$con))
+  d1 <- sv_join_diagnostics(tv, labs, "id", rule = win7)
+  d2 <- sv_join_diagnostics(tv, arrow::arrow_table(labs), "id", rule = win7)
+  expect_identical(sort(DBI::dbListTables(fx$con)), before)
+  want <- sv_join_diagnostics(visits, labs, "id", rule = win7)
+  expect_equal(d1, want, tolerance = 1e-12)
+  expect_equal(d2, want, tolerance = 1e-12)
+  expect_identical(d1$rule_kind, "Date")
+  expect_equal(c(d1$rule_dropped_x, d1$rule_dropped_y), c(1, 1))
+})
+
 test_that("lazy counts stay integer until they pass the integer range", {
   expect_identical(sv_lazy_count(5), 5L)
   expect_identical(sv_lazy_count(3e9), 3e9)

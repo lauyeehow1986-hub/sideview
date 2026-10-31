@@ -153,22 +153,35 @@ sv_join_rule_pairs <- function(x, y, by_x, by_y, rule, fn = NULL) {
 sv_join_rule_counts <- function(pairs, n_x, n_y, key_core, nearest) {
   px <- tabulate(pairs$.rx, n_x)
   py <- tabulate(pairs$.ry, n_y)
+  core <- sv_join_rule_core(
+    list(matched_x = sum(px > 0L), matched_y = sum(py > 0L),
+         many_x = any(py > 1L), many_y = any(px > 1L), inner = nrow(pairs)),
+    n_x, n_y, key_core, nearest
+  )
+  core$unmatched_rows_x <- which(px == 0L)
+  core$unmatched_rows_y <- which(py == 0L)
+  core
+}
+
+# The core numbers of a rule join from the scalars of its pairs: rows with a pair (`matched_x/y`),
+# some y row with several x rows (`many_x`) or the reverse (`many_y`), and the pair count (`inner`).
+# The distinct / duplicate key counts stay those of the keys (`key_core`). Shared by the in-memory
+# check and the duckdb one (sv_lazy_rule_scalars()).
+sv_join_rule_core <- function(s, n_x, n_y, key_core, nearest) {
   core <- sv_join_counts_from(
     list(
       distinct_x = key_core$distinct_x, distinct_y = key_core$distinct_y,
-      distinct_matched = nrow(pairs) > 0L,
-      matched_x = sum(px > 0L), matched_y = sum(py > 0L),
+      distinct_matched = s$inner > 0,
+      matched_x = s$matched_x, matched_y = s$matched_y,
       dup_keys_x = key_core$dup_keys_x, dup_keys_y = key_core$dup_keys_y,
-      many_x = any(py > 1L), many_y = any(px > 1L),
-      inner = nrow(pairs)
+      many_x = s$many_x, many_y = s$many_y,
+      inner = s$inner
     ),
     n_x = n_x, n_y = n_y
   )
   core$distinct_matched <- key_core$distinct_matched
   if (nearest) core$rows[c("right_join", "full_join")] <- list(NA_real_, NA_real_)
   core$rows <- lapply(core$rows, as.numeric)
-  core$unmatched_rows_x <- which(px == 0L)
-  core$unmatched_rows_y <- which(py == 0L)
   core
 }
 

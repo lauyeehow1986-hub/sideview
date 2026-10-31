@@ -33,8 +33,7 @@ step's rule: \code{shape} (\code{"between"}, \code{"window"}, \code{"before"}, \
 window's whole-number \code{from} and \code{to} (days, -3650 to 3650) and, for
 \code{"before"}/\code{"after"}, \code{inclusive}. The check then counts the rows the rule
 keeps, with \code{na_matches = "never"}: under a rule a missing key matches
-nothing. A rule that does not hold (see the message) is an error. Only for
-data frames.}
+nothing. A rule that does not hold (see the message) is an error.}
 }
 \value{
 An object of class \code{sv_join_diagnostics}: a list with \code{by}
@@ -79,7 +78,10 @@ handed to duckdb with \code{arrow::to_duckdb()}, and a data frame is registered
 temporarily; both are removed afterwards. Known differences from the
 in-memory check: keys of different types are compared as text, double keys
 are compared exactly, and an in-memory POSIXct key is compared as text where
-a database key is compared as an instant.
+a database key is compared as an instant. A date rule runs in duckdb too; its
+date-time columns are compared as instants (\code{TIMESTAMP}), and a date-time
+window adds whole days, which with duckdb's ICU extension loaded can be an
+hour off across a daylight-saving change.
 }
 
 \examples{

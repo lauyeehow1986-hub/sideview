@@ -186,26 +186,7 @@ test_that("the server answers join_diagnostics_request on the full data", {
 
 # ---- date rules (sideview 0.4.0) -----------------------------------------------
 
-# Synthetic tables with ties, NA dates and NA keys; the date columns are Date, date-time or numeric.
-rule_tables <- function(kind, seed) {
-  set.seed(seed)
-  conv <- function(v) switch(kind,
-    Date = as.Date("2024-01-01") + v,
-    `date-time` = as.POSIXct("2024-01-01", tz = "UTC") + v * 86400,
-    numeric = as.numeric(v))
-  nx <- 14L
-  ny <- 20L
-  vx <- sample(c(0:40, NA), nx, replace = TRUE)
-  vy <- sample(c(0:40, NA), ny, replace = TRUE)
-  x <- data.frame(id = sample(c(1:5, NA), nx, replace = TRUE), .i = seq_len(nx))
-  x$xd <- conv(vx)
-  x$xe <- conv(vx + sample(0:6, nx, replace = TRUE))
-  y <- data.frame(id = sample(c(1:6, NA), ny, replace = TRUE))
-  y$yd <- conv(vy)
-  y$ys <- conv(vy)
-  y$ye <- conv(vy + sample(0:6, ny, replace = TRUE))
-  list(x = x, y = y, unit = if (kind == "date-time") 86400 else 1)
-}
+# rule_tables() and rule_cases() are in helper-rules.R (test-lazy.R uses them too).
 
 # The dplyr reference of a rule: the table x (with window helpers) and the join_by().
 rule_reference <- function(shape, t, from = -7, to = 7, inclusive = TRUE) {

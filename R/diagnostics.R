@@ -19,7 +19,10 @@
 #' temporarily; both are removed afterwards. Known differences from the
 #' in-memory check: keys of different types are compared as text, double keys
 #' are compared exactly, and an in-memory POSIXct key is compared as text where
-#' a database key is compared as an instant.
+#' a database key is compared as an instant. A date rule runs in duckdb too; its
+#' date-time columns are compared as instants (`TIMESTAMP`), and a date-time
+#' window adds whole days, which with duckdb's ICU extension loaded can be an
+#' hour off across a daylight-saving change.
 #'
 #' @param x,y Tables to join (`x` is the left table): data frames, or duckdb
 #'   tables and Arrow tables, which are checked in full without loading them into R.
@@ -35,8 +38,7 @@
 #'   window's whole-number `from` and `to` (days, -3650 to 3650) and, for
 #'   `"before"`/`"after"`, `inclusive`. The check then counts the rows the rule
 #'   keeps, with `na_matches = "never"`: under a rule a missing key matches
-#'   nothing. A rule that does not hold (see the message) is an error. Only for
-#'   data frames.
+#'   nothing. A rule that does not hold (see the message) is an error.
 #'
 #' @return An object of class `sv_join_diagnostics`: a list with `by`
 #'   (data frame of `x`/`y` columns), `n_x`, `n_y`, `distinct_x`, `distinct_y`,
@@ -64,7 +66,9 @@
 #' sv_join_diagnostics(patients, visits, by = "id")
 sv_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_name = "y", rule = NULL) {
   if (sv_is_lazy_input(x) || sv_is_lazy_input(y)) {
-    return(sv_lazy_join_diagnostics(x, y, by, sample_n = sample_n, x_name = x_name, y_name = y_name))
+    # the lazy twin checks the rule with the same sv_join_rule_problem() message
+    return(sv_lazy_join_diagnostics(x, y, by, sample_n = sample_n, x_name = x_name, y_name = y_name,
+                                    rule = rule))
   }
   if (!is.data.frame(x) || !is.data.frame(y)) stop("`x` and `y` must be data frames.", call. = FALSE)
   if (!is.character(by) || !length(by)) stop("`by` must name at least one key column.", call. = FALSE)
