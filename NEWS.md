@@ -1,5 +1,37 @@
 # sideview 0.4.0 (development)
 
+## Date-window joins
+
+A join step can carry a **date rule**, so "labs within 7 days of the visit" is a
+join and not a hand-written filter. Click the calendar button on a join step to
+open the rule row. The shapes are **Between** (a date inside the other table's
+start and end), **Window** (within a number of days before and after),
+**Nearest before**, **Nearest after** and **Overlaps**. Date, date-time and
+numeric columns work. The code uses `join_by()` and, for a window, two helper
+columns (`.sv_lo`, `.sv_hi`) that it drops again.
+
+* **The join check knows the rule.** The panel shows the rule and the rows it
+  dropped ("Dropped by the rule": rows that match on the key but not the rule),
+  and the counts equal what dplyr returns. `sv_join_diagnostics()` has a new
+  `rule` argument, and the gadget, the saved widget and duckdb/arrow cards all
+  agree.
+* **Strict** (a checkbox on the join step) adds `relationship = ` and
+  `unmatched = ` arguments taken from the join check, so the join stops with
+  dplyr's own error if the data changes under it. Strict is R-only for duckdb
+  and arrow tables.
+* **Under a rule, `na_matches = "never"`.** A key that is `NA` never matches
+  another `NA`, as in dplyr's inequality joins, so the key check counts them
+  the same way when a rule is set.
+* **Saved workspaces** keep the rule and the Strict flag. A workspace saved with
+  a rule and opened in a 0.3.x install loses the rule silently (0.3.x ignores
+  unknown fields).
+* **Known differences.** In the saved widget a window of days is computed on the
+  browser's clock, so date-times that cross a daylight-saving change can differ
+  by an hour from R. For duckdb date-time rule checks the session time zone
+  should be UTC (an ICU or non-UTC `TimeZone` setting can move a boundary).
+  A rule check on a duckdb card may leave temporary `dbplyr_*` tables on your
+  connection until it closes.
+
 ## Big tables: full data for arrow and duckdb cards
 
 Arrow tables, datasets and queries and duckdb tables (`dplyr::tbl()`) used to

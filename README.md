@@ -29,6 +29,7 @@ remotes::install_github("lauyeehow1986-hub/sideview")
   - Draw a spline between two columns to generate `dplyr` joins, including multi-key joins.
   - `sv_suggest_mappings()` proposes likely keys from name, type and value overlap.
   - **Join diagnostics** (`sv_join_diagnostics()`) show match rates both ways, unmatched keys, 1:1 / 1:m / m:m relationships, rows per join type, and NA, spacing or case problems in keys.
+- **Date-Window Joins**: Click the calendar on a join step to join on a date rule (a window of days, between, nearest before or after, overlaps). The join check shows the rows the rule dropped, and **Strict** adds dplyr's `relationship` and `unmatched` checks.
 - **Composable Pipeline**: Every sort, filter, join, rename, recode, mutate, reshape or summarise becomes a step you can toggle, reorder or delete, with undo/redo and a `%>%` / `|>` choice. Sorts and filters run on the full data in R, not just the rows on screen.
 - **Data Quality**:
   - Header sparklines and missingness badges.

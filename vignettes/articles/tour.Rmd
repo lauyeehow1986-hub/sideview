@@ -41,6 +41,15 @@ Every new join is checked against the full data, not only the rows on screen:
 
 The **Discrepancy** tab also lists near-matching values and can add an automatic clean-up step.
 
+## Join on a date window
+
+Visits and labs rarely share an exact date. Open the **Pipeline** tab and click the calendar button on the
+join step, then choose **Window** and type `-7` and `7` to match labs within a week of the visit
+(**Between**, **Nearest before**, **Nearest after** and **Overlaps** are there too). Press `Ctrl+Enter` or
+**Apply**. The code gains the `join_by()` rule, and the join check adds a **Dropped by the rule** line
+for rows that match on the key but not the date. Tick **Strict** to add dplyr's `relationship` and
+`unmatched` checks.
+
 ## Sort and filter from the header
 
 ![Filter popover on the age column set to greater than 50](tour/filter.png)

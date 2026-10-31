@@ -578,7 +578,7 @@ test_that("narrow bottom-sheet drawer keeps undo/redo still as steps change", {
   expect_lt(abs(r$after - r$before), 1)
 })
 
-test_that("a join step keeps its controls on one line, with the key check below", {
+test_that("a join step keeps its label and buttons on one line, its options on the next, and the key check below", {
   b <- sv_shared_page()
   on.exit(sv_set_viewport(b, 1400, 900), add = TRUE)
   for (w in c(1400, 1000)) {
@@ -598,6 +598,8 @@ test_that("a join step keeps its controls on one line, with the key check below"
         toggle: top(li.querySelector('.sideview-step-toggle')),
         del: top(li.querySelector('[data-step-action=\"delete\"]')),
         select: top(li.querySelector('.sideview-step-jointype')),
+        rule: top(li.querySelector('.sideview-step-rule')),
+        strict: top(li.querySelector('.sideview-step-strict-label')),
         diag: top(li.querySelector('.sideview-step-diag')),
         textW: li.querySelector('.sideview-step-text').getBoundingClientRect().width,
         overflow: li.scrollWidth - li.clientWidth
@@ -607,7 +609,9 @@ test_that("a join step keeps its controls on one line, with the key check below"
     })()"), sv_card_js("patients"), sv_card_js("visits")))
     info <- sprintf("window %d, drawer %.0fpx", w, r$drawer)
     expect_lt(abs(r$del - r$toggle), 8, label = info)      # delete sits on the first line
-    expect_lt(abs(r$select - r$toggle), 8, label = info)
+    expect_gt(r$select, r$toggle + 8, label = info)        # the options sit on their own line
+    expect_lt(abs(r$rule - r$select), 8, label = info)    # the rule button and Strict share it
+    expect_lt(abs(r$strict - r$select), 8, label = info)
     expect_gt(r$diag, r$toggle + 8, label = info)          # the key check wraps below
     expect_gt(r$textW, 20, label = info)                   # the label still shows something
     expect_lte(r$overflow, 1, label = info)
@@ -1536,5 +1540,121 @@ test_that("the saved widget has the minimap, search and zoom-to-card", {
   expect_true(r$closed)
   expect_true(r$labsFocus)
   expect_true(r$inside)
+  expect_length(attr(b, "sv_errors")(), 0)
+})
+
+# ---- date rules of joins: edit from the join step, code and panel ------------
+
+test_that("a window rule edits from the join step and shows in code and panel", {
+  skip_if_no_browser()
+  setup <- paste0(
+    "{ set.seed(7); ",
+    "visits <- data.frame(id = rep(1:6, each = 2), visit_date = as.Date('2024-03-01') + rep(c(0, 20), 6) + rep(0:5, each = 2)); ",
+    "labs <- data.frame(id = rep(1:6, each = 3), lab_date = as.Date('2024-03-01') + rep(c(-5, 1, 21), 6) + rep(0:5, each = 3), ",
+    "value = round(rnorm(18), 2)); ",
+    "sideview(visits, labs, run = FALSE) }")
+  app <- sv_start_app(setup)
+  b <- sv_open_page(app$url)
+  withr::defer({
+    try(b$close(), silent = TRUE)
+    try(app$proc$kill(), silent = TRUE)
+  })
+  expect_true(attr(b, "sv_ready"))
+
+  visits <- data.frame(id = rep(1:6, each = 2),
+                       visit_date = as.Date("2024-03-01") + rep(c(0, 20), 6) + rep(0:5, each = 2))
+  set.seed(7)
+  labs <- data.frame(id = rep(1:6, each = 3),
+                     lab_date = as.Date("2024-03-01") + rep(c(-5, 1, 21), 6) + rep(0:5, each = 3))
+  labs$value <- round(rnorm(18), 2)
+  rule <- list(shape = "window", xCol = "visit_date", yCol = "lab_date", from = -3, to = 3)
+  want <- sv_join_diagnostics(visits, labs, c(id = "id"), x_name = "visits", y_name = "labs", rule = rule)
+  expect_gt(want$rule_dropped_x + want$rule_dropped_y, 0)
+
+  m <- sv_mouse(b)
+  centre <- function(sel) {
+    r <- sv_js(b, sprintf("(() => { const e = document.querySelector(%s); e.scrollIntoView({block: 'nearest'});
+      const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()",
+      jsonlite::toJSON(sel, auto_unbox = TRUE)))
+    list(x = r$x, y = r$y)
+  }
+  wait_for <- function(js, tries = 60) {
+    for (i in seq_len(tries)) { if (isTRUE(sv_js(b, js))) return(TRUE); Sys.sleep(0.25) }
+    FALSE
+  }
+  type_into <- function(sel, text) {
+    m$click(centre(sel))
+    sv_key(b, "a", "KeyA", 65, modifiers = 2)
+    b$Input$insertText(text = text)
+  }
+
+  # connect id to id, and wait for the join step with its key check
+  sv_js(b, paste0("(async () => {", sv_pipeline_helpers_js, "
+    const vis = ", sv_card_js("visits"), ", labs = ", sv_card_js("labs"), ";
+    fire(vis.querySelector('.sideview-col-port[data-col-name=\"id\"]')); await sleep(150);
+    fire(labs.querySelector('.sideview-col-port[data-col-name=\"id\"]')); await sleep(150);
+    return true; })()"))
+  expect_true(wait_for("!!document.querySelector('.sideview-step.is-join')"))
+  sv_js(b, paste0("(() => {", sv_pipeline_helpers_js, "
+    if (q('.sideview-drawer').classList.contains('collapsed')) q('[data-action=\"toggle-drawer\"]').click();
+    tab('pipeline'); return true; })()"))
+  expect_true(wait_for("(() => { const r = document.querySelector('button.sideview-step-rule').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth; })()"))
+
+  # real click on the rule button, then pick the window shape and its two columns
+  m$click(centre("button.sideview-step-rule[data-step-action='rule']"))
+  expect_true(wait_for("!!document.querySelector('.sideview-rule-row')"))
+  sv_js(b, paste0("(async () => {", sv_pipeline_helpers_js, "
+    setVal(q('.sideview-rule-shape'), 'window'); await sleep(150);
+    setVal(q('.sideview-rule-col[data-slot=\"xCol\"]'), 'visit_date'); await sleep(150);
+    setVal(q('.sideview-rule-col[data-slot=\"yCol\"]'), 'lab_date'); await sleep(150);
+    return true; })()"))
+  type_into(".sideview-rule-from", "-3")
+  type_into(".sideview-rule-to", "3")
+
+  geometry <- paste0("(() => {
+    const row = document.querySelector('.sideview-rule-row'), li = row.closest('.sideview-step');
+    const dr = document.querySelector('.sideview-drawer').getBoundingClientRect(), rr = row.getBoundingClientRect();
+    const others = ['.sideview-step-toggle', '.sideview-step-joinopts', '[data-step-action=\"delete\"]']
+      .map(s => li.querySelector(s)).filter(Boolean).map(e => e.getBoundingClientRect().toJSON());
+    return { row: rr.toJSON(), drawer: dr.toJSON(), others: others,
+             overflow: li.scrollWidth - li.clientWidth,
+             from: document.querySelector('.sideview-rule-from').value,
+             to: document.querySelector('.sideview-rule-to').value };
+  })()")
+  check_geometry <- function(label) {
+    g <- sv_js(b, geometry)
+    expect_equal(g$from, "-3", label = label)
+    expect_equal(g$to, "3", label = label)
+    expect_gte(g$row$left, g$drawer$left - 1)
+    expect_lte(g$row$right, g$drawer$right + 1)
+    expect_gte(g$row$top, g$drawer$top - 1)
+    expect_lte(g$row$bottom, g$drawer$bottom + 1)
+    expect_gt(length(g$others), 0)
+    for (o in g$others) expect_false(rect_overlap(g$row, o), info = label)
+    expect_lte(g$overflow, 1, label = label)
+  }
+  check_geometry("1400x900")
+  sv_set_viewport(b, 560, 700)
+  expect_true(wait_for("!!document.querySelector('.sideview-rule-row')"))
+  check_geometry("560x700")
+  sv_set_viewport(b, 1400, 900)
+
+  # Ctrl+Enter in the To field applies the rule
+  m$click(centre(".sideview-rule-to"))
+  sv_key(b, "Enter", "Enter", 13, modifiers = 2)
+  expect_true(wait_for("!document.querySelector('.sideview-rule-row')"))
+
+  code <- sv_js(b, "document.querySelector('.sideview-code-text').closest('pre').textContent")
+  expect_match(code, ".sv_lo = visit_date - 3", fixed = TRUE)
+  expect_match(code, ".sv_hi = visit_date + 3", fixed = TRUE)
+  expect_no_error(parse(text = code))
+
+  # the join check panel reports the rows the rule dropped, as R computes them
+  sv_js(b, "document.querySelector('.sideview-step-diag').click()")
+  expect_true(wait_for("!!document.querySelector('.sideview-joincheck-dropped')", 80))
+  txt <- sv_js(b, "document.querySelector('.sideview-joincheck-dropped').nextElementSibling.textContent")
+  expect_identical(txt, sprintf("%s visits rows / %s labs rows",
+                                formatC(want$rule_dropped_x, big.mark = ",", format = "d"),
+                                formatC(want$rule_dropped_y, big.mark = ",", format = "d")))
   expect_length(attr(b, "sv_errors")(), 0)
 })
