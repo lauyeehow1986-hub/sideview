@@ -12,7 +12,10 @@
   [`code()`](https://rstudio.github.io/htmltools/reference/builder.html),
   `pipeline()`, `state()` and `cards()`, and `sideviewProxy(id)` reaches
   the same canvas from elsewhere in the session. `cards =` can be a
-  reactive.
+  reactive; [`req()`](https://rdrr.io/pkg/shiny/man/req.html) in it
+  means “no cards yet”. Lazy (arrow / duckdb) cards in a module show
+  their true size, not “First 500 of …”, because R serves the whole
+  table.
 - **Verbs:**
   [`sv_add_card()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md),
   [`sv_replace_card()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md),
@@ -22,7 +25,9 @@
   [`sv_highlight()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md),
   which pipe. A replace keeps the card’s place and size, re-checks the
   join keys, and **disables, not deletes**, any pipeline step that names
-  a column the new table lacks, with one toast.
+  a column the new table lacks (a `mutate` expression that uses it
+  included), with one toast. A replace also keeps the card’s header sort
+  and filter, so the canvas still agrees with the code.
 - **Code execution is off in a module** (Insert Script, Run & Exit, Run
   in R, Run Console). `$code()` is composed in the browser: treat it as
   untrusted text.

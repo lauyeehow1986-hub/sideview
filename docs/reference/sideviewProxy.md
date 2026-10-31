@@ -31,6 +31,6 @@ A `sideview_proxy`.
 ``` r
 if (interactive()) {
   # inside a server function:
-  # sideviewProxy("review") |> sv_replace_card("labs", labs_now())
+  # sv_replace_card(sideviewProxy("review"), "labs", labs_now())
 }
 ```

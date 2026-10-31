@@ -78,6 +78,6 @@ sv_highlight(proxy, name, cols)
 ``` r
 if (interactive()) {
   # px <- sideviewProxy("review")
-  # px |> sv_replace_card("labs", labs_now()) |> sv_highlight("labs", "lab_date")
+  # sv_replace_card(px, "labs", labs_now()); sv_highlight(px, "labs", "lab_date")
 }
 ```
