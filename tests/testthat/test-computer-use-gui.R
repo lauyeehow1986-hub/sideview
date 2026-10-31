@@ -294,6 +294,19 @@ test_that("Computer Use GUI: Scenario 9 - the join check panel shows the rule an
 })
 
 # ==============================================================================
+# Scenario 10: namespaced inputs and the ns-routed message registry
+# ==============================================================================
+test_that("Computer Use GUI: Scenario 10 - inputs are namespaced and messages route by ns", {
+  res <- run_gui_test_scenarios()
+  s10 <- res$scenario10
+
+  expect_gt(length(s10), 0)
+  for (nm in names(s10)) {
+    expect_true(isTRUE(s10[[nm]]), info = nm)
+  }
+})
+
+# ==============================================================================
 # Diagnostic failure capture helper test
 # ==============================================================================
 test_that("Computer Use GUI: Diagnostic failure capture generates serialized artifacts and report on failure", {

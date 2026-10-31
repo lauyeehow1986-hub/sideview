@@ -1020,6 +1020,83 @@ function runAllScenarios() {
     no_rule_no_rule_rows: s9_plainClean
   };
 
+  // SCENARIO 10: namespaced inputs and the ns-routed message registry (Shiny module transport)
+  const s10_card = function () {
+    return [{
+      id: 'card_m1', name: 'labs', type: 'grid', x: 10, y: 10, dims: [2, 2],
+      data: { id: ['a', 'b'], val: [2, 1] }, col_types: { id: 'character', val: 'numeric' }
+    }];
+  };
+  const s10_make = function (opts) {
+    const el = new MockElement('DIV');
+    el.className = 'sideview-container';
+    document.body.appendChild(el);
+    opts.cards = s10_card();
+    return { el: el, engine: global.Sideview.init(el, opts) };
+  };
+  const s10_toasts = function (m) {
+    return m.el.querySelectorAll('.sideview-toast').map(function (t) { return t.textContent; });
+  };
+  const s10_warns = [];
+  const s10_origWarn = console.warn;
+  console.warn = function () { s10_warns.push(Array.prototype.slice.call(arguments).join(' ')); };
+
+  const s10_a = s10_make({ ns: 'a-' });
+  const s10_b = s10_make({ ns: 'b-' });
+  const s10_before = wsMessages.length;
+  s10_a.el.querySelector('.sideview-sort-btn[data-col-name="val"]').click();
+  const s10_sent = wsMessages.slice(s10_before).map(function (m) { return m.event; });
+  const s10_gadgetSort = wsMessages.filter(function (m) { return m.event === 'column_sorted'; }).length > 0;
+
+  shinyHandlers.sideview_toast({ ns: 'b-', text: 'hi', type: 'info' });
+  const s10_routeA = s10_toasts(s10_a);
+  const s10_routeB = s10_toasts(s10_b);
+
+  s10_warns.length = 0;
+  let s10_threw = false;
+  try { shinyHandlers.sideview_toast({ ns: 'zz-', text: 'lost' }); } catch (e) { s10_threw = true; }
+  const s10_warned = s10_warns.length > 0;
+
+  let s10_destroyed = false;
+  const s10_oldDestroy = s10_a.engine.destroy;
+  s10_a.engine.destroy = function () { s10_destroyed = true; return s10_oldDestroy.apply(this, arguments); };
+  const s10_a2 = s10_make({ ns: 'a-' });
+  const s10_registry = global.__sideviewEngines;
+  const s10_regOk = s10_registry['a-'] === s10_a2.engine && s10_registry['b-'] === s10_b.engine;
+
+  const s10_w = s10_make({ mode: 'embedded' });
+  const s10_wKeys = Object.keys(s10_registry);
+  shinyHandlers.sideview_toast({ ns: '', text: 'for the gadget' });
+  const s10_widgetToasts = s10_toasts(s10_w);
+
+  const s10_m = s10_make({ mode: 'embedded', ns: 'c-' });
+  const s10_dataNs = new MockElement('DIV');
+  s10_dataNs.className = 'sideview-container';
+  s10_dataNs.setAttribute('data-sv-ns', 'd-');
+  document.body.appendChild(s10_dataNs);
+  const s10_dEngine = global.Sideview.init(s10_dataNs, { cards: s10_card() });
+
+  console.warn = s10_origWarn;
+  results.scenario10 = {
+    module_input_prefix: s10_sent.indexOf('a-column_sorted') >= 0 && s10_sent.indexOf('column_sorted') < 0,
+    gadget_input_unprefixed: s10_gadgetSort && engine.ns === '',
+    route_by_ns: s10_routeB.indexOf('hi') >= 0 && s10_routeA.indexOf('hi') < 0,
+    unknown_ns_ignored: !s10_threw && s10_warned,
+    reregister_destroys_old: s10_destroyed && s10_regOk,
+    widget_not_registered: s10_wKeys.every(function (k) { return s10_registry[k] !== s10_w.engine; }) &&
+      s10_widgetToasts.indexOf('for the gadget') < 0,
+    module_hasR: s10_m.engine.hasR() === true && s10_m.engine.isGadget() === false,
+    widget_has_no_R: s10_w.engine.hasR() === false,
+    data_attribute_ns: s10_dEngine.ns === 'd-' && s10_registry['d-'] === s10_dEngine,
+    gadget_hasR: engine.hasR() === true && engine.isGadget() === true,
+    gadget_still_routed: s10_registry[''] === engine
+  };
+  s10_a2.engine.destroy();
+  s10_b.engine.destroy();
+  s10_m.engine.destroy();
+  s10_dEngine.destroy();
+  results.scenario10.destroy_unregisters = !s10_registry['b-'] && !s10_registry['a-'] && !s10_registry['d-'];
+
   // DIAGNOSTIC FAILURE CAPTURE HELPER
   function captureDiagnostics(testName, errorMsg) {
     const canvasDump = {

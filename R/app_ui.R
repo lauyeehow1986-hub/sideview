@@ -509,12 +509,10 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
           class = "sideview-chat-input-wrap",
           htmltools::tags$input(
             type = "text",
-            id = "sideview-chat-input",
             class = "sideview-chat-input",
             placeholder = "Ask Copilot... (e.g. filter rows where age > 30)"
           ),
           htmltools::tags$button(
-            id = "sideview-chat-send",
             class = "sideview-btn sideview-btn-primary sideview-chat-send",
             "Send"
           )

@@ -641,6 +641,15 @@ function sendToShiny(name, value) {
       cards: []
     }, options);
 
+    // Namespace prefix of this engine's Shiny inputs and routed messages:
+    // options.ns (a module), else data-sv-ns on the container, else "" (the gadget).
+    var dataNs = this.container.getAttribute ? this.container.getAttribute('data-sv-ns') : null;
+    this.ns = typeof this.options.ns === 'string' ? this.options.ns
+      : (typeof dataNs === 'string' ? dataNs : '');
+    this._handlers = {};
+    this._registeredAs = null;
+    this.registerEngine();
+
     // Global (window/document) listeners registered through listenGlobal() are
     // removed again by destroy(), so re-rendered widgets don't leak handlers.
     this._globalListeners = [];
@@ -949,6 +958,65 @@ function sendToShiny(name, value) {
     }
     return rows;
   }
+
+  // ---- Shiny transport: namespaced inputs and an ns-routed engine registry ------
+  // Every input an engine sends is prefixed with its namespace; every R message
+  // carries `ns` and reaches the engine registered under it. Only module engines
+  // (a string ns) and the gadget (mode 'standalone', key "") register, so an
+  // embedded htmlwidget never receives or steals R messages.
+  SideviewEngine.prototype.send = function (name, value) {
+    return sendToShiny(this.ns + name, value);
+  };
+
+  /** True when an R session backs this engine: the gadget, or a module. */
+  SideviewEngine.prototype.hasR = function () {
+    if (typeof global.Shiny === 'undefined') return false;
+    return typeof this.options.ns === 'string' || this.options.mode !== 'embedded';
+  };
+
+  SideviewEngine.prototype.registerEngine = function () {
+    var registers = typeof this.options.ns === 'string' || this.options.mode === 'standalone';
+    if (!registers) return;
+    var reg = global.__sideviewEngines = global.__sideviewEngines || {};
+    var old = reg[this.ns];
+    if (old && old !== this && typeof old.destroy === 'function') {
+      try { old.destroy(); } catch (e) {}
+    }
+    reg[this.ns] = this;
+    this._registeredAs = this.ns;
+  };
+
+  SideviewEngine.prototype.unregisterEngine = function () {
+    var reg = global.__sideviewEngines;
+    if (reg && this._registeredAs !== null && reg[this._registeredAs] === this) {
+      delete reg[this._registeredAs];
+    }
+    this._registeredAs = null;
+  };
+
+  /** Register fn for a message type; Shiny sees one handler per type, which routes by data.ns. */
+  SideviewEngine.prototype.onMessage = function (type, fn) {
+    this._handlers[type] = fn;
+    var routed = global.__sideviewRouted = global.__sideviewRouted || {};
+    if (routed[type]) return;
+    routed[type] = true;
+    global.Shiny.addCustomMessageHandler(type, function (data) {
+      var reg = global.__sideviewEngines || {};
+      Object.keys(reg).forEach(function (k) {
+        var c = reg[k] && reg[k].container;
+        if (c && c.isConnected === false) delete reg[k];
+      });
+      var key = (data && typeof data.ns === 'string') ? data.ns : '';
+      var target = reg[key];
+      if (!target || typeof target._handlers[type] !== 'function') {
+        if (typeof console !== 'undefined' && console.warn) {
+          console.warn('[Sideview] no engine for message "' + type + '" (ns "' + key + '")');
+        }
+        return;
+      }
+      target._handlers[type](data);
+    });
+  };
 
   SideviewEngine.prototype.listenGlobal = function (target, type, fn, opts) {
     target.addEventListener(type, fn, opts);
@@ -1476,6 +1544,7 @@ function sendToShiny(name, value) {
   };
 
   SideviewEngine.prototype.destroy = function () {
+    this.unregisterEngine();
     this._globalListeners.forEach(function (l) {
       try { l[0].removeEventListener(l[1], l[2], l[3]); } catch (e) {}
     });
@@ -1911,8 +1980,8 @@ function sendToShiny(name, value) {
         '      </div>',
         '    </div>',
         '    <div class="sideview-chat-input-wrap">',
-        '      <input type="text" id="sideview-chat-input" class="sideview-chat-input" placeholder="Ask Copilot... (e.g. filter rows where age > 30)" />',
-        '      <button id="sideview-chat-send" class="sideview-btn sideview-btn-primary sideview-chat-send">Send</button>',
+        '      <input type="text" class="sideview-chat-input" placeholder="Ask Copilot... (e.g. filter rows where age > 30)" />',
+        '      <button class="sideview-btn sideview-btn-primary sideview-chat-send">Send</button>',
         '    </div>',
         '  </div>',
         '</div>',
@@ -2063,9 +2132,9 @@ function sendToShiny(name, value) {
         self.showToast('Evaluating in R environment...', 'info');
       } else if (action === 'gadget-done') {
         self.showToast('Returning code to R...', 'success');
-        sendToShiny('sideview_done', { code: isNoCode(self.generatedCode) ? '' : self.generatedCode });
+        self.send('sideview_done', { code: isNoCode(self.generatedCode) ? '' : self.generatedCode });
       } else if (action === 'gadget-cancel') {
-        sendToShiny('sideview_cancel', { at: Date.now() });
+        self.send('sideview_cancel', { at: Date.now() });
       } else if (action === 'copy-code') {
         if (navigator.clipboard && self.generatedCode) {
           navigator.clipboard.writeText(self.generatedCode);
@@ -2089,7 +2158,7 @@ function sendToShiny(name, value) {
       } else if (action === 'apply-auto-clean') {
         var disc = self.lastDiscrepancy || {};
         var lastConn = self.connections.length > 0 ? self.connections[self.connections.length - 1] : null;
-        sendToShiny('apply_auto_clean', {
+        self.send('apply_auto_clean', {
           discrepancy: disc,
           from_table: disc.from_table || (lastConn ? lastConn.fromTable : 'df'),
           to_table: disc.to_table || (lastConn ? lastConn.toTable : null),
@@ -2153,7 +2222,7 @@ function sendToShiny(name, value) {
       if (tabName === 'discrepancy') self.renderJoinCheck();
       if (tabName === 'discrepancy' && self.connections.length > 0) {
         var lastConn = self.connections[self.connections.length - 1];
-        sendToShiny('discrepancy_check', {
+        self.send('discrepancy_check', {
           table1: lastConn.fromTable,
           col1: lastConn.fromCol,
           table2: lastConn.toTable,
@@ -2166,7 +2235,7 @@ function sendToShiny(name, value) {
 
     // Copilot Chat Submit Handling
     function submitCopilotChat() {
-      var chatInput = self.container.querySelector('#sideview-chat-input');
+      var chatInput = self.container.querySelector('.sideview-chat-input');
       var chatMessages = self.container.querySelector('.sideview-chat-messages');
       if (!chatInput) return;
       var msg = chatInput.value.trim();
@@ -2185,7 +2254,7 @@ function sendToShiny(name, value) {
 
       chatInput.value = '';
 
-      if (sendToShiny('send_copilot_chat', {
+      if (self.send('send_copilot_chat', {
         message: msg,
         current_code: self.generatedCode || ''
       })) {
@@ -2194,7 +2263,7 @@ function sendToShiny(name, value) {
     }
 
     this.container.addEventListener('click', function (e) {
-      if (e.target.closest('#sideview-chat-send') || e.target.closest('.sideview-chat-send')) {
+      if (e.target.closest('.sideview-chat-send')) {
         submitCopilotChat();
       }
 
@@ -2213,13 +2282,13 @@ function sendToShiny(name, value) {
         var bubble = insBtn.closest('.sideview-chat-bubble');
         var codeBlock = bubble ? bubble.querySelector('.sideview-chat-code') : null;
         if (codeBlock && codeBlock.textContent) {
-          sendToShiny('inject_script', { code: codeBlock.textContent.trim() });
+          self.send('inject_script', { code: codeBlock.textContent.trim() });
         }
       }
     });
 
     this.container.addEventListener('keydown', function (e) {
-      if (e.target && e.target.id === 'sideview-chat-input' && e.key === 'Enter') {
+      if (e.target && e.target.classList && e.target.classList.contains('sideview-chat-input') && e.key === 'Enter') {
         e.preventDefault();
         submitCopilotChat();
       }
@@ -2236,7 +2305,7 @@ function sendToShiny(name, value) {
 
       var tableNames = Array.from(self.cards.values()).map(function (c) { return c.name; });
       if (self.aiBusy) return;
-      var sent = sendToShiny('run_ai_prompt', {
+      var sent = self.send('run_ai_prompt', {
         prompt: prompt,
         tables: tableNames
       });
@@ -2289,7 +2358,7 @@ function sendToShiny(name, value) {
           });
         }
 
-        sendToShiny('sideview_highlight_changed', {
+        self.send('sideview_highlight_changed', {
           card_id: cardId,
           col_name: colName,
           row_idx: null,
@@ -2314,7 +2383,7 @@ function sendToShiny(name, value) {
           }
         }
 
-        sendToShiny('sideview_highlight_changed', {
+        self.send('sideview_highlight_changed', {
           card_id: cellCard ? cellCard.dataset.cardId : null,
           col_name: thCol ? thCol.dataset.colName : null,
           row_idx: rawRowIdx,
@@ -2690,7 +2759,7 @@ function sendToShiny(name, value) {
             if (port) port.dataset.colName = newName;
           }
           self.pipeline.add({ kind: 'rename', table: cardName, from: currentName, to: newName }, 'rename');
-          sendToShiny('column_renamed', {
+          self.send('column_renamed', {
             table: cardName,
             old_col: currentName,
             new_col: newName
@@ -2990,7 +3059,7 @@ function sendToShiny(name, value) {
         document.removeEventListener(upType, onPointerUp);
         self.updateConnectors();
 
-        sendToShiny('sideview_card_moved', {
+        self.send('sideview_card_moved', {
           card_id: cardMeta.id,
           x: cardMeta.x,
           y: cardMeta.y
@@ -3078,7 +3147,7 @@ function sendToShiny(name, value) {
     var total = parseInt(cardEl.dataset ? cardEl.dataset.totalRows : '', 10);
     // Shiny.setInputValue only appears once the session connects, which is
     // after this runs; requests made before then are retried.
-    var hasShiny = typeof global.Shiny !== 'undefined';
+    var hasShiny = this.hasR();
     if (!hasShiny || isNaN(total) || total <= vTable.totalRows) return;
     vTable.onRemoteCount = function (count, fullTotal) {
       var f = vTable.currentFilter;
@@ -3087,7 +3156,7 @@ function sendToShiny(name, value) {
       }
     };
     vTable.enableRemote(cardId, total, function (req) {
-      return sendToShiny('sideview_rows_request', req);
+      return self.send('sideview_rows_request', req);
     });
   };
 
@@ -3171,7 +3240,7 @@ function sendToShiny(name, value) {
   };
 
   SideviewEngine.prototype.requestSuggestedMappings = function (minConfidence) {
-    sendToShiny('request_suggested_mappings', {
+    this.send('request_suggested_mappings', {
       min_confidence: typeof minConfidence === 'number' ? minConfidence : 0.70
     });
   };
@@ -3341,7 +3410,7 @@ function sendToShiny(name, value) {
     this.pipeline.addJoinKey(connData.fromTable, connData.toTable,
       connData.fromCol, connData.toCol, connData.type || 'left_join');
 
-    sendToShiny('column_mapped', {
+    self.send('column_mapped', {
       from_table: connData.fromTable,
       from_col: connData.fromCol,
       to_table: connData.toTable,
@@ -3377,7 +3446,7 @@ function sendToShiny(name, value) {
     this.pipeline.removeJoinKey(conn.fromTable, conn.toTable, conn.fromCol, conn.toCol);
 
     this.showToast('Disconnected ' + conn.fromCol + ' ↔ ' + conn.toCol, 'info');
-    sendToShiny('column_disconnected', {
+    self.send('column_disconnected', {
       conn_id: connId,
       from_table: conn.fromTable,
       from_col: conn.fromCol,
@@ -3552,7 +3621,7 @@ function sendToShiny(name, value) {
     if (!silent) {
       this.showToast('Tidyverse operations and connectors cleared.', 'info');
     }
-    sendToShiny('clear_operations', { timestamp: Date.now() });
+    self.send('clear_operations', { timestamp: Date.now() });
   };
 
   // ---- drawer: tabs, pipeline view, builders --------------------------------
@@ -4007,7 +4076,7 @@ function sendToShiny(name, value) {
       by: (s.by || []).map(function (p) { return { left: p.left, right: p.right }; })
     };
     if (s.rule) req.rule = JSON.parse(JSON.stringify(s.rule));
-    if (this.options.mode !== 'embedded' && typeof global.Shiny !== 'undefined') {
+    if (this.hasR()) {
       this.joinDiagPending[sig] = true;
       this.requestJoinDiag(req, 0);
       return null;
@@ -4024,7 +4093,7 @@ function sendToShiny(name, value) {
   // Shiny.setInputValue appears only once the session connects; retry until then.
   SideviewEngine.prototype.requestJoinDiag = function (req, attempt) {
     var self = this;
-    if (sendToShiny('join_diagnostics_request', req)) return;
+    if (self.send('join_diagnostics_request', req)) return;
     if (attempt >= 40 || !this.container.isConnected) {
       delete this.joinDiagPending[req.id];
       this.joinDiag[req.id] = { id: req.id, error: 'The R session did not answer.' };
@@ -4130,7 +4199,7 @@ function sendToShiny(name, value) {
     this.renderJoinCheck();
     var s = this.pipeline.find(stepId);
     if (s && s.by && s.by.length) {
-      sendToShiny('discrepancy_check', {
+      this.send('discrepancy_check', {
         table1: s.table, col1: s.by[0].left, table2: s.right, col2: s.by[0].right
       });
     }
@@ -4313,7 +4382,7 @@ function sendToShiny(name, value) {
 
   /** Send an input that only the gadget's R session handles; warn (never claim success) without one. */
   SideviewEngine.prototype.sendToR = function (name, value, label) {
-    if (this.isGadget() && sendToShiny(name, value)) return true;
+    if (this.isGadget() && this.send(name, value)) return true;
     this.showToast(label + ' needs the R session (run sideview() from R). Use Copy instead.', 'warning');
     return false;
   };
@@ -4326,7 +4395,7 @@ function sendToShiny(name, value) {
     var sig = JSON.stringify([table, column]);
     if (this.colProfiles[sig]) return this.colProfiles[sig];
     if (this.colProfilePending[sig]) return null;
-    if (this.isGadget()) {
+    if (this.hasR()) {
       this.colProfilePending[sig] = true;
       this.requestColumnProfile({ id: sig, table: table, column: column }, 0);
       return null;
@@ -4340,7 +4409,7 @@ function sendToShiny(name, value) {
 
   SideviewEngine.prototype.requestColumnProfile = function (req, attempt) {
     var self = this;
-    if (sendToShiny('column_profile_request', req)) return;
+    if (self.send('column_profile_request', req)) return;
     if (attempt >= 40 || !this.container.isConnected) {
       delete this.colProfilePending[req.id];
       this.colProfiles[req.id] = { error: 'The R session did not answer.' };
@@ -4489,7 +4558,7 @@ function sendToShiny(name, value) {
   /** Export codebook: R writes the file in the gadget; the widget downloads a CSV. */
   SideviewEngine.prototype.exportCodebook = function () {
     if (this.isGadget()) {
-      if (!sendToShiny('codebook_export', Date.now())) this.showToast('The R session is not connected.', 'warning');
+      if (!this.send('codebook_export', Date.now())) this.showToast('The R session is not connected.', 'warning');
       return;
     }
     var P = global.SideviewPipeline, self = this, rows = [];
@@ -4725,7 +4794,7 @@ function sendToShiny(name, value) {
     var json = JSON.stringify(this.getState(), null, 2);
     this.lastStateJson = json;
     if (this.isGadget()) {
-      if (!sendToShiny('state_save', { json: json, nonce: Date.now() })) {
+      if (!this.send('state_save', { json: json, nonce: Date.now() })) {
         this.showToast('The R session is not connected.', 'warning');
       }
       return;
@@ -4742,7 +4811,7 @@ function sendToShiny(name, value) {
   SideviewEngine.prototype.openWorkspace = function () {
     var self = this;
     if (this.isGadget() && this.container.getAttribute('data-sv-file-dialog') === 'r') {
-      if (!sendToShiny('state_open_request', Date.now())) this.showToast('The R session is not connected.', 'warning');
+      if (!self.send('state_open_request', Date.now())) this.showToast('The R session is not connected.', 'warning');
       return;
     }
     var input = document.createElement('input');
@@ -5066,7 +5135,7 @@ function sendToShiny(name, value) {
         var arrangeCode = self.recordSort(cardName, colName, nextState);
         self.showToast('Sorted ' + colName + ' (' + (nextState === 'asc' ? 'ascending' : 'descending') + ')', 'success');
 
-        sendToShiny('column_sorted', {
+        self.send('column_sorted', {
           table: cardName,
           column: colName,
           direction: nextState,
@@ -5113,7 +5182,7 @@ function sendToShiny(name, value) {
         var arrangeCodeFallback = self.recordSort(cardNameFallback, colName, nextState);
         self.showToast('Sorted ' + colName + ' (' + (nextState === 'asc' ? 'ascending' : 'descending') + ')', 'success');
 
-        sendToShiny('column_sorted', {
+        self.send('column_sorted', {
           table: cardNameFallback,
           column: colName,
           direction: nextState,
@@ -5382,7 +5451,7 @@ function sendToShiny(name, value) {
         self.showToast('Filtered ' + colName + ' (' + matchedCount + '/' + totalRowsCount + ' rows)', 'success');
       }
 
-      sendToShiny('column_filtered', {
+      self.send('column_filtered', {
         table: cardName,
         column: colName,
         operator: op,
@@ -5479,19 +5548,19 @@ function sendToShiny(name, value) {
     }
 
     // Code update from R server
-    global.Shiny.addCustomMessageHandler('sideview_console_result', function (data) {
+    self.onMessage('sideview_console_result', function (data) {
       if (data && data.message) {
         self.showToast(data.message, data.success ? 'success' : 'warning');
       }
     });
 
-    global.Shiny.addCustomMessageHandler('sideview_inject_result', function (data) {
+    self.onMessage('sideview_inject_result', function (data) {
       if (data && data.message) {
         self.showToast(data.message, data.success ? 'success' : 'warning');
       }
     });
 
-    global.Shiny.addCustomMessageHandler('sideview_eval_result', function (data) {
+    self.onMessage('sideview_eval_result', function (data) {
       if (data && data.message) {
         var text = data.message;
         // A step that works on a data frame may have no arrow / duckdb translation.
@@ -5504,7 +5573,7 @@ function sendToShiny(name, value) {
     // (source "event") are ignored, Copilot replies wait for the user to press
     // "Replace pipeline", auto-clean code is appended as a step, and anything
     // else (AI bar, older servers) replaces the pipeline, undoably.
-    global.Shiny.addCustomMessageHandler('sideview_code_update', function (data) {
+    self.onMessage('sideview_code_update', function (data) {
       if (!data) return;
       var src = data.source || '';
       if (src === 'event' || src === 'copilot') return;
@@ -5518,14 +5587,14 @@ function sendToShiny(name, value) {
       self.updateDrawerCode(data.code, src === 'ai' ? 'AI code' : 'code from R');
     });
 
-    global.Shiny.addCustomMessageHandler('sideview_ai_status', function (data) {
+    self.onMessage('sideview_ai_status', function (data) {
       self.setAiBusy(false);
       if (data && data.message) {
         self.showToast(data.message, data.success ? 'success' : 'danger');
       }
     });
 
-    global.Shiny.addCustomMessageHandler('sideview_copilot_reply', function (data) {
+    self.onMessage('sideview_copilot_reply', function (data) {
       self.setAiBusy(false);
       if (!data) return;
       var chatMessages = self.container.querySelector('.sideview-chat-messages');
@@ -5581,7 +5650,7 @@ function sendToShiny(name, value) {
     });
 
     // Row window for a large card (reply to sideview_rows_request)
-    global.Shiny.addCustomMessageHandler('sideview_rows', function (data) {
+    self.onMessage('sideview_rows', function (data) {
       if (!data || data.card_id === undefined) return;
       var meta = self.cards.get(data.card_id);
       if (!meta) {
@@ -5599,26 +5668,26 @@ function sendToShiny(name, value) {
     });
 
     // Suggested mappings from server
-    global.Shiny.addCustomMessageHandler('sideview_suggested_mappings', function (data) {
+    self.onMessage('sideview_suggested_mappings', function (data) {
       if (data) {
         self.renderSuggestedSplines(data);
       }
     });
 
     // Column profile computed in R on the full data (reply to column_profile_request)
-    global.Shiny.addCustomMessageHandler('sideview_column_profile', function (data) {
+    self.onMessage('sideview_column_profile', function (data) {
       self.onColumnProfile(data);
     });
 
     // Workspace written by R (reply to state_save)
-    global.Shiny.addCustomMessageHandler('sideview_state_saved', function (data) {
+    self.onMessage('sideview_state_saved', function (data) {
       if (!data || data.cancelled) return;
       if (data.error) self.showToast('Workspace not saved: ' + data.error, 'danger');
       else self.showToast('Workspace saved to ' + data.path, 'success');
     });
 
     // Workspace chosen in RStudio's dialog (reply to state_open_request)
-    global.Shiny.addCustomMessageHandler('sideview_state_loaded', function (data) {
+    self.onMessage('sideview_state_loaded', function (data) {
       if (!data || data.cancelled) return;
       if (data.error) { self.showToast('Workspace not opened: ' + data.error, 'danger'); return; }
       try { self.openState(JSON.parse(data.json)); } catch (err) {
@@ -5627,7 +5696,7 @@ function sendToShiny(name, value) {
     });
 
     // A short notice from R (the preview fallback, codebook progress). showToast uses textContent.
-    global.Shiny.addCustomMessageHandler('sideview_toast', function (data) {
+    self.onMessage('sideview_toast', function (data) {
       if (!data || !data.text) return;
       self.showToast(String(data.text), data.type || 'info', data.id);
       // The notice is about a card whose link was lost: it answers from its preview from now on.
@@ -5635,19 +5704,19 @@ function sendToShiny(name, value) {
     });
 
     // Codebook written by R (reply to codebook_export)
-    global.Shiny.addCustomMessageHandler('sideview_codebook_saved', function (data) {
+    self.onMessage('sideview_codebook_saved', function (data) {
       if (!data || data.cancelled) return;
       if (data.error) self.showToast('Codebook not saved: ' + data.error, 'danger');
       else self.showToast('Codebook saved to ' + data.path, 'success');
     });
 
     // Join diagnostics computed in R on the full data (reply to join_diagnostics_request)
-    global.Shiny.addCustomMessageHandler('sideview_join_diagnostics', function (data) {
+    self.onMessage('sideview_join_diagnostics', function (data) {
       self.onJoinDiagnostics(data);
     });
 
     // Discrepancy report update
-    global.Shiny.addCustomMessageHandler('sideview_discrepancies', function (data) {
+    self.onMessage('sideview_discrepancies', function (data) {
       if (!data) return;
       // Shiny serialises data frames column-wise and length-1 vectors as scalars.
       data.fuzzy_matches = rowsFromColumns(data.fuzzy_matches);
