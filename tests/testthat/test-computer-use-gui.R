@@ -281,6 +281,19 @@ test_that("Computer Use GUI: Scenario 8 - the date-rule row and Strict on a join
 })
 
 # ==============================================================================
+# Scenario 9: the join check panel shows the rule, the drops and the Strict args
+# ==============================================================================
+test_that("Computer Use GUI: Scenario 9 - the join check panel shows the rule and Strict", {
+  res <- run_gui_test_scenarios()
+  s9 <- res$scenario9
+
+  expect_gt(length(s9), 0)
+  for (nm in names(s9)) {
+    expect_true(isTRUE(s9[[nm]]), info = nm)
+  }
+})
+
+# ==============================================================================
 # Diagnostic failure capture helper test
 # ==============================================================================
 test_that("Computer Use GUI: Diagnostic failure capture generates serialized artifacts and report on failure", {

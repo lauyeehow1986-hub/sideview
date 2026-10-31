@@ -1572,6 +1572,7 @@
     strictArgs: strictArgs,
     ruleValue: ruleValue,
     describeDiagnostics: describeDiagnostics,
+    fmtN: fmtN,
     columnProfile: columnProfile,
     codebookRow: codebookRow,
     codebookCsv: codebookCsv,

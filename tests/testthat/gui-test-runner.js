@@ -403,6 +403,7 @@ function runAllScenarios() {
     scenario6: {},
     scenario7: {},
     scenario8: {},
+    scenario9: {},
     diagnostics: {}
   };
 
@@ -905,6 +906,87 @@ function runAllScenarios() {
     rule_needs_fixing: s8_needsFix,
     strict_disabled_on_lazy: s8_lazyDisabled,
     shortcut_listed: s8_listed
+  };
+
+  // Scenario 9: the join check panel shows the rule, what it dropped and what Strict would write.
+  if (!container.querySelector('.sideview-joincheck')) {
+    const s9_panel = new MockElement('DIV');
+    s9_panel.className = 'sideview-joincheck';
+    container.appendChild(s9_panel);
+  }
+  engine.pipeline.clear();
+  engine.pipeline.setTables({
+    visits: { kinds: { patient_id: 'character', visit_date: 'Date' } },
+    labs: { kinds: { patient_id: 'character', lab_date: 'Date' } }
+  });
+  engine.pipeline.add({
+    kind: 'join', table: 'visits', right: 'labs', type: 'left_join',
+    by: [{ left: 'patient_id', right: 'patient_id' }],
+    rule: { shape: 'before', xCol: 'visit_date', yCol: 'lab_date', inclusive: true }
+  }, 'join');
+  const s9_id = engine.pipeline.steps[0].id;
+  const s9_step = function () { return engine.pipeline.find(s9_id); };
+  const s9_reply = function (over) {
+    return Object.assign({
+      id: engine.joinDiagSig(s9_step()), status: 'ok', relationship: 'one-to-many',
+      by: [{ left: 'patient_id', right: 'patient_id' }],
+      n_x: 40, n_y: 15, matched_x: 40, matched_y: 3, match_rate_x: 1, match_rate_y: 0.2,
+      distinct_x: 40, distinct_y: 4, distinct_matched: 4, dup_keys_x: 0, dup_keys_y: 2, na_x: 0, na_y: 0,
+      rows: { left_join: 40, inner_join: 40, semi_join: 40, anti_join: 0 },
+      unmatched_x: [], unmatched_y: [], type_issues: [], warnings: [], hints: [],
+      rule: { shape: 'before', xCol: 'visit_date', yCol: 'lab_date', inclusive: true }, rule_kind: 'Date',
+      rule_dropped_x: 2, rule_dropped_y: 1234,
+      strict_args: { left_join: { relationship: 'one-to-many' } }
+    }, over || {});
+  };
+  const s9_box = function () { return container.querySelector('.sideview-joincheck'); };
+  const s9_show = function (over, type) {
+    if (type) engine.pipeline.update(s9_id, { type: type });
+    engine.joinDiag = {};
+    engine.onJoinDiagnostics(s9_reply(over));
+    return s9_box().textContent.replace(/&quot;/g, '"');
+  };
+  const s9_t1 = s9_show({});
+  const s9_titleRule = s9_t1.indexOf('rule: last lab_date on or before visit_date') >= 0;
+  const s9_dropped = s9_t1.indexOf('Dropped by the rule') >= 0 && s9_t1.indexOf('2 visits rows / 1,234 labs rows') >= 0;
+  const s9_dropTitle = (s9_box().querySelector('.sideview-joincheck-dropped') || { getAttribute: function () { return null; } })
+    .getAttribute('title') === 'Rows that match on the key but not the rule';
+  const s9_missingDash = s9_t1.indexOf('Unknown for right and full joins with a nearest match') >= 0;
+  const s9_leftReason = s9_t1.indexOf('Strict would write: relationship = "one-to-many"') >= 0 &&
+    s9_t1.indexOf('unmatched left out: 12 labs rows would be dropped') >= 0;
+  const s9_tErr = s9_show({ matched_y: 15, strict_args: { left_join: { relationship: 'one-to-many', unmatched: 'error' } } });
+  const s9_errArg = s9_tErr.indexOf('Strict would write: relationship = "one-to-many", unmatched = "error"') >= 0 &&
+    s9_tErr.indexOf('would be dropped') < 0;
+  const s9_tInner = s9_show({ matched_x: 28, matched_y: 12,
+    strict_args: { inner_join: { relationship: 'one-to-many' } } }, 'inner_join');
+  const s9_inner = s9_tInner.indexOf('12 visits rows and 3 labs rows would be dropped') >= 0;
+  const s9_tRight = s9_show({ matched_x: 28, matched_y: 15,
+    strict_args: { right_join: { relationship: 'one-to-many' } } }, 'right_join');
+  const s9_right = s9_tRight.indexOf('unmatched right out: 12 visits rows would be dropped') >= 0;
+  const s9_tSemi = s9_show({}, 'semi_join');
+  const s9_semi = s9_tSemi.indexOf('Strict does not apply to semi and anti joins.') >= 0;
+  const s9_tNone = s9_show({ relationship: 'no matches', strict_args: {} }, 'left_join');
+  const s9_none = s9_tNone.indexOf('Strict needs at least one match.') >= 0;
+  const s9_tPlain = s9_show({ rule: undefined, rule_kind: undefined, rule_dropped_x: undefined, rule_dropped_y: undefined,
+    rows: { left_join: 40, right_join: 3, inner_join: 40, full_join: 43, semi_join: 40, anti_join: 0 } });
+  const s9_plainClean = s9_tPlain.indexOf('Dropped by the rule') < 0 && s9_tPlain.indexOf('rule:') < 0 &&
+    s9_tPlain.indexOf('Unknown for right and full joins') < 0;
+  engine.joinDiag = {};
+  engine.pipeline.clear();
+  engine.pipeline.setTables({});
+
+  results.scenario9 = {
+    title_names_rule: s9_titleRule,
+    dropped_row: s9_dropped,
+    dropped_row_title: s9_dropTitle,
+    missing_row_types_note: s9_missingDash,
+    strict_relationship_line: s9_leftReason,
+    strict_with_unmatched_error: s9_errArg,
+    strict_inner_reason: s9_inner,
+    strict_right_reason_counts_table: s9_right,
+    strict_semi_anti: s9_semi,
+    strict_needs_a_match: s9_none,
+    no_rule_no_rule_rows: s9_plainClean
   };
 
   // DIAGNOSTIC FAILURE CAPTURE HELPER

@@ -4158,7 +4158,7 @@ function sendToShiny(name, value) {
       return;
     }
     box.classList.add('is-' + d.status);
-    var fmt = function (n) { return Number(n).toLocaleString('en-US'); };
+    var fmt = global.SideviewPipeline.fmtN;
     var pct = function (p) { return (100 * p).toFixed(1) + '%'; };
     var by = d.by.map(function (p) { return p.left === p.right ? p.left : p.left + ' = ' + p.right; }).join(', ');
     var list = function (items, cls) {
@@ -4174,9 +4174,15 @@ function sendToShiny(name, value) {
       if (h.extra_y > 0) gain.push(fmt(h.extra_y) + ' more ' + s.right + ' rows');
       return h.label + ' would match ' + gain.join(' and ') + '.';
     });
+    var rule = d.rule || null;
+    var ruleText = rule ? global.SideviewPipeline.ruleLabel(rule, d.rule_kind) : '';
+    var hasDrops = !!rule && d.rule_dropped_x !== undefined && d.rule_dropped_y !== undefined;
+    var rowTypes = global.SideviewPipeline.JOIN_TYPES;
+    var rowUnknown = rowTypes.some(function (j) { return d.rows[j] === undefined; });
     var html = [
       '<p class="sideview-joincheck-title">Join check: <code>' + esc(s.table) + '</code> → <code>' +
-        esc(s.right) + '</code> by <code>' + esc(by) + '</code></p>',
+        esc(s.right) + '</code> by <code>' + esc(by) + '</code>' +
+        (ruleText ? ' <span class="sideview-joincheck-rule">· ' + esc('rule: ' + ruleText) + '</span>' : '') + '</p>',
       // the check only saw part of a table when it ran on fewer rows than the table has
       basisNoteHtml([
         { n: d.n_x, total: tableRows(this.cardElByName(s.table)), name: s.table },
@@ -4188,20 +4194,43 @@ function sendToShiny(name, value) {
       '<dt>Relationship</dt><dd>' + esc(d.relationship) + '</dd>',
       '<dt>' + esc(s.table) + ' rows matched</dt><dd>' + fmt(d.matched_x) + ' of ' + fmt(d.n_x) + ' (' + pct(d.match_rate_x) + ')</dd>',
       '<dt>' + esc(s.right) + ' rows matched</dt><dd>' + fmt(d.matched_y) + ' of ' + fmt(d.n_y) + ' (' + pct(d.match_rate_y) + ')</dd>',
+      hasDrops ? '<dt class="sideview-joincheck-dropped" title="Rows that match on the key but not the rule">Dropped by the rule</dt>' +
+        '<dd title="Rows that match on the key but not the rule">' + fmt(d.rule_dropped_x) + ' ' + esc(s.table) +
+        ' rows / ' + fmt(d.rule_dropped_y) + ' ' + esc(s.right) + ' rows</dd>' : '',
       '<dt>Distinct keys</dt><dd>' + fmt(d.distinct_x) + ' / ' + fmt(d.distinct_y) + ' (' + fmt(d.distinct_matched) + ' shared)</dd>',
       '<dt>Repeated keys</dt><dd>' + fmt(d.dup_keys_x) + ' / ' + fmt(d.dup_keys_y) + '</dd>',
       '<dt>Missing keys</dt><dd>' + fmt(d.na_x) + ' / ' + fmt(d.na_y) + ' rows</dd>',
       '</dl>',
       '<table class="sideview-joincheck-rows"><thead><tr><th scope="col">Join type</th><th scope="col">Rows</th></tr></thead><tbody>',
       global.SideviewPipeline.JOIN_TYPES.map(function (j) {
-        return '<tr' + (j === s.type ? ' class="is-current"' : '') + '><td>' + j + '</td><td>' + fmt(d.rows[j]) + '</td></tr>';
+        var known = d.rows[j] !== undefined;
+        return '<tr' + (j === s.type ? ' class="is-current"' : '') + '><td>' + j + '</td>' + (known ? '<td>' + fmt(d.rows[j]) + '</td>' :
+          '<td title="Unknown for right and full joins with a nearest match">-</td>') + '</tr>';
       }).join(''),
       '</tbody></table>',
+      rowUnknown ? '<p class="sideview-joincheck-note">Unknown for right and full joins with a nearest match</p>' : '',
+      '<p class="sideview-joincheck-strict">' + esc(this.strictLine(d, s)) + '</p>',
       d.unmatched_x.length ? '<p>Not in ' + esc(s.right) + ': ' + keys(d.unmatched_x) + '</p>' : '',
       d.unmatched_y.length ? '<p>Not in ' + esc(s.table) + ': ' + keys(d.unmatched_y) + '</p>' : '',
       hints.length ? '<p>Possible fixes:</p>' + list(hints, 'sideview-joincheck-hints') : ''
     ];
     box.innerHTML = html.join('');
+  };
+
+  /** What Strict would write for the step's join type, or why it would write less (or nothing). */
+  SideviewEngine.prototype.strictLine = function (d, s) {
+    var fmt = global.SideviewPipeline.fmtN;
+    if (s.type === 'semi_join' || s.type === 'anti_join') return 'Strict does not apply to semi and anti joins.';
+    var entry = d.strict_args && d.strict_args[s.type];
+    if (!entry) return 'Strict needs at least one match.';
+    var text = 'Strict would write: relationship = "' + entry.relationship + '"';
+    if (entry.unmatched) return text + ', unmatched = "' + entry.unmatched + '"';
+    var lostX = d.n_x - d.matched_x, lostY = d.n_y - d.matched_y;
+    var nx = fmt(lostX) + ' ' + s.table + ' rows', ny = fmt(lostY) + ' ' + s.right + ' rows';
+    var why = s.type === 'left_join' ? 'unmatched left out: ' + ny + ' would be dropped' :
+      s.type === 'right_join' ? 'unmatched right out: ' + nx + ' would be dropped' :
+      (lostX > 0 && lostY > 0 ? nx + ' and ' + ny : lostX > 0 ? nx : ny) + ' would be dropped';
+    return text + '; ' + why;
   };
 
   SideviewEngine.prototype.tableSchemas = function () {
