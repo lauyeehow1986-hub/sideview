@@ -19,37 +19,9 @@
 #' @noRd
 sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_fn, console_fn,
                                  gadget = FALSE, lifecycle = NULL, run_env = globalenv()) {
-  # Normalize input cards
-  card_list <- if (inherits(cards, "sideview_card") || is.data.frame(cards) ||
-                   inherits(cards, c("gt_tbl", "flextable", "table"))) {
-    list(cards)
-  } else if (is.list(cards)) {
-    cards
-  } else {
-    list(cards)
-  }
-
-  normalized_cards <- list()
-  cards_by_name <- list()
-  cards_by_id <- list()
-
-  for (i in seq_along(card_list)) {
-    c_item <- card_list[[i]]
-    if (!inherits(c_item, "sideview_card")) {
-      nm <- names(card_list)[i]
-      if (is.null(nm) || !nzchar(nm)) nm <- paste0("Table_", i)
-      c_item <- tryCatch(sv_normalize(c_item, name = nm), error = function(e) NULL)
-    }
-    if (!is.null(c_item)) {
-      normalized_cards[[length(normalized_cards) + 1]] <- c_item
-      if (!is.null(c_item$name) && nzchar(c_item$name)) {
-        cards_by_name[[c_item$name]] <- c_item
-      }
-      if (!is.null(c_item$id) && nzchar(c_item$id)) {
-        cards_by_id[[c_item$id]] <- c_item
-      }
-    }
-  }
+  # One mutable store is the single source of truth for the cards.
+  card_store <- sv_card_store(sv_normalize_cards(cards))
+  normalized_cards <- unname(card_store$all())
 
   # Helper to dispatch custom messages and record them for testing/audit
   dispatch_message <- function(type, message) {
@@ -66,9 +38,8 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
   # Lazy (arrow / duckdb) cards: one private connection per session, closed when the
   # session ends. `lazy_failed` holds the ids of cards whose whole-table request
   # failed; they answer from their preview rows from then on.
-  con_env <- sv_lazy_env()
+  con_env <- sv_session_lazy_env(session)
   lazy_failed <- new.env(parent = emptyenv())
-  session$onSessionEnded(function() sv_lazy_close(con_env))
 
   card_full <- function(card) sv_card_is_lazy(card) && is.null(lazy_failed[[card$id]])
 
@@ -275,7 +246,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
   shiny::observeEvent(input$sideview_rows_request, {
     req <- input$sideview_rows_request
     if (is.null(req) || is.null(req$card_id)) return()
-    card <- cards_by_id[[req$card_id]] %||% cards_by_name[[req$card_id]]
+    card <- card_store$get(req$card_id)
     if (is.null(card) || !is.data.frame(card$data)) return()
     win <- tryCatch(
       lazy_or_preview(
@@ -299,8 +270,8 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     if (is.data.frame(by)) by <- lapply(seq_len(nrow(by)), function(i) as.list(by[i, , drop = FALSE]))
     left_cols <- vapply(by, function(p) as.character(p$left), character(1))
     right_cols <- vapply(by, function(p) as.character(p$right), character(1))
-    cx <- cards_by_name[[req$left]] %||% cards_by_id[[req$left]]
-    cy <- cards_by_name[[req$right]] %||% cards_by_id[[req$right]]
+    cx <- card_store$get(req$left)
+    cy <- card_store$get(req$right)
     rule <- sv_rule_from_shiny(req$rule)
     # the rule's columns must exist too, with the same message as a missing key; a malformed
     # rule (no shape, a non-text column) is left for the rule check to word
@@ -353,7 +324,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
   shiny::observeEvent(input$column_profile_request, {
     req <- input$column_profile_request
     if (is.null(req) || is.null(req$table) || is.null(req$column)) return()
-    card <- cards_by_name[[req$table]] %||% cards_by_id[[req$table]]
+    card <- card_store$get(req$table)
     result <- tryCatch({
       if (is.null(card) || !is.data.frame(card$data)) {
         stop("The inspector needs this table as a data frame in memory.", call. = FALSE)
@@ -380,7 +351,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
   # profiled in full; one that has lost its source is profiled from its preview
   # rows and reports the table's true size.
   shiny::observeEvent(input$codebook_export, {
-    tables <- Filter(function(c) is.data.frame(c$data), cards_by_name)
+    tables <- Filter(function(c) is.data.frame(c$data), card_store$all())
     result <- tryCatch({
       if (!length(tables)) stop("No tables to describe.", call. = FALSE)
       path <- sv_choose_codebook_path()
@@ -485,8 +456,8 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
 
     tryCatch({
       # Resolve card data
-      c1 <- cards_by_name[[tbl1]] %||% cards_by_id[[tbl1]]
-      c2 <- cards_by_name[[tbl2]] %||% cards_by_id[[tbl2]]
+      c1 <- card_store$get(tbl1)
+      c2 <- card_store$get(tbl2)
 
       x_vec <- if (!is.null(c1) && !is.null(c1$data) && col1 %in% colnames(c1$data)) {
         c1$data[[col1]]
@@ -557,7 +528,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
       pipe <- isTRUE(evt$pipe)
 
       # A lazy (arrow / duckdb) table is named by its code_ref and the code ends in collect().
-      card <- cards_by_name[[tbl]]
+      card <- card_store$get(tbl)
       lazy <- !is.null(card) && isTRUE(card$is_lazy)
       # code_ref is the card's name unless the card is written as an expression (a duckdb tbl()).
       is_code <- lazy && !identical(card$code_ref, tbl)

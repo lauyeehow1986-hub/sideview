@@ -380,34 +380,7 @@ render_card_tag <- function(card, index = 1L) {
 #' @export
 sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALSE, theme = "auto",
                         state = NULL) {
-  # Normalize input into a list of sideview_cards
-  if (is.null(cards)) {
-    card_list <- list()
-  } else if (inherits(cards, "sideview_card") || is.data.frame(cards) ||
-             inherits(cards, c("gt_tbl", "flextable", "table"))) {
-    card_list <- list(cards)
-  } else if (is.list(cards)) {
-    card_list <- cards
-  } else {
-    card_list <- list(cards)
-  }
-  
-  normalized_cards <- list()
-  for (i in seq_along(card_list)) {
-    c_item <- card_list[[i]]
-    if (inherits(c_item, "sideview_card")) {
-      normalized_cards[[length(normalized_cards) + 1]] <- c_item
-    } else {
-      nm <- names(card_list)[i]
-      if (is.null(nm) || !nzchar(nm)) {
-        nm <- paste0("Table_", i)
-      }
-      norm <- tryCatch(sv_normalize(c_item, name = nm), error = function(e) NULL)
-      if (!is.null(norm)) {
-        normalized_cards[[length(normalized_cards) + 1]] <- norm
-      }
-    }
-  }
+  normalized_cards <- sv_normalize_cards(cards)
   
   # Render all card tags
   rendered_cards <- lapply(seq_along(normalized_cards), function(idx) {

@@ -107,22 +107,7 @@ sideview_widget <- function(...,
         card$html_content <- as.character(htmltools::as.tags(card$widget))
         card$widget <- NULL
       }
-      if (is.data.frame(card$data)) {
-        labels <- lapply(card$data, function(col) attr(col, "label", exact = TRUE))
-        labels <- Filter(function(l) is.character(l) && length(l) == 1L, labels)
-        if (length(labels)) card$col_labels <- labels
-      }
-      if (!is.null(card$col_types) && is.character(card$col_types)) {
-        card$col_types <- as.list(card$col_types)
-      }
-      # The R source object stays in R; the browser only learns that the card is lazy.
-      card$source <- NULL
-      card$lazy <- if (isTRUE(card$is_lazy)) card$lazy_source else NULL
-      card$codeRef <- card$code_ref
-      total <- card$dims[1]
-      if (length(total) == 1L && !is.na(total)) {
-        card$totalRows <- if (total == round(total) && abs(total) < .Machine$integer.max) as.integer(total) else total
-      }
+      card <- sv_card_payload(card)
       card_list[[length(card_list) + 1]] <- card
     }
   }
