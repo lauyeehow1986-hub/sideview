@@ -1252,6 +1252,86 @@ function runAllScenarios() {
   shinyHandlers.sideview_toast({ ns: 'm-', text: 'x' });
   s11_r.prune_destroys_engine = s11_pDestroyed && !global.__sideviewEngines['p-'];
 
+  // a lazy card R serves whole (remote) is not labelled a preview; the widget's lazy card still is
+  const s11_lazyCard = function (id, name, extra) {
+    return Object.assign({ id: id, name: name, type: 'grid', lazy: 'duckdb', dims: [1000, 1], totalRows: 1000,
+      data: { k: Array.from({ length: 50 }, function (_, i) { return i; }) }, col_types: { k: 'integer' } }, extra || {});
+  };
+  const s11_g = s11_make('m-', [s11_labsCard(['id', 'val'])]);
+  shinyHandlers.sideview_card_add({ ns: 'm-', card: s11_lazyCard('card_lzr', 'lz_remote', { remote: true }) });
+  shinyHandlers.sideview_card_add({ ns: 'm-', card: s11_lazyCard('card_lzw', 'lz_widget') });
+  const s11_lzr = s11_byName(s11_g, 'lz_remote').element;
+  const s11_lzw = s11_byName(s11_g, 'lz_widget').element;
+  const s11_badge = function (el) { return el.querySelector('.sideview-badge-dims').textContent; };
+  s11_r.remote_lazy_is_full = s11_lzr.dataset.rowsBasis === 'full' && s11_badge(s11_lzr).indexOf('First') < 0 &&
+    s11_badge(s11_lzr) === '1,000 \u00d7 1' && s11_lzr.dataset.lazy === 'duckdb' && s11_lzr.dataset.tableRows === '1000';
+  s11_r.widget_lazy_is_preview = s11_lzw.dataset.rowsBasis === 'preview' && s11_badge(s11_lzw) === 'First 50 of 1,000 rows';
+  // a lost link (toast with `card`) then downgrades the remote card to the preview label
+  shinyHandlers.sideview_toast({ ns: 'm-', text: 'link lost', type: 'warning', card: 'card_lzr' });
+  s11_r.remote_lazy_lost_link_downgrades = s11_lzr.dataset.rowsBasis === 'preview' &&
+    s11_badge(s11_lzr).indexOf('First') === 0;
+  s11_g.engine.destroy();
+
+  // replace keeps the header sort and filter on columns that stay, and the view of a dropped column goes
+  const s11_vcard = function (cols) {
+    const data = {}, types = {};
+    cols.forEach(function (c) { data[c] = ['c', 'a', 'b']; types[c] = 'character'; });
+    return { id: 'card_vw', name: 'vw', type: 'grid', x: 10, y: 10, dims: [3, cols.length], data: data, col_types: types, totalRows: 3 };
+  };
+  const s11_h = s11_make('m-', [s11_vcard(['id', 'val', 'extra'])]);
+  const s11_hc = s11_byName(s11_h, 'vw').element;
+  s11_hc.querySelector('.sideview-sort-btn[data-col-name="val"]').click();
+  const s11_fb = s11_hc.querySelector('.sideview-filter-btn[data-col-name="id"]');
+  s11_fb.click();
+  const s11_pop = document.querySelector('.sideview-filter-popover');
+  s11_pop.querySelector('.sideview-filter-select').value = 'contains';
+  s11_pop.querySelector('.sideview-filter-input').value = 'a';
+  s11_pop.querySelector('.sideview-filter-apply').click();
+  const s11_hv0 = s11_byName(s11_h, 'vw').element._virtualTable;
+  const s11_hSetup = !!s11_hv0.sortState && s11_hv0.sortState.colName === 'val' && s11_hv0.sortState.direction === 'asc' &&
+    !!s11_hv0.currentFilter && s11_hv0.currentFilter.colName === 'id';
+  shinyHandlers.sideview_card_replace({ ns: 'm-', card: s11_vcard(['id', 'val', 'extra']) });
+  const s11_hn = s11_byName(s11_h, 'vw').element;
+  const s11_hv = s11_hn._virtualTable;
+  const s11_hth = s11_hn.querySelector('th[data-col-name="val"]');
+  s11_r.replace_keeps_sort_filter = s11_hSetup && s11_hn !== s11_hc && s11_hv.sortState.colName === 'val' &&
+    s11_hv.sortState.direction === 'asc' && s11_hth.dataset.sortState === 'asc' &&
+    s11_hn.querySelector('.sideview-sort-btn[data-col-name="val"]').classList.contains('active') &&
+    s11_hv.currentFilter.colName === 'id' && s11_hv.currentFilter.operator === 'contains' &&
+    s11_hn.querySelector('.sideview-filter-btn[data-col-name="id"]').classList.contains('active');
+  // the sort column is dropped: no sort on the new card, and no error
+  let s11_hThrew = false;
+  try { shinyHandlers.sideview_card_replace({ ns: 'm-', card: s11_vcard(['id', 'extra']) }); } catch (err) { s11_hThrew = true; }
+  const s11_hv2 = s11_byName(s11_h, 'vw').element._virtualTable;
+  s11_r.replace_drops_view_of_dropped_column = !s11_hThrew && !(s11_hv2.sortState && s11_hv2.sortState.colName) &&
+    !!s11_hv2.currentFilter && s11_hv2.currentFilter.colName === 'id';
+  s11_h.engine.destroy();
+
+  // a mutate step that uses a dropped column is disabled by a replace; one that does not is kept
+  const s11_k = s11_make('m-', [s11_labsCard(['id', 'lab_dt', 'val'])]);
+  s11_k.engine.pipeline.add({ kind: 'mutate', table: 'labs', name: 'dbl', expr: 'val * 2' });
+  s11_k.engine.pipeline.add({ kind: 'mutate', table: 'labs', name: 'yr', expr: 'format(lab_dt, "%Y") # lab_dt' });
+  shinyHandlers.sideview_card_replace({ ns: 'm-', card: s11_labsCard(['id', 'val']) });
+  s11_r.replace_disables_mutate = s11_k.engine.pipeline.steps[0].enabled !== false &&
+    s11_k.engine.pipeline.steps[1].enabled === false &&
+    s11_toastTexts(s11_k).indexOf('labs refreshed: 1 step disabled (lab_dt not found)') >= 0;
+  s11_k.engine.destroy();
+
+  // an engine whose setup throws never takes the place of a working one
+  const s11_z = s11_make('z-', [s11_labsCard(['id'])]);
+  let s11_zDestroyed = false;
+  const s11_zOld = s11_z.engine.destroy;
+  s11_z.engine.destroy = function () { s11_zDestroyed = true; return s11_zOld.apply(this, arguments); };
+  const s11_zel = new MockElement('DIV');
+  s11_zel.className = 'sideview-container';
+  document.body.appendChild(s11_zel);
+  let s11_zThrew = false;
+  try {
+    global.Sideview.init(s11_zel, { ns: 'z-', mode: 'embedded', cards: [{ get name() { throw new Error('bad card'); } }] });
+  } catch (err) { s11_zThrew = true; }
+  s11_r.failed_init_keeps_registry = s11_zThrew && !s11_zDestroyed && global.__sideviewEngines['z-'] === s11_z.engine;
+  s11_z.engine.destroy();
+
   console.warn = s11_origWarn;
   results.scenario11 = s11_r;
   s11_c.engine.destroy();

@@ -90,7 +90,9 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   px <- sideviewServer("review", cards = list(visits = visits, labs = labs_now()))
   observeEvent(input$refresh, {
-    sideviewProxy("review") |> sv_replace_card("labs", labs_now()) |> sv_highlight("labs", "lab_date")
+    px <- sideviewProxy("review")
+    sv_replace_card(px, "labs", labs_now())
+    sv_highlight(px, "labs", "lab_date")
   })
   output$code <- renderText(px$code())
 }

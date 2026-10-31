@@ -572,14 +572,60 @@
 
 
   /**
+   * The names an R expression uses as variables: backticked names, and bare names outside string
+   * literals that are not called (`f(`), not a member (`x$a`, `pkg::a`) and not an argument name
+   * (`f(a = 1)`). A scan, not a parser: it only has to find a column that is no longer there.
+   */
+  function exprNames(expr) {
+    var text = String(expr == null ? '' : expr);
+    var names = [];
+    var bare = '';
+    var i = 0;
+    function flush() { if (bare) { scanBare(bare); bare = ''; } }
+    function scanBare(t) {
+      var re = /[\p{L}.][\p{L}\p{N}._]*/gu;
+      var m;
+      while ((m = re.exec(t)) !== null) {
+        var before = t.slice(Math.max(0, m.index - 2), m.index).replace(/\s+$/, '');
+        var after = t.slice(m.index + m[0].length);
+        if (/[$@]$/.test(before) || /::$/.test(before)) continue;
+        if (/^\s*\(/.test(after)) continue;
+        if (/^\s*=(?!=)/.test(after)) continue;
+        if (/^\d/.test(m[0]) || /^\.\d/.test(m[0])) continue;
+        if (names.indexOf(m[0]) < 0) names.push(m[0]);
+      }
+    }
+    while (i < text.length) {
+      var ch = text.charAt(i);
+      if (ch === '"' || ch === "'" || ch === '`') {
+        flush();
+        var j = i + 1;
+        while (j < text.length && text.charAt(j) !== ch) j += text.charAt(j) === '\\' ? 2 : 1;
+        if (ch === '`') {
+          var nm = text.slice(i + 1, j);
+          if (nm && names.indexOf(nm) < 0) names.push(nm);
+        }
+        i = j + 1;
+      } else {
+        bare += ch;
+        i++;
+      }
+    }
+    flush();
+    return names;
+  }
+
+  /**
    * Disable the enabled steps of `table` that need a column its refreshed data no longer has
    * (`columns`: the new column names), or every step on it and every join with it (`columns` null:
    * the table is gone). Columns are tracked along the table's chain (rename, mutate); after an
    * enabled join, summarise, reshape or custom step they are unknown and later steps are kept.
+   * `oldColumns` (the names the table had) lets a mutate expression be checked: it is disabled
+   * when it uses a name that was a column and is not any more; without it mutate is not checked.
    * One undoable change; when something was disabled, undo and redo history is dropped.
    * Returns { disabled: [{id, kind, missing}], missing: [unique columns] }.
    */
-  Pipeline.prototype.disableMissing = function (table, columns) {
+  Pipeline.prototype.disableMissing = function (table, columns, oldColumns) {
     var self = this;
     var found = {};
     var order = [];
@@ -598,7 +644,7 @@
       if (!rule) return [];
       return side === 'x' ? [rule.xCol, rule.xFrom, rule.xTo] : [rule.yCol, rule.yFrom, rule.yTo];
     }
-    function leftNeeds(s) {
+    function leftNeeds(s, cols) {
       var n = [];
       switch (s.kind) {
         case 'arrange': (s.cols || []).forEach(function (c) { n.push(c.col); }); break;
@@ -613,6 +659,13 @@
           break;
         case 'recode': n.push(s.col); break;
         case 'rename': n.push(s.from); break;
+        case 'mutate':
+          if (oldColumns) {
+            exprNames(s.expr).forEach(function (c) {
+              if (oldColumns.indexOf(c) >= 0 && cols.indexOf(c) < 0) n.push(c);
+            });
+          }
+          break;
         case 'summarise':
           (s.groups || []).forEach(function (g) { n.push(g); });
           (s.aggs || []).forEach(function (a) { n.push(a.col); });
@@ -645,7 +698,7 @@
       self.steps.forEach(function (s) {
         if (s.table !== table || !live(s)) return;
         if (!unknown) {
-          var miss = lack(cols, leftNeeds(s));
+          var miss = lack(cols, leftNeeds(s, cols));
           if (miss.length) { note(s, miss); s.enabled = false; return; }
           if (s.kind === 'rename') {
             var i = cols.indexOf(s.from);

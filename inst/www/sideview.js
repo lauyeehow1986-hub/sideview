@@ -648,7 +648,6 @@ function sendToShiny(name, value) {
       : (typeof dataNs === 'string' ? dataNs : '');
     this._handlers = {};
     this._registeredAs = null;
-    this.registerEngine();
 
     // Global (window/document) listeners registered through listenGlobal() are
     // removed again by destroy(), so re-rendered widgets don't leak handlers.
@@ -720,6 +719,9 @@ function sendToShiny(name, value) {
     this.registerShinyHandlers();
     this.initMinimap();
     this.initLayoutObserver();
+
+    // Registered last: an engine whose setup threw never replaces a working one for this ns.
+    this.registerEngine();
 
     // A module tells R it is ready (R then sends its cards) and reports its work back.
     this._constructed = true;
@@ -2836,13 +2838,15 @@ function sendToShiny(name, value) {
     var shownRows = previewRowCount(cardData.data);
     var tableRowCount = cardData.totalRows != null ? Number(cardData.totalRows) : NaN;
     var isLazyCard = !!cardData.lazy;
-    if (isLazyCard && shownRows != null && tableRowCount > shownRows) {
+    // A module card with `remote` is served whole by R (row windows, sorts, checks), however few rows it carries.
+    var isPreviewCard = isLazyCard && !cardData.remote;
+    if (isPreviewCard && shownRows != null && tableRowCount > shownRows) {
       dimsText = previewBadgeText(shownRows, tableRowCount);
     }
     if (!isNaN(tableRowCount)) cardEl.dataset.tableRows = String(tableRowCount);
     if (isLazyCard) cardEl.dataset.lazy = String(cardData.lazy);
     if (cardData.codeRef) cardEl.dataset.codeRef = String(cardData.codeRef);
-    cardEl.dataset.rowsBasis = isLazyCard ? 'preview' : 'full';
+    cardEl.dataset.rowsBasis = isPreviewCard ? 'preview' : 'full';
     if (isLazyCard && shownRows != null) cardEl.dataset.previewRows = String(shownRows);
     header.innerHTML = [
       '<div class="sideview-card-title-group">',
@@ -3515,7 +3519,8 @@ function sendToShiny(name, value) {
   function stepsPhrase(n) { return n + ' step' + (n === 1 ? '' : 's') + ' disabled'; }
 
   /**
-   * Rebuild a card from new data under the same name, keeping where it is and how big.
+   * Rebuild a card from new data under the same name, keeping where it is and how big, and the
+   * header sort / filter and highlights on columns that are still there.
    * Steps that need a column the new data lacks are disabled; splines on a dropped column go.
    * Returns { disabled, missing }, or null when no card has that name.
    */
@@ -3537,6 +3542,11 @@ function sendToShiny(name, value) {
       auto: el.dataset.autoPlace
     };
     var oldVt = el._virtualTable;
+    var view = cardViewOf(el);
+    var oldColumns = [];
+    el.querySelectorAll('.sideview-col-port').forEach(function (port) {
+      if (port.dataset && port.dataset.colName !== undefined) oldColumns.push(port.dataset.colName);
+    });
     var highlights = [];
     if (oldVt && oldVt.highlightedColumns) {
       oldVt.highlightedColumns.forEach(function (color, col) { highlights.push([col, color]); });
@@ -3577,7 +3587,22 @@ function sendToShiny(name, value) {
       if (touchesTo) c.toElement = portOf(next, c.toCol) || c.toElement;
     });
 
-    var out = this.pipeline.disableMissing(name, columns);
+    var out = this.pipeline.disableMissing(name, columns, oldColumns);
+    // The header sort / filter stays on the card where its column is still there and its step was not disabled.
+    var self2 = this;
+    var offIds = {};
+    out.disabled.forEach(function (d) { offIds[d.id] = true; });
+    var stillOn = function (kind, col) {
+      return !self2.pipeline.steps.some(function (st) {
+        if (!offIds[st.id] || st.table !== name || st.kind !== kind) return false;
+        return kind === 'arrange'
+          ? (st.cols || []).some(function (c) { return c && c.col === col; })
+          : (st.condCols || []).indexOf(col) >= 0;
+      });
+    };
+    var keepSort = view.sorts.filter(function (v) { return columns.indexOf(v.col) >= 0 && stillOn('arrange', v.col); })[0];
+    var keepFilter = view.filters.filter(function (v) { return columns.indexOf(v.col) >= 0 && stillOn('filter', v.col); })[0];
+    if (keepSort || keepFilter) this.applyCardView(nel, keepSort, keepFilter);
     this.resetDataCaches();
     if (out.disabled.length) {
       this.showToast(name + ' refreshed: ' + stepsPhrase(out.disabled.length) +
@@ -4900,6 +4925,19 @@ function sendToShiny(name, value) {
     }
   }
 
+  // The header sort and filter a card shows, as state stores them: { sorts: [], filters: [] }.
+  function cardViewOf(el) {
+    var vt = el && el._virtualTable;
+    var sorts = [], filters = [];
+    if (vt && vt.sortState && vt.sortState.colName && vt.sortState.direction && vt.sortState.direction !== 'none') {
+      sorts.push({ col: vt.sortState.colName, dir: vt.sortState.direction });
+    }
+    if (vt && vt.currentFilter && vt.currentFilter.colName) {
+      filters.push({ col: vt.currentFilter.colName, op: vt.currentFilter.operator, val: String(vt.currentFilter.value) });
+    }
+    return { sorts: sorts, filters: filters };
+  }
+
   SideviewEngine.prototype.getState = function () {
     var pz = this.panzoom;
     var pan = pz && pz.getPan ? pz.getPan() : { x: 0, y: 0 };
@@ -4914,14 +4952,8 @@ function sendToShiny(name, value) {
       } else if (el.classList.contains('is-minimized')) {
         h = parseFloat(el._svRestoreHeight) || null;
       }
-      var vt = el._virtualTable;
-      var sorts = [], filters = [];
-      if (vt && vt.sortState && vt.sortState.colName && vt.sortState.direction && vt.sortState.direction !== 'none') {
-        sorts.push({ col: vt.sortState.colName, dir: vt.sortState.direction });
-      }
-      if (vt && vt.currentFilter && vt.currentFilter.colName) {
-        filters.push({ col: vt.currentFilter.colName, op: vt.currentFilter.operator, val: String(vt.currentFilter.value) });
-      }
+      var view = cardViewOf(el);
+      var sorts = view.sorts, filters = view.filters;
       cards.push({
         id: card.id,
         name: card.name,

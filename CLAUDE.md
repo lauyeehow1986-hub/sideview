@@ -70,7 +70,9 @@ rstudio bridge: R/rstudio.R
   with its in-memory function. Lazy tables are never collected: only summaries, row windows and
   `collect(head(tbl, 0))` (for R classes) come back. One private duckdb connection per Shiny session
   (`sv_lazy_env()`), closed in `onSessionEnded`; a user's connection is left clean. A lost link or a missing
-  duckdb falls back to the preview with one `sideview_toast`. Do not use `is.nan()`/`is.infinite()` in lazy
+  duckdb falls back to the preview with one `sideview_toast`. In a module a lazy card's payload has `remote: true` (R serves the whole table), so the browser sets
+  `data-rows-basis="full"` and the true-size badge; only the widget's lazy card (no `remote`) is labelled a preview. `forget(id)`
+  unregisters the Arrow views a cached lazy table put on the session connection (`sv_arrow_views` attribute). Do not use `is.nan()`/`is.infinite()` in lazy
   expressions (dbplyr turns them into `PRINTF('%f', col)`, which fails on integer types): use `isnan()`/`isinf()`.
   Lazy "contains" is `str_detect(col, "<escaped literal>")`, never `stringr::fixed()`.
 - **Codebook:** `sv_codebook()` has a `rows_profiled` column after `n` (`n` = true row count, `rows_profiled` =

@@ -608,7 +608,7 @@ sv_ui_build <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
     # Save/Open use RStudio's file dialog through R when there is one.
     `data-sv-file-dialog` = if (isTRUE(gadget) && sv_has_file_dialog()) "r" else NULL,
     style = if (module) {
-      paste(c(sv_theme_style(theme), sprintf("height: %s; position: relative", height)), collapse = "; ")
+      paste(c(sv_theme_style(theme), sprintf("height: %s; position: relative", shiny::validateCssUnit(height))), collapse = "; ")
     } else {
       sv_theme_style(theme)
     },

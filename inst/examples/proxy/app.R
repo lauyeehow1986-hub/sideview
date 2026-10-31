@@ -63,15 +63,15 @@ server <- function(input, output, session) {
 
   observeEvent(input$add, {
     nm <- paste0("extra", length(added()) + 1L)
-    sideviewProxy("a") |> sv_add_card(head(visits, 5), nm)
+    sv_add_card(sideviewProxy("a"), head(visits, 5), nm)
     added(c(added(), nm))
   })
   observeEvent(input$replace, {
-    sideviewProxy("a") |> sv_replace_card("labs", labs_now(input$refresh))
+    sv_replace_card(sideviewProxy("a"), "labs", labs_now(input$refresh))
   })
   observeEvent(input$remove, {
     if (length(added())) {
-      sideviewProxy("a") |> sv_remove_card(utils::tail(added(), 1))
+      sv_remove_card(sideviewProxy("a"), utils::tail(added(), 1))
       added(utils::head(added(), -1))
     }
   })

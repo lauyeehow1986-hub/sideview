@@ -132,6 +132,26 @@ Each sub-project gets its own spec, plan and build, in this order:
 
 ## Log
 
+### 2026-11-01 - Shiny module and proxy: final review fixes (0.4.0)
+- **Reactive `cards`** (`sv_initial_cards()`): a `req()` at start means no cards yet, any other start error is a warning naming
+  the module id; the observer fills the store when the reactive is valid. A reactive refresh whose element no longer
+  normalises keeps the old card and warns once per card name (`sv_normalize_cards(on_drop =)`, `sv_sync_cards(keep =)`).
+- **Remote lazy cards** (`cardData.remote`): `rowsBasis` is `full` and the badge shows the true size; the widget's lazy card
+  (no `remote`) is unchanged ("First 50 of ..."), and the lost-link toast with `card` still downgrades a module card.
+- **Replace keeps the view:** `cardViewOf(el)` is shared by `getState()` and `replaceCard()`; the sort / filter is re-applied with
+  `applyCardView()` where the column still exists and its step was not disabled by this refresh.
+- **Arrow cleanup:** `sv_lazy_tbl()` records the views it registered (`sv_arrow_views` attribute); `forget()` unregisters them via
+  `sv_lazy_release()` (never fails). A user's duckdb tbl is untouched. Registrations made by `sv_lazy_place()` for joins are not
+  tracked (not per card; left as is).
+- **Mutate disable:** `disableMissing(table, columns, oldColumns)` scans a mutate `expr` (`exprNames()`: outside string literals,
+  backticked names too, not `f(`, `x$a`, `pkg::a`, `f(a = )`) for names that were columns and are gone. Without `oldColumns` mutate
+  is not checked.
+- **Minors:** `height` through `validateCssUnit()`; module codebook csv read with `readChar()` (byte-equal to `write.csv()`);
+  engine registered at the end of the constructor; `card_store$replace()` rename branch deleted (nothing used it); README / example
+  / roxygen use plain calls, not `|>` (no `Depends: R (>= 4.1)`); more `disableMissing` cases (rule, recode, reshape, no `condCols`).
+- **Verified:** gui runner (mock DOM) scenario 11 new cases, test-pipeline.R, test-module.R, real-browser test "replace keeps the header
+  sort" in test-layout-browser.R (fails with the re-apply call removed). Not re-checked in RStudio.
+
 ### 2026-11-01 - Shiny module and proxy: RStudio check (0.4.0, task 7)
 - **Viewer pane, `runApp("inst/examples/proxy")`:** both canvases start with their cards; a real drag joins `visits.id` to
   `labs.id` and `$code()` shows `visits %>% dplyr::left_join(labs, by = "id")`; canvas B has no connector and no step

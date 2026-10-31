@@ -332,3 +332,111 @@ test_that("without llm_fn the canvas is told to hide the AI bar, with one it is 
   })
 })
 
+
+test_that("a reactive cards that stops with req() means no cards yet", {
+  rv <- shiny::reactiveVal(NULL)
+  shiny::testServer(sideviewServer, args = list(id = "cv", cards = shiny::reactive({ shiny::req(rv()) })), {
+    px <- session$getReturned()
+    expect_length(px$cards(), 0L)
+    session$setInputs(sideview_ready = list(nonce = 1))
+    session$flushReact()
+    expect_length(msgs(session, "sideview_card_add"), 0L)
+
+    rv(list(a = visits, b = labs))
+    session$flushReact()
+    expect_equal(px$cards(), c("a", "b"))
+    expect_equal(px$ctl$store$names(), c("a", "b"))
+    adds <- msgs(session, "sideview_card_add")
+    expect_equal(vapply(adds, function(m) m$message$card$name, ""), c("a", "b"))
+  })
+})
+
+test_that("cards that become valid before the canvas is ready are sent at ready", {
+  rv <- shiny::reactiveVal(NULL)
+  shiny::testServer(sideviewServer, args = list(id = "cv", cards = shiny::reactive({ shiny::req(rv()) })), {
+    rv(list(a = visits, b = labs))
+    session$flushReact()
+    expect_length(msgs(session, "sideview_card_add"), 0L)
+    session$setInputs(sideview_ready = list(nonce = 1))
+    expect_length(msgs(session, "sideview_card_add"), 2L)
+  })
+})
+
+test_that("a reactive cards that errors at start warns with the id and starts empty", {
+  bad <- shiny::reactive(stop("feed not there"))
+  expect_warning(
+    shiny::testServer(sideviewServer, args = list(id = "cv", cards = bad), {
+      expect_length(session$getReturned()$cards(), 0L)
+    }),
+    "cv"
+  )
+})
+
+test_that("a reactive refresh whose element does not normalise keeps the old card and warns once", {
+  rv <- shiny::reactiveVal(list(a = visits, b = labs))
+  shiny::testServer(sideviewServer, args = list(id = "cv", cards = shiny::reactive(rv())), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    session$flushReact()
+    n0 <- length(session$userData$custom_messages)
+    expect_warning({
+      rv(list(a = visits, b = sum))
+      session$flushReact()
+    }, "b")
+    expect_equal(px$cards(), c("a", "b"))
+    expect_length(msgs(session, "sideview_card_remove"), 0L)
+    expect_warning({
+      rv(list(a = visits[1:2, ], b = sum))
+      session$flushReact()
+    }, NA)
+    expect_equal(px$cards(), c("a", "b"))
+    expect_equal(nrow(px$ctl$store$get("a")$data), 2L)
+  })
+})
+
+test_that("height goes through validateCssUnit", {
+  expect_match(as.character(sideviewUI("cv", height = 600)), "height: 600px; position: relative", fixed = TRUE)
+  expect_match(as.character(sideviewUI("cv", height = "50%")), "height: 50%; position: relative", fixed = TRUE)
+})
+
+test_that("the module codebook csv is the file write.csv wrote, byte for byte", {
+  shiny::testServer(sideviewServer, args = start_module(), {
+    session$setInputs(codebook_export = list(at = 1))
+    csv <- msgs(session, "sideview_codebook_saved")[[1]]$message$csv
+    # write.csv ends every line, the last too, with the platform's line break; keep it as written
+    eol <- if (.Platform$OS.type == "windows") "\r\n" else "\n"
+    expect_true(endsWith(csv, eol))
+    expect_gt(lengths(regmatches(csv, gregexpr(eol, csv, fixed = TRUE))), 1L)
+  })
+})
+
+test_that("replacing an Arrow card unregisters the old table from the session connection", {
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  mk <- function(n) arrow::arrow_table(id = 1:n, v = n:1)
+  shiny::testServer(sideviewServer, args = list(id = "cv", cards = list(labs = mk(20), other = mk(5))), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    con_env <- session$userData$sv_lazy_env
+    rows <- function(name, ver) {
+      id <- px$ctl$store$get(name)$id
+      session$setInputs(sideview_rows_request = list(card_id = id, offset = 0L, limit = 5L, version = ver))
+    }
+    rows("labs", 1L)
+    rows("other", 2L)
+    n_registered <- function() length(duckdb::duckdb_list_arrow(con_env$con))
+    expect_equal(n_registered(), 2L)
+    for (i in 1:3) {
+      sv_replace_card(px, "labs", mk(20 + i))
+      rows("labs", 10L + i)
+      expect_equal(n_registered(), 2L, info = paste("replace", i))
+    }
+    # the rows still come from the new table
+    last <- msgs(session, "sideview_rows")
+    expect_equal(last[[length(last)]]$message$total, 23L)
+    # removing a card unregisters its table too
+    sv_remove_card(px, "labs")
+    expect_equal(n_registered(), 1L)
+  })
+})

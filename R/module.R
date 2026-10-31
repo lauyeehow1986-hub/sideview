@@ -62,7 +62,7 @@ sideviewServer <- function(id, cards = list(), state = NULL, llm_fn = NULL) {
   force(state)
   force(llm_fn)
   shiny::moduleServer(id, function(input, output, session) {
-    initial <- if (is.function(cards)) shiny::isolate(cards()) else cards
+    initial <- if (is.function(cards)) sv_initial_cards(cards, id) else cards
     llm <- llm_fn %||% function(...) stop("No llm_fn was given to sideviewServer().", call. = FALSE)
     impl <- sideview_server_impl(input, output, session, sv_module_cards(initial), llm, NULL, NULL, module = TRUE)
     ctl <- impl$ctl
@@ -85,8 +85,20 @@ sideviewServer <- function(id, cards = list(), state = NULL, llm_fn = NULL) {
     }
     if (is.function(cards)) {
       shiny::observe({
-        new_cards <- sv_module_cards(cards())
-        shiny::isolate(sv_sync_cards(proxy, new_cards))
+        raw <- cards()
+        failed <- character()
+        new_cards <- sv_module_cards(raw, on_drop = function(nm) failed <<- c(failed, nm))
+        shiny::isolate({
+          # an element that no longer normalises keeps its old card, with one warning
+          kept <- intersect(failed, proxy$ctl$store$names())
+          fresh <- setdiff(kept, ctl$warned_cards)
+          if (length(fresh)) {
+            ctl$warned_cards <- c(ctl$warned_cards, fresh)
+            warning(sprintf("sideviewServer(\"%s\"): could not read card \"%s\" from `cards`; keeping the card it had",
+                            id, paste(fresh, collapse = "\", \"")), call. = FALSE)
+          }
+          sv_sync_cards(proxy, new_cards, keep = kept)
+        })
       })
     }
     proxy
@@ -105,7 +117,7 @@ sideviewServer <- function(id, cards = list(), state = NULL, llm_fn = NULL) {
 #' @examples
 #' if (interactive()) {
 #'   # inside a server function:
-#'   # sideviewProxy("review") |> sv_replace_card("labs", labs_now())
+#'   # sv_replace_card(sideviewProxy("review"), "labs", labs_now())
 #' }
 #' @export
 sideviewProxy <- function(id, session = shiny::getDefaultReactiveDomain()) {
@@ -143,7 +155,7 @@ sideviewProxy <- function(id, session = shiny::getDefaultReactiveDomain()) {
 #' @examples
 #' if (interactive()) {
 #'   # px <- sideviewProxy("review")
-#'   # px |> sv_replace_card("labs", labs_now()) |> sv_highlight("labs", "lab_date")
+#'   # sv_replace_card(px, "labs", labs_now()); sv_highlight(px, "labs", "lab_date")
 #' }
 #' @seealso [sideviewServer()]
 #' @export
@@ -262,7 +274,24 @@ sv_prepare_card <- function(card) {
   card
 }
 
-sv_module_cards <- function(cards) lapply(sv_normalize_cards(cards), sv_prepare_card)
+sv_module_cards <- function(cards, on_drop = NULL) {
+  lapply(sv_normalize_cards(cards, on_drop = on_drop), sv_prepare_card)
+}
+
+# The cards a reactive `cards =` gives when the module starts. `req()` (a silent error)
+# means "no cards yet"; the observer fills the store when the reactive becomes valid.
+# Any other error is reported as a warning and the module starts empty.
+sv_initial_cards <- function(cards, id) {
+  tryCatch(
+    shiny::isolate(cards()),
+    shiny.silent.error = function(e) list(),
+    error = function(e) {
+      warning(sprintf("sideviewServer(\"%s\"): `cards` failed at start (%s); starting without cards",
+                      id, conditionMessage(e)), call. = FALSE)
+      list()
+    }
+  )
+}
 
 sv_module_state <- function(state) {
   if (is.character(state) && length(state) == 1L && grepl("^\\s*\\{", state)) {
@@ -306,7 +335,7 @@ sv_proxy_remove <- function(proxy, name) {
 }
 
 # A reactive `cards =`: replace what changed, add what is new, remove what is gone.
-sv_sync_cards <- function(proxy, new_cards) {
+sv_sync_cards <- function(proxy, new_cards, keep = character()) {
   store <- proxy$ctl$store
   new_names <- vapply(new_cards, function(cd) cd$name, "")
   for (card in new_cards) {
@@ -318,7 +347,7 @@ sv_sync_cards <- function(proxy, new_cards) {
   for (card in new_cards) {
     if (!store$has(card$name)) sv_proxy_add(proxy, card)
   }
-  for (nm in setdiff(store$names(), new_names)) sv_proxy_remove(proxy, nm)
+  for (nm in setdiff(store$names(), c(new_names, keep))) sv_proxy_remove(proxy, nm)
   invisible(proxy)
 }
 
@@ -331,6 +360,7 @@ sv_module_wire <- function(input, session, store, send) {
   ctl$ready <- FALSE
   ctl$queue <- list()
   ctl$warned <- FALSE
+  ctl$warned_cards <- character()
   ctl$forget <- function(id) invisible(NULL)
   ctl$code_rv <- shiny::reactiveVal("")
   ctl$pipeline_rv <- shiny::reactiveVal(list())

@@ -1850,6 +1850,40 @@ test_that("module: replace that drops a column shows the disabled-step toast", {
   expect_equal(sv_js(b, "document.querySelector('[data-sv-ns=\"b-\"]').querySelectorAll('.sideview-toast').length"), 0)
 })
 
+test_that("module: replace keeps the header sort of a card (the canvas agrees with the code)", {
+  b <- sv_module_page()
+  ui <- sv_module_ui(b)
+  sort_btn <- '.sideview-card[data-card-name="labs"] .sideview-sort-btn[data-col-name="value"]'
+  ui$m$click(ui$centre(paste0('[data-sv-ns="a-"] ', sort_btn)))
+  th_state <- paste0("(() => {", sv_module_js, "
+    const th = card('a-', 'labs').querySelector('th[data-col-name=\"value\"]'); return th && th.dataset.sortState; })()")
+  expect_true(ui$wait_for(paste0("(", th_state, ") === 'asc'")))
+  # the first rendered values of the value column (rows of the virtual table that carry a cell there), as numbers
+  value_js <- paste0("(() => {", sv_module_js, "
+    const el = card('a-', 'labs'), i = el.querySelector('th[data-col-name=\"value\"]').cellIndex;
+    return [...el.querySelectorAll('tbody tr')].filter(r => r.children.length > i)
+      .map(r => parseFloat(r.children[i].textContent)).filter(v => !isNaN(v)).slice(0, 6); })()")
+  first_values <- function() unlist(sv_js(b, value_js))
+  expect_true(ui$wait_for(paste0("(", value_js, ").length >= 4")))
+  sv_js(b, paste0("(() => {", sv_module_js, "card('a-', 'labs').dataset.beforeReplace = '1'; return true; })()"))
+
+  ui$m$click(ui$centre("#replace"))
+  expect_true(ui$wait_for(paste0("(() => {", sv_module_js, "return !card('a-', 'labs').dataset.beforeReplace; })()")))
+  expect_true(ui$wait_for(paste0("(", th_state, ") === 'asc'")))
+  expect_true(sv_js(b, paste0("(() => {", sv_module_js, "
+    return card('a-', 'labs').querySelector('.sideview-sort-btn[data-col-name=\"value\"]').classList.contains('active'); })()")))
+  # rows follow the sort: the first values come back ascending (waits for the row window)
+  ok <- FALSE
+  for (i in 1:40) {
+    v <- first_values()
+    ok <- length(v) >= 4 && !is.unsorted(v)
+    if (ok) break
+    Sys.sleep(0.25)
+  }
+  expect_true(ok, info = paste(first_values(), collapse = " "))
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
 test_that("module: canvases are independent", {
   b <- sv_module_page()
   ui <- sv_module_ui(b)

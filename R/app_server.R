@@ -392,7 +392,8 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
         sv_write_codebook(cb, path)
         if (isTRUE(module)) {
           # a deployed app has no file dialog: the browser saves the text
-          csv <- paste(readLines(path, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
+          csv <- readChar(path, file.size(path), useBytes = TRUE)
+          Encoding(csv) <- "UTF-8"
           unlink(path)
           list(csv = csv,
                filename = "codebook.csv", n_tables = length(tables))
@@ -777,7 +778,10 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     for (e in list(row_order_caches, lazy_order_caches, lazy_failed)) {
       if (!is.null(e[[id]])) rm(list = id, envir = e)
     }
-    con_env$tbls[[id]] <- NULL
+    if (!is.null(con_env$tbls[[id]])) {
+      sv_lazy_release(con_env$tbls[[id]], con_env)
+      con_env$tbls[[id]] <- NULL
+    }
     invisible(NULL)
   }
 

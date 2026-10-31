@@ -7,9 +7,10 @@ sv_preview_rows <- 500L
 #' Normalise whatever the user passed into a list of `sideview_card`s
 #'
 #' A single object becomes a one-element list; unnamed elements are called
-#' `Table_<i>`; elements that cannot be normalised are dropped.
+#' `Table_<i>`; elements that cannot be normalised are dropped
+#' (`on_drop(name)` is called for each).
 #' @noRd
-sv_normalize_cards <- function(cards) {
+sv_normalize_cards <- function(cards, on_drop = NULL) {
   card_list <- if (is.null(cards)) {
     list()
   } else if (inherits(cards, "sideview_card") || is.data.frame(cards) ||
@@ -28,6 +29,7 @@ sv_normalize_cards <- function(cards) {
       nm <- names(card_list)[i]
       if (is.null(nm) || is.na(nm) || !nzchar(nm)) nm <- paste0("Table_", i)
       item <- tryCatch(sv_normalize(item, name = nm), error = function(e) NULL)
+      if (is.null(item) && is.function(on_drop)) on_drop(nm)
     }
     if (!is.null(item)) out[[length(out) + 1L]] <- item
   }
@@ -36,7 +38,7 @@ sv_normalize_cards <- function(cards) {
 
 #' A mutable store of cards, keyed by name (insertion order kept)
 #'
-#' `add(card)`, `replace(name, card)` (keeps the slot), `remove(name)`,
+#' `add(card)`, `replace(name, card)` (keeps the slot; the card keeps its name), `remove(name)`,
 #' `get(key)` (name, then id; `NULL` if absent), `names()`, `all()`, `has(name)`.
 #' @noRd
 sv_card_store <- function(cards = list()) {
@@ -54,12 +56,6 @@ sv_card_store <- function(cards = list()) {
   self$replace <- function(name, card) {
     if (name %in% order) {
       by_name[[name]] <<- card
-      if (!identical(card$name, name) && !is.null(card$name) && nzchar(card$name)) {
-        # renamed on replace: the slot keeps its place under the new name
-        by_name[[name]] <<- NULL
-        order[order == name] <<- card$name
-        by_name[[card$name]] <<- card
-      }
       invisible(self)
     } else {
       self$add(card)
