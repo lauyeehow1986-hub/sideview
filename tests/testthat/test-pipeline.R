@@ -663,3 +663,103 @@ test_that("a three-way chain across duckdb, a data frame and arrow equals the da
     if (!is.null(got)) expect_same_rows(got, want, info = label)
   }
 })
+
+test_that("disableMissing keeps steps whose columns exist", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.add({kind:'arrange', key:'a', table:'labs', cols:[{col:'id'}]});
+    p.add({kind:'filter', table:'labs', conds:[P.condition('val', 'gt', '1', true)], condCols:['val'], combine:'and'});
+    const n = p.undoStack.length;
+    const r = p.disableMissing('labs', ['id', 'val']);
+    out = { r: r, en: p.steps.map(s => s.enabled), same: p.undoStack.length === n };
+  ")
+  expect_length(out$r$disabled, 0)
+  expect_length(out$r$missing, 0)
+  expect_equal(unlist(out$en), c(TRUE, TRUE))
+  expect_true(out$same)
+})
+
+test_that("disableMissing disables a filter on a dropped column", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.add({kind:'arrange', key:'a', table:'labs', cols:[{col:'id'}]});
+    const f = p.add({kind:'filter', table:'labs', conds:[P.condition('lab_dt', 'is_na', '', true)], condCols:['lab_dt'], combine:'and'});
+    const r = p.disableMissing('labs', ['id', 'val']);
+    out = { r: r, fid: f.id, en: p.steps.map(s => s.enabled), u: p.undoStack.length, d: p.redoStack.length };
+  ")
+  expect_equal(out$r$disabled[[1]]$id, out$fid)
+  expect_equal(out$r$disabled[[1]]$kind, "filter")
+  expect_equal(unlist(out$r$disabled[[1]]$missing), "lab_dt")
+  expect_equal(unlist(out$r$missing), "lab_dt")
+  expect_equal(unlist(out$en), c(TRUE, FALSE))
+  expect_equal(c(out$u, out$d), c(0, 0))
+})
+
+test_that("disableMissing follows renames and mutates", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.add({kind:'rename', table:'labs', from:'lab_dt', to:'d'});
+    p.add({kind:'arrange', key:'a', table:'labs', cols:[{col:'d'}]});
+    p.add({kind:'mutate', table:'labs', name:'z', expr:'1'});
+    p.add({kind:'filter', table:'labs', conds:[P.condition('z', 'gt', '0', true)], condCols:['z'], combine:'and'});
+    const r = p.disableMissing('labs', ['lab_dt', 'val']);
+    out = { r: r, en: p.steps.map(s => s.enabled) };
+  ")
+  expect_length(out$r$disabled, 0)
+  expect_equal(unlist(out$en), rep(TRUE, 4))
+})
+
+test_that("disableMissing stops checking after a summarise", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.add({kind:'summarise', table:'labs', groups:['id'], aggs:[{fn:'n'}]});
+    p.add({kind:'filter', table:'labs', conds:[P.condition('nope', 'gt', '0', true)], condCols:['nope'], combine:'and'});
+    const r = p.disableMissing('labs', ['id']);
+    out = { r: r, en: p.steps.map(s => s.enabled) };
+  ")
+  expect_length(out$r$disabled, 0)
+  expect_equal(unlist(out$en), c(TRUE, TRUE))
+})
+
+test_that("disableMissing checks both sides of a join", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.addJoinKey('visits', 'labs', 'id', 'pid');
+    const left = p.disableMissing('visits', ['id']);
+    const right = p.disableMissing('labs', ['id', 'val']);
+    out = { left: left, right: right, en: p.steps.map(s => s.enabled) };
+  ")
+  expect_length(out$left$disabled, 0)
+  expect_equal(unlist(out$right$disabled[[1]]$missing), "pid")
+  expect_equal(unlist(out$right$missing), "pid")
+  expect_equal(unlist(out$en), FALSE)
+})
+
+test_that("disableMissing with null disables everything on the table", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.add({kind:'arrange', key:'a', table:'labs', cols:[{col:'id'}]});
+    p.add({kind:'arrange', key:'b', table:'visits', cols:[{col:'id'}]});
+    p.addJoinKey('visits', 'labs', 'id', 'pid');
+    const r = p.disableMissing('labs', null);
+    out = { r: r, en: p.steps.map(s => s.enabled), u: p.undoStack.length };
+  ")
+  expect_length(out$r$disabled, 2)
+  expect_length(out$r$missing, 0)
+  expect_equal(unlist(out$en), c(FALSE, TRUE, FALSE))
+  expect_equal(out$u, 0)
+})
+
+test_that("compose skips disabled steps and still parses", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.add({kind:'arrange', key:'a', table:'labs', cols:[{col:'id'}]});
+    p.add({kind:'filter', table:'labs', conds:[P.condition('lab_dt', 'is_na', '', true)], condCols:['lab_dt'], combine:'and'});
+    p.addJoinKey('visits', 'labs', 'id', 'pid');
+    p.disableMissing('labs', ['id', 'val']);
+    out = p.compose();
+  ")
+  expect_parses(out)
+  expect_false(grepl("lab_dt", out, fixed = TRUE))
+  expect_false(grepl("pid", out, fixed = TRUE))
+})

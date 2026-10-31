@@ -4935,7 +4935,8 @@ function sendToShiny(name, value) {
         step = {
           kind: 'filter', table: table, conds: conds, combine: fieldValue(builder, 'combine'),
           // "contains" is rewritten for the chain's engine when the code is composed
-          specs: parts.map(function (c) { return c.op === 'contains' ? c : null; })
+          specs: parts.map(function (c) { return c.op === 'contains' ? c : null; }),
+          condCols: parts.map(function (c) { return c.col; })
         };
       }
     } else if (kind === 'arrange') {
@@ -5443,7 +5444,8 @@ function sendToShiny(name, value) {
       self.pipeline.add({
         kind: 'filter', key: headerFilterKey(cardName), table: cardName,
         conds: [condExpr], source: 'header',
-        specs: [op === 'contains' ? { col: colName, op: op, val: val, numeric: numericForCode } : null]
+        specs: [op === 'contains' ? { col: colName, op: op, val: val, numeric: numericForCode } : null],
+        condCols: [colName]
       }, 'filter');
       var filterCode = self.generatedCode;
       // Server-paged tables report their count when the first block arrives.
