@@ -572,10 +572,13 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
 
     schema <- sv_build_schema_context(current_cards())
     prompt_obj <- sv_build_prompt(evt$prompt, schema_context = schema)
-    backend <- evt$backend %||% getOption("sideview.llm_backend", Sys.getenv("SIDEVIEW_LLM_BACKEND", "ollama"))
-    model <- evt$model %||% getOption("sideview.llm_model", NULL)
-    endpoint <- evt$endpoint %||% getOption("sideview.llm_endpoint", NULL)
-    api_key <- evt$api_key %||% getOption("sideview.llm_api_key", NULL)
+    # In a module the browser is untrusted: backend, model, endpoint and key come only
+    # from the options / environment, never from the input.
+    from_evt <- if (isTRUE(module)) list() else evt
+    backend <- from_evt$backend %||% getOption("sideview.llm_backend", Sys.getenv("SIDEVIEW_LLM_BACKEND", "ollama"))
+    model <- from_evt$model %||% getOption("sideview.llm_model", NULL)
+    endpoint <- from_evt$endpoint %||% getOption("sideview.llm_endpoint", NULL)
+    api_key <- from_evt$api_key %||% getOption("sideview.llm_api_key", NULL)
 
     ai_err <- NULL
     ai_code <- tryCatch({
@@ -645,10 +648,11 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
       schema_context = schema
     )
 
-    backend <- if (is.list(evt) && !is.null(evt$backend)) evt$backend else getOption("sideview.llm_backend", Sys.getenv("SIDEVIEW_LLM_BACKEND", "ollama"))
-    model <- if (is.list(evt) && !is.null(evt$model)) evt$model else getOption("sideview.llm_model", NULL)
-    endpoint <- if (is.list(evt) && !is.null(evt$endpoint)) evt$endpoint else getOption("sideview.llm_endpoint", NULL)
-    api_key <- if (is.list(evt) && !is.null(evt$api_key)) evt$api_key else getOption("sideview.llm_api_key", NULL)
+    cfg <- if (isTRUE(module) || !is.list(evt)) list() else evt
+    backend <- cfg$backend %||% getOption("sideview.llm_backend", Sys.getenv("SIDEVIEW_LLM_BACKEND", "ollama"))
+    model <- cfg$model %||% getOption("sideview.llm_model", NULL)
+    endpoint <- cfg$endpoint %||% getOption("sideview.llm_endpoint", NULL)
+    api_key <- cfg$api_key %||% getOption("sideview.llm_api_key", NULL)
 
     chat_err <- NULL
     reply_text <- tryCatch({

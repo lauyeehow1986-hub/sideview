@@ -57,7 +57,7 @@ sideviewServer <- function(id, cards = list(), state = NULL, llm_fn = NULL) {
   shiny::moduleServer(id, function(input, output, session) {
     initial <- if (is.function(cards)) shiny::isolate(cards()) else cards
     llm <- llm_fn %||% function(...) stop("No llm_fn was given to sideviewServer().", call. = FALSE)
-    impl <- sideview_server_impl(input, output, session, initial, llm, NULL, NULL, module = TRUE)
+    impl <- sideview_server_impl(input, output, session, sv_module_cards(initial), llm, NULL, NULL, module = TRUE)
     ctl <- impl$ctl
     ctl$forget <- impl$forget
 
@@ -77,7 +77,7 @@ sideviewServer <- function(id, cards = list(), state = NULL, llm_fn = NULL) {
     }
     if (is.function(cards)) {
       shiny::observe({
-        new_cards <- sv_normalize_cards(cards())
+        new_cards <- sv_module_cards(cards())
         shiny::isolate(sv_sync_cards(proxy, new_cards))
       })
     }
@@ -241,12 +241,19 @@ sv_make_card <- function(x, name, id = NULL) {
   card$name <- name
   if (is.null(card$code_ref) || !nzchar(card$code_ref)) card$code_ref <- name
   if (!is.null(id)) card$id <- id
+  sv_prepare_card(card)
+}
+
+# An htmlwidget card is sent as its HTML; every card entering a module goes through this.
+sv_prepare_card <- function(card) {
   if (identical(card$type, "widget") && !is.null(card$widget) && is.null(card$html_content)) {
     card$html_content <- as.character(htmltools::as.tags(card$widget))
     card$widget <- NULL
   }
   card
 }
+
+sv_module_cards <- function(cards) lapply(sv_normalize_cards(cards), sv_prepare_card)
 
 sv_module_state <- function(state) {
   if (is.character(state) && length(state) == 1L && grepl("^\\s*\\{", state)) {

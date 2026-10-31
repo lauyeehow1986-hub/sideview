@@ -273,3 +273,46 @@ test_that("codebook in a module replies with csv", {
     expect_equal(saved[[1]]$message$filename, "codebook.csv")
   })
 })
+
+test_that("forged LLM settings in module inputs are ignored", {
+  seen <- list()
+  llm <- function(prompt, backend, model, endpoint, api_key) {
+    seen[[length(seen) + 1L]] <<- list(backend = backend, model = model, endpoint = endpoint, api_key = api_key)
+    "x <- 1"
+  }
+  withr::local_options(sideview.llm_backend = "ollama", sideview.llm_model = "m0",
+                       sideview.llm_endpoint = NULL, sideview.llm_api_key = NULL)
+  forged <- list(backend = "openai", model = "evil", endpoint = "http://evil.example", api_key = "k")
+  shiny::testServer(sideviewServer, args = start_module(llm_fn = llm), {
+    session$setInputs(run_ai_prompt = c(list(prompt = "count rows"), forged))
+    session$setInputs(send_copilot_chat = c(list(message = "hi"), forged))
+  })
+  expect_length(seen, 2L)
+  for (s in seen) {
+    expect_identical(s$backend, "ollama")
+    expect_identical(s$model, "m0")
+    expect_null(s$endpoint)
+    expect_null(s$api_key)
+  }
+})
+
+test_that("widget cards are sent as html in a module: initial, reactive and verbs", {
+  wcard <- function(txt) new_sideview_card(name = "w", type = "widget", widget = htmltools::tags$div(txt))
+  rv <- shiny::reactiveVal(list(w = wcard("first")))
+  shiny::testServer(sideviewServer, args = list(id = "cv", cards = shiny::reactive(rv())), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    session$flushReact()
+    add <- msgs(session, "sideview_card_add")[[1]]$message$card
+    expect_match(add$html_content, "first", fixed = TRUE)
+    expect_null(add$widget)
+    rv(list(w = wcard("second")))
+    session$flushReact()
+    rep <- msgs(session, "sideview_card_replace")[[1]]$message$card
+    expect_match(rep$html_content, "second", fixed = TRUE)
+    expect_null(rep$widget)
+    sv_add_card(px, wcard("third"), "w3")
+    last <- session$userData$custom_messages[[length(session$userData$custom_messages)]]$message$card
+    expect_match(last$html_content, "third", fixed = TRUE)
+  })
+})
