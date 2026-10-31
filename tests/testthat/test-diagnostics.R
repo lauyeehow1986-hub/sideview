@@ -151,6 +151,9 @@ test_that("the JS twin gives the same diagnostics as R", {
   js <- run_pipeline_js("out = P.describeDiagnostics({relationship: 'one-to-many', match_rate_x: 0.975,
     rows: {left_join: 1240}}, 'left_join', 'patients');")
   expect_identical(js, "1:m · 98% of patients matched · 1,240 rows")
+  # a check that could not run is its message, not a half-empty line
+  js <- run_pipeline_js("out = P.describeDiagnostics({error: 'Not in labs: nope'}, 'left_join', 'labs');")
+  expect_identical(js, "Not in labs: nope")
 })
 
 test_that("the server answers join_diagnostics_request on the full data", {
@@ -594,5 +597,118 @@ test_that("rule labels and problems are the same in R and the browser", {
   }
   for (i in seq_along(labels)) {
     expect_identical(js$labs[[i]], sv_join_rule_label(labels[[i]]$rule, labels[[i]]$kind), label = paste("label", i))
+  }
+})
+
+# ---- the date rule over the wire (sideview 0.4.0) --------------------------------
+
+diag_msgs <- function(session, type) {
+  Filter(function(m) identical(m$type, type), session$userData$custom_messages)
+}
+
+test_that("the server answers a join_diagnostics_request that carries a date rule", {
+  t <- rule_tables("Date", 3)
+  cards <- list(sv_normalize(t$x, name = "labs"), sv_normalize(t$y, name = "meds"))
+  rule <- list(shape = "window", xCol = "xd", yCol = "yd", from = -7, to = 7)
+  expected <- sv_join_diagnostics(t$x, t$y, by = c(id = "id"), x_name = "labs", y_name = "meds", rule = rule)
+  shiny::testServer(sideview_server(cards), {
+    session$setInputs(join_diagnostics_request = list(
+      id = "r1", left = "labs", right = "meds",
+      by = list(list(left = "id", right = "id")),
+      # Shiny can hand scalars over as length-1 lists
+      rule = list(shape = "window", xCol = "xd", yCol = list("yd"), from = list(-7), to = 7)
+    ))
+    m <- diag_msgs(session, "sideview_join_diagnostics")
+    expect_length(m, 1)
+    msg <- m[[1]]$message
+    expect_null(msg$error)
+    expect_identical(msg$id, "r1")
+    expect_equal(msg$rule_dropped_x, expected$rule_dropped_x)
+    expect_equal(msg$rule_dropped_y, expected$rule_dropped_y)
+    expect_identical(msg$rule_kind, "Date")
+    expect_equal(msg$rule$from, -7)
+    expect_identical(msg$strict_args$left_join$relationship, expected$strict_args$left_join$relationship)
+    expect_true(nzchar(msg$strict_args$left_join$relationship))
+
+    # a nearest-match rule with inclusive as a logical
+    session$setInputs(join_diagnostics_request = list(
+      id = "r2", left = "labs", right = "meds",
+      by = list(list(left = "id", right = "id")),
+      rule = list(shape = "before", xCol = "xd", yCol = "yd", inclusive = FALSE)
+    ))
+    m <- diag_msgs(session, "sideview_join_diagnostics")
+    expect_null(m[[2]]$message$error)
+    expect_identical(m[[2]]$message$rule$inclusive, FALSE)
+  })
+})
+
+test_that("a rule naming a missing column answers like a missing key", {
+  t <- rule_tables("Date", 3)
+  cards <- list(sv_normalize(t$x, name = "labs"), sv_normalize(t$y, name = "meds"))
+  shiny::testServer(sideview_server(cards), {
+    session$setInputs(join_diagnostics_request = list(
+      id = "r3", left = "labs", right = "meds",
+      by = list(list(left = "id", right = "id")),
+      rule = list(shape = "window", xCol = "nope", yCol = "yd", from = -7, to = 7)
+    ))
+    m <- diag_msgs(session, "sideview_join_diagnostics")
+    expect_identical(m[[1]]$message$error, "Not in labs: nope")
+    expect_identical(m[[1]]$message$id, "r3")
+
+    session$setInputs(join_diagnostics_request = list(
+      id = "r4", left = "labs", right = "meds",
+      by = list(list(left = "id", right = "id")),
+      rule = list(shape = "between", xCol = "xd", yFrom = "ys", yTo = "gone")
+    ))
+    m <- diag_msgs(session, "sideview_join_diagnostics")
+    expect_identical(m[[2]]$message$error, "Not in meds: gone")
+
+    # a rule that does not hold (a text column) is R's message, with no half-empty result
+    session$setInputs(join_diagnostics_request = list(
+      id = "r5", left = "labs", right = "meds",
+      by = list(list(left = "id", right = "id")),
+      rule = list(shape = "window", xCol = "xd", yCol = "yd", from = -7, to = 7000)
+    ))
+    m <- diag_msgs(session, "sideview_join_diagnostics")
+    expect_match(m[[3]]$message$error, "whole numbers")
+    expect_null(m[[3]]$message$n_x)
+  })
+})
+
+test_that("a lazy duckdb card answers a rule request like the data frame", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("DBI")
+  gc()
+  t <- rule_tables("Date", 5)
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(suppressWarnings(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE)))
+  DBI::dbWriteTable(con, "lx", t$x)
+  DBI::dbWriteTable(con, "ly", t$y)
+  lazy <- list(sv_normalize(dplyr::tbl(con, "lx"), name = "labs"), sv_normalize(dplyr::tbl(con, "ly"), name = "meds"))
+  mem <- list(sv_normalize(t$x, name = "labs"), sv_normalize(t$y, name = "meds"))
+  ask <- function(cards, rule) {
+    out <- NULL
+    shiny::testServer(sideview_server(cards), {
+      session$setInputs(join_diagnostics_request = list(
+        id = "z", left = "labs", right = "meds",
+        by = list(list(left = "id", right = "id")), rule = rule
+      ))
+      out <<- diag_msgs(session, "sideview_join_diagnostics")[[1]]$message
+    })
+    out
+  }
+  for (rule in list(
+    list(shape = "window", xCol = "xd", yCol = "yd", from = -7, to = 7),
+    list(shape = "before", xCol = "xd", yCol = "yd", inclusive = TRUE),
+    list(shape = "overlaps", xFrom = "xd", xTo = "xe", yFrom = "ys", yTo = "ye")
+  )) {
+    a <- ask(lazy, rule)
+    b <- ask(mem, rule)
+    expect_null(a$error)
+    expect_false(is.null(a$rule_dropped_x))
+    # the unmatched samples are row tags that depend on the backend's order; the counts are the reply
+    for (k in c("unmatched_x", "unmatched_y", "hints")) { a[[k]] <- NULL; b[[k]] <- NULL }
+    expect_equal(a, b, tolerance = 1e-12)
   }
 })

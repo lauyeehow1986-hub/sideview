@@ -205,3 +205,15 @@ sv_join_strict_args <- function(core, n_x, n_y, rule = NULL) {
 
 utils::globalVariables(c(".sv_k", ".sv_rx", ".sv_ry", ".sv_xa", ".sv_xb", ".sv_ya", ".sv_yb",
                          "between", "overlaps", "closest"))
+
+# A rule as Shiny hands it over (a list whose scalars may be length-1 lists; numbers are doubles,
+# `inclusive` a logical) -> the plain rule list the checks take. NULL for no rule.
+sv_rule_from_shiny <- function(rule) {
+  if (is.null(rule) || !length(rule)) return(NULL)
+  scalar <- function(v) {
+    if (is.list(v)) v <- unlist(v, use.names = FALSE)
+    if (length(v) == 1L) v else NULL
+  }
+  out <- lapply(rule, scalar)
+  out[!vapply(out, is.null, logical(1))]
+}

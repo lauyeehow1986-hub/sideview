@@ -301,16 +301,24 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     right_cols <- vapply(by, function(p) as.character(p$right), character(1))
     cx <- cards_by_name[[req$left]] %||% cards_by_id[[req$left]]
     cy <- cards_by_name[[req$right]] %||% cards_by_id[[req$right]]
+    rule <- sv_rule_from_shiny(req$rule)
+    # the rule's columns must exist too, with the same message as a missing key
+    if (!is.null(rule)) {
+      for (s in sv_rule_slots(rule$shape)) {
+        if (sv_rule_slot_side(s) == "x") left_cols <- c(left_cols, rule[[s]])
+        else right_cols <- c(right_cols, rule[[s]])
+      }
+    }
     result <- tryCatch({
       if (is.null(cx) || !is.data.frame(cx$data) || is.null(cy) || !is.data.frame(cy$data)) {
         stop("Join diagnostics need both tables as data frames.", call. = FALSE)
       }
       # a missing key is the same error for the preview and the whole table
-      miss_x <- setdiff(left_cols, names(cx$data))
-      miss_y <- setdiff(right_cols, names(cy$data))
+      miss_x <- unique(setdiff(left_cols, names(cx$data)))
+      miss_y <- unique(setdiff(right_cols, names(cy$data)))
       if (length(miss_x)) stop(sprintf("Not in %s: %s", req$left, paste(miss_x, collapse = ", ")), call. = FALSE)
       if (length(miss_y)) stop(sprintf("Not in %s: %s", req$right, paste(miss_y, collapse = ", ")), call. = FALSE)
-      by_cols <- stats::setNames(right_cols, left_cols)
+      by_cols <- stats::setNames(right_cols[seq_along(by)], left_cols[seq_along(by)])
       sv_join_diagnostics_json(lazy_or_preview(
         list(cx, cy),
         function() {
@@ -324,10 +332,12 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
           }
           sv_lazy_join_diagnostics(
             side(cx, cy), side(cy, cx),
-            by = by_cols, x_name = req$left, y_name = req$right, con_env = con_env
+            by = by_cols, x_name = req$left, y_name = req$right, con_env = con_env,
+            rule = rule
           )
         },
-        function() sv_join_diagnostics(cx$data, cy$data, by = by_cols, x_name = req$left, y_name = req$right)
+        function() sv_join_diagnostics(cx$data, cy$data, by = by_cols, x_name = req$left, y_name = req$right,
+                                        rule = rule)
       ))
     }, error = function(e) list(error = conditionMessage(e)))
     result$id <- req$id

@@ -2864,7 +2864,12 @@ function sendToShiny(name, value) {
     var meta = {};
     this.cards.forEach(function (c) {
       var d = (c.element && c.element.dataset) || {};
-      meta[c.name] = { lazy: d.lazy || null, codeRef: d.codeRef || null };
+      var vt = c.virtualTable || (c.element && c.element._virtualTable);
+      meta[c.name] = {
+        lazy: d.lazy || null, codeRef: d.codeRef || null,
+        // R class names; setTables maps them to kinds (Date, date-time, numeric, ...) for the date-rule check
+        kinds: (vt && vt.colTypes) || {}
+      };
     });
     this.pipeline.setTables(meta);
   };
@@ -3721,7 +3726,8 @@ function sendToShiny(name, value) {
   // the htmlwidget holds the full data and computes it in the browser.
 
   SideviewEngine.prototype.joinDiagSig = function (s) {
-    return JSON.stringify([s.table, s.right, (s.by || []).map(function (p) { return [p.left, p.right]; })]);
+    // the pipeline's signature: tables, key pairs and the date rule
+    return this.pipeline.joinSig(s);
   };
 
   SideviewEngine.prototype.joinDiagFor = function (s) {
@@ -3732,6 +3738,7 @@ function sendToShiny(name, value) {
       id: sig, left: s.table, right: s.right,
       by: (s.by || []).map(function (p) { return { left: p.left, right: p.right }; })
     };
+    if (s.rule) req.rule = JSON.parse(JSON.stringify(s.rule));
     if (this.options.mode !== 'embedded' && typeof global.Shiny !== 'undefined') {
       this.joinDiagPending[sig] = true;
       this.requestJoinDiag(req, 0);
@@ -3739,7 +3746,9 @@ function sendToShiny(name, value) {
     }
     var d = this.localJoinDiagnostics(req);
     d.id = sig;
+    // stored first: setJoinCheck re-renders the pipeline, which reads this cache
     this.joinDiag[sig] = d;
+    this.pipeline.setJoinCheck(sig, d.error ? null : d.strict_args || null);
     this.announceJoinDiag(d, s);
     return d;
   };
@@ -3775,21 +3784,42 @@ function sendToShiny(name, value) {
   };
 
   SideviewEngine.prototype.localJoinDiagnostics = function (req) {
-    var x = this.cardColumns(req.left, req.by.map(function (p) { return p.left; }));
-    var y = this.cardColumns(req.right, req.by.map(function (p) { return p.right; }));
+    var colsX = req.by.map(function (p) { return p.left; });
+    var colsY = req.by.map(function (p) { return p.right; });
+    // a date rule needs its columns' values and types too
+    var rule = req.rule || null;
+    if (rule) {
+      global.SideviewPipeline.ruleSlots(rule.shape).forEach(function (sl) {
+        var col = rule[sl.slot];
+        var list = sl.side === 'x' ? colsX : colsY;
+        if (typeof col === 'string' && list.indexOf(col) < 0) list.push(col);
+      });
+    }
+    var x = this.cardColumns(req.left, colsX);
+    var y = this.cardColumns(req.right, colsY);
     if (x.error || y.error) return { error: x.error || y.error };
     return global.SideviewPipeline.joinDiagnostics(x.cols, y.cols, req.by, {
-      xName: req.left, yName: req.right, xTypes: x.types, yTypes: y.types
+      xName: req.left, yName: req.right, xTypes: x.types, yTypes: y.types, rule: rule
     });
   };
 
   SideviewEngine.prototype.onJoinDiagnostics = function (data) {
     if (!data || !data.id) return;
     delete this.joinDiagPending[data.id];
+    // a check that could not run (a missing column, a rule that does not hold) is an error state:
+    // the message, no counts, and nothing for Strict to use
+    if (data.error) {
+      this.joinDiag[data.id] = { id: data.id, error: String(data.error) };
+      this.pipeline.setJoinCheck(data.id, null);
+      this.renderPipeline();
+      this.renderJoinCheck();
+      return;
+    }
     ['by', 'unmatched_x', 'unmatched_y', 'type_issues', 'warnings', 'hints'].forEach(function (k) {
       data[k] = asArray(data[k]);
     });
     this.joinDiag[data.id] = data;
+    this.pipeline.setJoinCheck(data.id, data.strict_args || null);
     var step = this.pipeline.steps.filter(function (s) { return s.kind === 'join'; })
       .filter(function (s) { return this.joinDiagSig(s) === data.id; }, this)[0];
     this.announceJoinDiag(data, step);

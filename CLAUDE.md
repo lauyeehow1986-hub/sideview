@@ -62,7 +62,13 @@ rstudio bridge: R/rstudio.R
 - **Join diagnostics:** `sv_join_diagnostics()` (R/diagnostics.R) and `SideviewPipeline.joinDiagnostics()`
   (sv-pipeline.js) are twins with the same snake_case fields; `test-diagnostics.R` checks parity and that row
   counts equal dplyr (NA matches NA, as `na_matches = "na"`). The gadget asks R (`join_diagnostics_request`,
-  full data); the widget computes in the browser. Change both together.
+  full data); the widget computes in the browser. Change both together. The date-rule check is a third twin:
+  `sv_join_diagnostics(rule =)` (R/join_rules.R), `sv_lazy_join_diagnostics(rule =)` (R/lazy.R) and
+  `joinDiagnostics(..., { rule })` (sv-pipeline.js) agree with dplyr's `join_by()`; a rule that does not hold
+  gives `{error}` with none of the usual fields, and the engine shows that as the key-check error state.
+  `join_diagnostics_request` is `{id, left, right, by, rule?}` (`id` = `pipeline.joinSig()`; a rule column missing
+  from a table answers `Not in <table>: <col>` like a key); the reply adds `rule`, `rule_kind`, `rule_dropped_x/y`
+  and `strict_args`, which the engine hands to `pipeline.setJoinCheck(id, strict_args)` for Strict.
 - **Column inspector / codebook:** same twin rule. `sv_column_profile()` / `sv_codebook()` (R/codebook.R) and
   `SideviewPipeline.columnProfile()` / `codebookRow()` / `codebookCsv()` (sv-pipeline.js); `test-codebook.R`
   checks the fields, the issue texts and that the JS CSV is byte-equal to `write.csv(sv_codebook(...))`.

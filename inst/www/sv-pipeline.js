@@ -1139,6 +1139,8 @@
 
   /** One-line summary of a diagnostics result for a join step. */
   function describeDiagnostics(d, type, xName) {
+    // a check that could not run (a missing column, a rule that does not hold) has no counts
+    if (d && d.error) return String(d.error);
     var rows = d.rows[type || 'left_join'];
     var rel = { 'one-to-one': '1:1', 'one-to-many': '1:m', 'many-to-one': 'm:1', 'many-to-many': 'm:m' }[d.relationship] ||
       d.relationship;
