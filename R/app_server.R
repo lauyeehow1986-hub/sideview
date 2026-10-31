@@ -302,11 +302,14 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     cx <- cards_by_name[[req$left]] %||% cards_by_id[[req$left]]
     cy <- cards_by_name[[req$right]] %||% cards_by_id[[req$right]]
     rule <- sv_rule_from_shiny(req$rule)
-    # the rule's columns must exist too, with the same message as a missing key
-    if (!is.null(rule)) {
+    # the rule's columns must exist too, with the same message as a missing key; a malformed
+    # rule (no shape, a non-text column) is left for the rule check to word
+    if (!is.null(rule) && is.character(rule$shape) && length(rule$shape) == 1L) {
       for (s in sv_rule_slots(rule$shape)) {
-        if (sv_rule_slot_side(s) == "x") left_cols <- c(left_cols, rule[[s]])
-        else right_cols <- c(right_cols, rule[[s]])
+        col <- rule[[s]]
+        if (!is.character(col) || length(col) != 1L || is.na(col)) next
+        if (sv_rule_slot_side(s) == "x") left_cols <- c(left_cols, col)
+        else right_cols <- c(right_cols, col)
       }
     }
     result <- tryCatch({

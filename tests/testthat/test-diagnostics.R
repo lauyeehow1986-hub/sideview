@@ -675,6 +675,27 @@ test_that("a rule naming a missing column answers like a missing key", {
   })
 })
 
+test_that("a malformed rule answers with an error, never an observer error", {
+  t <- rule_tables("Date", 3)
+  cards <- list(sv_normalize(t$x, name = "labs"), sv_normalize(t$y, name = "meds"))
+  shiny::testServer(sideview_server(cards), {
+    send <- function(id, rule) {
+      session$setInputs(join_diagnostics_request = list(
+        id = id, left = "labs", right = "meds",
+        by = list(list(left = "id", right = "id")), rule = rule))
+      diag_msgs(session, "sideview_join_diagnostics")
+    }
+    m <- send("m1", list(xCol = "xd", yCol = "yd", from = -7, to = 7))
+    expect_match(m[[1]]$message$error, "Unknown date rule")
+    expect_identical(m[[1]]$message$id, "m1")
+    m <- send("m2", list(shape = "window", xCol = 5, yCol = "yd", from = -7, to = 7))
+    expect_type(m[[2]]$message$error, "character")
+    expect_null(m[[2]]$message$n_x)
+    m <- send("m3", list(shape = c("window", "before"), xCol = "xd", yCol = "yd"))
+    expect_type(m[[3]]$message$error, "character")
+  })
+})
+
 test_that("a lazy duckdb card answers a rule request like the data frame", {
   skip_if_not_installed("duckdb")
   skip_if_not_installed("dbplyr")
