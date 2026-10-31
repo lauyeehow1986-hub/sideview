@@ -100,13 +100,15 @@ sv_find_tables <- function(env = parent.frame()) {
 #' Date rules on joins (the calendar button on a join step) give the same rows
 #' in R, in the saved widget and on duckdb/arrow cards, with these exceptions:
 #' \itemize{
-#'   \item The saved widget counts a window of days in the browser, as
-#'     wall-clock time. Date-times that cross a daylight-saving change can differ
-#'     by an hour from R, which adds the days to the instant.
-#'   \item duckdb date-time rule checks assume a UTC session. With the ICU
-#'     extension and a non-UTC `TimeZone` setting, a boundary can move.
-#'   \item A rule check on a duckdb card may leave temporary `dbplyr_*` tables
-#'     on your connection until it closes.
+#'   \item The saved widget drops fractions of a second from date-times, so a
+#'     boundary that falls inside a second can differ from R.
+#'   \item The generated duckdb code for a date-time window uses the session
+#'     time zone when the ICU extension is loaded. With a non-UTC `TimeZone`
+#'     setting, a boundary can move.
+#'   \item Running the code in R on a mixed arrow/data-frame and duckdb chain
+#'     may leave temporary `dbplyr_*` tables on your connection until it closes.
+#'   \item sideview writes `na_matches = "never"` on every rule join (dplyr's
+#'     default would match `NA` to `NA`).
 #' }
 #'
 #' @section Keyboard and navigation:

@@ -3661,7 +3661,6 @@ function sendToShiny(name, value) {
   ];
   var RULE_PICK_KINDS = { 'Date': 1, 'date-time': 1, 'numeric': 1 };
   var STRICT_TITLE = 'Add relationship and unmatched checks from the join check';
-  var STRICT_LAZY_TITLE = 'Strict runs in R only: duckdb rejects relationship and unmatched, and arrow ignores them';
   var NEAREST_TOAST = 'Nearest-match rules need a left, inner, semi or anti join: switched to left join.';
 
   function isNearestShape(shape) { return shape === 'before' || shape === 'after'; }
@@ -3689,10 +3688,11 @@ function sendToShiny(name, value) {
       (bad ? ' is-invalid' : '') + '" data-step-action="rule" aria-label="Date rule" title="Date rule" aria-expanded="' +
       (open ? 'true' : 'false') + '">' + icon('calendar') +
       (bad ? '<span class="sideview-step-rule-label is-invalid">Rule needs fixing</span>' : '') + '</button>';
-    var lazy = !!(p.lazyKind(s.table) || p.lazyKind(s.right));
+    // Strict is greyed (and keeps its flag) where the join check's arguments would not hold
+    var applies = p.strictApplies(s);
     var strict = '<label class="sideview-step-strict-label"><input type="checkbox" class="sideview-step-strict"' +
       (s.strict ? ' checked' : '') +
-      (lazy ? ' disabled title="' + STRICT_LAZY_TITLE + '"' : ' title="' + STRICT_TITLE + '"') +
+      (applies.ok ? ' title="' + STRICT_TITLE + '"' : ' disabled title="' + escapeHtml(applies.reason) + '"') +
       ' aria-label="Strict" /> Strict</label>';
     return '<div class="sideview-step-joinopts">' + sel + btn + strict + '</div>';
   };
@@ -3934,7 +3934,7 @@ function sendToShiny(name, value) {
       } else {
         list.innerHTML = p.steps.map(function (s, i) {
           var on = s.enabled !== false;
-          var label = P.describe(s);
+          var label = p.describe(s);
           var title = s.kind === 'custom' ? String(s.code || '').split('\n')[0] : label;
           var join = '';
           var ruleRow = '';
@@ -4043,7 +4043,7 @@ function sendToShiny(name, value) {
     for (var k = 0; k < cols.length; k++) {
       var c = cols[k];
       var idx = vt.colNames.indexOf(c);
-      if (idx < 0) return { error: 'Column ' + c + ' is not in ' + name + '.' };
+      if (idx < 0) return { error: 'Not in ' + name + ': ' + c };
       var vals = new Array(vt.totalRows);
       for (var i = 0; i < vt.totalRows; i++) vals[i] = vt.getCellValue(i, c, idx);
       out[c] = vals;
@@ -4221,6 +4221,8 @@ function sendToShiny(name, value) {
   SideviewEngine.prototype.strictLine = function (d, s) {
     var fmt = global.SideviewPipeline.fmtN;
     if (s.type === 'semi_join' || s.type === 'anti_join') return 'Strict does not apply to semi and anti joins.';
+    var applies = this.pipeline.strictApplies(s);
+    if (!applies.ok) return applies.reason;
     var entry = d.strict_args && d.strict_args[s.type];
     if (!entry) return 'Strict needs at least one match.';
     var text = 'Strict would write: relationship = "' + entry.relationship + '"';

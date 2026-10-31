@@ -780,12 +780,15 @@ test_that("lazy rule joins return the in-memory rows", {
   withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
   for (nm in names(tabs)) DBI::dbWriteTable(con, nm, tabs[[nm]])
   jf <- list(left_join = dplyr::left_join, inner_join = dplyr::inner_join,
-             semi_join = dplyr::semi_join, anti_join = dplyr::anti_join)
+             semi_join = dplyr::semi_join, anti_join = dplyr::anti_join,
+             right_join = dplyr::right_join, full_join = dplyr::full_join)
   refs <- rule_refs(tabs)
   specs <- rule_specs()
   cases <- list()
   for (combo in lazy_rule_combos) for (nm in names(specs)) for (type in names(jf)) {
     sp <- specs[[nm]]
+    # a nearest match keeps the left rows only: no right or full join
+    if (type %in% c("right_join", "full_join") && grepl("^(before|after)", nm)) next
     cases[[length(cases) + 1]] <- list(label = paste(nm, type, paste(combo, collapse = "x")), name = nm,
                                        type = type, left = sp[[1]], right = sp[[2]], rule = sp[[3]],
                                        lazy = lazy_rule_map(sp[[1]], sp[[2]], combo),
@@ -1071,4 +1074,150 @@ test_that("a strict join fails when the data change", {
   # a lab with no patient: unmatched = "error" stops the left join
   lost <- new_env(tabs$patients[-4, ], tabs$labs)
   for (cd in code) expect_error(eval(parse(text = cd), envir = lost), "unmatched|match")
+})
+
+# ---- Strict only on a join on the original tables ----------------------------------------------
+
+# An environment for running composed code on the Strict fixtures.
+strict_env <- function(...) {
+  env <- list2env(list(...), parent = globalenv())
+  env$`%>%` <- dplyr::`%>%`
+  env
+}
+
+test_that("strict writes nothing after a step that changes the rows, and the code still runs", {
+  tabs <- strict_tables()
+  extra <- data.frame(id = 1:4, grp = c("a", "b", "a", "b"))
+  args_labs <- strict_args_json(tabs$patients, tabs$labs)
+  args_extra <- strict_args_json(tabs$patients, extra)
+  expect_identical(args_labs$left_join$relationship, "one-to-many")
+  expect_identical(args_extra$left_join$relationship, "one-to-one")
+  late <- "pdate > as.Date('2024-01-12')"
+
+  # Each case: steps = list of list(op, ...); a Strict join carries `strict` and the check args.
+  cases <- list(
+    # a filter first: it drops patient 1, whose labs the check saw matched
+    list(label = "filter, strict join", expect_args = FALSE,
+         steps = list(list(op = "filter", table = "patients", cond = late),
+                      list(op = "join", right = "labs", strict = TRUE, args = args_labs))),
+    # a 1:m join first: patients now repeat, so a one-to-one check no longer holds
+    list(label = "join, strict join", expect_args = FALSE,
+         steps = list(list(op = "join", right = "labs"),
+                      list(op = "join", right = "extra", strict = TRUE, args = args_extra))),
+    # the right side has steps of its own
+    list(label = "strict join, right has a filter", expect_args = FALSE,
+         steps = list(list(op = "filter", table = "labs", cond = "lval > 1"),
+                      list(op = "join", right = "labs", strict = TRUE, args = args_labs))),
+    # a Strict join that is first still writes the arguments, and a step after it does not matter
+    list(label = "strict join first", expect_args = TRUE,
+         steps = list(list(op = "join", right = "labs", strict = TRUE, args = args_labs))),
+    list(label = "strict join, filter after", expect_args = TRUE,
+         steps = list(list(op = "join", right = "labs", strict = TRUE, args = args_labs),
+                      list(op = "filter", table = "patients", cond = late))),
+    # steps that keep the rows (arrange, mutate) or are switched off do not count
+    list(label = "arrange and mutate before", expect_args = TRUE,
+         steps = list(list(op = "arrange", table = "patients"),
+                      list(op = "mutate", table = "patients"),
+                      list(op = "join", right = "labs", strict = TRUE, args = args_labs))),
+    list(label = "disabled filter before", expect_args = TRUE,
+         steps = list(list(op = "filter", table = "patients", cond = late, enabled = FALSE),
+                      list(op = "join", right = "labs", strict = TRUE, args = args_labs)))
+  )
+  json <- jsonlite::toJSON(cases, auto_unbox = TRUE, null = "null")
+  res <- run_pipeline_js(sprintf("
+    const cases = %s;
+    out = cases.map(c => {
+      const p = new P.Pipeline({pipe: '%%>%%'});
+      p.setTables({patients: {kinds: {pdate: 'Date'}}, labs: {kinds: {ldate: 'Date'}}, extra: {kinds: {}}});
+      let strictId = null;
+      c.steps.forEach(s => {
+        if (s.op === 'filter') {
+          p.add({kind: 'filter', table: s.table, conds: [s.cond], combine: 'and', enabled: s.enabled !== false}, 'filter');
+        } else if (s.op === 'arrange') {
+          p.add({kind: 'arrange', table: s.table, cols: [{col: 'id'}]}, 'arrange');
+        } else if (s.op === 'mutate') {
+          p.add({kind: 'mutate', table: s.table, name: 'k', expr: 'id * 2'}, 'mutate');
+        } else {
+          p.addJoinKey('patients', s.right, 'id', 'id', 'left_join');
+          const st = p.steps[p.steps.length - 1];
+          if (s.strict) {
+            p.setJoinStrict(st.id, true);
+            p.setJoinCheck(p.joinSig(p.find(st.id)), s.args);
+            strictId = st.id;
+          }
+        }
+      });
+      const code = p.compose();
+      const step = strictId ? p.find(strictId) : null;
+      return {code: code, applies: step ? p.strictApplies(step) : null, kept: step ? step.strict === true : null};
+    });
+  ", json))
+  for (i in seq_along(cases)) {
+    cs <- cases[[i]]
+    r <- res[[i]]
+    expect_parses(r$code, cs$label)
+    expect_identical(grepl("relationship =", r$code, fixed = TRUE), cs$expect_args, label = cs$label)
+    expect_identical(r$applies$ok, cs$expect_args, label = cs$label)
+    # the flag is kept even where nothing is written
+    expect_true(r$kept, label = cs$label)
+    if (!cs$expect_args) {
+      expect_match(r$applies$reason, "Strict applies only to a join on the original tables", label = cs$label)
+    }
+    # the code runs on the unchanged data
+    env <- strict_env(patients = tabs$patients, labs = tabs$labs, extra = extra)
+    got <- tryCatch(eval(parse(text = r$code), envir = env), error = function(e) {
+      fail(paste0(cs$label, ": ", conditionMessage(e), "\n", r$code)); NULL
+    })
+    expect_false(is.null(got), label = cs$label)
+  }
+  expect_match(res[[1]]$applies$reason, "an earlier step changes the rows", fixed = TRUE)
+  expect_match(res[[3]]$applies$reason, "labs has steps of its own", fixed = TRUE)
+})
+
+test_that("a lazy chain gives Strict no arguments and says why", {
+  res <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.addJoinKey('a', 'b', 'id', 'id', 'left_join');
+    p.setTables({a: {kinds: {}}, b: {lazy: 'duckdb', codeRef: 'dplyr::tbl(con, \"b\")', kinds: {}}});
+    out = p.strictApplies(p.steps[0]);
+  ")
+  expect_false(res$ok)
+  expect_match(res$reason, "Strict runs in R only", fixed = TRUE)
+})
+
+test_that("strict with a rule runs on the data the check saw", {
+  tabs <- strict_tables()
+  rules <- list(
+    before = list(shape = "before", xCol = "pdate", yCol = "ldate", inclusive = TRUE),
+    window = list(shape = "window", xCol = "pdate", yCol = "ldate", from = -7, to = 7)
+  )
+  refs <- list(
+    before = function(j) j(tabs$patients, tabs$labs,
+      by = dplyr::join_by(id, closest(pdate >= ldate)), na_matches = "never"),
+    window = function(j) tabs$patients |>
+      dplyr::mutate(.sv_lo = pdate - 7, .sv_hi = pdate + 7) |>
+      j(tabs$labs, by = dplyr::join_by(id, between(y$ldate, x$.sv_lo, x$.sv_hi)), na_matches = "never") |>
+      dplyr::select(-.sv_lo, -.sv_hi)
+  )
+  jf <- list(left_join = dplyr::left_join, inner_join = dplyr::inner_join)
+  cases <- list()
+  for (nm in names(rules)) for (type in names(jf)) for (pipe in c("%>%", "|>")) {
+    cases[[length(cases) + 1]] <- list(label = paste(nm, type, pipe), name = nm, type = type, pipe = pipe,
+                                       rule = rules[[nm]],
+                                       args = strict_args_json(tabs$patients, tabs$labs, rule = rules[[nm]]))
+  }
+  code <- compose_strict_cases(cases)
+  for (i in seq_along(cases)) {
+    cs <- cases[[i]]
+    expect_parses(code[[i]], cs$label)
+    # Strict is on: the checked arguments are in the join
+    expect_match(code[[i]], 'relationship = "', fixed = TRUE, label = cs$label)
+    got <- tryCatch(eval(parse(text = code[[i]]), envir = strict_env(patients = tabs$patients, labs = tabs$labs)),
+                    error = function(e) {
+                      fail(paste0(cs$label, ": ", conditionMessage(e), "\n", code[[i]])); NULL
+                    })
+    if (is.null(got)) next
+    want <- refs[[cs$name]](jf[[cs$type]])
+    expect_equal(nrow(got), nrow(want), label = cs$label)
+  }
 })

@@ -18,19 +18,24 @@ columns (`.sv_lo`, `.sv_hi`) that it drops again.
 * **Strict** (a checkbox on the join step) adds `relationship = ` and
   `unmatched = ` arguments taken from the join check, so the join stops with
   dplyr's own error if the data changes under it. Strict is R-only for duckdb
-  and arrow tables.
-* **Under a rule, `na_matches = "never"`.** A key that is `NA` never matches
-  another `NA`, as in dplyr's inequality joins, so the key check counts them
-  the same way when a rule is set.
+  and arrow tables. The check looks at the two original tables, so Strict
+  applies only to a join on them: when an earlier step on the left table
+  changes its rows (a filter, another join, a summary, a pivot), or the right
+  table has steps of its own, the checkbox is greyed with the reason, keeps its
+  setting, and the code is the plain join.
+* **Under a rule, `na_matches = "never"`.** sideview writes
+  `na_matches = "never"` on every rule join (dplyr's default would match `NA`
+  to `NA`), so a key that is `NA` never matches another `NA` and the key check
+  counts them the same way when a rule is set.
 * **Saved workspaces** keep the rule and the Strict flag. A workspace saved with
   a rule and opened in a 0.3.x install loses the rule silently (0.3.x ignores
   unknown fields).
-* **Known differences.** In the saved widget a window of days is computed on the
-  browser's clock, so date-times that cross a daylight-saving change can differ
-  by an hour from R. For duckdb date-time rule checks the session time zone
-  should be UTC (an ICU or non-UTC `TimeZone` setting can move a boundary).
-  A rule check on a duckdb card may leave temporary `dbplyr_*` tables on your
-  connection until it closes.
+* **Known differences.** The saved widget drops fractions of a second from
+  date-times, so a boundary that falls inside a second can differ from R. The
+  generated duckdb code for a date-time window uses the session time zone when
+  the ICU extension is loaded, so with a non-UTC `TimeZone` setting a boundary
+  can move. Running the code in R on a mixed arrow/data-frame and duckdb chain
+  may leave temporary `dbplyr_*` tables on your connection until it closes.
 * **lubridate for duckdb date-time windows.** On a duckdb table, the code for a
   window on a date-time column writes `lubridate::days()`, so run it with
   lubridate installed (it is in Suggests; Date and numeric windows do not need it).

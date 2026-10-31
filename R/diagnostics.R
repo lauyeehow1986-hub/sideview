@@ -169,10 +169,8 @@ print.sv_join_diagnostics <- function(x, ...) {
   cat("  rows after join:", paste(sprintf("%s %s", sub("_join$", "", names(x$rows)),
                                            vapply(x$rows, fmt_n, character(1))), collapse = " | "), "\n")
   if (!is.null(x$rule)) {
-    cat("  rule: ", sv_join_rule_label(x$rule, x$rule_kind), "
-", sep = "")
-    cat(sprintf("  dropped by the rule: %s x rows, %s y rows
-", fmt_n(x$rule_dropped_x), fmt_n(x$rule_dropped_y)))
+    cat("  rule: ", sv_join_rule_label(x$rule, x$rule_kind), "\n", sep = "")
+    cat(sprintf("  dropped by the rule: %s x rows, %s y rows\n", fmt_n(x$rule_dropped_x), fmt_n(x$rule_dropped_y)))
   }
   if (length(x$unmatched_x)) cat("  unmatched in x:", paste(x$unmatched_x, collapse = "; "), "\n")
   if (length(x$unmatched_y)) cat("  unmatched in y:", paste(x$unmatched_y, collapse = "; "), "\n")

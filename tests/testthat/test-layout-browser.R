@@ -906,6 +906,17 @@ test_that("the saved widget checks join keys in the browser without R", {
   expect_identical(r$d$relationship, want$relationship)
   expect_equal(unlist(r$d$rows), unlist(want$rows))
   expect_match(r$diag, "1:m", fixed = TRUE)
+  # a column that is not in a table reads as it does in the gadget: Not in <table>: <col>
+  miss <- sv_js(b, "(() => {
+    const eng = document.querySelector('.sideview-container')._sideviewInstance;
+    return {
+      key: eng.localJoinDiagnostics({ left: 'patients', right: 'visits', by: [{ left: 'patient_id', right: 'nope' }] }).error,
+      rule: eng.localJoinDiagnostics({ left: 'patients', right: 'visits', by: [{ left: 'patient_id', right: 'pid' }],
+        rule: { shape: 'before', xCol: 'patient_id', yCol: 'nope', inclusive: true } }).error
+    };
+  })()")
+  expect_identical(miss$key, "Not in visits: nope")
+  expect_identical(miss$rule, "Not in visits: nope")
   expect_length(attr(b, "sv_errors")(), 0)
 })
 
@@ -1656,5 +1667,34 @@ test_that("a window rule edits from the join step and shows in code and panel", 
   expect_identical(txt, sprintf("%s visits rows / %s labs rows",
                                 formatC(want$rule_dropped_x, big.mark = ",", format = "d"),
                                 formatC(want$rule_dropped_y, big.mark = ",", format = "d")))
+
+  # Strict: a filter before the join greys the box with the reason (in the step and in the panel),
+  # a real click on it changes nothing; without the filter a real click turns Strict on
+  expect_false(is.null(want$strict_args$left_join))
+  join_strict <- "!!window._sideviewInstance.pipeline.steps.find(s => s.kind === 'join').strict"
+  sv_js(b, "(() => { const e = window._sideviewInstance;
+    const f = e.pipeline.add({ kind: 'filter', table: 'visits', conds: ['id > 1'], combine: 'and' }, 'filter');
+    e.pipeline.move(f.id, -1); window._svFilterId = f.id; return true; })()")
+  expect_true(wait_for("document.querySelector('.sideview-step-strict').disabled"))
+  reason <- "Strict applies only to a join on the original tables: an earlier step changes the rows"
+  # a new step brings the Pipeline tab forward; the panel is drawn when its tab opens
+  m$click(centre('.sideview-drawer-tab[data-tab="discrepancy"]'))
+  expect_true(wait_for("!!document.querySelector('.sideview-joincheck-strict')"))
+  g <- sv_js(b, "({ title: document.querySelector('.sideview-step-strict').title,
+                    line: document.querySelector('.sideview-joincheck-strict').textContent })")
+  expect_identical(g$title, reason)
+  expect_identical(g$line, reason)
+  m$click(centre('.sideview-drawer-tab[data-tab="pipeline"]'))
+  expect_true(wait_for("document.querySelector('.sideview-step-strict').offsetParent !== null"))
+  m$click(centre(".sideview-step-strict"))
+  Sys.sleep(0.4)
+  expect_false(isTRUE(sv_js(b, join_strict)))
+  sv_js(b, "window._sideviewInstance.pipeline.remove(window._svFilterId)")
+  expect_true(wait_for("!document.querySelector('.sideview-step-strict').disabled"))
+  m$click(centre(".sideview-step-strict"))
+  expect_true(wait_for(join_strict))
+  code <- sv_js(b, "document.querySelector('.sideview-code-text').closest('pre').textContent")
+  expect_match(code, 'relationship = "', fixed = TRUE)
+  expect_no_error(parse(text = code))
   expect_length(attr(b, "sv_errors")(), 0)
 })

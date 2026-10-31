@@ -348,7 +348,8 @@
           }
           var tx = ctx && ctx.tables && ctx.tables[step.table];
           var kx = tx && tx.kinds ? tx.kinds[step.rule.xCol || step.rule.xFrom] : null;
-          return text + ' · ' + ruleLabel(step.rule, kx);
+          var rl = ruleLabel(step.rule, kx);
+          return rl ? text + ' · ' + rl : text;
         }
         return text;
       }
@@ -597,6 +598,39 @@
     return this.steps.filter(function (s) { return s.enabled !== false; }).length;
   };
 
+  // Steps that change which rows a chain holds (or that run code of their own). arrange, rename,
+  // mutate and recode keep the rows, so a Strict join after them still sees the checked data.
+  var ROW_CHANGING = { join: 1, filter: 1, summarise: 1, reshape: 1, custom: 1 };
+  var STRICT_LAZY_REASON = 'Strict runs in R only: duckdb rejects relationship and unmatched, and arrow ignores them';
+
+  /**
+   * Whether Strict may write relationship / unmatched into a join step: { ok, reason }.
+   * The join check looks at the two original tables, so the arguments are only valid when this join
+   * is the first row-changing step on its left table's chain, the right side is the raw table (not
+   * a chain of its own) and the chain runs in R. compose() and the UI both ask here.
+   */
+  Pipeline.prototype.strictApplies = function (step) {
+    if (!step || step.kind !== 'join') return { ok: false, reason: 'Strict applies to joins only.' };
+    if (this.lazyKind(step.table) || this.lazyKind(step.right)) return { ok: false, reason: STRICT_LAZY_REASON };
+    var steps = this.steps.filter(function (x) { return x.enabled !== false; });
+    var at = steps.indexOf(step);
+    if (at < 0) {
+      for (var i = 0; i < steps.length; i++) if (steps[i].id !== undefined && steps[i].id === step.id) { at = i; break; }
+    }
+    var earlier = at < 0 ? [] : steps.slice(0, at);
+    var changed = earlier.some(function (x) { return x.table === step.table && ROW_CHANGING[x.kind]; });
+    if (changed) {
+      return { ok: false, reason: 'Strict applies only to a join on the original tables: an earlier step changes the rows' };
+    }
+    var prepared = step.right !== step.table && steps.some(function (x) {
+      return x.table === step.right && x.kind !== 'custom';
+    });
+    if (prepared) {
+      return { ok: false, reason: 'Strict applies only to a join on the original tables: ' + step.right + ' has steps of its own' };
+    }
+    return { ok: true, reason: '' };
+  };
+
   /** Compose the enabled steps into one R script ('' when there is nothing). */
   // Known limit: a factor column holding NA segfaults duckdb 1.4.x when an arrow table is scanned through it.
   Pipeline.prototype.compose = function () {
@@ -718,8 +752,9 @@
             };
           }
           // Strict: the join check's arguments for this join type, when the chain is in memory here
-          // (kind is null after any move above) and a rule, if any, holds.
-          if (s.strict && !kind && (!s.rule || hasRule)) {
+          // (kind is null after any move above), the join is on the checked tables (strictApplies)
+          // and a rule, if any, holds.
+          if (s.strict && !kind && (!s.rule || hasRule) && self.strictApplies(s).ok) {
             var chk = self.checks[self.joinSig(s)];
             var jt = JOIN_TYPES.indexOf(s.type) >= 0 ? s.type : 'left_join';
             var sa = chk && Object.prototype.hasOwnProperty.call(chk, jt) ? chk[jt] : null;

@@ -69,6 +69,7 @@ rstudio bridge: R/rstudio.R
   `join_diagnostics_request` is `{id, left, right, by, rule?}` (`id` = `pipeline.joinSig()`; a rule column missing
   from a table answers `Not in <table>: <col>` like a key); the reply adds `rule`, `rule_kind`, `rule_dropped_x/y`
   and `strict_args`, which the engine hands to `pipeline.setJoinCheck(id, strict_args)` for Strict.
+- **Strict applicability:** the join check runs on the two original cards, so `relationship =` / `unmatched =` are written only where that check still holds. `Pipeline.strictApplies(step)` (sv-pipeline.js) returns `{ok, reason}`: not ok when a card is lazy, when an earlier enabled filter, join, summarise, pivot or custom step is on the left table's chain, or when the right table has steps of its own. `compose()`, the Strict checkbox (`joinOptionsHtml`: disabled, title = reason) and `strictLine()` all ask it; the step keeps its `strict` flag. Do not duplicate the test.
 - **Join check cache:** a path that replaces a card's data (none exists today) must call `clearJoinChecks()` and reset `joinDiag`, or stale checks (and rule drops) stay on screen.
 - **Column inspector / codebook:** same twin rule. `sv_column_profile()` / `sv_codebook()` (R/codebook.R) and
   `SideviewPipeline.columnProfile()` / `codebookRow()` / `codebookCsv()` (sv-pipeline.js); `test-codebook.R`

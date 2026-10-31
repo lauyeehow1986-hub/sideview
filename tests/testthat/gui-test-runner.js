@@ -860,6 +860,8 @@ function runAllScenarios() {
   const s8_fixLabel = s8_li().querySelector('.sideview-step-rule').querySelector('.is-invalid');
   const s8_needsFix = s8_li().textContent.indexOf('Rule needs fixing') >= 0 && !!s8_fixLabel &&
     s8_fixLabel.textContent === 'Rule needs fixing';
+  // the step's own label (its title; the mock DOM has no nested text) says so, from the pipeline's tables
+  const s8_labelFix = s8_li().querySelector('.sideview-step-text').getAttribute('title').indexOf(' · Rule needs fixing') >= 0;
 
   // Strict is off on a lazy chain, with the reason
   engine.pipeline.setTables(Object.assign(s8_tables('Date'), {
@@ -867,6 +869,21 @@ function runAllScenarios() {
   }));
   const s8_lazyDisabled = s8_strictBox().hasAttribute('disabled') && s8_strictBox().getAttribute('title') ===
     'Strict runs in R only: duckdb rejects relationship and unmatched, and arrow ignores them';
+
+  // Strict is greyed, with the reason, when an earlier step changes the rows of the left table;
+  // it keeps its flag, and is enabled again once the step is gone
+  engine.pipeline.setTables(s8_tables('Date'));
+  const s8_strictFree = !s8_strictBox().hasAttribute('disabled');
+  engine.pipeline.setJoinStrict(s8_id, true);
+  const s8_filterStep = engine.pipeline.add({
+    kind: 'filter', table: 'patients', conds: ['age > 45'], combine: 'and'
+  }, 'filter');
+  engine.pipeline.move(s8_filterStep.id, -1);
+  const s8_rowsGrey = s8_strictBox().hasAttribute('disabled') && s8_strictBox().getAttribute('title') ===
+    'Strict applies only to a join on the original tables: an earlier step changes the rows' &&
+    s8_cur().strict === true;
+  engine.pipeline.remove(s8_filterStep.id);
+  const s8_strictBack = !s8_strictBox().hasAttribute('disabled');
 
   // The ? list names the new use of Ctrl+Enter
   engine.toggleShortcuts(true);
@@ -905,6 +922,10 @@ function runAllScenarios() {
     rule_ok_label_absent: s8_okLabel,
     rule_needs_fixing: s8_needsFix,
     strict_disabled_on_lazy: s8_lazyDisabled,
+    step_label_says_rule_needs_fixing: s8_labelFix,
+    strict_enabled_on_original_tables: s8_strictFree,
+    strict_disabled_after_row_changing_step: s8_rowsGrey,
+    strict_enabled_again: s8_strictBack,
     shortcut_listed: s8_listed
   };
 
@@ -971,11 +992,21 @@ function runAllScenarios() {
     rows: { left_join: 40, right_join: 3, inner_join: 40, full_join: 43, semi_join: 40, anti_join: 0 } });
   const s9_plainClean = s9_tPlain.indexOf('Dropped by the rule') < 0 && s9_tPlain.indexOf('rule:') < 0 &&
     s9_tPlain.indexOf('Unknown for right and full joins') < 0;
+  // A filter before the join: the panel says why Strict writes nothing instead of what it would write
+  const s9_filterStep = engine.pipeline.add({
+    kind: 'filter', table: 'visits', conds: ['TRUE'], combine: 'and'
+  }, 'filter');
+  engine.pipeline.move(s9_filterStep.id, -1);
+  const s9_tFilter = s9_show({}, 'left_join');
+  const s9_filterReason = s9_tFilter.indexOf(
+    'Strict applies only to a join on the original tables: an earlier step changes the rows') >= 0 &&
+    s9_tFilter.indexOf('Strict would write') < 0;
   engine.joinDiag = {};
   engine.pipeline.clear();
   engine.pipeline.setTables({});
 
   results.scenario9 = {
+    strict_reason_after_row_changing_step: s9_filterReason,
     title_names_rule: s9_titleRule,
     dropped_row: s9_dropped,
     dropped_row_title: s9_dropTitle,
