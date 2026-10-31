@@ -126,7 +126,8 @@ and only summaries and row windows come back into R. The table is never
 collected. Without duckdb, or when the link to a table is lost, the card
 says "First 50 of N rows" and the checks use the preview.</p>
 <p>Generated code stays lazy and ends in one <code>collect()</code>. Known differences
-from an in-memory card:</p><ul><li><p>"Contains" on a number matches its text; for doubles duckdb writes
+from an in-memory card:</p><ul><li><p>"Contains" on a number matches its text. The grid filter drops a
+trailing <code>.0</code>, but in generated code duckdb writes a double as
 <code>"130.0"</code> where R writes <code>"130"</code>, and float noise or scientific
 notation can differ. The generated filter is a literal match,
 <code>stringr::str_detect(col, "&lt;escaped literal&gt;")</code>.</p></li>
@@ -146,6 +147,21 @@ character first.</p></li>
 </ul><p>If <strong>Run in R</strong> fails on a lazy pipeline, the message suggests moving
 <code>collect()</code> above the step that needs R.</p>
     </div>
+    <div class="section level2">
+    <h2 id="known-differences">Known differences<a class="anchor" aria-label="anchor" href="#known-differences"></a></h2>
+
+
+<p>Date rules on joins (the calendar button on a join step) give the same rows
+in R, in the saved widget and on duckdb/arrow cards, with these exceptions:</p><ul><li><p>The saved widget drops fractions of a second from date-times, so a
+boundary that falls inside a second can differ from R.</p></li>
+<li><p>The generated duckdb code for a date-time window uses the session
+time zone when the ICU extension is loaded. With a non-UTC <code>TimeZone</code>
+setting, a boundary can move.</p></li>
+<li><p>Running the code in R on a mixed arrow/data-frame and duckdb chain
+may leave temporary <code>dbplyr_*</code> tables on your connection until it closes.</p></li>
+<li><p>sideview writes <code>na_matches = "never"</code> on every rule join (dplyr's
+default would match <code>NA</code> to <code>NA</code>).</p></li>
+</ul></div>
     <div class="section level2">
     <h2 id="keyboard-and-navigation">Keyboard and navigation<a class="anchor" aria-label="anchor" href="#keyboard-and-navigation"></a></h2>
 

@@ -120,6 +120,21 @@ rows they would match.</li>
 and can add an automatic clean-up step.</p>
 </div>
 <div class="section level2">
+<h2 id="join-on-a-date-window">Join on a date window<a class="anchor" aria-label="anchor" href="#join-on-a-date-window"></a>
+</h2>
+<p>Visits and labs rarely share an exact date. Open the
+<strong>Pipeline</strong> tab and click the calendar button on the join
+step, then choose <strong>Window</strong> and type <code>-7</code> and
+<code>7</code> to match labs within a week of the visit
+(<strong>Between</strong>, <strong>Nearest before</strong>,
+<strong>Nearest after</strong> and <strong>Overlaps</strong> are there
+too). Press <code>Ctrl+Enter</code> or <strong>Apply</strong>. The code
+gains the <code>join_by()</code> rule, and the join check adds a
+<strong>Dropped by the rule</strong> line for rows that match on the key
+but not the date. Tick <strong>Strict</strong> to add dplyr’s
+<code>relationship</code> and <code>unmatched</code> checks.</p>
+</div>
+<div class="section level2">
 <h2 id="sort-and-filter-from-the-header">Sort and filter from the header<a class="anchor" aria-label="anchor" href="#sort-and-filter-from-the-header"></a>
 </h2>
 <div class="float">
@@ -198,7 +213,8 @@ table.</p>
 move <code>collect()</code> above it.</p>
 <p>Known differences from an in-memory table:</p>
 <ul>
-<li>“Contains” on a number matches its text. A double is
+<li>“Contains” on a number matches its text. The grid filter drops a
+trailing <code>.0</code>, but in generated code a double is
 <code>"130.0"</code> in duckdb and <code>"130"</code> in R, and float
 noise or scientific notation can differ. The filter is a literal match,
 <code>stringr::str_detect(col, "&lt;escaped literal&gt;")</code>.</li>

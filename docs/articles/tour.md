@@ -53,6 +53,17 @@ screen:
 The **Discrepancy** tab also lists near-matching values and can add an
 automatic clean-up step.
 
+## Join on a date window
+
+Visits and labs rarely share an exact date. Open the **Pipeline** tab
+and click the calendar button on the join step, then choose **Window**
+and type `-7` and `7` to match labs within a week of the visit
+(**Between**, **Nearest before**, **Nearest after** and **Overlaps** are
+there too). Press `Ctrl+Enter` or **Apply**. The code gains the
+`join_by()` rule, and the join check adds a **Dropped by the rule** line
+for rows that match on the key but not the date. Tick **Strict** to add
+dplyr’s `relationship` and `unmatched` checks.
+
 ## Sort and filter from the header
 
 ![Filter popover on the age column set to greater than
@@ -123,9 +134,10 @@ above it.
 
 Known differences from an in-memory table:
 
-- “Contains” on a number matches its text. A double is `"130.0"` in
-  duckdb and `"130"` in R, and float noise or scientific notation can
-  differ. The filter is a literal match,
+- “Contains” on a number matches its text. The grid filter drops a
+  trailing `.0`, but in generated code a double is `"130.0"` in duckdb
+  and `"130"` in R, and float noise or scientific notation can differ.
+  The filter is a literal match,
   `stringr::str_detect(col, "<escaped literal>")`.
 - A POSIXct value at exactly midnight, and `-0`, can print differently.
 - Join keys of different types compare as text, and double keys compare

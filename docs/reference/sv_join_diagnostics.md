@@ -11,7 +11,15 @@ matches `NA`.
 ## Usage
 
 ``` r
-sv_join_diagnostics(x, y, by, sample_n = 5L, x_name = "x", y_name = "y")
+sv_join_diagnostics(
+  x,
+  y,
+  by,
+  sample_n = 5L,
+  x_name = "x",
+  y_name = "y",
+  rule = NULL
+)
 ```
 
 ## Arguments
@@ -38,6 +46,17 @@ sv_join_diagnostics(x, y, by, sample_n = 5L, x_name = "x", y_name = "y")
 
   Table names used in messages.
 
+- rule:
+
+  Optional date rule for the join, a list with the fields of a join
+  step's rule: `shape` (`"between"`, `"window"`, `"before"`, `"after"`
+  or `"overlaps"`) and its columns (`xCol`, `yCol`, `yFrom`, `yTo`,
+  `xFrom`, `xTo`), a window's whole-number `from` and `to` (days, -3650
+  to 3650) and, for `"before"`/`"after"`, `inclusive`. The check then
+  counts the rows the rule keeps, with `na_matches = "never"`: under a
+  rule a missing key matches nothing. A rule that does not hold (see the
+  message) is an error.
+
 ## Value
 
 An object of class `sv_join_diagnostics`: a list with `by` (data frame
@@ -47,8 +66,19 @@ of `x`/`y` columns), `n_x`, `n_y`, `distinct_x`, `distinct_y`,
 key), `dup_keys_x`, `dup_keys_y` (keys that occur more than once),
 `relationship`, `rows` (named list of row counts per join type),
 `unmatched_x`, `unmatched_y` (sample keys), `type_issues`, `hints` (list
-of `fix`, `label`, `extra_x`, `extra_y`), `warnings` and `status`
-(`"ok"`, `"warn"` or `"error"`).
+of `fix`, `label`, `extra_x`, `extra_y`), `strict_args`, `warnings` and
+`status` (`"ok"`, `"warn"` or `"error"`).
+
+`strict_args` is a named list with an entry per join type (`left_join`,
+`inner_join`, `right_join`, `full_join`) holding the arguments a Strict
+join writes (`relationship`, and `unmatched = "error"` when every row of
+the checked side has a partner); an entry is absent when Strict would
+write nothing for that type (no matches; right and full joins under a
+nearest-match rule). With a `rule` the result also has `rule`,
+`rule_kind` (the kind of the rule's first `x` column), `rule_dropped_x`
+and `rule_dropped_y` (rows that have a key partner but no pair that
+satisfies the rule), and `rows$right_join` / `rows$full_join` are `NA`
+under a nearest-match rule.
 
 ## Details
 
@@ -67,7 +97,10 @@ and a data frame is registered temporarily; both are removed afterwards.
 Known differences from the in-memory check: keys of different types are
 compared as text, double keys are compared exactly, and an in-memory
 POSIXct key is compared as text where a database key is compared as an
-instant.
+instant. A date rule runs in duckdb too; its date-time columns are
+compared as UTC instants (taken with `epoch_us()`, so the session
+`TimeZone` and the ICU extension play no part), and a date-time window
+adds whole days of 24 hours, as the in-memory check does.
 
 ## Examples
 

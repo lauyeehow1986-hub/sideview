@@ -38,6 +38,10 @@ Install the development version from GitHub:
     show match rates both ways, unmatched keys, 1:1 / 1:m / m:m
     relationships, rows per join type, and NA, spacing or case problems
     in keys.
+- **Date-Window Joins**: Click the calendar on a join step to join on a
+  date rule (a window of days, between, nearest before or after,
+  overlaps). The join check shows the rows the rule dropped, and
+  **Strict** adds dplyr’s `relationship` and `unmatched` checks.
 - **Composable Pipeline**: Every sort, filter, join, rename, recode,
   mutate, reshape or summarise becomes a step you can toggle, reorder or
   delete, with undo/redo and a `%>%` / `|>` choice. Sorts and filters

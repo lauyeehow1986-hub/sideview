@@ -100,7 +100,8 @@ the card says "First 50 of N rows" and the checks use the preview.
 Generated code stays lazy and ends in one `collect()`. Known differences
 from an in-memory card:
 
-- "Contains" on a number matches its text; for doubles duckdb writes
+- "Contains" on a number matches its text. The grid filter drops a
+  trailing `.0`, but in generated code duckdb writes a double as
   `"130.0"` where R writes `"130"`, and float noise or scientific
   notation can differ. The generated filter is a literal match,
   `stringr::str_detect(col, "<escaped literal>")`.
@@ -130,6 +131,25 @@ from an in-memory card:
 
 If **Run in R** fails on a lazy pipeline, the message suggests moving
 `collect()` above the step that needs R.
+
+## Known differences
+
+Date rules on joins (the calendar button on a join step) give the same
+rows in R, in the saved widget and on duckdb/arrow cards, with these
+exceptions:
+
+- The saved widget drops fractions of a second from date-times, so a
+  boundary that falls inside a second can differ from R.
+
+- The generated duckdb code for a date-time window uses the session time
+  zone when the ICU extension is loaded. With a non-UTC `TimeZone`
+  setting, a boundary can move.
+
+- Running the code in R on a mixed arrow/data-frame and duckdb chain may
+  leave temporary `dbplyr_*` tables on your connection until it closes.
+
+- sideview writes `na_matches = "never"` on every rule join (dplyr's
+  default would match `NA` to `NA`).
 
 ## Keyboard and navigation
 

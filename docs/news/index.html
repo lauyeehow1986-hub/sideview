@@ -35,6 +35,22 @@
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.4.0" id="sideview-040-development">sideview 0.4.0 (development)<a class="anchor" aria-label="anchor" href="#sideview-040-development"></a></h2>
 <div class="section level3">
+<h3 id="date-window-joins-0-4-0">Date-window joins<a class="anchor" aria-label="anchor" href="#date-window-joins-0-4-0"></a></h3>
+<p>A join step can carry a <strong>date rule</strong>, so “labs within 7 days of the visit” is a join and not a hand-written filter. Click the calendar button on a join step to open the rule row. The shapes are <strong>Between</strong> (a date inside the other table’s start and end), <strong>Window</strong> (within a number of days before and after), <strong>Nearest before</strong>, <strong>Nearest after</strong> and <strong>Overlaps</strong>. Date, date-time and numeric columns work. The code uses <code>join_by()</code> and, for a window, two helper columns (<code>.sv_lo</code>, <code>.sv_hi</code>) that it drops again.</p>
+<ul><li>
+<strong>The join check knows the rule.</strong> The panel shows the rule and the rows it dropped (“Dropped by the rule”: rows that match on the key but not the rule), and the counts equal what dplyr returns. <code><a href="../reference/sv_join_diagnostics.html">sv_join_diagnostics()</a></code> has a new <code>rule</code> argument, and the gadget, the saved widget and duckdb/arrow cards all agree.</li>
+<li>
+<strong>Strict</strong> (a checkbox on the join step) adds <code>relationship =</code> and <code>unmatched =</code> arguments taken from the join check, so the join stops with dplyr’s own error if the data changes under it. Strict is R-only for duckdb and arrow tables. The check looks at the two original tables, so Strict applies only to a join on them: when an earlier step on the left table changes its rows (a filter, another join, a summary, a pivot), or the right table has steps of its own, the checkbox is greyed with the reason, keeps its setting, and the code is the plain join.</li>
+<li>
+<strong>Under a rule, <code>na_matches = "never"</code>.</strong> sideview writes <code>na_matches = "never"</code> on every rule join (dplyr’s default would match <code>NA</code> to <code>NA</code>), so a key that is <code>NA</code> never matches another <code>NA</code> and the key check counts them the same way when a rule is set.</li>
+<li>
+<strong>Saved workspaces</strong> keep the rule and the Strict flag. A workspace saved with a rule and opened in a 0.3.x install loses the rule silently (0.3.x ignores unknown fields).</li>
+<li>
+<strong>Known differences.</strong> The saved widget drops fractions of a second from date-times, so a boundary that falls inside a second can differ from R. The generated duckdb code for a date-time window uses the session time zone when the ICU extension is loaded, so with a non-UTC <code>TimeZone</code> setting a boundary can move. Running the code in R on a mixed arrow/data-frame and duckdb chain may leave temporary <code>dbplyr_*</code> tables on your connection until it closes.</li>
+<li>
+<strong>lubridate for duckdb date-time windows.</strong> On a duckdb table, the code for a window on a date-time column writes <code><a href="https://lubridate.tidyverse.org/reference/period.html" class="external-link">lubridate::days()</a></code>, so run it with lubridate installed (it is in Suggests; Date and numeric windows do not need it).</li>
+</ul></div>
+<div class="section level3">
 <h3 id="big-tables-full-data-for-arrow-and-duckdb-cards-0-4-0">Big tables: full data for arrow and duckdb cards<a class="anchor" aria-label="anchor" href="#big-tables-full-data-for-arrow-and-duckdb-cards-0-4-0"></a></h3>
 <p>Arrow tables, datasets and queries and duckdb tables (<code><a href="https://dplyr.tidyverse.org/reference/tbl.html" class="external-link">dplyr::tbl()</a></code>) used to keep only their first 50 rows, so a sort, a join check or a codebook looked complete when it was not. They now use the whole table.</p>
 <ul><li>
@@ -47,10 +63,17 @@
 <strong>The canvas says what it used.</strong> Without duckdb, or when the link to a table is lost, the card header reads “First 50 of N rows” and the checks say “Based on the first 50 rows”. A toast explains a lost link, and a codebook shows its progress (“Profiling visits_db: column 40 of 200”).</li>
 <li>
 <strong>Generated code stays lazy</strong> and ends in one <code>collect()</code>. Joins across duckdb, arrow and data frames are written so they run, a “contains” filter is <code>stringr::str_detect(col, "&lt;escaped literal&gt;")</code> (stringr is in Suggests), and a reshape on arrow collects first. If <strong>Run in R</strong> fails, the message adds “This step may need data in R: move collect() above it.”</li>
-<li>Auto Map, the Discrepancy tab’s value comparison and the copilot’s schema summary still use the preview (the copilot is told the true row count). Nothing is sent to the model but the schema.</li>
+<li>Auto Map, the Discrepancy tab’s value comparison and the copilot’s schema summary still use the preview (the copilot is told the true row count). Auto Map suggestions and the discrepancy summary say so (“Based on the first 50 rows”), and so does the auto-clean button. Nothing is sent to the model but the schema.</li>
+<li>Fixed: the gadget toolbar now has the <strong>Auto Map</strong> button (R answered the request, but there was no button). The saved widget drops it, since it needs R. When nothing is found, a toast says “No suggested joins found”.</li>
+<li>Fixed: with duckdb 2.0, a <code>&gt;</code>, <code>&gt;=</code>, <code>&lt;</code>, <code>&lt;=</code> or <code>=</code> filter on an Arrow date-time column with a time zone matched no rows. duckdb 2.0 turns that comparison into a filter inside the Arrow scan, which loses every row.</li>
 <li>Fixed: a BIGINT column (what duckdb gives <code>count()</code> and <code><a href="https://rdrr.io/r/base/range.html" class="external-link">range()</a></code>) made the lazy join check, filters and “contains” fail.</li>
+<li>Fixed: an Arrow factor sorts by its levels, not its text, and keeps its class and its time zones in the gadget’s inspector and codebook.</li>
+<li>Fixed: a filter value that is not a valid value for the column (<code>"yes"</code> on a logical, <code>"abc"</code> on a date) matches no rows, as on a data frame, instead of failing.</li>
+<li>Fixed: card headers and printed cards write counts as <code>200,000</code>, not <code>200000</code> or <code>2e+05</code>; a widget codebook gives a lazy card’s true row count as <code>n</code>.</li>
+<li>Fixed: a duckdb table whose name holds <code>"</code> or <code>\</code> gets code that parses; a saved state never holds a card’s lazy table.</li>
+<li>Sorted and scrolled windows on a big table are faster: duckdb returns only the rows shown (a sorted window of 5,000,000 rows takes under 0.3 s).</li>
 </ul><p>Known differences from an in-memory card:</p>
-<ul><li>“Contains” on a number matches its text. For doubles duckdb writes <code>"130.0"</code> where R writes <code>"130"</code>, and float noise or scientific notation can differ.</li>
+<ul><li>“Contains” on a number matches its text. The grid filter drops a trailing <code>.0</code>, but in generated code duckdb writes a double as <code>"130.0"</code> where R writes <code>"130"</code>, and float noise or scientific notation can differ.</li>
 <li>A POSIXct value at exactly midnight, and <code>-0</code>, can print differently.</li>
 <li>Join keys of different types compare as text; double keys compare exactly; an in-memory POSIXct key is compared as text where a database key is compared as an instant.</li>
 <li>Arrow time-zone offsets are computed for 1900 to 2100, so local times outside that range may be off. duckdb <code>TIMESTAMPTZ</code> columns show in UTC. duckdb ordered factors report class <code>"factor"</code>.</li>

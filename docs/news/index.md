@@ -2,6 +2,52 @@
 
 ## sideview 0.4.0 (development)
 
+### Date-window joins
+
+A join step can carry a **date rule**, so “labs within 7 days of the
+visit” is a join and not a hand-written filter. Click the calendar
+button on a join step to open the rule row. The shapes are **Between**
+(a date inside the other table’s start and end), **Window** (within a
+number of days before and after), **Nearest before**, **Nearest after**
+and **Overlaps**. Date, date-time and numeric columns work. The code
+uses `join_by()` and, for a window, two helper columns (`.sv_lo`,
+`.sv_hi`) that it drops again.
+
+- **The join check knows the rule.** The panel shows the rule and the
+  rows it dropped (“Dropped by the rule”: rows that match on the key but
+  not the rule), and the counts equal what dplyr returns.
+  [`sv_join_diagnostics()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_join_diagnostics.md)
+  has a new `rule` argument, and the gadget, the saved widget and
+  duckdb/arrow cards all agree.
+- **Strict** (a checkbox on the join step) adds `relationship =` and
+  `unmatched =` arguments taken from the join check, so the join stops
+  with dplyr’s own error if the data changes under it. Strict is R-only
+  for duckdb and arrow tables. The check looks at the two original
+  tables, so Strict applies only to a join on them: when an earlier step
+  on the left table changes its rows (a filter, another join, a summary,
+  a pivot), or the right table has steps of its own, the checkbox is
+  greyed with the reason, keeps its setting, and the code is the plain
+  join.
+- **Under a rule, `na_matches = "never"`.** sideview writes
+  `na_matches = "never"` on every rule join (dplyr’s default would match
+  `NA` to `NA`), so a key that is `NA` never matches another `NA` and
+  the key check counts them the same way when a rule is set.
+- **Saved workspaces** keep the rule and the Strict flag. A workspace
+  saved with a rule and opened in a 0.3.x install loses the rule
+  silently (0.3.x ignores unknown fields).
+- **Known differences.** The saved widget drops fractions of a second
+  from date-times, so a boundary that falls inside a second can differ
+  from R. The generated duckdb code for a date-time window uses the
+  session time zone when the ICU extension is loaded, so with a non-UTC
+  `TimeZone` setting a boundary can move. Running the code in R on a
+  mixed arrow/data-frame and duckdb chain may leave temporary `dbplyr_*`
+  tables on your connection until it closes.
+- **lubridate for duckdb date-time windows.** On a duckdb table, the
+  code for a window on a date-time column writes
+  [`lubridate::days()`](https://lubridate.tidyverse.org/reference/period.html),
+  so run it with lubridate installed (it is in Suggests; Date and
+  numeric windows do not need it).
+
 ### Big tables: full data for arrow and duckdb cards
 
 Arrow tables, datasets and queries and duckdb tables
@@ -37,14 +83,38 @@ looked complete when it was not. They now use the whole table.
   move collect() above it.”
 - Auto Map, the Discrepancy tab’s value comparison and the copilot’s
   schema summary still use the preview (the copilot is told the true row
-  count). Nothing is sent to the model but the schema.
+  count). Auto Map suggestions and the discrepancy summary say so
+  (“Based on the first 50 rows”), and so does the auto-clean button.
+  Nothing is sent to the model but the schema.
+- Fixed: the gadget toolbar now has the **Auto Map** button (R answered
+  the request, but there was no button). The saved widget drops it,
+  since it needs R. When nothing is found, a toast says “No suggested
+  joins found”.
+- Fixed: with duckdb 2.0, a `>`, `>=`, `<`, `<=` or `=` filter on an
+  Arrow date-time column with a time zone matched no rows. duckdb 2.0
+  turns that comparison into a filter inside the Arrow scan, which loses
+  every row.
 - Fixed: a BIGINT column (what duckdb gives `count()` and
   [`range()`](https://rdrr.io/r/base/range.html)) made the lazy join
   check, filters and “contains” fail.
+- Fixed: an Arrow factor sorts by its levels, not its text, and keeps
+  its class and its time zones in the gadget’s inspector and codebook.
+- Fixed: a filter value that is not a valid value for the column
+  (`"yes"` on a logical, `"abc"` on a date) matches no rows, as on a
+  data frame, instead of failing.
+- Fixed: card headers and printed cards write counts as `200,000`, not
+  `200000` or `2e+05`; a widget codebook gives a lazy card’s true row
+  count as `n`.
+- Fixed: a duckdb table whose name holds `"` or `\` gets code that
+  parses; a saved state never holds a card’s lazy table.
+- Sorted and scrolled windows on a big table are faster: duckdb returns
+  only the rows shown (a sorted window of 5,000,000 rows takes under 0.3
+  s).
 
 Known differences from an in-memory card:
 
-- “Contains” on a number matches its text. For doubles duckdb writes
+- “Contains” on a number matches its text. The grid filter drops a
+  trailing `.0`, but in generated code duckdb writes a double as
   `"130.0"` where R writes `"130"`, and float noise or scientific
   notation can differ.
 - A POSIXct value at exactly midnight, and `-0`, can print differently.
