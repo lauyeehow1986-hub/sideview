@@ -74,4 +74,29 @@ save_sideview(sideview_widget(patients, visits), file = "study_overview.html")
 
 To embed the canvas in Quarto or R Markdown, put `sideview_widget(patients, visits, height = "650px")` in a chunk.
 
+## In your own Shiny app
+
+`sideviewUI()` and `sideviewServer()` put an R-backed canvas into any Shiny app, several per page. Sorting, filtering, lazy arrow/duckdb tables, the join check and the column inspector run in R, as in the gadget. The server adds, replaces and removes tables through a proxy and reads back what the user built:
+
+```r
+library(shiny)
+library(sideview)
+
+ui <- fluidPage(
+  actionButton("refresh", "Refresh labs"),
+  sideviewUI("review", height = "560px"),
+  verbatimTextOutput("code")
+)
+server <- function(input, output, session) {
+  px <- sideviewServer("review", cards = list(visits = visits, labs = labs_now()))
+  observeEvent(input$refresh, {
+    sideviewProxy("review") |> sv_replace_card("labs", labs_now()) |> sv_highlight("labs", "lab_date")
+  })
+  output$code <- renderText(px$code())
+}
+shinyApp(ui, server)
+```
+
+A replace keeps the card where it is; steps that name a column the new table lacks are disabled, not deleted, and one toast says so. `px$code()`, `px$pipeline()`, `px$state()` and `px$cards()` are reactives. Insert Script, Run & Exit, Run in R and Run Console are off in a module, because any visitor to a deployed app could forge the code they would run. `$code()` is composed in the browser: treat it as untrusted text to show, save or review, and never `eval()` it unattended. A complete app with two canvases is in `system.file("examples/proxy", package = "sideview")`.
+
 `sideview` is a research and education tool for exploring and preparing data. It is not medical device software and is not intended for clinical decisions.

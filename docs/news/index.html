@@ -35,6 +35,17 @@
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.4.0" id="sideview-040-development">sideview 0.4.0 (development)<a class="anchor" aria-label="anchor" href="#sideview-040-development"></a></h2>
 <div class="section level3">
+<h3 id="shiny-module-and-proxy-0-4-0">Shiny module and proxy<a class="anchor" aria-label="anchor" href="#shiny-module-and-proxy-0-4-0"></a></h3>
+<ul><li>
+<strong><code><a href="../reference/sideviewUI.html">sideviewUI()</a></code> / <code><a href="../reference/sideviewUI.html">sideviewServer()</a></code></strong> put an R-backed canvas into your own Shiny app, several per page. The server returns a proxy with the reactives <code><a href="https://rstudio.github.io/htmltools/reference/builder.html" class="external-link">code()</a></code>, <code>pipeline()</code>, <code>state()</code> and <code>cards()</code>, and <code>sideviewProxy(id)</code> reaches the same canvas from elsewhere in the session. <code>cards =</code> can be a reactive.</li>
+<li>
+<strong>Verbs:</strong> <code><a href="../reference/sv_add_card.html">sv_add_card()</a></code>, <code><a href="../reference/sv_add_card.html">sv_replace_card()</a></code>, <code><a href="../reference/sv_add_card.html">sv_remove_card()</a></code>, <code><a href="../reference/sv_add_card.html">sv_set_state()</a></code> and <code><a href="../reference/sv_add_card.html">sv_highlight()</a></code>, which pipe. A replace keeps the card’s place and size, re-checks the join keys, and <strong>disables, not deletes</strong>, any pipeline step that names a column the new table lacks, with one toast.</li>
+<li>
+<strong>Code execution is off in a module</strong> (Insert Script, Run &amp; Exit, Run in R, Run Console). <code>$code()</code> is composed in the browser: treat it as untrusted text.</li>
+<li>A module takes no AI settings from the browser, and shows the AI bar and the Copilot tab only when <code>llm_fn</code> is given.</li>
+<li>The example app <code>inst/examples/proxy/app.R</code> has two canvases and a button for each verb. The gadget and the widget are unchanged.</li>
+</ul></div>
+<div class="section level3">
 <h3 id="date-window-joins-0-4-0">Date-window joins<a class="anchor" aria-label="anchor" href="#date-window-joins-0-4-0"></a></h3>
 <p>A join step can carry a <strong>date rule</strong>, so “labs within 7 days of the visit” is a join and not a hand-written filter. Click the calendar button on a join step to open the rule row. The shapes are <strong>Between</strong> (a date inside the other table’s start and end), <strong>Window</strong> (within a number of days before and after), <strong>Nearest before</strong>, <strong>Nearest after</strong> and <strong>Overlaps</strong>. Date, date-time and numeric columns work. The code uses <code>join_by()</code> and, for a window, two helper columns (<code>.sv_lo</code>, <code>.sv_hi</code>) that it drops again.</p>
 <ul><li>

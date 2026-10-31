@@ -2,6 +2,35 @@
 
 ## sideview 0.4.0 (development)
 
+### Shiny module and proxy
+
+- **[`sideviewUI()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewUI.md)
+  /
+  [`sideviewServer()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewUI.md)**
+  put an R-backed canvas into your own Shiny app, several per page. The
+  server returns a proxy with the reactives
+  [`code()`](https://rstudio.github.io/htmltools/reference/builder.html),
+  `pipeline()`, `state()` and `cards()`, and `sideviewProxy(id)` reaches
+  the same canvas from elsewhere in the session. `cards =` can be a
+  reactive.
+- **Verbs:**
+  [`sv_add_card()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md),
+  [`sv_replace_card()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md),
+  [`sv_remove_card()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md),
+  [`sv_set_state()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md)
+  and
+  [`sv_highlight()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md),
+  which pipe. A replace keeps the card’s place and size, re-checks the
+  join keys, and **disables, not deletes**, any pipeline step that names
+  a column the new table lacks, with one toast.
+- **Code execution is off in a module** (Insert Script, Run & Exit, Run
+  in R, Run Console). `$code()` is composed in the browser: treat it as
+  untrusted text.
+- A module takes no AI settings from the browser, and shows the AI bar
+  and the Copilot tab only when `llm_fn` is given.
+- The example app `inst/examples/proxy/app.R` has two canvases and a
+  button for each verb. The gadget and the widget are unchanged.
+
 ### Date-window joins
 
 A join step can carry a **date rule**, so “labs within 7 days of the

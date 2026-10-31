@@ -964,6 +964,7 @@ function runAllScenarios() {
   const s9_show = function (over, type) {
     if (type) engine.pipeline.update(s9_id, { type: type });
     engine.joinDiag = {};
+    engine.joinDiagPending[engine.joinDiagSig(s9_step())] = true; // the check the reply answers
     engine.onJoinDiagnostics(s9_reply(over));
     return s9_box().textContent.replace(/&quot;/g, '"');
   };

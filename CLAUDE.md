@@ -18,6 +18,8 @@ sv_normalize() (R/normalize.R)  ->  sideview_card objects
   |-- gadget:  sideview() (R/sideview.R)
   |      sideview_ui()  (R/app_ui.R)   ->  server-rendered HTML cards  ->  sideview.js  initSideview()
   |      sideview_server() (R/app_server.R)  <->  Shiny.setInputValue / sendCustomMessage
+  |-- module:  sideviewUI()/sideviewServer()/sideviewProxy() + sv_add_card() etc. (R/module.R) -> same server impl
+  |      in module mode; mutable card store (R/card_store.R: sv_card_store(), add/replace/remove/get/names)
   |-- widget:  sideview_widget() (R/widget.R)  ->  JSON cards  ->  inst/htmlwidgets/sideview.js
                                                                    -> new Sideview.Engine(el, opts)
 codegen: R/codegen.R (sv_code_* generators)    engine: SideviewEngine + VirtualTable (sideview.js)
@@ -32,18 +34,33 @@ rstudio bridge: R/rstudio.R
   `apply_auto_clean`, `run_ai_prompt`, `send_copilot_chat`, `inject_script`, `send_console`,
   `send_console_and_exit`, `eval_env`, `sideview_card_moved`, `sideview_highlight_changed`,
   `sideview_rows_request`, `join_diagnostics_request`, `column_profile_request`, `codebook_export`,
-  `state_save`, `state_open_request`,
+  `state_save`, `state_open_request`, `sideview_ready` (module: the canvas is on the page, R sends its cards),
+  `sideview_snapshot` (module: `{code, pipeline, state, cards}`, pipeline/state as JSON text, debounced 300 ms),
   `sideview_done`, `sideview_cancel`,
   `cancel` (miniUI dialog close).
 - Custom messages (R → client): `sideview_code_update`, `sideview_discrepancies`,
   `sideview_suggested_mappings`, `sideview_copilot_reply`, `sideview_inject_result`,
   `sideview_console_result`, `sideview_eval_result`, `sideview_rows`, `sideview_ai_status`,
-  `sideview_join_diagnostics`, `sideview_column_profile`, `sideview_codebook_saved`,
+  `sideview_join_diagnostics`, `sideview_column_profile`, `sideview_codebook_saved` (module: carries `csv`, the file text, plus `filename`; the browser downloads it),
   `sideview_state_saved`, `sideview_state_loaded`,
+  `sideview_card_add`, `sideview_card_replace`, `sideview_card_remove`, `sideview_state_set`, `sideview_highlight`,
+  `sideview_llm` (module without `llm_fn`: hide the AI bar and Copilot tab),
   `sideview_toast` (`{text, type, id?, card?}`: a notice from R, e.g. the lazy-to-preview fallback; a toast with the same `id` is updated in place, as for codebook progress; `card` is the id of the card the notice is about: the browser then sets that card's `data-rows-basis` to `preview`, as for a lost link).
 - `sideview_code_update` carries `source`: `event` (echo of a client step; ignored), `auto_clean`
   (appended as a custom step), `copilot` (offered in the chat bubble only), `ai`/absent (replaces the pipeline).
 - Keep this list in sync when adding inputs/messages.
+- **Module routing (`ns`):** every input a module canvas sends is prefixed with the container's `data-sv-ns`
+  (`review-column_mapped`; the gadget's prefix is `""`). Shiny allows one handler per custom message type, so
+  `onMessage()` registers each type once and routes by the `ns` field of the message to the engine registry
+  (`ns` -> engine; no `ns` = the gadget). An unknown `ns` or card gets a `console.warn`. A new R-to-client message
+  must carry `ns` in module mode (`send()` adds it); a new handler goes through `onMessage()`, never
+  `Shiny.addCustomMessageHandler` directly.
+- **Module mode is an untrusted client:** the code-execution inputs (`inject_script`, `send_console`,
+  `send_console_and_exit`, `eval_env`, `sideview_done`, `sideview_cancel`) are refused (handlers not registered)
+  and their buttons not rendered, and the LLM backend, endpoint and key are never taken from the browser (only
+  `llm_fn`). `$code()` is composed in the browser: show, save or review it, never `eval()` it unattended. Clients
+  only name cards in the R store, so a forged input cannot make R read another object. A verb updates the R
+  store first, then tells the browser (queued until `sideview_ready`); verbs return the proxy invisibly.
 - **Lazy (arrow / duckdb) cards:** `new_sideview_card()` keeps the user's object as `source` (plus `code_ref`,
   `is_lazy`, `lazy_source`); `card$data` stays the 50-row preview and `dims[1]` the true row count. **`source` is
   never serialised**: not in widget JSON, state or card attributes (test-lazy.R checks this). All lazy logic is

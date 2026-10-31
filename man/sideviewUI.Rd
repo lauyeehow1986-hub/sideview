@@ -23,10 +23,13 @@ sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL)
 time it fires: new names are added, names that are gone are removed, and names
 still there are replaced unless the table is \code{identical()} to the one on the canvas.}
 
-\item{state}{A saved workspace (a state object or its JSON text) applied once
-after the first cards arrive.}
+\item{state}{A saved workspace applied once after the first cards arrive: a state
+object, or its JSON text (a string whose first non-blank character is an opening curly brace).}
 
-\item{llm_fn}{Function used for the AI bar and the copilot (as for \code{\link[=sideview]{sideview()}}).}
+\item{llm_fn}{Function used for the AI bar and the copilot (as for \code{\link[=sideview]{sideview()}}).
+With none, the server tells the canvas to hide the AI bar and the Copilot tab.
+\code{sideviewUI()} always renders them, so they show for a moment before the first
+message arrives.}
 }
 \value{
 \code{sideviewUI()} returns a \code{shiny.tag.list}. \code{sideviewServer()} returns a
@@ -49,6 +52,13 @@ Console are not rendered, and their inputs are ignored by the server). The
 composed \verb{$code()} is built in the browser: treat it as untrusted text to show,
 save or review, never \code{eval()} it unattended.
 }
+\section{One server per id}{
+
+Calling \code{sideviewServer()} twice with the same \code{id} in one session replaces the
+first canvas's entry in the proxy registry: \code{\link[=sideviewProxy]{sideviewProxy()}} then reaches the
+second. Give each canvas its own id.
+}
+
 \examples{
 if (interactive()) {
   library(shiny)

@@ -78,6 +78,29 @@ Install the development version from GitHub:
 To embed the canvas in Quarto or R Markdown, put
 `sideview_widget(patients, visits, height = "650px")` in a chunk.
 
+## In your own Shiny app
+
+[`sideviewUI()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewUI.md)
+and
+[`sideviewServer()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewUI.md)
+put an R-backed canvas into any Shiny app, several per page. Sorting,
+filtering, lazy arrow/duckdb tables, the join check and the column
+inspector run in R, as in the gadget. The server adds, replaces and
+removes tables through a proxy and reads back what the user built:
+
+[`library`](https://rdrr.io/r/base/library.html)`(`[`shiny`](https://shiny.posit.co/)`)`` `[`library`](https://rdrr.io/r/base/library.html)`(`[`sideview`](https://lauyeehow1986-hub.github.io/sideview/)`)`` `` ``ui`` ``<-`` `[`fluidPage`](https://rdrr.io/pkg/shiny/man/fluidPage.html)`(`` `` `[`actionButton`](https://rdrr.io/pkg/shiny/man/actionButton.html)`(``"refresh"``, ``"Refresh labs"``)``,`` `` `[`sideviewUI`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewUI.md)`(``"review"``, height ``=`` ``"560px"``)``,`` `` `[`verbatimTextOutput`](https://rdrr.io/pkg/shiny/man/textOutput.html)`(``"code"``)`` ``)`` ``server`` ``<-`` ``function``(``input``, ``output``, ``session``)`` ``{`` `` ``px`` ``<-`` `[`sideviewServer`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewUI.md)`(``"review"``, cards ``=`` `[`list`](https://rdrr.io/r/base/list.html)`(``visits ``=`` ``visits``, labs ``=`` ``labs_now``(``)``)``)`` `` `[`observeEvent`](https://rdrr.io/pkg/shiny/man/observeEvent.html)`(``input``$``refresh``, ``{`` `` `[`sideviewProxy`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewProxy.md)`(``"review"``)`` ``|>`` `[`sv_replace_card`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md)`(``"labs"``, ``labs_now``(``)``)`` ``|>`` `[`sv_highlight`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md)`(``"labs"``, ``"lab_date"``)`` `` ``}``)`` `` ``output``$``code`` ``<-`` `[`renderText`](https://rdrr.io/pkg/shiny/man/renderPrint.html)`(``px``$``code``(``)``)`` ``}`` `[`shinyApp`](https://rdrr.io/pkg/shiny/man/shinyApp.html)`(``ui``, ``server``)`
+
+A replace keeps the card where it is; steps that name a column the new
+table lacks are disabled, not deleted, and one toast says so.
+`px$code()`, `px$pipeline()`, `px$state()` and `px$cards()` are
+reactives. Insert Script, Run & Exit, Run in R and Run Console are off
+in a module, because any visitor to a deployed app could forge the code
+they would run. `$code()` is composed in the browser: treat it as
+untrusted text to show, save or review, and never
+[`eval()`](https://rdrr.io/r/base/eval.html) it unattended. A complete
+app with two canvases is in
+`system.file("examples/proxy", package = "sideview")`.
+
 `sideview` is a research and education tool for exploring and preparing
 data. It is not medical device software and is not intended for clinical
 decisions.

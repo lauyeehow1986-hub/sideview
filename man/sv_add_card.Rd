@@ -25,7 +25,8 @@ sv_highlight(proxy, name, cols)
 
 \item{name}{Card name (a single string).}
 
-\item{state}{A state object or its JSON text (e.g. \code{proxy$state()}).}
+\item{state}{A state object or its JSON text (e.g. \code{proxy$state()}); text is recognised
+by its leading curly brace.}
 
 \item{cols}{Column names (a character vector); columns not on the card are ignored.}
 }

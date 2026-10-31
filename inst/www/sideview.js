@@ -1579,6 +1579,7 @@ function sendToShiny(name, value) {
     }
     if (lastActiveEngine === this) lastActiveEngine = null;
     if (this.container._sideviewInstance === this) this.container._sideviewInstance = null;
+    this._destroyed = true;
   };
 
   // ---- theme ------------------------------------------------------------------
@@ -3657,6 +3658,7 @@ function sendToShiny(name, value) {
   // only once the session connects: retry until then.
   SideviewEngine.prototype.sendReady = function (attempt) {
     var self = this;
+    if (this._destroyed) return;
     if (this.send('sideview_ready', { nonce: Date.now() })) return;
     if (attempt >= 120 || !this.container.isConnected) return;
     setTimeout(function () { self.sendReady(attempt + 1); }, 250);
@@ -3676,7 +3678,7 @@ function sendToShiny(name, value) {
 
   /** Module only: send the pipeline, code and workspace to R once changes have settled. */
   SideviewEngine.prototype.scheduleSnapshot = function () {
-    if (typeof this.options.ns !== 'string' || !this._constructed) return;
+    if (typeof this.options.ns !== 'string' || !this._constructed || this._destroyed) return;
     var self = this;
     if (this._snapshotTimer) clearTimeout(this._snapshotTimer);
     this._snapshotTimer = setTimeout(function () {
@@ -4421,6 +4423,8 @@ function sendToShiny(name, value) {
 
   SideviewEngine.prototype.onJoinDiagnostics = function (data) {
     if (!data || !data.id) return;
+    // a reply to a check the engine no longer waits for (the table was replaced meanwhile) is stale
+    if (!this.joinDiagPending[data.id]) return;
     delete this.joinDiagPending[data.id];
     // a check that could not run (a missing column, a rule that does not hold) is an error state:
     // the message, no counts, and nothing for Strict to use
@@ -6000,6 +6004,10 @@ function sendToShiny(name, value) {
       self.pipeline.undoStack = [];
       self.pipeline.redoStack = [];
       if (out.missing.length) self.showToast(stateSummary(out), 'warning');
+    });
+    // A module started without llm_fn: hide the AI bar and the Copilot tab.
+    self.onMessage('sideview_llm', function (data) {
+      self.container.classList.toggle('sv-no-llm', !!data && data.enabled === false);
     });
     self.onMessage('sideview_highlight', function (data) {
       if (data) self.highlightColumns(data.name, data.cols);

@@ -1698,3 +1698,247 @@ test_that("a window rule edits from the join step and shows in code and panel", 
   expect_no_error(parse(text = code))
   expect_length(attr(b, "sv_errors")(), 0)
 })
+
+# ---- Shiny module: the two-canvas example app (inst/examples/proxy/app.R) ---------------------
+# One app and one headless page for the group; each test reloads the page, which starts a new
+# Shiny session, so the tests do not leak state into each other. The canvases are "a-" and "b-".
+
+.sv_module <- new.env()
+
+sv_module_page <- function() {
+  skip_if_no_browser()
+  if (is.null(.sv_module$app)) {
+    .sv_module$app <- sv_start_app(app_file = sv_example_app("proxy"))
+    withr::defer({
+      try(.sv_module$page$close(), silent = TRUE)
+      try(.sv_module$app$proc$kill(), silent = TRUE)
+      .sv_module$app <- NULL
+      .sv_module$page <- NULL
+    }, envir = testthat::teardown_env())
+  }
+  ready_js <- "['a-', 'b-'].every(ns => { const c = document.querySelector('[data-sv-ns=\"' + ns + '\"]');
+    return !!c && c.querySelectorAll('.sideview-card').length >= 2 && !!c._sideviewInstance; })"
+  if (is.null(.sv_module$page)) {
+    .sv_module$page <- sv_open_page(.sv_module$app$url, wait_for = ready_js)
+  } else {
+    b <- .sv_module$page
+    b$Page$navigate(.sv_module$app$url, wait_ = FALSE)
+    b$Page$loadEventFired()
+    ok <- FALSE
+    for (i in 1:80) { ok <- isTRUE(sv_js(b, ready_js)); if (ok) break; Sys.sleep(0.25) }
+    attr(b, "sv_ready") <- ok
+  }
+  b <- .sv_module$page
+  sv_set_viewport(b, 1400, 900)
+  b
+}
+
+# JS helpers for the module tests, scoped to one canvas by its namespace.
+sv_module_js <- "
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const C = ns => document.querySelector('[data-sv-ns=\"' + ns + '\"]');
+  const card = (ns, n) => C(ns).querySelector('.sideview-card[data-card-name=\"' + n + '\"]');
+  const port = (ns, n, col) => card(ns, n).querySelector('.sideview-col-port[data-col-name=\"' + col + '\"]');
+"
+
+# Real-input helpers for a module page: centre of an element (scrolled into view), clicks and polling.
+sv_module_ui <- function(b) {
+  m <- sv_mouse(b)
+  centre <- function(sel) {
+    r <- sv_js(b, sprintf("(() => { const e = document.querySelector(%s); e.scrollIntoView({block: 'center', behavior: 'instant'});
+      const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()",
+      jsonlite::toJSON(sel, auto_unbox = TRUE)))
+    list(x = r$x, y = r$y)
+  }
+  port_centre <- function(ns, n, col) {
+    r <- sv_js(b, paste0("(() => {", sv_module_js, sprintf("
+      const p = port('%s', '%s', '%s'); p.scrollIntoView({block: 'center', behavior: 'instant'});
+      const r = p.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()", ns, n, col)))
+    list(x = r$x, y = r$y)
+  }
+  wait_for <- function(js, tries = 60) {
+    for (i in seq_len(tries)) { if (isTRUE(sv_js(b, js))) return(TRUE); Sys.sleep(0.25) }
+    FALSE
+  }
+  # click a port, glide to the other and click it, as a person would
+  connect <- function(ns, from, to) {
+    p1 <- port_centre(ns, from[1], from[2])
+    m$click(p1)
+    p2 <- port_centre(ns, to[1], to[2])
+    p1 <- port_centre(ns, from[1], from[2])
+    for (t in seq(0.25, 1, by = 0.25)) {
+      b$Input$dispatchMouseEvent(type = "mouseMoved", x = p1$x + (p2$x - p1$x) * t,
+                                 y = p1$y + (p2$y - p1$y) * t, button = "left", clickCount = 0)
+    }
+    m$click(p2)
+    Sys.sleep(0.4)
+  }
+  n_links <- function(ns) sv_js(b, paste0("(() => {", sv_module_js, sprintf(
+    "return C('%s').querySelectorAll('.sideview-connector-path:not(.sideview-connector-draft):not(.sideview-spline-suggested)').length; })()", ns)))
+  list(m = m, centre = centre, port_centre = port_centre, wait_for = wait_for,
+       connect = connect, n_links = n_links)
+}
+
+test_that("module: two canvases start with their cards and no JS errors", {
+  b <- sv_module_page()
+  expect_true(attr(b, "sv_ready"))
+  r <- sv_js(b, paste0("(() => {", sv_module_js, "
+    const names = ns => [...C(ns).querySelectorAll('.sideview-card')].map(c => c.getAttribute('data-card-name')).sort();
+    return { a: names('a-'), b: names('b-'),
+             runBtns: document.querySelectorAll('[data-action=\"inject-script\"], [data-action=\"eval-env\"]').length };
+  })()"))
+  expect_equal(unlist(r$a), c("labs", "visits"))
+  expect_equal(unlist(r$b), c("sites", "visits"))
+  expect_equal(r$runBtns, 0)  # code execution is off in a module
+  # no llm_fn was given: no AI bar and no Copilot tab
+  hidden <- sv_js(b, paste0("(() => {", sv_module_js, "
+    const shown = el => !!el && getComputedStyle(el).display !== 'none';
+    return { bar: shown(C('a-').querySelector('.sideview-ai-bar')), tab: shown(C('a-').querySelector('.sideview-drawer-tab[data-tab=\"chat\"]')) };
+  })()"))
+  expect_false(hidden$bar)
+  expect_false(hidden$tab)
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("module: replace keeps the card's position and splines stay on their ports", {
+  b <- sv_module_page()
+  ui <- sv_module_ui(b)
+  ui$connect("a-", c("visits", "id"), c("labs", "id"))
+  expect_equal(ui$n_links("a-"), 1)
+
+  # position relative to the canvas, so scrolling the page for the click cannot matter
+  rel <- function() sv_js(b, paste0("(() => {", sv_module_js, "
+    const r = card('a-', 'labs').getBoundingClientRect(), c = C('a-').getBoundingClientRect();
+    return { x: r.x - c.x, y: r.y - c.y, w: r.width, h: r.height };
+  })()"))
+  before <- rel()
+  ui$m$click(ui$centre("#replace"))
+  Sys.sleep(1.5)
+  after <- rel()
+  for (k in c("x", "y", "w", "h")) expect_lt(abs(after[[k]] - before[[k]]), 1.01, label = k)
+
+  ends <- sv_js(b, paste0("(() => {", sv_module_js, "
+    const path = C('a-').querySelector('.sideview-connector-path:not(.sideview-connector-draft)');
+    const len = path.getTotalLength(), m = path.getScreenCTM();
+    const pt = p => new DOMPoint(p.x, p.y).matrixTransform(m);
+    const a = pt(path.getPointAtLength(0)), z = pt(path.getPointAtLength(len));
+    const c = el => { const x = el.getBoundingClientRect(); return { x: x.x + x.width / 2, y: x.y + x.height / 2 }; };
+    const c1 = c(port('a-', 'visits', 'id')), c2 = c(port('a-', 'labs', 'id'));
+    const d = (u, v) => Math.hypot(u.x - v.x, u.y - v.y);
+    return { start: Math.min(d(a, c1), d(a, c2)), end: Math.min(d(z, c1), d(z, c2)) };
+  })()"))
+  expect_lt(ends$start, 2)
+  expect_lt(ends$end, 2)
+  expect_equal(ui$n_links("a-"), 1)
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("module: replace that drops a column shows the disabled-step toast", {
+  b <- sv_module_page()
+  ui <- sv_module_ui(b)
+  sv_js(b, paste0("(() => {", sv_module_js, "
+    const e = C('a-')._sideviewInstance;
+    e.pipeline.add({ kind: 'arrange', table: 'labs', cols: [{ col: 'lab_date', desc: false }] }, 'arrange');
+    return true; })()"))
+  ui$m$click(ui$centre("input[name=refresh][value=drop]"))
+  ui$m$click(ui$centre("#replace"))
+  expect_true(ui$wait_for(paste0("(() => {", sv_module_js, "
+    return [...C('a-').querySelectorAll('.sideview-toast')].some(t => /labs refreshed: 1 step disabled \\(lab_date not found\\)/.test(t.textContent)); })()")))
+  expect_false(sv_js(b, paste0("(() => {", sv_module_js, "
+    return C('a-')._sideviewInstance.pipeline.steps.find(s => s.kind === 'arrange').enabled !== false; })()")))
+  # the toast belongs to canvas A
+  expect_equal(sv_js(b, "document.querySelector('[data-sv-ns=\"b-\"]').querySelectorAll('.sideview-toast').length"), 0)
+})
+
+test_that("module: canvases are independent", {
+  b <- sv_module_page()
+  ui <- sv_module_ui(b)
+  ui$connect("a-", c("visits", "id"), c("labs", "id"))
+  expect_equal(ui$n_links("a-"), 1)
+  expect_equal(ui$n_links("b-"), 0)
+
+  scale_of <- function(ns) sv_js(b, paste0("(() => {", sv_module_js, sprintf(
+    "const e = C('%s')._sideviewInstance; return { s: e.panzoom.getScale(), p: e.panzoom.getPan() }; })()", ns)))
+  # a real click on A's zoom-in button puts the focus inside A and moves only A's view
+  ui$m$click(ui$centre('[data-sv-ns="a-"] [data-action="zoom-in"]'))
+  Sys.sleep(0.4)
+  a1 <- scale_of("a-"); b1 <- scale_of("b-")
+  expect_gt(a1$s, 1)
+  expect_equal(b1$s, 1)
+  sv_key(b, "f", "KeyF", 70)
+  Sys.sleep(0.6)
+  a2 <- scale_of("a-"); b2 <- scale_of("b-")
+  expect_false(isTRUE(all.equal(a1, a2)))
+  expect_equal(b2, b1)
+  # ...and the other way round
+  ui$m$click(ui$centre('[data-sv-ns="b-"] [data-action="zoom-in"]'))
+  Sys.sleep(0.4)
+  expect_equal(scale_of("a-"), a2)
+  expect_gt(scale_of("b-")$s, 1)
+  expect_equal(ui$n_links("b-"), 0)
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("module: the page scrolls past the canvases", {
+  b <- sv_module_page()
+  expect_gt(sv_js(b, "document.documentElement.scrollHeight - innerHeight"), 100)
+  expect_equal(sv_js(b, "window.scrollY"), 0)
+  # a wheel turn over the page heading, outside both canvases
+  p <- sv_js(b, "(() => { const r = document.querySelector('h2, h4').getBoundingClientRect();
+    return { x: r.left + 10, y: r.top + r.height / 2 }; })()")
+  for (i in 1:3) {
+    b$Input$dispatchMouseEvent(type = "mouseWheel", x = p$x, y = p$y, deltaX = 0, deltaY = 300)
+    Sys.sleep(0.2)
+  }
+  Sys.sleep(0.4)
+  expect_gt(sv_js(b, "window.scrollY"), 0)
+})
+
+test_that("module: the code output parses", {
+  b <- sv_module_page()
+  ui <- sv_module_ui(b)
+  ui$connect("a-", c("visits", "id"), c("labs", "id"))
+  expect_true(ui$wait_for("document.querySelector('#code').textContent.indexOf('join') >= 0", 40))
+  code <- sv_js(b, "document.querySelector('#code').textContent")
+  expect_match(code, "join")
+  expect_no_error(parse(text = code))
+  expect_equal(ui$n_links("b-"), 0)
+})
+
+test_that("module: zero-row replace shows an empty card", {
+  b <- sv_module_page()
+  ui <- sv_module_ui(b)
+  ui$m$click(ui$centre("input[name=refresh][value=empty]"))
+  ui$m$click(ui$centre("#replace"))
+  expect_true(ui$wait_for(paste0("(() => {", sv_module_js, "
+    const t = card('a-', 'labs').querySelector('.sideview-badge-dims'); return !!t && /^0\\s/.test(t.textContent.trim()); })()")))
+  # the card is still there with its columns, and the page raised no error
+  r <- sv_js(b, paste0("(() => {", sv_module_js, "
+    return { cols: card('a-', 'labs').querySelectorAll('thead th').length }; })()"))
+  expect_gte(r$cols, 4)
+  expect_equal(attr(b, "sv_errors")(), character())
+  # and it refills when the feed comes back
+  ui$m$click(ui$centre("input[name=refresh][value=same]"))
+  ui$m$click(ui$centre("#replace"))
+  expect_true(ui$wait_for(paste0("(() => {", sv_module_js, "
+    const t = card('a-', 'labs').querySelector('.sideview-badge-dims'); return !!t && /^90\\s/.test(t.textContent.trim()); })()")))
+})
+
+test_that("module: a stale join-check reply is ignored and a destroyed engine stays quiet", {
+  b <- sv_module_page()
+  r <- sv_js(b, paste0("(() => {", sv_module_js, "
+    const e = C('a-')._sideviewInstance;
+    e.joinDiagPending = {}; e.joinDiag = {};
+    e.onJoinDiagnostics({ id: 'stale', status: 'ok', by: [] });
+    const stale = !!e.joinDiag['stale'];
+    e.joinDiagPending['live'] = true;
+    e.onJoinDiagnostics({ id: 'live', status: 'ok', by: [] });
+    const live = !!e.joinDiag['live'];
+    e.destroy(); e.scheduleSnapshot();
+    return { stale: stale, live: live, timer: !!e._snapshotTimer };
+  })()"))
+  expect_false(r$stale)
+  expect_true(r$live)
+  expect_false(r$timer)
+})
+

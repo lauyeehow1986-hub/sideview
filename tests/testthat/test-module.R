@@ -39,7 +39,7 @@ test_that("state is queued until ready, after the cards", {
     expect_length(msgs(session, "sideview_state_set"), 0L)
     session$setInputs(sideview_ready = list(nonce = 1))
     types <- vapply(session$userData$custom_messages, function(m) m$type, "")
-    expect_equal(types, c("sideview_card_add", "sideview_card_add", "sideview_state_set"))
+    expect_equal(types[types != "sideview_llm"], c("sideview_card_add", "sideview_card_add", "sideview_state_set"))
     expect_type(msgs(session, "sideview_state_set")[[1]]$message$state, "character")
   })
 })
@@ -97,7 +97,7 @@ test_that("reactive cards are diffed by name", {
     session$setInputs(sideview_ready = list(nonce = 1))
     session$flushReact()
     n0 <- length(session$userData$custom_messages)
-    expect_equal(n0, 2L)
+    expect_equal(n0, 3L) # two cards and the llm notice (no llm_fn)
 
     rv(list(b = labs[1:3, ], c = mtcars))
     session$flushReact()
@@ -316,3 +316,19 @@ test_that("widget cards are sent as html in a module: initial, reactive and verb
     expect_match(last$html_content, "third", fixed = TRUE)
   })
 })
+
+test_that("without llm_fn the canvas is told to hide the AI bar, with one it is not", {
+  shiny::testServer(sideviewServer, args = start_module(), {
+    expect_length(msgs(session, "sideview_llm"), 0L)
+    session$setInputs(sideview_ready = list(nonce = 1))
+    m <- msgs(session, "sideview_llm")
+    expect_length(m, 1L)
+    expect_false(m[[1]]$message$enabled)
+    expect_identical(m[[1]]$message$ns, session$ns(""))
+  })
+  shiny::testServer(sideviewServer, args = start_module(llm_fn = function(...) "x"), {
+    session$setInputs(sideview_ready = list(nonce = 1))
+    expect_length(msgs(session, "sideview_llm"), 0L)
+  })
+})
+

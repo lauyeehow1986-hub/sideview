@@ -45,20 +45,24 @@ labs <- data.frame(
 '
 
 # Start the gadget app in a background R process; returns list(proc, url).
-sv_start_app <- function(app_expr = "sideview(patients, visits, labs, run = FALSE)") {
+sv_start_app <- function(app_expr = "sideview(patients, visits, labs, run = FALSE)", app_file = NULL) {
   port <- httpuv::randomPort()
   proc <- callr::r_bg(
-    function(root, fixture, app_expr, port) {
+    function(root, fixture, app_expr, app_file, port) {
       if (nzchar(root)) {
         suppressMessages(pkgload::load_all(root, quiet = TRUE, export_all = FALSE))
       } else {
         suppressMessages(library(sideview))
       }
       eval(parse(text = fixture), envir = globalenv())
+      if (!is.null(app_file)) {
+        return(shiny::runApp(dirname(app_file), port = port, launch.browser = FALSE))
+      }
       app <- eval(parse(text = app_expr), envir = globalenv())
       shiny::runApp(app, port = port, launch.browser = FALSE)
     },
-    args = list(root = sv_pkg_root(), fixture = sv_fixture_code, app_expr = app_expr, port = port),
+    args = list(root = sv_pkg_root(), fixture = sv_fixture_code, app_expr = app_expr,
+                app_file = app_file, port = port),
     stdout = "|", stderr = "|"
   )
   url <- sprintf("http://127.0.0.1:%d", port)
@@ -120,4 +124,13 @@ sv_set_viewport <- function(b, width, height) {
 # JS snippet: find a card element by table name.
 sv_card_js <- function(name) {
   sprintf("[...document.querySelectorAll('.sideview-card')].find(c => c.getAttribute('data-card-name') === '%s' || (c.querySelector('.sideview-card-title')||{}).textContent === '%s')", name, name)
+}
+
+# The example app (inst/examples/<name>/app.R): from the source tree, or the installed package.
+sv_example_app <- function(name = "proxy") {
+  root <- sv_pkg_root()
+  path <- if (nzchar(root)) file.path(root, "inst", "examples", name, "app.R") else
+    system.file("examples", name, "app.R", package = "sideview")
+  if (!nzchar(path) || !file.exists(path)) stop("example app not found: ", name, call. = FALSE)
+  normalizePath(path, winslash = "/")
 }

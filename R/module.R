@@ -22,9 +22,12 @@
 #'   **reactive** returning one. A reactive is compared with the canvas by name each
 #'   time it fires: new names are added, names that are gone are removed, and names
 #'   still there are replaced unless the table is `identical()` to the one on the canvas.
-#' @param state A saved workspace (a state object or its JSON text) applied once
-#'   after the first cards arrive.
+#' @param state A saved workspace applied once after the first cards arrive: a state
+#'   object, or its JSON text (a string whose first non-blank character is an opening curly brace).
 #' @param llm_fn Function used for the AI bar and the copilot (as for [sideview()]).
+#'   With none, the server tells the canvas to hide the AI bar and the Copilot tab.
+#'   `sideviewUI()` always renders them, so they show for a moment before the first
+#'   message arrives.
 #'
 #' @return `sideviewUI()` returns a `shiny.tag.list`. `sideviewServer()` returns a
 #'   `sideview_proxy`: a list with the reactives `code()` (the composed code, `""`
@@ -41,6 +44,10 @@
 #'   }
 #'   shinyApp(ui, server)
 #' }
+#' @section One server per id:
+#' Calling `sideviewServer()` twice with the same `id` in one session replaces the
+#' first canvas's entry in the proxy registry: [sideviewProxy()] then reaches the
+#' second. Give each canvas its own id.
 #' @seealso [sideviewProxy()], [sv_add_card()]
 #' @export
 sideviewUI <- function(id, height = "600px", title = NULL, theme = "auto") {
@@ -71,6 +78,7 @@ sideviewServer <- function(id, cards = list(), state = NULL, llm_fn = NULL) {
       class = "sideview_proxy"
     )
     sv_register_proxy(session, ns, proxy)
+    if (is.null(llm_fn)) ctl$emit("sideview_llm", list(enabled = FALSE))
 
     if (!is.null(state)) {
       ctl$emit("sideview_state_set", list(state = sv_state_json(sv_module_state(state))))
@@ -128,7 +136,8 @@ sideviewProxy <- function(id, session = shiny::getDefaultReactiveDomain()) {
 #' @param proxy A `sideview_proxy` from [sideviewServer()] or [sideviewProxy()].
 #' @param x A table: anything [sideview()] accepts.
 #' @param name Card name (a single string).
-#' @param state A state object or its JSON text (e.g. `proxy$state()`).
+#' @param state A state object or its JSON text (e.g. `proxy$state()`); text is recognised
+#'   by its leading curly brace.
 #' @param cols Column names (a character vector); columns not on the card are ignored.
 #' @return `proxy`, invisibly.
 #' @examples

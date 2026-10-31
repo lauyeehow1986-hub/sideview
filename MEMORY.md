@@ -109,8 +109,10 @@ Each sub-project gets its own spec, plan and build, in this order:
    codebook on the whole table; generated code stays lazy and uses `collect()`.
 2. **Join rules**: `relationship` / `unmatched` arguments from the join check; date-window and
    nearest-match joins (`join_by()` with `between()` / `closest()`), with R and JS join-check twins.
-3. **`sideviewProxy()`**: update a `sideviewOutput()` canvas from server code in the user's own Shiny app
-   (add/remove/replace cards, set state, read the pipeline). Wanted by the user.
+3. **Shiny module + proxy** (done 2026-10-31): `sideviewUI()` / `sideviewServer()` put an R-backed canvas into the user's own
+   Shiny app; `sideviewProxy()` and `sv_add_card()` / `sv_replace_card()` / `sv_remove_card()` / `sv_set_state()` /
+   `sv_highlight()` drive it, `$code()` / `$pipeline()` / `$state()` / `$cards()` read it back. A proxy for the
+   `sideviewOutput()` htmlwidget is a non-goal: the widget stays browser-only (spec section 3).
 4. **Small items**: `save_sideview()` row cap and message, Positron check plus a `viewer = "dialog"`
    fallback, workspace-version warning and migration slot, r-universe.
 
@@ -129,6 +131,31 @@ Each sub-project gets its own spec, plan and build, in this order:
 ---
 
 ## Log
+
+### 2026-10-31 - Shiny module and proxy: example app, real-browser tests, docs (0.4.0, task 6)
+- **Example:** `inst/examples/proxy/app.R`: two canvases (`a`, `b`) on a `bslib::page_fillable(fillable = FALSE)` (plain
+  `fluidPage` without bslib), synthetic `visits` / `labs`, buttons `add`, `replace`, `remove`, `state`, `highlight` on
+  canvas `a` through `sideviewProxy("a")`, a radio (`same` / `drop lab_date` / `no rows`) for what the refresh sends, and
+  `verbatimTextOutput("code")` for `px$code()`. `sv_start_app(app_file =)` runs it in the browser tests.
+- **Real browser (chromote, `NOT_CRAN=true`), 8 new tests in `test-layout-browser.R`, real mouse input for ports, buttons and
+  radios:** both canvases start with their cards, no JS errors, no run-code buttons, no AI bar or Copilot tab; replace keeps
+  the card's rectangle (within 1 px) and every spline end within 2 px of its port; a replace that drops `lab_date` shows
+  `labs refreshed: 1 step disabled (lab_date not found)` and disables the arrange step; connecting in A leaves B with no
+  connector and F with focus in A moves only A's view; the page scrolls on a wheel turn outside the canvases; `#code` text
+  `parse()`s; a zero-row replace shows a `0 x n` card without errors and refills after. Found on the way: `scrollIntoView`
+  must be `behavior: 'instant'` in tests (the bslib page scrolls smoothly, so ports were measured before the scroll ended).
+- **Small fixes folded in:** `sideviewServer()` without `llm_fn` sends `sideview_llm {enabled: false}` and the canvas hides the
+  AI bar and Copilot tab (`sv-no-llm`); a join-check reply with no pending request is dropped (stale after a replace);
+  `_destroyed` guards `sendReady` retries and `scheduleSnapshot`; `tools/tour-screenshots.R` uses `.sideview-chat-input`.
+  Known gap: a stale reply that arrives after a new request for the same join signature is still accepted (no epoch counter).
+- **Docs:** README "In your own Shiny app", NEWS 0.4.0 "Shiny module and proxy", roxygen notes (`state` text, `llm_fn`, one
+  server per id), `_pkgdown.yml` group already listed, CLAUDE.md (module/card-store lines, new inputs and messages, `ns`
+  routing, untrusted-client rule, codebook `csv`), roadmap line 3 above replaced per spec section 3.
+- **Verified:** `devtools::test(filter = 'layout-browser|pipeline|card-store|computer-use|widget|e2e|features|assets|theme|state')`
+  1642 pass, 0 fail (`NOT_CRAN=true`, mock GUI runner included; `s9_show` now marks the join check pending first); `module` filter
+  100 pass; `pkgdown::check_pkgdown()` clean; `devtools::check(args = '--no-manual')`: 0 errors, 0 warnings, 1 NOTE (the Windows
+  `''NULL''` check-directory note); site rebuilt, `docs/CLAUDE.*` / `docs/MEMORY.*` and their sitemap / search entries removed.
+  Not done here: the RStudio Viewer / dialog pass of the example app and the gadget regression pass (needs RStudio).
 
 ### 2026-10-26 - CI fix: Arrow time-zone filters under duckdb 2.0
 - **Bug:** R-CMD-check on 27290e9 (run 40244887020) failed on windows-latest and ubuntu release/oldrel-1/devel (macOS passed): 12 failures at test-lazy.R:1101, gt/gte filters on an Arrow POSIXct column with a time zone gave 0 rows. CI had arrow 26.0.0, duckdb 2.0.0, dbplyr 2.6.0; locally arrow 23 / duckdb 1.4.3 / dbplyr 2.5.1 passed.
