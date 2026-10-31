@@ -47,5 +47,6 @@ Suggests:
     callr,
     chromote,
     httpuv,
-    pkgload
+    pkgload,
+    lubridate
 Config/testthat/edition: 3

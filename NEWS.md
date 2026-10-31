@@ -31,6 +31,9 @@ columns (`.sv_lo`, `.sv_hi`) that it drops again.
   should be UTC (an ICU or non-UTC `TimeZone` setting can move a boundary).
   A rule check on a duckdb card may leave temporary `dbplyr_*` tables on your
   connection until it closes.
+* **lubridate for duckdb date-time windows.** On a duckdb table, the code for a
+  window on a date-time column writes `lubridate::days()`, so run it with
+  lubridate installed (it is in Suggests; Date and numeric windows do not need it).
 
 ## Big tables: full data for arrow and duckdb cards
 
