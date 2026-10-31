@@ -380,7 +380,16 @@ render_card_tag <- function(card, index = 1L) {
 #' @export
 sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALSE, theme = "auto",
                         state = NULL) {
-  normalized_cards <- sv_normalize_cards(cards)
+  sv_ui_build(cards = cards, title = title, gadget = gadget, theme = theme, state = state)
+}
+
+# The chrome (toolbar, canvas, drawer, AI bar) behind sideview_ui() and sideviewUI().
+# `ns` (a module's full input prefix, e.g. "review-") switches to embedded mode: no cards,
+# no page-level rules, no buttons that run code, `data-sv-ns` and a per-container init script.
+sv_ui_build <- function(cards = list(), title = "Sideview Canvas", gadget = FALSE, theme = "auto",
+                        state = NULL, ns = NULL, height = NULL) {
+  module <- !is.null(ns)
+  normalized_cards <- if (module) list() else sv_normalize_cards(cards)
   
   # Render all card tags
   rendered_cards <- lapply(seq_along(normalized_cards), function(idx) {
@@ -390,8 +399,8 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
   # Toolbar
   toolbar_tag <- htmltools::tags$div(
     class = "sideview-toolbar",
-    htmltools::tags$span(class = "sideview-brand", title),
-    htmltools::tags$span(class = "sideview-toolbar-divider"),
+    if (!is.null(title)) htmltools::tags$span(class = "sideview-brand", title),
+    if (!is.null(title)) htmltools::tags$span(class = "sideview-toolbar-divider"),
     htmltools::tags$button(class = "sideview-btn", `data-action` = "zoom-in", title = "Zoom in (+)", `aria-label` = "Zoom in", "+"),
     htmltools::tags$button(class = "sideview-btn", `data-action` = "zoom-out", title = "Zoom out (-)", `aria-label` = "Zoom out", "-"),
     htmltools::tags$button(class = "sideview-btn", `data-action` = "zoom-reset", title = "Reset view to 100% (0)", `aria-label` = "Reset zoom", "100%"),
@@ -521,10 +530,12 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
     ),
     htmltools::tags$div(
       class = "sideview-drawer-actions",
+      if (!module) htmltools::tagList(
       htmltools::tags$button(class = "sideview-btn sideview-btn-primary", `data-action` = "inject-script", `data-r-only` = NA, title = "Insert code into active RStudio script", "Insert Script"),
       htmltools::tags$button(class = "sideview-btn", `data-action` = "send-console-exit", `data-r-only` = NA, title = "Send code to RStudio console and exit gadget to execute immediately", "Run & Exit"),
       htmltools::tags$button(class = "sideview-btn", `data-action` = "eval-env", `data-r-only` = NA, title = "Execute code immediately in active R session environment", "Run in R"),
-      htmltools::tags$button(class = "sideview-btn", `data-action` = "send-console", `data-r-only` = NA, title = "Queue code to RStudio console (executes when gadget closes)", "Run Console"),
+      htmltools::tags$button(class = "sideview-btn", `data-action` = "send-console", `data-r-only` = NA, title = "Queue code to RStudio console (executes when gadget closes)", "Run Console")
+      ),
       htmltools::tags$button(class = "sideview-btn", `data-action` = "copy-code", "Copy"),
       htmltools::tags$button(class = "sideview-btn sideview-btn-danger", `data-action` = "clear-operation", title = "Clear current operations, connector lines, and generated code", "Clear"),
       htmltools::tags$label(
@@ -545,7 +556,25 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
   )
   
   # Client bootstrap script
-  init_script <- htmltools::tags$script(htmltools::HTML("
+  init_script <- if (module) {
+    ns_js <- gsub("</", "<\\/", jsonlite::toJSON(ns, auto_unbox = TRUE), fixed = TRUE)
+    htmltools::tags$script(htmltools::HTML(paste0("
+    (function() {
+      var ns = ", ns_js, ";
+      function start() {
+        var el = document.querySelector('[data-sv-ns=\"' + CSS.escape(ns) + '\"]');
+        if (el && !el._sideviewInstance && typeof initSideview === 'function') {
+          initSideview(el, { mode: 'embedded', ns: ns });
+        }
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', start);
+      } else {
+        start();
+      }
+    })();
+  ")))
+  } else htmltools::tags$script(htmltools::HTML("
     (function() {
       function start() {
         if (typeof initSideview === 'function') {
@@ -573,11 +602,16 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
   # Complete container
   theme <- sv_resolve_theme(theme)
   container_tag <- htmltools::tags$div(
-    class = paste0("sideview-container sv-standalone sv-theme-", theme$mode),
+    class = paste0("sideview-container ", if (!module) "sv-standalone ", "sv-theme-", theme$mode),
     `data-sv-theme` = theme$mode,
+    `data-sv-ns` = ns,
     # Save/Open use RStudio's file dialog through R when there is one.
     `data-sv-file-dialog` = if (isTRUE(gadget) && sv_has_file_dialog()) "r" else NULL,
-    style = sv_theme_style(theme),
+    style = if (module) {
+      paste(c(sv_theme_style(theme), sprintf("height: %s; position: relative", height)), collapse = "; ")
+    } else {
+      sv_theme_style(theme)
+    },
     state_tag,
     canvas_tag,
     htmltools::tags$div(class = "sideview-topbar", toolbar_tag, palette_tag),

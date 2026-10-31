@@ -16,15 +16,25 @@
 #'   the window or the last browser tab stop the app and return to the console.
 #' @param lifecycle Environment shared by all sessions of one app (from
 #'   `sv_new_lifecycle()`), so the app stops once and only after the last tab closes.
+#' @param module If `TRUE`, the canvas is a Shiny module (`sideviewServer()`): every
+#'   message carries `ns`, the code-running inputs are refused, cards are sent on
+#'   `sideview_ready`, and snapshots from the browser feed the read-back reactives.
+#' @return Invisibly `list(store, send, forget, ctl)`: the card store, the message sender,
+#'   a function that drops the caches of a card id, and (module only) the control
+#'   environment of the proxy.
 #' @noRd
 sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_fn, console_fn,
-                                 gadget = FALSE, lifecycle = NULL, run_env = globalenv()) {
+                                 gadget = FALSE, lifecycle = NULL, run_env = globalenv(),
+                                 module = FALSE) {
   # One mutable store is the single source of truth for the cards.
   card_store <- sv_card_store(sv_normalize_cards(cards))
-  normalized_cards <- unname(card_store$all())
+  # The cards as they are now (a module changes them while it runs).
+  current_cards <- function() unname(card_store$all())
+  ns_prefix <- if (isTRUE(module)) session$ns("") else NULL
 
   # Helper to dispatch custom messages and record them for testing/audit
   dispatch_message <- function(type, message) {
+    if (isTRUE(module)) message$ns <- ns_prefix
     if (is.null(session$userData$custom_messages)) {
       session$userData$custom_messages <- list()
     }
@@ -354,7 +364,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     tables <- Filter(function(c) is.data.frame(c$data), card_store$all())
     result <- tryCatch({
       if (!length(tables)) stop("No tables to describe.", call. = FALSE)
-      path <- sv_choose_codebook_path()
+      path <- if (isTRUE(module)) tempfile(fileext = ".csv") else sv_choose_codebook_path()
       if (is.null(path)) {
         list(cancelled = TRUE)
       } else {
@@ -380,12 +390,24 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
         run <- function() sv_codebook(inputs(), progress = progress)
         cb <- lazy_or_preview(unname(tables), run, run)
         sv_write_codebook(cb, path)
-        list(path = normalizePath(path, winslash = "/", mustWork = FALSE), n_tables = length(tables))
+        if (isTRUE(module)) {
+          # a deployed app has no file dialog: the browser saves the text
+          csv <- paste(readLines(path, warn = FALSE, encoding = "UTF-8"), collapse = "
+")
+          unlink(path)
+          list(csv = csv,
+               filename = "codebook.csv", n_tables = length(tables))
+        } else {
+          list(path = normalizePath(path, winslash = "/", mustWork = FALSE), n_tables = length(tables))
+        }
       }
     }, error = function(e) list(error = conditionMessage(e)))
     dispatch_message("sideview_codebook_saved", result)
   }, ignoreInit = FALSE)
 
+  # Workspace Save/Open go through R's file dialog in the gadget only; a module's
+  # browser saves and opens files itself.
+  if (!isTRUE(module)) {
   # Workspace Save: the canvas sends its state as JSON text; R writes the file.
   shiny::observeEvent(input$state_save, {
     evt <- input$state_save
@@ -417,6 +439,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     }, error = function(e) list(error = conditionMessage(e)))
     dispatch_message("sideview_state_loaded", result)
   }, ignoreInit = FALSE)
+  }
 
   # 2. Column Renamed -> Rename Code Generation
   shiny::observeEvent(input$column_renamed, {
@@ -498,7 +521,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     }
 
     tryCatch({
-      suggestions <- sv_suggest_mappings(normalized_cards, min_confidence = min_conf)
+      suggestions <- sv_suggest_mappings(current_cards(), min_confidence = min_conf)
       candidates <- if (is.data.frame(suggestions) && nrow(suggestions) > 0) {
         lapply(seq_len(nrow(suggestions)), function(i) {
           as.list(suggestions[i, , drop = FALSE])
@@ -547,7 +570,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     evt <- input$run_ai_prompt
     if (is.null(evt) || is.null(evt$prompt) || !nzchar(evt$prompt)) return()
 
-    schema <- sv_build_schema_context(normalized_cards)
+    schema <- sv_build_schema_context(current_cards())
     prompt_obj <- sv_build_prompt(evt$prompt, schema_context = schema)
     backend <- evt$backend %||% getOption("sideview.llm_backend", Sys.getenv("SIDEVIEW_LLM_BACKEND", "ollama"))
     model <- evt$model %||% getOption("sideview.llm_model", NULL)
@@ -614,7 +637,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
       current_code <- NULL
     }
 
-    schema <- sv_build_schema_context(normalized_cards)
+    schema <- sv_build_schema_context(current_cards())
     prompt_obj <- sv_build_chat_prompt(
       user_message = user_msg,
       history = history,
@@ -676,6 +699,9 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     }
   }, ignoreInit = FALSE)
 
+  # Code the browser sends is run only in the gadget: in a deployed module any
+  # visitor could forge it, so these inputs get no handler.
+  if (!isTRUE(module)) {
   # 5. Inject Script -> rstudioapi insertion
   shiny::observeEvent(input$inject_script, {
     evt <- input$inject_script
@@ -736,11 +762,27 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     })
     dispatch_message("sideview_eval_result", eval_res)
   }, ignoreInit = FALSE)
+  }
 
   # 7. Highlight Changes
   shiny::observeEvent(input$sideview_highlight_changed, {
     # Highlight events can be captured or relayed if needed
   }, ignoreInit = FALSE)
+
+  # Caches that belong to a card id: row order, the converted lazy table, the lost-link flag.
+  forget <- function(id) {
+    for (e in list(row_order_caches, lazy_order_caches, lazy_failed)) {
+      if (!is.null(e[[id]])) rm(list = id, envir = e)
+    }
+    con_env$tbls[[id]] <- NULL
+    invisible(NULL)
+  }
+
+  ctl <- NULL
+  if (isTRUE(module)) {
+    ctl <- sv_module_wire(input, session, card_store, dispatch_message)
+  }
+  invisible(list(store = card_store, send = dispatch_message, forget = forget, ctl = ctl))
 }
 
 #' Sideview Server Logic

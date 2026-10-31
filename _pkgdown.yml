@@ -21,6 +21,13 @@ reference:
       - sv_find_tables
       - sv_theme
 
+  - title: "Shiny module"
+    desc: "Put an R-backed canvas into your own Shiny app and drive it from the server."
+    contents:
+      - sideviewUI
+      - sideviewProxy
+      - sv_add_card
+
   - title: "Standalone HTMLWidget & Export"
     desc: "Export interactive canvases to self-contained, portable HTML reports or embed in Shiny."
     contents:
