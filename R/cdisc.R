@@ -40,9 +40,14 @@ sv_cdisc_check_arg <- function(cdisc) {
     stop("`cdisc` must be \"auto\", FALSE, or a named character vector of domain codes ",
          "such as c(my_ae = \"AE\").", call. = FALSE)
   }
-  if (is.character(cdisc) && anyDuplicated(names(cdisc))) {
+  if (is.character(cdisc)) {
+    # `lab` and `lab.csv` name the same table
+    cleaned <- vapply(names(cdisc), sv_cdisc_clean_name, character(1), USE.NAMES = FALSE)
+    dup <- duplicated(cleaned) | duplicated(cleaned, fromLast = TRUE)
+  } else dup <- FALSE
+  if (any(dup)) {
     stop("`cdisc` has duplicate names: ",
-         paste(unique(names(cdisc)[duplicated(names(cdisc))]), collapse = ", "),
+         paste(unique(names(cdisc)[dup]), collapse = ", "),
          ". Name each table once.", call. = FALSE)
   }
   cdisc
@@ -321,7 +326,7 @@ sv_cdisc_row_std <- function(code, standard) {
 sv_cdisc_card_cols <- function(card) {
   src <- if (!is.null(card$source)) card$source else card$data
   tryCatch({
-    if (is.data.frame(src)) names(src) else if (sv_is_lazy_input(src)) sv_lazy_names(src) else character()
+    if (is.data.frame(src)) toupper(names(src)) else if (sv_is_lazy_input(src)) toupper(sv_lazy_names(src)) else character()
   }, error = function(e) character())
 }
 
@@ -360,7 +365,8 @@ sv_cdisc_resolve <- function(cards) {
   for (i in seq_along(cards)) {
     t <- tags[[i]]
     if (is.null(t)) next
-    t$evidence <- t$evidence[!startsWith(t$evidence, "SEND canvas:")]
+    ev <- as.character(t$evidence)
+    t$evidence <- if (length(ev)) ev[!startsWith(ev, "SEND canvas:")] else ev
     # SUPPAE, SUPPLB ... are SUPPQUAL in both standards: they follow the canvas
     supp <- grepl("^SUPP[A-Z]{2}$", t$domain)
     if ((t$domain %in% shared || supp) && identical(t$source, "auto") && identical(t$standard, other)) {

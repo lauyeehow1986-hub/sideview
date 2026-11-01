@@ -647,3 +647,47 @@ test_that("a long column or dataset label is capped in the LLM schema text", {
   tag$label <- long
   expect_lte(nchar(sv_schema_cdisc_line(tag)), 200L + 60L)
 })
+
+# ---- Follow-up 1 review fixes ---------------------------------------------------
+
+test_that("a lower-case SPECIES column still flips the canvas to SEND", {
+  f <- sv_cdisc_fixtures()
+  lc <- function(d) { names(d) <- tolower(names(d)); d }
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(dm = lc(f$send_dm), ae = f$ae, suppae = f$suppae), "auto")
+  expect_identical(cards[[1]]$cdisc$domain, "DM")
+  expect_identical(cards[[1]]$cdisc$standard, "SEND")
+  expect_identical(cards[[3]]$cdisc$standard, "SEND")
+  expect_true("SEND canvas: DM has a SPECIES column" %in% cards[[3]]$cdisc$evidence)
+  mixed <- f$send_dm
+  names(mixed)[names(mixed) == "SPECIES"] <- "Species"
+  expect_identical(sv_cdisc_finalize(sv_cdisc_cards(dm = mixed), "auto")[[1]]$cdisc$standard, "SEND")
+})
+
+test_that("a lower-case SPECIES column flips a lazy canvas too", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("withr")
+  f <- sv_cdisc_fixtures()
+  d <- f$send_dm
+  names(d) <- tolower(names(d))
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbWriteTable(con, "dm", d)
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(dm = dplyr::tbl(con, "dm"), suppae = f$suppae), "auto")
+  expect_identical(cards[[1]]$cdisc$standard, "SEND")
+  expect_identical(cards[[2]]$cdisc$standard, "SEND")
+})
+
+test_that("resolve copes with a tag that has no evidence", {
+  f <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(dm = f$dm), "auto")
+  cards[[1]]$cdisc$evidence <- NULL
+  expect_no_error(out <- sv_cdisc_resolve(cards))
+  expect_identical(out[[1]]$cdisc$domain, "DM")
+})
+
+test_that("cdisc names that clean to the same table are refused", {
+  expect_error(sv_cdisc_check_arg(c(lab = "AE", "lab.csv" = "LB")), "duplicate names: lab, lab.csv")
+  expect_error(sv_cdisc_check_arg(c("a.xpt" = "AE", "a.csv" = "LB")), "duplicate")
+  expect_no_error(sv_cdisc_check_arg(c(lab = "AE", LAB = "LB")))
+})
