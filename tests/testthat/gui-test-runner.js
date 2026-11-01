@@ -1343,6 +1343,71 @@ function runAllScenarios() {
   s11_d.engine.destroy();
   s11_b.engine.destroy();
 
+  // SCENARIO 12: CDISC badge, header label titles, tag updates, search, inspector, codebook domain
+  const s12_r = {};
+  const s12_warns = [];
+  console.warn = function () { s12_warns.push(Array.prototype.slice.call(arguments).join(' ')); };
+  const s12_tag = { domain: 'AE', label: 'Adverse Events', class: 'Events', standard: 'SDTM', parent: null,
+    evidence: ['DOMAIN column is AE', 'name matches AE'], source: 'auto' };
+  const s12_aeCard = {
+    id: 'card_ae', name: 'ae', type: 'grid', x: 10, y: 10, dims: [2, 2],
+    data: { USUBJID: ['a', 'b'], AETERM: ['x', 'y'] }, col_types: { USUBJID: 'character', AETERM: 'character' },
+    col_labels: { USUBJID: 'Unique Subject Identifier' }, cdisc: s12_tag
+  };
+  const s12_hostileTag = Object.assign({}, s12_tag, { domain: 'ZZ', label: '<img src=x onerror=alert(1)>', standard: 'ADaM' });
+  const s12_plain = { id: 'card_pl', name: 'plain', type: 'grid', x: 400, y: 10, dims: [2, 1],
+    data: { id: ['a', 'b'] }, col_types: { id: 'character' } };
+  const s12_hostile = { id: 'card_hz', name: 'hz', type: 'grid', x: 800, y: 10, dims: [2, 1],
+    data: { id: ['a', 'b'] }, col_types: { id: 'character' }, cdisc: s12_hostileTag };
+  const s12 = s11_make('c-', [s12_aeCard, s12_plain, s12_hostile]);
+  const s12e = s12.engine;
+  const s12_ae = s11_byName(s12, 'ae').element;
+  const s12_bd = s12_ae.querySelector('.sideview-badge-cdisc');
+  s12_r.badge_text = !!s12_bd && s12_bd.textContent === 'AE';
+  s12_r.badge_class = !!s12_bd && s12_bd.classList.contains('sv-cdisc-sdtm');
+  s12_r.badge_title = !!s12_bd && s12_bd.title ===
+    'Adverse Events · SDTM Events\nDOMAIN column is AE\nname matches AE';
+  s12_r.dataset_domain = s12_ae.dataset.cdiscDomain === 'AE' && s12e.cardDomain('ae') === 'AE';
+  s12_r.untagged_has_no_badge = !s11_byName(s12, 'plain').element.querySelector('.sideview-badge-cdisc') &&
+    s12e.cardDomain('plain') === null;
+  const s12_hb = s11_byName(s12, 'hz').element.querySelector('.sideview-badge-cdisc');
+  s12_r.hostile_label_is_text = !!s12_hb && s12_hb.classList.contains('sv-cdisc-adam') &&
+    s12_hb.title.indexOf('<img src=x onerror=alert(1)> · ADaM Events') === 0 &&
+    !s11_byName(s12, 'hz').element.querySelector('img');
+  s12_r.header_label_title = s12_ae.querySelector('th[data-col-name="USUBJID"]').title === 'Unique Subject Identifier' &&
+    s12_ae.querySelector('th[data-col-name="AETERM"]').title === 'AETERM (character)';
+  // search: domain and dataset label, and a hit on the card (not a column)
+  const s12_hit = s12e.searchCards('adverse').filter(function (h) { return h.name === 'ae' && h.col === null; })[0];
+  s12_r.search_label = !!s12_hit && s12_hit.rank === 1;
+  s12_r.search_domain = s12e.searchCards('zz').some(function (h) { return h.name === 'hz' && h.col === null; });
+  s12_r.search_name_prefix_first = s12e.searchCards('ae')[0].name === 'ae' && s12e.searchCards('ae')[0].rank === 0;
+  // tag update: a new tag, then a user-cleared one
+  s12_warns.length = 0;
+  let s12_threw = false;
+  try {
+    shinyHandlers.sideview_cdisc_update({ ns: 'c-', tags: { nope: { domain: 'AE' }, card_pl: { domain: 'LB',
+      label: 'Laboratory', class: 'Findings', standard: 'SDTM', parent: null, evidence: 'name matches LB' } } });
+    shinyHandlers.sideview_cdisc_update({ ns: 'c-' });
+  } catch (err) { s12_threw = true; }
+  const s12_pl = s11_byName(s12, 'plain').element;
+  s12_r.update_adds_badge = !s12_threw && !!s12_pl.querySelector('.sideview-badge-cdisc') &&
+    s12_pl.querySelector('.sideview-badge-cdisc').textContent === 'LB' && s12_pl.dataset.cdiscDomain === 'LB' &&
+    s12_pl.querySelector('.sideview-badge-cdisc').title === 'Laboratory · SDTM Findings\nname matches LB';
+  s12_r.update_unknown_card_quiet = !s12_threw && s12_warns.length === 0;
+  shinyHandlers.sideview_cdisc_update({ ns: 'c-', tags: { card_ae: null } });
+  s12_r.null_removes_badge = !s12_ae.querySelector('.sideview-badge-cdisc') && s12_ae.dataset.cdiscDomain === undefined &&
+    s12e.cardDomain('ae') === null && s11_byName(s12, 'ae').cdisc === null;
+  s12_r.cleared_not_searchable = !s12e.searchCards('adverse').some(function (h) { return h.name === 'ae'; });
+  // inspector: dataset line under the card, and the column label
+  s12_r.inspector_dataset_line = s12e.inspectorDatasetHtml('plain') ===
+    '<p class="sideview-inspect-dataset">LB · Laboratory</p>' && s12e.inspectorDatasetHtml('ae') === '' &&
+    s12e.inspectorDatasetHtml('hz').indexOf('&lt;img') > 0 && s12e.inspectorDatasetHtml('hz').indexOf('<img') < 0;
+  // the codebook export reads the domain through cardDomain()
+  s12_r.codebook_domain_source = s12e.cardDomain('plain') === 'LB';
+  s12e.destroy();
+  console.warn = s11_origWarn;
+  results.scenario12 = s12_r;
+
   // snapshots wait for the debounce, so they finish after the synchronous scenarios
   results.__later = function () {
     const sleep = function (ms) { return new Promise(function (res) { setTimeout(res, ms); }); };

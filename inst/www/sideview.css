@@ -46,6 +46,12 @@
   --sv-hover-overlay: rgba(15, 23, 42, 0.06);
   --sv-badge-type-bg: #dbeafe;
   --sv-badge-type-text: #1e40af;
+  --sv-cdisc-sdtm: #e0e7ff;
+  --sv-cdisc-sdtm-text: #3730a3;
+  --sv-cdisc-send: #ccfbf1;
+  --sv-cdisc-send-text: #115e59;
+  --sv-cdisc-adam: #fce7f3;
+  --sv-cdisc-adam-text: #9d174d;
   --sv-spark: #93c5fd;
   --sv-cat-bg: #f1f5f9;
   --sv-cat-border: #e2e8f0;
@@ -139,6 +145,12 @@
   --sv-hover-overlay: rgba(255, 255, 255, 0.08);
   --sv-badge-type-bg: rgba(96, 165, 250, 0.18);
   --sv-badge-type-text: #bfdbfe;
+  --sv-cdisc-sdtm: rgba(129, 140, 248, 0.2);
+  --sv-cdisc-sdtm-text: #c7d2fe;
+  --sv-cdisc-send: rgba(45, 212, 191, 0.18);
+  --sv-cdisc-send-text: #99f6e4;
+  --sv-cdisc-adam: rgba(244, 114, 182, 0.18);
+  --sv-cdisc-adam-text: #fbcfe8;
   --sv-spark: #3b82f6;
   --sv-cat-bg: #0f172a;
   --sv-cat-border: #334155;
@@ -216,6 +228,12 @@
     --sv-hover-overlay: rgba(255, 255, 255, 0.08);
     --sv-badge-type-bg: rgba(96, 165, 250, 0.18);
     --sv-badge-type-text: #bfdbfe;
+    --sv-cdisc-sdtm: rgba(129, 140, 248, 0.2);
+    --sv-cdisc-sdtm-text: #c7d2fe;
+    --sv-cdisc-send: rgba(45, 212, 191, 0.18);
+    --sv-cdisc-send-text: #99f6e4;
+    --sv-cdisc-adam: rgba(244, 114, 182, 0.18);
+    --sv-cdisc-adam-text: #fbcfe8;
     --sv-spark: #3b82f6;
     --sv-cat-bg: #0f172a;
     --sv-cat-border: #334155;
@@ -2790,4 +2808,21 @@ html.sv-standalone body {
 .sideview-container.sv-no-llm .sideview-ai-bar,
 .sideview-container.sv-no-llm .sideview-drawer-tab[data-tab="chat"] {
   display: none;
+}
+
+/* CDISC domain badge in the card title bar, and the dataset line in the inspector. */
+.sideview-container .sideview-badge-cdisc {
+  background: var(--sv-surface-secondary);
+  color: var(--sv-text);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: help;
+}
+.sideview-container .sideview-badge-cdisc.sv-cdisc-sdtm { background: var(--sv-cdisc-sdtm); color: var(--sv-cdisc-sdtm-text); }
+.sideview-container .sideview-badge-cdisc.sv-cdisc-send { background: var(--sv-cdisc-send); color: var(--sv-cdisc-send-text); }
+.sideview-container .sideview-badge-cdisc.sv-cdisc-adam { background: var(--sv-cdisc-adam); color: var(--sv-cdisc-adam-text); }
+.sideview-container .sideview-inspect-dataset {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--sv-text-muted);
 }

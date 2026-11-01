@@ -113,7 +113,10 @@ test_that("text colours meet WCAG AA (4.5:1) in light and dark themes", {
     c("--sv-na-text", "--sv-na-bg"),
     c("--sv-na-high-text", "--sv-na-high-bg"),
     c("--sv-code-text", "--sv-code-bg"),
-    c("--sv-tooltip-text", "--sv-tooltip-bg")
+    c("--sv-tooltip-text", "--sv-tooltip-bg"),
+    c("--sv-cdisc-sdtm-text", "--sv-cdisc-sdtm"),
+    c("--sv-cdisc-send-text", "--sv-cdisc-send"),
+    c("--sv-cdisc-adam-text", "--sv-cdisc-adam")
   )
   for (theme in list(list(name = "light", t = light), list(name = "dark", t = dark))) {
     for (p in pairs) {

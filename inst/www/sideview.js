@@ -1419,6 +1419,11 @@ function sendToShiny(name, value) {
       var lname = name.toLowerCase();
       var at = q ? lname.indexOf(q) : 0;
       if (at >= 0) out.push({ id: id, el: el, name: name, dims: dims, col: null, rank: at === 0 ? 0 : 1 });
+      else if (q && card.cdisc &&
+        [card.cdisc.domain, card.cdisc.label].some(function (t) { return t && String(t).toLowerCase().indexOf(q) >= 0; })) {
+        // the domain code or the dataset label (not a name prefix)
+        out.push({ id: id, el: el, name: name, dims: dims, col: null, rank: 1 });
+      }
       if (!q) return;
       var ths = el.querySelectorAll('thead th[data-col-name]');
       var seen = {};
@@ -2883,7 +2888,8 @@ function sendToShiny(name, value) {
         th.dataset.colName = colName;
         var colType = colTypes[colName] || '';
         if (colType) th.dataset.colType = colType;
-        th.title = colType ? colName + ' (' + colType + ')' : colName;
+        var colLabel = cardData.col_labels && cardData.col_labels[colName];
+        th.title = colLabel ? String(colLabel) : (colType ? colName + ' (' + colType + ')' : colName);
         var safeName = escapeHtml(colName);
         th.innerHTML = [
           '<div class="col-header-wrap">',
@@ -2931,9 +2937,11 @@ function sendToShiny(name, value) {
       body: body,
       x: initialX,
       y: initialY,
-      colLabels: cardData.col_labels || null
+      colLabels: cardData.col_labels || null,
+      cdisc: cardData.cdisc || null
     };
     this.cards.set(cardId, cardMeta);
+    this.renderCdiscBadge(cardMeta);
 
     // Setup Drag and Drop
     this.setupCardDrag(cardEl, cardMeta);
@@ -3126,9 +3134,12 @@ function sendToShiny(name, value) {
         body: body,
         virtualTable: vTable,
         x: parseFloat(cardEl.style.left) || 0,
-        y: parseFloat(cardEl.style.top) || 0
+        y: parseFloat(cardEl.style.top) || 0,
+        colLabels: parseJsonAttr(cardEl, 'data-col-labels'),
+        cdisc: parseJsonAttr(cardEl, 'data-cdisc')
       };
       self.cards.set(cardId, cardMeta);
+      self.renderCdiscBadge(cardMeta);
       self.setupCardDrag(cardEl, cardMeta);
       self.setupScrollSync(cardMeta);
     });
@@ -4750,6 +4761,15 @@ function sendToShiny(name, value) {
     return labels && labels[column] ? String(labels[column]) : null;
   };
 
+  // "<domain> · <dataset label>" under the card picker, for a tagged card.
+  SideviewEngine.prototype.inspectorDatasetHtml = function (table) {
+    var tag = null;
+    this.cards.forEach(function (c) { if (c.name === table) tag = c.cdisc; });
+    if (!tag || !tag.domain) return '';
+    var text = [tag.domain, tag.label].filter(Boolean).join(' · ');
+    return '<p class="sideview-inspect-dataset">' + escapeHtml(text) + '</p>';
+  };
+
   SideviewEngine.prototype.renderInspector = function () {
     var pane = this.container.querySelector('.sideview-drawer-content > [data-pane="inspect"]');
     if (!pane) return;
@@ -4777,6 +4797,7 @@ function sendToShiny(name, value) {
       optionList(schemas.map(function (s) { return s.name; }), schema.name) + '</select></label>' +
       '<label class="sideview-builder-field">Column <select data-inspect="column">' +
       optionList(names, column) + '</select></label></div>' +
+      this.inspectorDatasetHtml(schema.name) +
       '<div class="sideview-inspect-body" aria-live="polite">' + body + '</div>' +
       '<div class="sideview-builder-actions">' +
       '<button type="button" class="sideview-btn" data-action="export-codebook" title="One row per column of every table, as CSV">' +
@@ -4865,10 +4886,72 @@ function sendToShiny(name, value) {
       escapeHtml(fmtNum(h.breaks[h.breaks.length - 1])) + '</span></figcaption></figure>';
   };
 
+  // ---- CDISC tags -----------------------------------------------------------------
+
+  function parseJsonAttr(el, attr) {
+    var raw = el.getAttribute ? el.getAttribute(attr) : null;
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch (err) { return null; }
+  }
+
+  // Tooltip of the domain badge (spec 7): "<label> · <standard> <class>", the evidence lines,
+  // then "supplements <parent>". Plain text: it goes into the title property.
+  function cdiscTitle(tag) {
+    var kind = [tag.standard, tag['class']].filter(Boolean).join(' ');
+    var head = [tag.label, kind].filter(Boolean).join(' \u00b7 ');
+    var lines = head ? [head] : [];
+    var ev = tag.evidence;
+    if (typeof ev === 'string') ev = [ev];
+    if (Array.isArray(ev)) ev.forEach(function (e) { if (e !== null && e !== undefined && e !== '') lines.push(String(e)); });
+    if (tag.parent) lines.push('supplements ' + tag.parent);
+    return lines.join('\n');
+  }
+
   /**
-   * The CDISC domain tagged on a card, or null. Tags are not yet stored client-side
-   * (the tag handler arrives later): read an optional data-cdisc-domain attribute.
+   * Create, update or remove the domain badge in a card's title bar (after the name) from
+   * cardMeta.cdisc, and keep el.dataset.cdiscDomain in step (removed when untagged).
+   * The domain and the title are set as text, never as markup.
    */
+  SideviewEngine.prototype.renderCdiscBadge = function (cardMeta) {
+    var el = cardMeta && cardMeta.element;
+    if (!el) return;
+    var tag = cardMeta.cdisc && cardMeta.cdisc.domain ? cardMeta.cdisc : null;
+    var old = el.querySelector('.sideview-badge-cdisc');
+    if (!tag) {
+      if (old) old.remove();
+      delete el.dataset.cdiscDomain;
+      return;
+    }
+    var std = String(tag.standard || '').toLowerCase();
+    var badge = old;
+    if (!badge) {
+      badge = document.createElement('span');
+      var titleEl = el.querySelector('.sideview-card-header .sideview-card-title');
+      var group = titleEl && titleEl.parentNode;
+      if (!group) return;
+      group.insertBefore(badge, titleEl.nextSibling);
+    }
+    badge.className = 'sideview-badge sideview-badge-cdisc' + (/^(sdtm|send|adam)$/.test(std) ? ' sv-cdisc-' + std : '');
+    badge.textContent = String(tag.domain);
+    badge.title = cdiscTitle(tag);
+    el.dataset.cdiscDomain = String(tag.domain);
+  };
+
+  /** Apply a sideview_cdisc_update: {card_id: tag | null}. An unknown card id is ignored. */
+  SideviewEngine.prototype.setCdiscTags = function (tags) {
+    if (!tags || typeof tags !== 'object') return;
+    var self = this, touched = false;
+    Object.keys(tags).forEach(function (id) {
+      var meta = self.cards.get(id);
+      if (!meta) return;
+      meta.cdisc = tags[id] || null;
+      self.renderCdiscBadge(meta);
+      touched = true;
+    });
+    if (touched) this.renderInspector();
+  };
+
+  /** The CDISC domain tagged on the card with this name, or null. */
   SideviewEngine.prototype.cardDomain = function (name) {
     var el = this.cardElByName(name);
     var d = el && el.dataset ? el.dataset.cdiscDomain : null;
@@ -6064,6 +6147,12 @@ function sendToShiny(name, value) {
       self.showToast(String(data.text), data.type || 'info', data.id);
       // The notice is about a card whose link was lost: it answers from its preview from now on.
       if (data.card) self.markCardPreview(String(data.card));
+    });
+
+    // Tag changes on other cards after R re-resolved the CDISC tags: {tags: {card_id: tag | null}}.
+    // An id this canvas does not hold (a card since removed) is ignored without a word.
+    self.onMessage('sideview_cdisc_update', function (data) {
+      if (data && data.tags) self.setCdiscTags(data.tags);
     });
 
     // Codebook written by R (reply to codebook_export)
