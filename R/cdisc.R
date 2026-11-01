@@ -56,28 +56,36 @@ sv_cdisc_peek <- function(data) {
     x <- toupper(trimws(as.character(x)))
     unique(x[!is.na(x) & nzchar(x)])
   }
-  if (sv_is_lazy_input(data)) {
-    cols <- sv_lazy_names(data)
+  # Column names match whatever their case (STUDYID, studyid, StudyID): `cols`
+  # is upper-cased for the rules, `actual(x)` gives the real name to query.
+  lazy <- sv_is_lazy_input(data)
+  raw <- if (lazy) sv_lazy_names(data) else names(data)
+  cols <- toupper(raw)
+  actual <- function(x) raw[match(x, cols)]
+  if (lazy) {
     return(list(
       cols = cols,
-      domain_values = if ("DOMAIN" %in% cols) clean(sv_cdisc_lazy_query(data, "domain")) else character(),
+      domain_values = if ("DOMAIN" %in% cols) {
+        clean(sv_cdisc_lazy_query(data, "domain", actual("DOMAIN")))
+      } else character(),
       usubjid_unique = function() {
-        "USUBJID" %in% cols && isTRUE(sv_cdisc_lazy_query(data, "adsl"))
+        "USUBJID" %in% cols && isTRUE(sv_cdisc_lazy_query(data, "adsl", actual("USUBJID")))
       },
       rdomain_values = function() {
-        if ("RDOMAIN" %in% cols) clean(sv_cdisc_lazy_query(data, "rdomain")) else character()
+        if ("RDOMAIN" %in% cols) {
+          clean(sv_cdisc_lazy_query(data, "rdomain", actual("RDOMAIN")))
+        } else character()
       }
     ))
   }
-  cols <- names(data)
   list(
     cols = cols,
-    domain_values = if ("DOMAIN" %in% cols) clean(data[["DOMAIN"]]) else character(),
+    domain_values = if ("DOMAIN" %in% cols) clean(data[[actual("DOMAIN")]]) else character(),
     usubjid_unique = function() {
-      "USUBJID" %in% cols && !anyDuplicated(data[["USUBJID"]])
+      "USUBJID" %in% cols && !anyDuplicated(data[[actual("USUBJID")]])
     },
     rdomain_values = function() {
-      if ("RDOMAIN" %in% cols) clean(data[["RDOMAIN"]]) else character()
+      if ("RDOMAIN" %in% cols) clean(data[[actual("RDOMAIN")]]) else character()
     }
   )
 }
@@ -197,6 +205,25 @@ sv_cdisc_make_tag <- function(data, code, class = NULL, standard = NULL, parent 
        parent = parent, parent_card = NULL, evidence = evidence, source = source)
 }
 
+# The tag for a domain code the user set: the class and parent come from the
+# catalogue, the SUPPQUAL pattern or the ADaM structure, never a guess.
+sv_cdisc_user_tag <- function(data, code) {
+  class <- NULL; standard <- NULL; parent <- NULL; row_code <- code
+  if (grepl("^SUPP[A-Z]{2}$", code)) {
+    row_code <- "SUPPQUAL"
+    parent <- substring(code, 5L)
+  } else if (identical(code, "SUPPQUAL")) {
+    rd <- sv_cdisc_peek(data)$rdomain_values()
+    if (length(rd) == 1L) parent <- rd
+  } else if (is.null(sv_cdisc_row(code)) && grepl("^AD[A-Z0-9]+$", code)) {
+    standard <- "ADaM"
+    adam <- sv_cdisc_rule_adam(sv_cdisc_peek(data), code)
+    if (!is.null(adam)) class <- adam$class
+  }
+  sv_cdisc_make_tag(data, code, class = class, standard = standard, parent = parent,
+                    row_code = row_code, evidence = "set by cdisc =", source = "user")
+}
+
 #' Detect the CDISC dataset a table is (internal)
 #'
 #' @param data A data frame.
@@ -213,10 +240,7 @@ sv_cdisc_detect <- function(data, name, cdisc = "auto") {
   }
   if (identical(cdisc, FALSE)) return(NULL)
   if (is.character(cdisc) && length(cdisc) == 1L && !is.na(cdisc) && cdisc != "auto") {
-    code <- toupper(trimws(cdisc))
-    adam_like <- is.null(sv_cdisc_row(code)) && grepl("^AD[A-Z0-9]+$", code)
-    return(sv_cdisc_make_tag(data, code, standard = if (adam_like) "ADaM",
-                             evidence = "set by cdisc =", source = "user"))
+    return(sv_cdisc_user_tag(data, toupper(trimws(cdisc))))
   }
   peek <- sv_cdisc_peek(data)
   if (!("STUDYID" %in% peek$cols)) return(NULL)
@@ -307,26 +331,41 @@ sv_cdisc_resolve <- function(cards) {
   send_only <- setdiff(send, sdtm)
   shared <- intersect(sdtm, send)
   tags <- lapply(cards, function(c) c$cdisc)
-  has_send <- any(vapply(seq_along(cards), function(i) {
+  # the first card that shows the canvas is SEND, as a reason for the tooltip
+  send_reason <- NULL
+  for (i in seq_along(cards)) {
     t <- tags[[i]]
-    if (is.null(t)) return(FALSE)
-    if (t$domain %in% send_only) return(TRUE)
-    t$domain == "DM" && "SPECIES" %in% sv_cdisc_card_cols(cards[[i]])
-  }, logical(1)))
+    if (is.null(t)) next
+    if (t$domain %in% send_only) {
+      send_reason <- paste("SEND canvas:", t$domain, "is a SEND-only domain")
+    } else if (t$domain == "DM" && "SPECIES" %in% sv_cdisc_card_cols(cards[[i]])) {
+      send_reason <- "SEND canvas: DM has a SPECIES column"
+    }
+    if (!is.null(send_reason)) break
+  }
+  has_send <- !is.null(send_reason)
   want <- if (has_send) "SEND" else "SDTM"
   other <- if (has_send) "SDTM" else "SEND"
   domains <- vapply(tags, function(t) if (is.null(t)) NA_character_ else t$domain, character(1))
   for (i in seq_along(cards)) {
     t <- tags[[i]]
     if (is.null(t)) next
-    if (t$domain %in% shared && identical(t$source, "auto") && identical(t$standard, other)) {
-      old <- sv_cdisc_row_std(t$domain, other)
-      new <- sv_cdisc_row_std(t$domain, want)
+    t$evidence <- t$evidence[!startsWith(t$evidence, "SEND canvas:")]
+    # SUPPAE, SUPPLB ... are SUPPQUAL in both standards: they follow the canvas
+    supp <- grepl("^SUPP[A-Z]{2}$", t$domain)
+    if ((t$domain %in% shared || supp) && identical(t$source, "auto") && identical(t$standard, other)) {
+      row_dom <- if (supp) "SUPPQUAL" else t$domain
+      old <- sv_cdisc_row_std(row_dom, other)
+      new <- sv_cdisc_row_std(row_dom, want)
       if (!is.null(new)) {
         if (identical(t$label, old$label)) t$label <- new$label
         t$class <- new$class
         t$standard <- want
       }
+    }
+    if (has_send && (t$domain %in% shared || supp) && identical(t$source, "auto") &&
+        identical(t$standard, "SEND")) {
+      t$evidence <- c(t$evidence, send_reason)
     }
     if (!is.null(t$parent)) {
       j <- which(domains == t$parent)

@@ -382,18 +382,30 @@ test_that("parquet is lazy by default and eager on request", {
   expect_identical(sv_card_payload(sv_normalize(y$dm, "dm"))$col_labels$AGE, "Age")
 })
 
-test_that("dataset-json is read when datasetjson is installed", {
+test_that("dataset-json is read when datasetjson is installed, with its labels", {
   skip_if_not_installed("datasetjson")
   skip_if_not_installed("withr")
   f <- sv_cdisc_fixtures()
   dir <- withr::local_tempdir()
-  ds <- datasetjson::dataset_json(f$ae, item_oid = "IG.AE", name = "AE", dataset_label = "Adverse Events",
+  ae <- f$ae
+  attr(ae, "label") <- NULL
+  cols <- data.frame(itemOID = paste0("IT.AE.", names(ae)), name = names(ae),
+                     label = paste("Label of", names(ae)),
+                     dataType = ifelse(vapply(ae, is.integer, logical(1)), "integer", "string"),
+                     stringsAsFactors = FALSE)
+  ds <- datasetjson::dataset_json(ae, item_oid = "IG.AE", name = "AE", dataset_label = "Adverse Events",
                                   file_oid = "x", last_modified = "2024-01-01T00:00:00",
                                   originator = "t", sys = "t", sys_version = "1", study = "S",
-                                  metadata_version = "1", metadata_ref = "x")
+                                  metadata_version = "1", metadata_ref = "x", columns = cols)
   datasetjson::write_dataset_json(ds, file.path(dir, "ae.json"))
   x <- sv_read_cdisc(file.path(dir, "ae.json"))
+  expect_true(is.data.frame(x$ae))
   expect_identical(sv_normalize(x$ae, "ae")$cdisc$domain, "AE")
+  expect_identical(attr(x$ae$AETERM, "label"), "Label of AETERM")
+  expect_identical(attr(x$ae$USUBJID, "label"), "Label of USUBJID")
+  expect_identical(attr(x$ae, "label"), "Adverse Events")
+  expect_identical(sv_normalize(x$ae, "ae")$cdisc$label, "Adverse Events")
+  expect_identical(sv_card_payload(sv_normalize(x$ae, "ae"))$col_labels$AESEQ, "Label of AESEQ")
 })
 
 test_that("sas7bdat goes through haven::read_sas", {
@@ -486,4 +498,100 @@ test_that("unsupported files in a directory are ignored", {
   haven::write_xpt(sv_cdisc_fixtures()$ae, file.path(dir, "ae.xpt"))
   writeLines("x", file.path(dir, "notes.txt"))
   expect_identical(names(sv_read_cdisc(dir)), "ae")
+})
+
+# ---- Follow-up 1: case, ADaM/SUPP overrides, resolve evidence ------------------
+
+test_that("column names are matched whatever their case", {
+  f <- sv_cdisc_fixtures()
+  for (fx in c("ae", "dm", "labs", "ts", "adsl", "adlb", "suppae")) {
+    d <- f[[fx]]
+    lab <- attr(d, "label")
+    names(d) <- tolower(names(d))
+    want <- sv_cdisc_detect(f[[fx]], fx)
+    got <- sv_cdisc_detect(d, fx)
+    expect_false(is.null(got), info = fx)
+    expect_identical(got$domain, want$domain, info = fx)
+    expect_identical(got$class, want$class, info = fx)
+  }
+  m <- f$ae
+  names(m) <- c("StudyID", "Domain", "UsubjId", names(m)[-(1:3)])
+  expect_identical(sv_cdisc_detect(m, "x")$domain, "AE")
+  # still conservative: no STUDYID in any case, no tag
+  n <- f$ae
+  names(n)[1] <- "study"
+  expect_null(sv_cdisc_detect(n, "ae"))
+})
+
+test_that("lower-case names work for lazy tables too", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("withr")
+  f <- sv_cdisc_fixtures()
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  for (nm in c("ae", "adsl", "suppae")) {
+    d <- f[[nm]]
+    names(d) <- tolower(names(d))
+    DBI::dbWriteTable(con, nm, d)
+  }
+  expect_identical(sv_cdisc_detect(dplyr::tbl(con, "ae"), "x")$domain, "AE")
+  expect_identical(sv_cdisc_detect(dplyr::tbl(con, "adsl"), "adsl")$class, "ADSL")
+  expect_identical(sv_cdisc_detect(dplyr::tbl(con, "suppae"), "x")$parent, "AE")
+})
+
+test_that("a user ADaM tag gets the ADaM class from the structure", {
+  f <- sv_cdisc_fixtures()
+  cls <- function(d, code) {
+    tag <- sv_cdisc_detect(d, "my", cdisc = c(my = code))
+    c(tag$domain, tag$standard, tag$class, tag$source)
+  }
+  expect_identical(cls(f$adlb, "ADLB"), c("ADLB", "ADaM", "BDS", "user"))
+  expect_identical(cls(f$adae, "ADAE"), c("ADAE", "ADaM", "OCCDS", "user"))
+  expect_identical(cls(f$adtte, "adtte"), c("ADTTE", "ADaM", "TTE", "user"))
+  expect_identical(cls(f$adsl, "ADSL"), c("ADSL", "ADaM", "ADSL", "user"))
+  expect_identical(cls(f$adsl, "ADSLX"), c("ADSLX", "ADaM", "ADSL", "user"))
+  # no structure to confirm: ADaM standard, class stays Custom
+  expect_identical(cls(f$keys_only, "ADLB"), c("ADLB", "ADaM", "Custom", "user"))
+  # through finalize, from a card
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(lab = f$adlb), c(lab = "ADLB"))
+  expect_identical(cards[[1]]$cdisc$class, "BDS")
+})
+
+test_that("a user SUPP tag gets Relationship and its parent", {
+  f <- sv_cdisc_fixtures()
+  tag <- sv_cdisc_detect(f$keys_only, "s", cdisc = c(s = "suppae"))
+  expect_identical(c(tag$domain, tag$class, tag$standard, tag$parent, tag$source),
+                   c("SUPPAE", "Relationship", "SDTM", "AE", "user"))
+  tag <- sv_cdisc_detect(f$suppae, "s", cdisc = c(s = "SUPPQUAL"))
+  expect_identical(c(tag$class, tag$parent), c("Relationship", "AE"))
+  expect_null(sv_cdisc_detect(f$keys_only, "s", cdisc = c(s = "SUPPQUAL"))$parent)
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(ae = f$ae, s = f$keys_only), c(s = "SUPPAE"))
+  expect_identical(cards[[2]]$cdisc$parent_card, cards[[1]]$id)
+})
+
+test_that("SUPP follows the canvas to SEND; a user SUPP tag is never flipped", {
+  f <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(bw = f$bw, suppae = f$suppae), "auto")
+  expect_identical(cards[[2]]$cdisc$standard, "SEND")
+  expect_identical(cards[[2]]$cdisc$class, "Relationship")
+  expect_identical(cards[[2]]$cdisc$domain, "SUPPAE")
+  expect_identical(sv_cdisc_resolve(cards), cards)
+  back <- sv_cdisc_resolve(cards[2])
+  expect_identical(back[[1]]$cdisc$standard, "SDTM")
+  expect_false(any(grepl("^SEND canvas", back[[1]]$cdisc$evidence)))
+  user <- sv_cdisc_finalize(sv_cdisc_cards(bw = f$bw, s = f$suppae), c(s = "SUPPAE"))
+  expect_identical(user[[2]]$cdisc$standard, "SDTM")
+})
+
+test_that("resolve appends the SEND reason to evidence and removes it again", {
+  f <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(dm = f$dm, bw = f$bw), "auto")
+  expect_true("SEND canvas: BW is a SEND-only domain" %in% cards[[1]]$cdisc$evidence)
+  expect_identical(sum(grepl("^SEND canvas", cards[[1]]$cdisc$evidence)), 1L)
+  expect_false(any(grepl("^SEND canvas", cards[[2]]$cdisc$evidence)))
+  expect_identical(sv_cdisc_resolve(cards), cards)
+  expect_false(any(grepl("^SEND canvas", sv_cdisc_resolve(cards[1])[[1]]$cdisc$evidence)))
+  sp <- sv_cdisc_finalize(sv_cdisc_cards(dm = f$send_dm), "auto")
+  expect_true("SEND canvas: DM has a SPECIES column" %in% sp[[1]]$cdisc$evidence)
 })

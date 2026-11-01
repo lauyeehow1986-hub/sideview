@@ -1535,9 +1535,9 @@ test_that("lazy detection runs at most two small queries", {
   DBI::dbWriteTable(con, "mtcars", mtcars)
   calls <- character()
   real <- sv_cdisc_lazy_query
-  local_mocked_bindings(sv_cdisc_lazy_query = function(tbl, kind) {
+  local_mocked_bindings(sv_cdisc_lazy_query = function(tbl, kind, ...) {
     calls <<- c(calls, kind)
-    real(tbl, kind)
+    real(tbl, kind, ...)
   })
   sv_cdisc_detect(dplyr::tbl(con, "adsl"), "adsl")
   expect_equal(sum(calls == "domain"), 0); expect_equal(sum(calls == "adsl"), 1)

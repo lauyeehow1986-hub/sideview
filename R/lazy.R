@@ -1706,10 +1706,11 @@ utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number
 #' `anyDuplicated()` does). Tests mock this function to count the calls.
 #' @param tbl A duckdb tbl or Arrow object.
 #' @param kind `"domain"`, `"rdomain"` or `"adsl"`.
+#' @param col The table's actual column name for the variable (any case); default the upper-case name.
 #' @noRd
-sv_cdisc_lazy_query <- function(tbl, kind) {
+sv_cdisc_lazy_query <- function(tbl, kind, col = NULL) {
   if (kind %in% c("domain", "rdomain")) {
-    col <- if (kind == "domain") "DOMAIN" else "RDOMAIN"
+    if (is.null(col)) col <- if (kind == "domain") "DOMAIN" else "RDOMAIN"
     sym <- rlang::sym(col)
     # Normalise in the query (as the in-memory clean() does) before distinct, so
     # case and whitespace variants cannot use up the two slots.
@@ -1729,10 +1730,12 @@ sv_cdisc_lazy_query <- function(tbl, kind) {
       dplyr::collect()
     return(as.character(res[[".sv_v"]]))
   }
+  if (is.null(col)) col <- "USUBJID"
+  usym <- rlang::sym(col)
   res <- tbl |>
     dplyr::summarise(n = dplyr::n(),
-                     d = dplyr::n_distinct(USUBJID, na.rm = TRUE),
-                     nn = sum(as.integer(is.na(USUBJID)), na.rm = TRUE)) |>
+                     d = dplyr::n_distinct(!!usym, na.rm = TRUE),
+                     nn = sum(as.integer(is.na(!!usym)), na.rm = TRUE)) |>
     dplyr::collect()
   n <- as.numeric(res$n); nn <- as.numeric(res$nn); d <- as.numeric(res$d)
   # sum()/n_distinct() over zero rows can be NULL: that is no rows, so unique
