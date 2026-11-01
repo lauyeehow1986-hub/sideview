@@ -1696,7 +1696,7 @@ sv_lazy_histogram <- function(fin, lo, hi, n_fin, bins) {
 }
 
 # Names that only exist inside the SQL translation of the verbs above.
-utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc", "cast", "nx", "ny", "fx", "fy", "trim", "regexp_replace", "regexp_full_match", "quantile_cont", "isfinite", "isnan", "isinf", "n", "rtrim", "sd", "lower", "epoch_us", "make_timestamp", "strftime", ".sv_v", ".sv_t", ".sv_f", ".sv_k", ".sv_n", ".sv_bin", ".sv_rn", ".sv_rk", ".rx", ".ry", ".sv_cx", ".sv_cy", ".sv_first", ".sv_near", "n_distinct", "days", "USUBJID"))
+utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc", "cast", "nx", "ny", "fx", "fy", "trim", "regexp_replace", "regexp_full_match", "quantile_cont", "isfinite", "isnan", "isinf", "n", "rtrim", "sd", "lower", "epoch_us", "make_timestamp", "strftime", ".sv_v", ".sv_t", ".sv_f", ".sv_k", ".sv_n", ".sv_bin", ".sv_rn", ".sv_rk", ".rx", ".ry", ".sv_cx", ".sv_cy", ".sv_first", ".sv_near", "n_distinct", "days", "USUBJID", "upper"))
 
 #' The one place CDISC detection queries a lazy table
 #'
@@ -1713,8 +1713,16 @@ sv_cdisc_lazy_query <- function(tbl, kind) {
     sym <- rlang::sym(col)
     # Normalise in the query (as the in-memory clean() does) before distinct, so
     # case and whitespace variants cannot use up the two slots.
+    # trimws() strips [ \t\r\n]; duckdb's trim() needs the set spelled out, and
+    # Arrow has no trim(x, chars) but does have gsub().
+    txt <- rlang::expr(as.character(!!sym))
+    norm <- if (inherits(tbl, "tbl_lazy")) {
+      rlang::expr(upper(trim(!!txt, !!" \t\r\n")))
+    } else {
+      rlang::expr(toupper(gsub("^[ \t\r\n]+|[ \t\r\n]+$", "", !!txt)))
+    }
     res <- tbl |>
-      dplyr::mutate(.sv_v = toupper(stringr::str_trim(as.character(!!sym)))) |>
+      dplyr::mutate(.sv_v = !!norm) |>
       dplyr::filter(!is.na(.sv_v), .sv_v != "") |>
       dplyr::distinct(.sv_v) |>
       utils::head(2) |>

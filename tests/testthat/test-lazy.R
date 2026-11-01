@@ -1564,6 +1564,24 @@ test_that("lazy CDISC detection matches in-memory on messy DOMAIN, RDOMAIN, fact
     for (k in names(lz)) expect_equal(sv_cdisc_detect(lz[[k]], nm), mem, info = paste(k, label))
     mem
   }
+  # the normalised value set itself, after clean(), equals the in-memory one
+  vals <- function(x) { x <- toupper(trimws(as.character(x))); sort(unique(x[!is.na(x) & nzchar(x)])) }
+  for (v in list(c("AE", "ae", "LB", "AE"), c("	AE", "AE", "ae
+", "LB", "
+LB"), c("AE", " ae ", "	")))  {
+    dd <- data.frame(DOMAIN = v, RDOMAIN = rev(v), stringsAsFactors = FALSE)
+    lz <- as_lazy(dd, paste0("vals_", sample.int(1e9, 1)))
+    for (k in names(lz)) for (kind in c("domain", "rdomain")) {
+      got <- vals(sv_cdisc_lazy_query(lz[[k]], kind))
+      want <- vals(dd[[if (kind == "domain") "DOMAIN" else "RDOMAIN"]])
+      if (length(want) > 2) want <- want[1:2]
+      if (length(unique(want)) <= 2) expect_equal(got, want, info = paste(k, kind, paste(v, collapse = "|")))
+    }
+  }
+  d <- f$ae[1:5, ]; d$DOMAIN <- c("	AE", "AE", "ae
+", "AE", "
+AE")
+  expect_equal(check(d, "x", "ws")$domain, "AE")
   # case/whitespace variants must not use up the two slots
   d <- f$ae[1:4, ]; d$DOMAIN <- c("AE", "ae", " Ae ", "AE")
   expect_equal(check(d, "x", "case")$domain, "AE")
