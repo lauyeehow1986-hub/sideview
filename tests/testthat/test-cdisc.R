@@ -28,3 +28,10 @@ test_that("the catalogue is read once", {
   testthat::local_mocked_bindings(read.csv = function(...) stop("re-read"), .package = "utils")
   expect_s3_class(sv_cdisc_catalogue(), "data.frame")
 })
+
+test_that("ADaM rows have empty keys and class equal to name", {
+  adam <- sv_cdisc_catalogue()
+  adam <- adam[adam$standard == "ADaM", ]
+  expect_true(all(adam$keys == ""))
+  expect_identical(adam$class, adam$name)
+})
