@@ -381,3 +381,126 @@ sv_cdisc_tag_diff <- function(old, new) {
   }
   out
 }
+
+# ---- Reader ------------------------------------------------------------------
+
+#' Is a package installed? A wrapper so tests can mock it.
+#' @noRd
+sv_has_pkg <- function(pkg) requireNamespace(pkg, quietly = TRUE)
+
+sv_read_cdisc_pkg <- c(xpt = "haven", sas7bdat = "haven", json = "datasetjson", parquet = "arrow")
+
+#' Read a Dataset-JSON file into a data frame with variable labels.
+#' @noRd
+sv_read_dataset_json <- function(path) {
+  obj <- datasetjson::read_dataset_json(path)
+  dat <- if (is.data.frame(obj)) obj else obj$data
+  if (!is.data.frame(dat)) stop("no data in the file", call. = FALSE)
+  cols <- if (is.list(obj) && !is.data.frame(obj)) obj$columns else NULL
+  if (is.data.frame(cols) && all(c("name", "label") %in% names(cols))) {
+    for (i in seq_len(nrow(cols))) {
+      nm <- cols$name[i]
+      lab <- cols$label[i]
+      if (nm %in% names(dat) && is.character(lab) && length(lab) == 1L && !is.na(lab) &&
+          is.null(attr(dat[[nm]], "label", exact = TRUE))) {
+        attr(dat[[nm]], "label") <- lab
+      }
+    }
+  }
+  as.data.frame(dat)
+}
+
+#' Read CDISC datasets from files
+#'
+#' Reads `.xpt`, `.sas7bdat`, Dataset-JSON (`.json`) and `.parquet` files into a
+#' named list that can go straight into [sideview()] or [sideview_widget()].
+#' Names are the lower-case file stems, in file order. Variable labels are kept.
+#'
+#' Each format needs its package, all in `Suggests:`: haven (`.xpt`,
+#' `.sas7bdat`), datasetjson (`.json`) and arrow (`.parquet`). Files are only
+#' read, never run. Nothing goes over the network.
+#'
+#' @param path A directory (its supported files are read, not recursively) or a
+#'   character vector of files. A file with an unsupported extension is an
+#'   error when named, and ignored when found in a directory.
+#' @param lazy When `TRUE` (the default), parquet files are opened as Arrow
+#'   Datasets and stay on disk. When `FALSE` they are read into data frames.
+#' @return A named list of data frames (and Arrow Datasets for lazy parquet).
+#'   A file that cannot be read gives a warning and is skipped.
+#' @examples
+#' \dontrun{
+#' x <- sv_read_cdisc("study/sdtm")
+#' sideview_widget(x)
+#' }
+#' @export
+sv_read_cdisc <- function(path, lazy = TRUE) {
+  if (!is.character(path) || !length(path) || anyNA(path)) {
+    stop("`path` must be a character vector of files or a directory.", call. = FALSE)
+  }
+  supported <- names(sv_read_cdisc_pkg)
+  files <- character()
+  for (p in path) {
+    if (dir.exists(p)) {
+      all <- list.files(p, full.names = TRUE)
+      all <- all[!dir.exists(all)]
+      found <- all[tolower(tools::file_ext(all)) %in% supported]
+      if (!length(found)) {
+        stop(sprintf("No .xpt, .sas7bdat, .json or .parquet files in %s.", p), call. = FALSE)
+      }
+      files <- c(files, found)
+    } else if (file.exists(p)) {
+      if (!(tolower(tools::file_ext(p)) %in% supported)) {
+        stop(sprintf("Unsupported file type: %s.", basename(p)), call. = FALSE)
+      }
+      files <- c(files, p)
+    } else {
+      stop(sprintf("Not found: %s.", p), call. = FALSE)
+    }
+  }
+
+  exts <- tolower(tools::file_ext(files))
+  pkgs <- unname(sv_read_cdisc_pkg[exts])
+  for (pkg in unique(pkgs)) {
+    if (!sv_has_pkg(pkg)) {
+      hit <- pkgs == pkg
+      stop(sprintf("Reading .%s files needs the %s package: %s.",
+                   paste(unique(exts[hit]), collapse = "/."), pkg,
+                   paste(basename(files[hit]), collapse = ", ")), call. = FALSE)
+    }
+  }
+
+  stems <- tolower(tools::file_path_sans_ext(basename(files)))
+  dup <- unique(stems[duplicated(stems)])
+  if (length(dup)) {
+    stop(sprintf("Two files have the stem `%s`: %s.", dup[1],
+                 paste(basename(files[stems == dup[1]]), collapse = ", ")), call. = FALSE)
+  }
+
+  out <- list()
+  for (i in seq_along(files)) {
+    f <- files[i]
+    res <- tryCatch(
+      switch(exts[i],
+        xpt = haven::read_xpt(f),
+        sas7bdat = haven::read_sas(f),
+        json = sv_read_dataset_json(f),
+        parquet = if (isTRUE(lazy)) {
+          ds <- arrow::open_dataset(f, format = "parquet")
+          ds$schema
+          ds
+        } else {
+          as.data.frame(arrow::read_parquet(f))
+        }
+      ),
+      error = function(e) e
+    )
+    if (inherits(res, "error")) {
+      warning(sprintf("Could not read %s (%s); skipped.", basename(f), conditionMessage(res)),
+              call. = FALSE)
+      next
+    }
+    if (is.data.frame(res)) res <- as.data.frame(res)
+    out[[stems[i]]] <- res
+  }
+  out
+}

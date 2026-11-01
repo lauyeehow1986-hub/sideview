@@ -305,3 +305,120 @@ test_that("sideview() checks cdisc and cdisc = FALSE leaves cards untagged", {
   tagged <- sideview(dm = f$dm, run = FALSE)
   expect_identical(tagged$cards[[1]]$cdisc$domain, "DM")
 })
+
+# ---- sv_read_cdisc() ----------------------------------------------------------
+
+test_that("xpt round trip keeps labels", {
+  skip_if_not_installed("haven")
+  skip_if_not_installed("withr")
+  f <- sv_cdisc_fixtures()
+  dir <- withr::local_tempdir()
+  haven::write_xpt(f$dm, file.path(dir, "dm.xpt"))
+  haven::write_xpt(f$ae, file.path(dir, "AE.XPT"))
+  x <- sv_read_cdisc(dir)
+  expect_identical(names(x), c("ae", "dm"))
+  expect_identical(attr(x$dm$USUBJID, "label"), "Unique Subject Identifier")
+  w <- sideview_widget(x)
+  tags <- vapply(w$x$cards, function(c) c$cdisc$domain %||% NA_character_, character(1))
+  expect_setequal(tags, c("AE", "DM"))
+})
+
+test_that("parquet is lazy by default and eager on request", {
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("withr")
+  f <- sv_cdisc_fixtures()
+  dir <- withr::local_tempdir()
+  arrow::write_parquet(f$ae, file.path(dir, "ae.parquet"))
+  arrow::write_parquet(f$dm, file.path(dir, "dm.parquet"))
+  x <- sv_read_cdisc(dir)
+  expect_s3_class(x$ae, "Dataset")
+  expect_identical(sv_normalize(x$ae, "ae")$cdisc$domain, "AE")
+  expect_identical(sv_card_payload(sv_normalize(x$dm, "dm"))$col_labels$USUBJID,
+                   "Unique Subject Identifier")
+  y <- sv_read_cdisc(dir, lazy = FALSE)
+  expect_true(is.data.frame(y$ae))
+  expect_identical(sv_normalize(y$ae, "ae")$cdisc$domain, "AE")
+  expect_identical(sv_card_payload(sv_normalize(y$dm, "dm"))$col_labels$AGE, "Age")
+})
+
+test_that("dataset-json is read when datasetjson is installed", {
+  skip_if_not_installed("datasetjson")
+  skip_if_not_installed("withr")
+  f <- sv_cdisc_fixtures()
+  dir <- withr::local_tempdir()
+  ds <- datasetjson::dataset_json(f$ae, item_oid = "IG.AE", name = "AE", dataset_label = "Adverse Events",
+                                  file_oid = "x", last_modified = "2024-01-01T00:00:00",
+                                  originator = "t", sys = "t", sys_version = "1", study = "S",
+                                  metadata_version = "1", metadata_ref = "x")
+  datasetjson::write_dataset_json(ds, file.path(dir, "ae.json"))
+  x <- sv_read_cdisc(file.path(dir, "ae.json"))
+  expect_identical(sv_normalize(x$ae, "ae")$cdisc$domain, "AE")
+})
+
+test_that("sas7bdat goes through haven::read_sas", {
+  skip_if_not_installed("haven")
+  skip_if_not_installed("withr")
+  f <- sv_cdisc_fixtures()
+  dir <- withr::local_tempdir()
+  file.create(file.path(dir, "ae.sas7bdat"))
+  testthat::local_mocked_bindings(read_sas = function(path, ...) f$ae, .package = "haven")
+  x <- sv_read_cdisc(dir)
+  expect_identical(names(x), "ae")
+  expect_identical(sv_normalize(x$ae, "ae")$cdisc$domain, "AE")
+})
+
+test_that("sv_read_cdisc names a missing package", {
+  skip_if_not_installed("withr")
+  dir <- withr::local_tempdir()
+  file.create(file.path(dir, c("dm.xpt", "ae.xpt")))
+  testthat::local_mocked_bindings(sv_has_pkg = function(pkg) FALSE)
+  expect_error(sv_read_cdisc(dir),
+               "Reading .xpt files needs the haven package: ae.xpt, dm.xpt.", fixed = TRUE)
+})
+
+test_that("sv_read_cdisc rejects a named unsupported file", {
+  skip_if_not_installed("withr")
+  dir <- withr::local_tempdir()
+  p <- file.path(dir, "notes.txt")
+  writeLines("x", p)
+  expect_error(sv_read_cdisc(p), "Unsupported file type: notes.txt.", fixed = TRUE)
+})
+
+test_that("sv_read_cdisc warns and skips an unreadable file", {
+  skip_if_not_installed("haven")
+  skip_if_not_installed("withr")
+  f <- sv_cdisc_fixtures()
+  dir <- withr::local_tempdir()
+  writeLines("not a transport file", file.path(dir, "bad.xpt"))
+  haven::write_xpt(f$dm, file.path(dir, "dm.xpt"))
+  expect_warning(x <- sv_read_cdisc(dir), "Could not read bad.xpt (", fixed = TRUE)
+  expect_warning(sv_read_cdisc(dir), "); skipped.", fixed = TRUE)
+  expect_identical(names(x), "dm")
+})
+
+test_that("sv_read_cdisc refuses duplicate stems", {
+  skip_if_not_installed("withr")
+  dir <- withr::local_tempdir()
+  file.create(file.path(dir, c("ae.xpt", "ae.parquet")))
+  testthat::local_mocked_bindings(sv_has_pkg = function(pkg) TRUE)
+  expect_error(sv_read_cdisc(dir), "Two files have the stem `ae`: ae.parquet, ae.xpt.", fixed = TRUE)
+})
+
+test_that("sv_read_cdisc errors when nothing is supported or the path is missing", {
+  skip_if_not_installed("withr")
+  dir <- withr::local_tempdir()
+  writeLines("x", file.path(dir, "notes.txt"))
+  expect_error(sv_read_cdisc(dir),
+               sprintf("No .xpt, .sas7bdat, .json or .parquet files in %s.", dir), fixed = TRUE)
+  gone <- file.path(dir, "nope")
+  expect_error(sv_read_cdisc(gone), sprintf("Not found: %s.", gone), fixed = TRUE)
+})
+
+test_that("unsupported files in a directory are ignored", {
+  skip_if_not_installed("haven")
+  skip_if_not_installed("withr")
+  dir <- withr::local_tempdir()
+  haven::write_xpt(sv_cdisc_fixtures()$ae, file.path(dir, "ae.xpt"))
+  writeLines("x", file.path(dir, "notes.txt"))
+  expect_identical(names(sv_read_cdisc(dir)), "ae")
+})
