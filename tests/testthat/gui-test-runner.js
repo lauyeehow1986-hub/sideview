@@ -58,6 +58,10 @@ class MockElement {
     this._sideviewInstance = null;
     this._sourceBtn = null;
     this.scrollTop = 0;
+    this.contains = function (n) {
+      for (let cur = n; cur; cur = cur.parentNode) if (cur === this) return true;
+      return false;
+    };
     this.scrollLeft = 0;
     this.scrollWidth = 400;
     this.scrollHeight = 300;
@@ -1424,6 +1428,53 @@ function runAllScenarios() {
   s12e.destroy();
   console.warn = s11_origWarn;
   results.scenario12 = s12_r;
+
+  // SCENARIO 13: L toggles the variable-label row; saved in state as view.labels_row
+  const s13_r = {};
+  const s13 = s11_make('l-', [
+    { id: 'card_ae', name: 'ae', type: 'grid', x: 10, y: 10, dims: [2, 2],
+      data: { USUBJID: ['a', 'b'], AETERM: ['x', 'y'] }, col_types: { USUBJID: 'character', AETERM: 'character' },
+      col_labels: { USUBJID: 'Unique Subject Identifier', AETERM: '<img src=x onerror=alert(2)>' } },
+    { id: 'card_pl', name: 'plain', type: 'grid', x: 400, y: 10, dims: [2, 1],
+      data: { id: ['a', 'b'] }, col_types: { id: 'character' } }
+  ]);
+  const s13e = s13.engine;
+  const s13_ae = s11_byName(s13, 'ae').element;
+  const s13_pl = s11_byName(s13, 'plain').element;
+  s13_r.off_by_default = !s13_ae.querySelector('.sv-label-row') && s13e.getState().view.labels_row === false;
+  const s13_fire = function (el, props) {
+    const ev = new MockEvent('keydown', Object.assign({ bubbles: true }, props));
+    Object.assign(ev, props);
+    el.dispatchEvent(ev);
+  };
+  const s13_ai = new MockElement('INPUT'); s13_ai.type = 'text'; s13_ai.className = 'sideview-ai-input';
+  s13.el.appendChild(s13_ai);
+  document.activeElement = s13.el;
+  s13_fire(s13.el, { key: 'L' });
+  s13_r.l_shows_row = !!s13_ae.querySelector('.sv-label-row') && s13e.getState().view.labels_row === true;
+  s13_r.label_cell_text = s13_ae.querySelectorAll('.sv-label-cell').length === 2 &&
+    s13_ae.querySelectorAll('.sv-label-cell')[0].textContent === 'Unique Subject Identifier' &&
+    s13_ae.querySelectorAll('.sv-label-cell')[0].title === 'Unique Subject Identifier';
+  s13_r.hostile_label_is_text = !s13_ae.querySelector('img') &&
+    s13_ae.querySelectorAll('.sv-label-cell')[1].textContent === '<img src=x onerror=alert(2)>';
+  s13_r.no_labels_no_row = !s13_pl.querySelector('.sv-label-row');
+  s13_fire(s13.el, { key: 'l' });
+  s13_r.l_hides_row = !s13_ae.querySelector('.sv-label-row') && s13e.getState().view.labels_row === false;
+  // typing in the AI input does not toggle
+  document.activeElement = s13_ai;
+  s13_fire(s13_ai, { key: 'L' });
+  document.activeElement = s13.el;
+  s13_r.typing_ignored = !s13_ae.querySelector('.sv-label-row');
+  s13e.applyState({ view: { labels_row: true } });
+  s13_r.apply_state_shows = !!s13_ae.querySelector('.sv-label-row') && s13e.getState().view.labels_row === true;
+  s13e.applyState({ cards: [] });
+  s13_r.state_without_view_keeps = !!s13_ae.querySelector('.sv-label-row');
+  s13_r.no_duplicate_row = s13e.toggleLabelsRow(true) === true && s13_ae.querySelectorAll('.sv-label-row').length === 1;
+  s13_r.toggle_returns_bool = s13e.toggleLabelsRow(false) === false && !s13_ae.querySelector('.sv-label-row');
+  s13e.toggleShortcuts(true);
+  s13_r.shortcut_listed = (s13.el.textContent || '').indexOf('Show or hide variable labels') >= 0;
+  s13e.destroy();
+  results.scenario13 = s13_r;
 
   // snapshots wait for the debounce, so they finish after the synchronous scenarios
   results.__later = function () {

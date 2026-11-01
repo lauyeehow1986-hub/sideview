@@ -1670,6 +1670,7 @@ function sendToShiny(name, value) {
     [['Ctrl+K'], 'Find a card or column'],
     [['Double-click a card title'], 'Zoom to that card'],
     [['M'], 'Show or hide the minimap'],
+    [['L'], 'Show or hide variable labels'],
     [['D'], 'Show or hide the drawer'],
     [['T'], 'Switch light / dark theme'],
     [['/'], 'Type an AI prompt'],
@@ -2717,6 +2718,7 @@ function sendToShiny(name, value) {
       else if ((k === '-' || k === '_') && self.panzoom) self.panzoom.zoomToPoint(self.panzoom.getScale() * 0.8, centre);
       else if (k === 't' || k === 'T') self.toggleTheme();
       else if (k === 'm' || k === 'M') self.toggleMinimap();
+      else if (k === 'l' || k === 'L') self.toggleLabelsRow();
       else if (k === 'd' || k === 'D') {
         var drawerEl = self.container.querySelector('.sideview-drawer');
         if (drawerEl) drawerEl.classList.toggle('collapsed');
@@ -2942,6 +2944,7 @@ function sendToShiny(name, value) {
     };
     this.cards.set(cardId, cardMeta);
     this.renderCdiscBadge(cardMeta);
+    this.syncLabelsRow(cardMeta);
 
     // Setup Drag and Drop
     this.setupCardDrag(cardEl, cardMeta);
@@ -3140,6 +3143,7 @@ function sendToShiny(name, value) {
       };
       self.cards.set(cardId, cardMeta);
       self.renderCdiscBadge(cardMeta);
+      self.syncLabelsRow(cardMeta);
       self.setupCardDrag(cardEl, cardMeta);
       self.setupScrollSync(cardMeta);
     });
@@ -5075,7 +5079,8 @@ function sendToShiny(name, value) {
         active_tab: this.activeDrawerTab || 'pipeline',
         steps: this.pipeline.toJSON().steps,
         pipe: this.pipeline.pipe
-      }
+      },
+      view: { labels_row: !!this.labelsRow }
     };
   };
 
@@ -5170,10 +5175,60 @@ function sendToShiny(name, value) {
       pz.zoom(zoom);
       pz.pan(finiteOr(cv.pan_x, 0), finiteOr(cv.pan_y, 0));
     }
+    if (state.view && typeof state.view === 'object' && typeof state.view.labels_row === 'boolean') {
+      this.toggleLabelsRow(state.view.labels_row);
+    }
     // Keep the saved view: the first layout only places cards the state lacks.
     if (out.restored.length) this._restoredView = true;
     this.scheduleConnectorUpdate();
     return out;
+  };
+
+  // Second header row of variable labels (the L key). A card without labels
+  // gets no row at all, not an empty one. Cells are td, so the th-based code
+  // (column index, ports, sort) never sees them.
+  SideviewEngine.prototype.syncLabelsRow = function (card) {
+    var el = card && card.element;
+    var thead = el && el.querySelector('.sideview-table thead');
+    if (!thead) return;
+    var old = thead.querySelector('.sv-label-row');
+    if (old) old.parentNode.removeChild(old);
+    var labels = card.colLabels;
+    if (!this.labelsRow || !labels || typeof labels !== 'object') return;
+    var ths = thead.querySelectorAll('th[data-col-name]');
+    var any = false;
+    var tr = document.createElement('tr');
+    tr.className = 'sv-label-row';
+    for (var i = 0; i < ths.length; i++) {
+      var lab = labels[ths[i].dataset.colName];
+      var td = document.createElement('td');
+      td.className = 'sv-label-cell';
+      if (lab !== undefined && lab !== null && String(lab) !== '') {
+        td.textContent = String(lab);
+        td.title = String(lab);
+        any = true;
+      }
+      tr.appendChild(td);
+    }
+    if (!any) return;
+    thead.appendChild(tr);
+    // The label cells stick just under the column-name row.
+    var first = ths.length ? ths[0].parentNode : null;
+    var h = first && first.offsetHeight;
+    if (h && typeof el.style.setProperty === 'function') el.style.setProperty('--sv-th-row-h', h + 'px');
+  };
+
+  SideviewEngine.prototype.toggleLabelsRow = function (show) {
+    var self = this;
+    if (show === undefined) show = !this.labelsRow;
+    this.labelsRow = !!show;
+    this.cards.forEach(function (card) {
+      self.syncLabelsRow(card);
+      if (card.element && card.element._virtualTable) card.element._virtualTable.render();
+    });
+    this.scheduleConnectorUpdate();
+    this.scheduleSnapshot();
+    return this.labelsRow;
   };
 
   function stateSummary(out) {

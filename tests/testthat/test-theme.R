@@ -60,7 +60,7 @@ test_that("every --sv-* token used in CSS and JS is defined on the container", {
   used <- sub("^var\\(", "", used)
   # Layout sizes measured at runtime by sideview.js; every use has a fallback.
   # sv_theme() overrides that are only read through var(name, fallback).
-  runtime <- c("--sv-topbar-h", "--sv-aibar-h", "--sv-primary-text-light", "--sv-primary-text-dark")
+  runtime <- c("--sv-topbar-h", "--sv-aibar-h", "--sv-th-row-h", "--sv-primary-text-light", "--sv-primary-text-dark")
   missing <- setdiff(used, c(names(light), runtime))
   expect_identical(missing, character(0))
 })

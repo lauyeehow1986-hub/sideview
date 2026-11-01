@@ -118,7 +118,7 @@ rstudio bridge: R/rstudio.R
 - **Mode-aware overrides:** a custom colour that must differ by mode uses `-light`/`-dark` variables:
   the base block has `--sv-primary-text: var(--sv-primary-text-light, #...)`, the dark blocks use
   `var(--sv-primary-text-dark, #...)`. Use `--sv-primary-text` (not `--sv-primary`) for primary-coloured *text*.
-- **Keyboard:** single-key shortcuts (F, 0, +/-, T, D, M, /, ?) and Ctrl+K (card search) only fire when the
+- **Keyboard:** single-key shortcuts (F, 0, +/-, T, D, M, L, /, ?) and Ctrl+K (card search) only fire when the
   canvas owns the keyboard (`ownsKeyboard()`: standalone, or focus inside an embedded widget) and never while
   typing. Ctrl+Enter submits a drawer builder. Add new shortcuts to the `?` dialog list too.
 - **Navigation:** `zoomToCard()` (title double-click, minimap click, Ctrl+K result), the minimap (`renderMinimap()`,

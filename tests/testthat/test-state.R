@@ -445,3 +445,24 @@ test_that("a saved state round-trips with the current version", {
   expect_silent(st <- sv_load_state(tf))
   expect_equal(st$version, "0.3.0")
 })
+
+test_that("labels_row survives a JSON round trip", {
+  st <- sv_state_from_json(sv_state_json(list(version = "0.3.0", view = list(labels_row = TRUE))))
+  expect_true(st$view$labels_row)
+  st <- sv_state_from_json(sv_state_json(list(version = "0.3.0", view = list(labels_row = FALSE))))
+  expect_false(st$view$labels_row)
+})
+
+test_that("a state without view still loads", {
+  st <- sv_state_from_json(sv_state_json(new_sideview_state()))
+  expect_null(st$view)
+  expect_equal(st$version, "0.3.0")
+})
+
+test_that("state never carries cdisc", {
+  ae <- data.frame(STUDYID = "S", DOMAIN = "AE", USUBJID = "1", AETERM = "x")
+  card <- sv_normalize(ae, name = "ae")
+  expect_false(is.null(card$cdisc))
+  st <- new_sideview_state(cards = list(c(unclass(card), list(x = 1, y = 2))), pipeline = list(code = ""))
+  expect_false(grepl('"cdisc"', sv_state_json(st), fixed = TRUE))
+})
