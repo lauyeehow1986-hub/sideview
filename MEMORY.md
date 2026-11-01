@@ -5,6 +5,33 @@ Each entry: **date — change — why — verification**. Keep the "Open issues"
 
 ---
 
+### 2026-11-01 - CDISC awareness: real-browser and manual verification (Task 11)
+- **Browser tests do run here** (Chrome at `C:\Program Files\Google\Chrome\Application\chrome.exe`, chromote + callr present). The earlier
+  "timeouts" were not reproduced: `test-layout-browser.R` ran to completion with `NOT_CRAN=true` (about 2 min) both before and after the new tests.
+- **New tests (test-layout-browser.R), all passed on first run:** `cdisc badge sits in the title bar without overlap` (1400x900, 1024x700,
+  560x520: every badge inside its header, no title-bar button overlapped, toolbar/palette/ai-bar still clear); `labelled headers carry titles`;
+  `L toggles labels and splines stay on their ports` (real drag connects dm.USUBJID to ae.USUBJID; spline ends within 2 px of the port centres
+  with the row off, on, off again); `a module snapshot carries view.labels_row and follows the L toggle` (proxy example app, `a-` canvas).
+  They passed without a code change, so there was no failing-first step and no Task 7-8 bug was found.
+- **Manual pass done in headless Chrome via chromote (gadget, dm/ae/suppae/adsl/adlb, `run = FALSE` app), NOT in RStudio:**
+  badge text and tooltip (e.g. "Demographics . SDTM Special-Purpose / DOMAIN column = DM / STUDYID + USUBJID"); th tooltip
+  ("Unique Subject Identifier"); `L` shows/hides the row; Ctrl+K "adverse" finds the `ae` card by its label; inspector for dm.USUBJID shows
+  the "Unique Subject Identifier" label line; dark theme (T) toggles.
+- **Parked: `--sv-th-row-h` staleness.** Measured 71 px layout height in light, after T (dark), zoomed in x2, after the container font changed, and
+  with the card narrowed; the labels row stayed flush under the header after scrolling the card body (gap 0 in light, dark and zoomed).
+  Headers are `white-space: nowrap`, so their height does not change with theme or zoom. It would only go stale if the header height changed
+  after the row was built (e.g. a late web-font load); forcing that by padding the th did leave the cached value at 71 px. Not fixed (no
+  realistic trigger found); left as a known limitation.
+- **Parked: module `test-module.R` warning:** `devtools::test(filter = "module")` gives 1 warning, `nothing is sent before ready`:
+  "package 'shiny' was built under R version 4.5.3" (installed shiny built for a newer R than 4.5.2). Environmental, not package code.
+- **NOT verified (needs real RStudio):** `viewer = "dialog"` and `viewer = "pane"` with the five tables; RStudio's Viewer pane rendering of the
+  badge and tooltip. `viewer = "browser"` equivalent covered only by headless Chrome above, not a user-visible browser window.
+- **Full suite, `NOT_CRAN=true devtools::test()`:** 22759 expectations, 0 failed, 0 errors, 0 warnings, 1 skipped (`datasetjson` not installed). One
+  earlier full run hit a real `Chromote: timed out waiting for event Page.loadEventFired` at `module: zero-row replace` (test-layout-browser.R:1943)
+  while I had other Rscript/Chrome processes running; the identical code passed alone and in the clean rerun, so the timeout is intermittent
+  and load-related (a reload-wait in `sv_module_page()`), not a CDISC regression. The full suite takes about 25 minutes here.
+- Codebook `domain` column: covered by test-codebook.R (R and byte-equal JS CSV); not opened as a downloaded file in a browser.
+
 ### 2026-11-01 - CDISC task 7: domain badge, label titles, inspector line, search
 - **Change:** `renderCdiscBadge(cardMeta)` puts `span.sideview-badge-cdisc.sv-cdisc-<std>` after the card name (text = domain, title = `<label> · <standard> <class>` + evidence + `supplements <parent>`, all set as text) and keeps `el.dataset.cdiscDomain` real (deleted when the tag is null), so `cardDomain()` feeds the widget/module codebook. `setCdiscTags()` + `onMessage('sideview_cdisc_update')` apply module updates (null clears; an unknown id is ignored quietly). `th` titles use the variable label; `searchCards()` matches domain and dataset label (rank 1); the inspector shows `<domain> · <dataset label>`. Gadget cards carry `data-cdisc` / `data-col-labels` (JSON) from `render_card_tag()`, read in `initExistingCards()`. Tokens `--sv-cdisc-{sdtm,send,adam}[-text]` in the base, dark and auto-dark blocks.
 - **Verified:** mock-DOM scenario 12, test-theme contrast pairs, `render_card_tag` test. Real browser / RStudio: pending Task 11.
