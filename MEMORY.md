@@ -5,6 +5,12 @@ Each entry: **date — change — why — verification**. Keep the "Open issues"
 
 ---
 
+### 2026-11-02 - Real-browser tests no longer time out under load (test infrastructure only)
+- **Root cause:** `sv_open_page()` (tests/testthat/helper-browser.R) waited for `Page$loadEventFired()` with chromote's default 10 s event timeout (`default_timeout`), and every later `Runtime$evaluate` had the same 10 s. With the suite or `devtools::check()` running (Chrome, duckdb, callr app starts all competing for CPU) the first paint of the callr app took longer, giving "timed out waiting for Page.loadEventFired". Only helper-browser.R starts Chrome (test-layout-browser.R, test-lazy-browser.R); shinytest2 `AppDriver` is used once, behind `SIDEVIEW_HEADED_QA`, so it is off by default.
+- **Change:** one shared timeout, `sv_browser_timeout()` (90 s, env `SIDEVIEW_BROWSER_TIMEOUT`), set as the session's `default_timeout`; `sv_navigate()` (navigate + load event, one retry); `sv_wait_js()` (poll a JS condition to a deadline, replaces the fixed 15 s ready loops); `ChromoteSession$new` retried once; app start wait raised from 30 s to 2 min. The module page re-navigation uses `sv_navigate()`. Pages were already shared per file. No assertion or geometry threshold changed.
+- **test-lazy.R:** the 1M-row duckdb join check bound went from 5 s to 15 s (7 s measured here, also on the older commit); the comment says it guards a collect-to-R or quadratic regression, which takes minutes.
+- **Verified:** full `NOT_CRAN=true devtools::test()` with no failures (layout-browser, lazy-browser, lazy included); `devtools::check(args = "--no-manual")` result in followup-2-report.md.
+
 ### 2026-11-01 - CDISC awareness: follow-up 1 (deferred minors closed)
 - **Case-insensitive columns:** `sv_cdisc_peek()` upper-cases column names for the rules and reads values through the real name; `sv_cdisc_lazy_query(tbl, kind, col)` takes that name (arrow/duckdb twins unchanged otherwise).
 - **User tags:** `sv_cdisc_user_tag()` gives `AD*` the ADaM class from `sv_cdisc_rule_adam()` (Custom if no structure confirms) and `SUPPxx`/`SUPPQUAL` Relationship plus parent. Auto SUPP tags flip with the SEND canvas (`sv_cdisc_resolve()`), user tags never; a flipped tag gets `SEND canvas: ...` evidence (removed again when the evidence goes).

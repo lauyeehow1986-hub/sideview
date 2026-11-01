@@ -1722,10 +1722,8 @@ sv_module_page <- function() {
     .sv_module$page <- sv_open_page(.sv_module$app$url, wait_for = ready_js)
   } else {
     b <- .sv_module$page
-    b$Page$navigate(.sv_module$app$url, wait_ = FALSE)
-    b$Page$loadEventFired()
-    ok <- FALSE
-    for (i in 1:80) { ok <- isTRUE(sv_js(b, ready_js)); if (ok) break; Sys.sleep(0.25) }
+    sv_navigate(b, .sv_module$app$url)
+    ok <- sv_wait_js(b, ready_js, timeout = 60)
     attr(b, "sv_ready") <- ok
   }
   b <- .sv_module$page
