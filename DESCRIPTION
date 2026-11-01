@@ -1,6 +1,6 @@
 Package: sideview
 Title: Explore and Join Many Tables on a Zoomable Canvas
-Version: 0.3.0
+Version: 0.4.0
 Authors@R: c(
     person("Yee How", "Lau", email = "lauyeehow1986@gmail.com", role = c("aut", "cre", "cph"))
   )

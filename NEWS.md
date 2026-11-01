@@ -1,4 +1,4 @@
-# sideview 0.4.0 (development)
+# sideview 0.4.0
 
 ## Smaller items
 

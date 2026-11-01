@@ -15,7 +15,11 @@ to see every feature in a screenshot.
 
 ## Installation
 
-Install the development version from GitHub:
+Install from r-universe (binaries for Windows and macOS):
+
+[`install.packages`](https://rdrr.io/r/utils/install.packages.html)`(``"sideview"``, repos ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``"https://lauyeehow1986-hub.r-universe.dev"``, ``"https://cloud.r-project.org"``)``)`
+
+Or install the development version from GitHub:
 
 `# install.packages("remotes")`` ``remotes``::`[`install_github`](https://remotes.r-lib.org/reference/install_github.html)`(``"lauyeehow1986-hub/sideview"``)`
 

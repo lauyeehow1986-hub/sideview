@@ -1,6 +1,29 @@
 # Changelog
 
-## sideview 0.4.0 (development)
+## sideview 0.4.0
+
+### Smaller items
+
+- **Row cap for widgets.**
+  [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md)
+  and
+  [`save_sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/save_sideview.md)
+  take `max_rows = 5000`. A longer data-frame table is cut to its first
+  rows, its card says “First N of M rows” and one message names the
+  tables cut (silent while knitting). `max_rows = Inf` embeds
+  everything. Lazy tables are unchanged.
+- **Positron.** Without `viewer =`,
+  [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)
+  and
+  [`sideview_addin()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_addin.md)
+  open the browser in Positron, which has no dialog viewer;
+  `viewer = "dialog"` there also opens the browser, with one message.
+- **State files carry a schema version.**
+  [`sv_load_state()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_load_state.md)
+  and `state =` read a file without a `version` as 0.2.0 and upgrade
+  older files (stamped 0.3.0); a file from a newer sideview loads with
+  one warning.
+- **Install from r-universe:** see the README.
 
 ### Shiny module and proxy
 

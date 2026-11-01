@@ -12,6 +12,7 @@ save_sideview(
   selfcontained = TRUE,
   title = "Sideview",
   background = "white",
+  max_rows = 5000,
   ...
 )
 ```
@@ -40,6 +41,13 @@ save_sideview(
 - background:
 
   Background color for the document body. Default `"white"`.
+
+- max_rows:
+
+  Row cap used when `widget` is table data rather than a widget (see
+  [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md);
+  default 5000). A widget you built yourself keeps the cap it was built
+  with.
 
 - ...:
 

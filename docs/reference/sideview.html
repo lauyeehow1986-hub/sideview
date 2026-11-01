@@ -11,7 +11,7 @@ discrepancy recoding, and LLM-assisted tidyverse code generation."><meta propert
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -48,13 +48,7 @@ discrepancy recoding, and LLM-assisted tidyverse code generation.</p>
     <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">sideview</span><span class="op">(</span></span>
 <span>  <span class="va">...</span>,</span>
 <span>  title <span class="op">=</span> <span class="st">"Sideview Canvas"</span>,</span>
-<span>  viewer <span class="op">=</span> <span class="kw">if</span> <span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/ns-load.html" class="external-link">requireNamespace</a></span><span class="op">(</span><span class="st">"rstudioapi"</span>, quietly <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span> <span class="op">&amp;&amp;</span></span>
-<span>    <span class="fu">rstudioapi</span><span class="fu">::</span><span class="fu"><a href="https://rstudio.github.io/rstudioapi/reference/isAvailable.html" class="external-link">isAvailable</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span> <span class="op">{</span></span>
-<span>     <span class="fu">shiny</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">dialogViewer</a></span><span class="op">(</span><span class="st">"Sideview Canvas"</span>, width <span class="op">=</span></span>
-<span>    <span class="fl">1400</span>, height <span class="op">=</span> <span class="fl">900</span><span class="op">)</span></span>
-<span> <span class="op">}</span> <span class="kw">else</span> <span class="op">{</span></span>
-<span>     <span class="fu">shiny</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">paneViewer</a></span><span class="op">(</span>minHeight <span class="op">=</span> <span class="fl">500</span><span class="op">)</span></span>
-<span> <span class="op">}</span>,</span>
+<span>  viewer <span class="op">=</span> <span class="fu">sv_default_viewer</span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  theme <span class="op">=</span> <span class="st">"auto"</span>,</span>
 <span>  state <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  env <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/sys.parent.html" class="external-link">parent.frame</a></span><span class="op">(</span><span class="op">)</span>,</span>
@@ -79,7 +73,9 @@ discrepancy recoding, and LLM-assisted tidyverse code generation.</p>
 <dd><p>Shiny viewer gadget display mode (e.g. <code><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">shiny::paneViewer()</a></code>,
 <code><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">shiny::dialogViewer()</a></code>, <code><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">shiny::browserViewer()</a></code>), or a character shorthand
 (<code>"browser"</code>, <code>"dialog"</code>, or <code>"pane"</code>). Default is <code><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">shiny::dialogViewer()</a></code>
-(width 1400, height 900) when RStudio is available, otherwise <code><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">shiny::paneViewer()</a></code>.</p></dd>
+(width 1400, height 900) in RStudio, <code><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">shiny::browserViewer()</a></code> in Positron
+(it has no dialog viewer; <code>"dialog"</code> there also opens the browser, with one
+message) and <code><a href="https://rdrr.io/pkg/shiny/man/viewer.html" class="external-link">shiny::paneViewer()</a></code> elsewhere.</p></dd>
 
 
 <dt id="arg-theme">theme<a class="anchor" aria-label="anchor" href="#arg-theme"></a></dt>
