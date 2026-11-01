@@ -113,6 +113,13 @@ follows the prefix rule.
 When two rules disagree (for example `DOMAIN = "AE"` in a table named `cm`), the rule that comes first wins
 and `evidence` records the conflict (`"name cm disagrees with DOMAIN AE"`).
 
+*Amendment, 2026-11-01 (follow-up 1):* column names are matched case-insensitively (`studyid`, `Domain`); the
+rules see upper-cased names and the real name is used to read values. A user tag (`cdisc =`) for `AD*` takes
+its class from the ADaM structure rule (`Custom` when nothing confirms it); `SUPPxx` takes `Relationship`
+and the suffix as `parent`. Keys of a named `cdisc` vector are compared with the table name without a file
+extension (case matters). §6: auto SUPP tags follow the canvas standard like shared domains; user tags
+never flip; a flipped tag gets `SEND canvas: ...` in `evidence`.
+
 ### 5.2 Lazy tables
 
 The checks use the schema (`colnames`) plus at most two small aggregates. Nothing is collected beyond what

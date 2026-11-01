@@ -37,25 +37,20 @@
 <h2 class="pkg-version" data-toc-text="0.5.0" id="sideview-050">sideview 0.5.0<a class="anchor" aria-label="anchor" href="#sideview-050"></a></h2>
 <div class="section level3">
 <h3 id="cdisc-awareness-0-5-0">CDISC awareness<a class="anchor" aria-label="anchor" href="#cdisc-awareness-0-5-0"></a></h3>
-<ul><li>
-<strong>Domain badges.</strong> Tables that look like SDTM, SEND or ADaM datasets get a small badge after the card name (<code>DM</code>, <code>AE</code>, <code>ADSL</code>, …). Hover for the dataset label, the standard and class, and why sideview thinks so. Supplemental qualifier tables (<code>SUPPAE</code>) say which parent they supplement. Other tables are never touched.</li>
-<li>
-<strong>Variable labels.</strong> Column headers show a variable’s label as a tooltip, <code>L</code> shows a row of labels under the headers (saved with the workspace), <code>Ctrl+K</code> also finds a card by its domain or dataset label, and the column inspector shows the label.</li>
-<li>
-<strong><code>cdisc =</code></strong> on <code><a href="../reference/sideview.html">sideview()</a></code>, <code><a href="../reference/sideview_widget.html">sideview_widget()</a></code>, <code><a href="../reference/save_sideview.html">save_sideview()</a></code>, <code><a href="../reference/sideviewUI.html">sideviewServer()</a></code> and <code><a href="../reference/sv_codebook.html">sv_codebook()</a></code>: <code>"auto"</code> (default), <code>FALSE</code>, or a named vector such as <code>c(my_ae = "AE")</code>. Module canvases update their badges when a card is added or replaced.</li>
-<li>
-<strong><code><a href="../reference/sv_codebook.html">sv_codebook()</a></code> has a <code>domain</code> column.</strong> The widget’s CSV download matches it byte for byte.</li>
-<li>
-<strong><code><a href="../reference/sv_cdisc_catalogue.html">sv_cdisc_catalogue()</a></code></strong> returns the dataset catalogue the detection uses.</li>
-<li>
-<strong><code><a href="../reference/sv_read_cdisc.html">sv_read_cdisc()</a></code></strong> reads a folder or a set of <code>.xpt</code>, <code>.sas7bdat</code>, Dataset-JSON and <code>.parquet</code> files into a named list for <code><a href="../reference/sideview.html">sideview()</a></code>, keeping variable labels. Nothing goes over the network.</li>
-<li>
-<strong>Copilot.</strong> The schema text sent to the LLM now includes column labels and a domain line. Row data is still never sent.</li>
+<ul><li><p><strong>Domain badges.</strong> Tables that look like SDTM, SEND or ADaM datasets get a small badge after the card name (<code>DM</code>, <code>AE</code>, <code>ADSL</code>, …). Hover for the dataset label, the standard and class, and why sideview thinks so. Supplemental qualifier tables (<code>SUPPAE</code>) say which parent they supplement. Other tables are never touched.</p></li>
+<li><p><strong>Variable labels.</strong> Column headers show a variable’s label as a tooltip, <code>L</code> shows a row of labels under the headers (saved with the workspace as <code>view.labels_row</code>), <code>Ctrl+K</code> also finds a card by its domain or dataset label, and the column inspector shows the label.</p></li>
+<li><p><strong><code>cdisc =</code></strong> on <code><a href="../reference/sideview.html">sideview()</a></code>, <code><a href="../reference/sideview_widget.html">sideview_widget()</a></code>, <code><a href="../reference/save_sideview.html">save_sideview()</a></code>, <code><a href="../reference/sideviewUI.html">sideviewServer()</a></code> and <code><a href="../reference/sv_codebook.html">sv_codebook()</a></code>: <code>"auto"</code> (default), <code>FALSE</code>, or a named vector such as <code>c(my_ae = "AE")</code>. Module canvases update their badges when a card is added or replaced.</p></li>
+<li><p><strong><code><a href="../reference/sv_codebook.html">sv_codebook()</a></code> has a <code>domain</code> column.</strong> The widget’s CSV download matches it byte for byte.</p></li>
+<li><p><strong><code><a href="../reference/sv_cdisc_catalogue.html">sv_cdisc_catalogue()</a></code></strong> returns the dataset catalogue the detection uses.</p></li>
+<li><p><strong><code><a href="../reference/sv_read_cdisc.html">sv_read_cdisc()</a></code></strong> reads a folder or a set of <code>.xpt</code>, <code>.sas7bdat</code>, Dataset-JSON and <code>.parquet</code> files into a named list for <code><a href="../reference/sideview.html">sideview()</a></code>, keeping variable labels. Nothing goes over the network.</p></li>
+<li><p><strong>Copilot.</strong> The schema text sent to the LLM now includes column labels and a domain line. Row data is still never sent.</p></li>
+<li><p><strong>Overrides.</strong> A table you tag yourself (<code>cdisc = c(my_adae = "ADAE")</code>) gets the same class as an auto-detected one: ADaM tags take BDS, OCCDS, TTE or ADSL from the table’s columns, and <code>SUPPAE</code>-style tags get Relationship and their parent. On a SEND canvas an auto-detected SUPP table is SEND too; your own tags are never flipped. The hover text says why a table is SEND. Names in <code>cdisc =</code> ignore a file extension (<code>"lab.csv"</code> names the table <code>lab</code>); case still matters.</p></li>
+<li><p><strong>Codebook and canvas agree.</strong> The gadget’s codebook uses the badges on the canvas, so a tag you cleared stays cleared in the CSV. Labels sent to the Copilot are cut to 200 characters.</p></li>
 </ul><div class="section level4">
 <h4 id="limits-to-know-about-0-5-0">Limits to know about<a class="anchor" aria-label="anchor" href="#limits-to-know-about-0-5-0"></a></h4>
 <ul><li>The <code>ig_versions</code> column of the catalogue (SDTM, SEND and ADaM implementation guide versions) is approximate. It is for awareness, not conformance checking: sideview does not validate a dataset against an implementation guide.</li>
 <li>A table named <code>AD...</code> (<code>ADLB</code>, <code>ADAE</code>, <code>ADVS</code>) whose columns confirm an ADaM structure is tagged ADaM even when it keeps SDTM-prefixed columns (<code>LBTESTCD</code>, <code>AETERM</code>, …); the tooltip notes the prefix as a disagreement. A table with any other name and SDTM-prefixed columns is still tagged by its prefix.</li>
-<li>Column names must be upper-case (<code>STUDYID</code>, <code>USUBJID</code>, <code>DOMAIN</code>). Lower-cased names, for example after <code><a href="https://sfirke.github.io/janitor/reference/clean_names.html" class="external-link">janitor::clean_names()</a></code>, are not detected.</li>
+<li>Column names are matched whatever their case (<code>STUDYID</code>, <code>studyid</code>, <code>StudyID</code>), so tables cleaned with <code><a href="https://sfirke.github.io/janitor/reference/clean_names.html" class="external-link">janitor::clean_names()</a></code> are still recognised. A <code>STUDYID</code> column is still required.</li>
 <li>
 <code>sideview_server(cdisc =)</code>, used with your own <code><a href="../reference/sideview_ui.html">sideview_ui()</a></code>, only sets the <code>domain</code> column of the codebook; the badges come from the cards given to <code><a href="../reference/sideview_ui.html">sideview_ui()</a></code>.</li>
 <li>
@@ -63,7 +58,7 @@
 <li>
 <code>cdisc = FALSE</code> shows no tags but, for lazy (arrow / duckdb) cards, detection at construction time still runs, with its cost. A named <code>cdisc =</code> vector with several lazy cards costs more on every verb (quadratic in the number of cards).</li>
 <li>
-<code><a href="../reference/sv_read_cdisc.html">sv_read_cdisc()</a></code> reads Dataset-JSON with the <code>datasetjson</code> package, which was not installed when this was developed, so that path is untested against the real package; if the structure differs, the file is skipped with a warning.</li>
+<code><a href="../reference/sv_read_cdisc.html">sv_read_cdisc()</a></code> reads Dataset-JSON with the <code>datasetjson</code> package (checked against datasetjson 0.4.1, with column and dataset labels); if a file’s structure differs, it is skipped with a warning.</li>
 <li>The row of labels is placed using one measurement of the header height; it could sit off only if a header later grows taller (for example after a late font load).</li>
 <li>Checked in headless Chrome. <code>viewer = "dialog"</code> and <code>"pane"</code> were not checked in RStudio for this release.</li>
 <li>Workspace files gain an optional <code>view.labels_row</code> field without a new schema version; older sideview versions ignore it.</li>

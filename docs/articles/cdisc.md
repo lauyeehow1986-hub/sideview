@@ -22,8 +22,9 @@ and `ADSL` here. Hover over a badge for the dataset label, the standard
 and class, and the evidence used (for example “DOMAIN column = DM” or
 “STUDYID + USUBJID”). `SUPPAE` also says which parent it supplements.
 Column headers show a variable’s label as a tooltip, `L` shows a row of
-labels under the headers (it is saved with the workspace), and `Ctrl+K`
-finds a card by its domain or dataset label.
+labels under the headers (it is saved with the workspace, as
+`view.labels_row`), and `Ctrl+K` finds a card by its domain or dataset
+label.
 
 The tags are worked out in R when the canvas is built. They are never
 saved in a workspace file; they are worked out again when it is opened.
@@ -86,15 +87,13 @@ Parquet files stay on disk as Arrow Datasets unless you pass
   columns such as `LBTESTCD`; the tooltip records the prefix as a
   disagreement. With any other name, SDTM-prefixed columns still give an
   SDTM tag.
-- Column names must be upper-case (`STUDYID`, `USUBJID`, `DOMAIN`).
-  Lower-cased names, for example after
-  [`janitor::clean_names()`](https://sfirke.github.io/janitor/reference/clean_names.html),
-  are not detected.
+- Column names are matched whatever their case (`STUDYID`, `studyid`),
+  but a `STUDYID` column is still required.
 - `cdisc = FALSE` shows no tags, but lazy (arrow / duckdb) cards still
   run detection when they are built. A named `cdisc =` vector with
   several lazy cards gets slower with each verb.
-- Dataset-JSON reading was not tested against the real `datasetjson`
-  package; if its structure differs, the file is skipped with a warning.
+- Dataset-JSON reading was checked against `datasetjson` 0.4.1; if a
+  file’s structure differs, it is skipped with a warning.
 - The Copilot gets column labels and a domain line as schema text, never
   row data.
 - The label row is placed from one measurement of the header height, so

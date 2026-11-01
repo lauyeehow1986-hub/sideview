@@ -9,10 +9,12 @@
   for the dataset label, the standard and class, and why sideview thinks
   so. Supplemental qualifier tables (`SUPPAE`) say which parent they
   supplement. Other tables are never touched.
+
 - **Variable labels.** Column headers show a variable’s label as a
   tooltip, `L` shows a row of labels under the headers (saved with the
-  workspace), `Ctrl+K` also finds a card by its domain or dataset label,
-  and the column inspector shows the label.
+  workspace as `view.labels_row`), `Ctrl+K` also finds a card by its
+  domain or dataset label, and the column inspector shows the label.
+
 - **`cdisc =`** on
   [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md),
   [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md),
@@ -23,18 +25,35 @@
   `"auto"` (default), `FALSE`, or a named vector such as
   `c(my_ae = "AE")`. Module canvases update their badges when a card is
   added or replaced.
+
 - **[`sv_codebook()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_codebook.md)
   has a `domain` column.** The widget’s CSV download matches it byte for
   byte.
+
 - **[`sv_cdisc_catalogue()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_cdisc_catalogue.md)**
   returns the dataset catalogue the detection uses.
+
 - **[`sv_read_cdisc()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_read_cdisc.md)**
   reads a folder or a set of `.xpt`, `.sas7bdat`, Dataset-JSON and
   `.parquet` files into a named list for
   [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md),
   keeping variable labels. Nothing goes over the network.
+
 - **Copilot.** The schema text sent to the LLM now includes column
   labels and a domain line. Row data is still never sent.
+
+- **Overrides.** A table you tag yourself
+  (`cdisc = c(my_adae = "ADAE")`) gets the same class as an
+  auto-detected one: ADaM tags take BDS, OCCDS, TTE or ADSL from the
+  table’s columns, and `SUPPAE`-style tags get Relationship and their
+  parent. On a SEND canvas an auto-detected SUPP table is SEND too; your
+  own tags are never flipped. The hover text says why a table is SEND.
+  Names in `cdisc =` ignore a file extension (`"lab.csv"` names the
+  table `lab`); case still matters.
+
+- **Codebook and canvas agree.** The gadget’s codebook uses the badges
+  on the canvas, so a tag you cleared stays cleared in the CSV. Labels
+  sent to the Copilot are cut to 200 characters.
 
 #### Limits to know about
 
@@ -47,10 +66,10 @@
   columns (`LBTESTCD`, `AETERM`, …); the tooltip notes the prefix as a
   disagreement. A table with any other name and SDTM-prefixed columns is
   still tagged by its prefix.
-- Column names must be upper-case (`STUDYID`, `USUBJID`, `DOMAIN`).
-  Lower-cased names, for example after
-  [`janitor::clean_names()`](https://sfirke.github.io/janitor/reference/clean_names.html),
-  are not detected.
+- Column names are matched whatever their case (`STUDYID`, `studyid`,
+  `StudyID`), so tables cleaned with
+  [`janitor::clean_names()`](https://sfirke.github.io/janitor/reference/clean_names.html)
+  are still recognised. A `STUDYID` column is still required.
 - `sideview_server(cdisc =)`, used with your own
   [`sideview_ui()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_ui.md),
   only sets the `domain` column of the codebook; the badges come from
@@ -65,10 +84,9 @@
   `cdisc =` vector with several lazy cards costs more on every verb
   (quadratic in the number of cards).
 - [`sv_read_cdisc()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_read_cdisc.md)
-  reads Dataset-JSON with the `datasetjson` package, which was not
-  installed when this was developed, so that path is untested against
-  the real package; if the structure differs, the file is skipped with a
-  warning.
+  reads Dataset-JSON with the `datasetjson` package (checked against
+  datasetjson 0.4.1, with column and dataset labels); if a file’s
+  structure differs, it is skipped with a warning.
 - The row of labels is placed using one measurement of the header
   height; it could sit off only if a header later grows taller (for
   example after a late font load).

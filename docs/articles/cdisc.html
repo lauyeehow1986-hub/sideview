@@ -113,8 +113,9 @@ over a badge for the dataset label, the standard and class, and the
 evidence used (for example “DOMAIN column = DM” or “STUDYID + USUBJID”).
 <code>SUPPAE</code> also says which parent it supplements. Column
 headers show a variable’s label as a tooltip, <code>L</code> shows a row
-of labels under the headers (it is saved with the workspace), and
-<code>Ctrl+K</code> finds a card by its domain or dataset label.</p>
+of labels under the headers (it is saved with the workspace, as
+<code>view.labels_row</code>), and <code>Ctrl+K</code> finds a card by
+its domain or dataset label.</p>
 <p>The tags are worked out in R when the canvas is built. They are never
 saved in a workspace file; they are worked out again when it is
 opened.</p>
@@ -193,18 +194,16 @@ confirm an ADaM structure, even if it keeps SDTM-prefixed columns such
 as <code>LBTESTCD</code>; the tooltip records the prefix as a
 disagreement. With any other name, SDTM-prefixed columns still give an
 SDTM tag.</li>
-<li>Column names must be upper-case (<code>STUDYID</code>,
-<code>USUBJID</code>, <code>DOMAIN</code>). Lower-cased names, for
-example after <code><a href="https://sfirke.github.io/janitor/reference/clean_names.html" class="external-link">janitor::clean_names()</a></code>, are not
-detected.</li>
+<li>Column names are matched whatever their case (<code>STUDYID</code>,
+<code>studyid</code>), but a <code>STUDYID</code> column is still
+required.</li>
 <li>
 <code>cdisc = FALSE</code> shows no tags, but lazy (arrow / duckdb)
 cards still run detection when they are built. A named
 <code>cdisc =</code> vector with several lazy cards gets slower with
 each verb.</li>
-<li>Dataset-JSON reading was not tested against the real
-<code>datasetjson</code> package; if its structure differs, the file is
-skipped with a warning.</li>
+<li>Dataset-JSON reading was checked against <code>datasetjson</code>
+0.4.1; if a file’s structure differs, it is skipped with a warning.</li>
 <li>The Copilot gets column labels and a domain line as schema text,
 never row data.</li>
 <li>The label row is placed from one measurement of the header height,
