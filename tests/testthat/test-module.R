@@ -520,3 +520,101 @@ test_that("cdisc = FALSE in a module tags nothing", {
     expect_length(msgs(session, "sideview_cdisc_update"), 0L)
   })
 })
+
+# ---- CDISC fix round 1 ----------------------------------------------------------------
+test_that("sideviewServer validates cdisc", {
+  for (bad in list(TRUE, c("AE", "LB"), "foo")) {
+    expect_error(shiny::testServer(sideviewServer, args = cdisc_start(cdisc = bad), {}), "cdisc")
+  }
+})
+
+test_that("a tag in the update is normalised like the card payload", {
+  f <- sv_cdisc_fixtures()
+  shiny::testServer(sideviewServer, args = cdisc_start(), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    dm_id <- px$ctl$store$get("dm")$id
+    sv_add_card(px, f$bw, "bw")
+    tag <- msgs(session, "sideview_cdisc_update")[[1]]$message$tags[[dm_id]]
+    expect_type(tag$evidence, "list")
+    expect_false(any(vapply(tag, is.null, TRUE)))
+  })
+  tag1 <- sv_cdisc_wire_tag(list(domain = "DM", evidence = "one", extra = NULL))
+  expect_type(tag1$evidence, "list")
+  expect_null(sv_cdisc_wire_tag(NULL))
+})
+
+test_that("a re-firing reactive with other data replaces only what changed", {
+  f <- sv_cdisc_fixtures()
+  rv <- shiny::reactiveVal(list(dm = f$dm, bw = f$bw))
+  shiny::testServer(sideviewServer, args = list(id = "cd", cards = rv), {
+    session$setInputs(sideview_ready = list(nonce = 1))
+    rv(list(dm = f$dm, bw = f$bw, mt = mtcars))
+    session$flushReact()
+    expect_length(msgs(session, "sideview_card_replace"), 0L)
+    adds <- vapply(msgs(session, "sideview_card_add"), function(m) m$message$card$name, "")
+    expect_equal(adds, c("dm", "bw", "mt"))
+  })
+})
+
+test_that("changed data and a moved tag give a replace and an update", {
+  f <- sv_cdisc_fixtures()
+  rv <- shiny::reactiveVal(list(dm = f$dm, bw = f$bw))
+  shiny::testServer(sideviewServer, args = list(id = "cd", cards = rv), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    dm_id <- px$ctl$store$get("dm")$id
+    expect_equal(px$ctl$store$get("dm")$cdisc$standard, "SEND")
+    rv(list(dm = f$dm, bw = mtcars))
+    session$flushReact()
+    rep <- msgs(session, "sideview_card_replace")
+    expect_length(rep, 1L)
+    expect_equal(rep[[1]]$message$card$name, "bw")
+    up <- msgs(session, "sideview_cdisc_update")
+    expect_equal(up[[length(up)]]$message$tags[[dm_id]]$standard, "SDTM")
+  })
+})
+
+test_that("a named override applies in a module, also to a later card", {
+  f <- sv_cdisc_fixtures()
+  suppressWarnings(shiny::testServer(sideviewServer, args = cdisc_start(cdisc = c(odd = "AE")), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    sv_add_card(px, f$labs, "odd")
+    add <- msgs(session, "sideview_card_add")
+    expect_equal(add[[length(add)]]$message$card$cdisc$domain, "AE")
+    expect_equal(add[[length(add)]]$message$card$cdisc$source, "user")
+  }))
+})
+
+test_that("sv_replace_card emits an update for other cards", {
+  f <- sv_cdisc_fixtures()
+  shiny::testServer(sideviewServer, args = cdisc_start(), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    sv_add_card(px, mtcars, "bw")
+    expect_length(msgs(session, "sideview_cdisc_update"), 0L)
+    dm_id <- px$ctl$store$get("dm")$id
+    sv_replace_card(px, "bw", f$bw)
+    up <- msgs(session, "sideview_cdisc_update")
+    expect_length(up, 1L)
+    expect_equal(up[[1]]$message$tags[[dm_id]]$standard, "SEND")
+  })
+})
+
+test_that("unknown override names warn once at start for static cards only", {
+  expect_warning(
+    shiny::testServer(sideviewServer, args = cdisc_start(cdisc = c(nope = "AE")), {
+      px <- session$getReturned()
+      sv_add_card(px, mtcars, "mt")
+    }),
+    "names no table"
+  ) |> suppressMessages()
+  rv <- shiny::reactiveVal(list())
+  expect_no_warning(
+    shiny::testServer(sideviewServer, args = list(id = "cd", cards = rv, cdisc = c(later = "AE")), {
+      rv(list(later = sv_cdisc_fixtures()$labs))
+      session$flushReact()
+    })
+  )
+})

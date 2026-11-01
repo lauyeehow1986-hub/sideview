@@ -61,13 +61,19 @@ sideviewUI <- function(id, height = "600px", title = NULL, theme = "auto") {
 #' @export
 sideviewServer <- function(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto") {
   force(cards)
-  force(cdisc)
+  cdisc <- sv_cdisc_check_arg(cdisc)
   force(state)
   force(llm_fn)
   shiny::moduleServer(id, function(input, output, session) {
     initial <- if (is.function(cards)) sv_initial_cards(cards, id) else cards
     llm <- llm_fn %||% function(...) stop("No llm_fn was given to sideviewServer().", call. = FALSE)
-    initial <- sv_cdisc_finalize(sv_module_cards(initial), cdisc)
+    initial <- sv_module_cards(initial)
+    # an override may name a card that arrives later: warn only when the cards are all here
+    initial <- if (is.function(cards) || !length(initial)) {
+      suppressWarnings(sv_cdisc_finalize(initial, cdisc))
+    } else {
+      sv_cdisc_finalize(initial, cdisc)
+    }
     impl <- sideview_server_impl(input, output, session, initial, llm, NULL, NULL, module = TRUE)
     ctl <- impl$ctl
     ctl$forget <- impl$forget
@@ -358,7 +364,8 @@ sv_module_refinalize <- function(ctl, except = NULL) {
   for (card in new) {
     if (card$id %in% names(diff)) ctl$store$replace(card$name, card)
   }
-  diff[setdiff(names(diff), except)]
+  diff <- diff[setdiff(names(diff), except)]
+  lapply(diff, sv_cdisc_wire_tag)
 }
 
 sv_emit_cdisc <- function(ctl, tags) {

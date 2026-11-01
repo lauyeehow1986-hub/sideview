@@ -84,6 +84,18 @@ sv_card_store <- function(cards = list()) {
   self
 }
 
+#' A CDISC tag as the browser receives it (internal)
+#'
+#' Drops NULL elements, and keeps `evidence` a list so one line is still a JSON array.
+#' A `NULL` tag stays `NULL`.
+#' @noRd
+sv_cdisc_wire_tag <- function(tag) {
+  if (is.null(tag)) return(NULL)
+  tag <- Filter(Negate(is.null), tag)
+  tag$evidence <- as.list(tag$evidence)
+  tag
+}
+
 #' The card as the browser receives it
 #'
 #' Drops the R `source` (never serialised), adds labels, `lazy`, `codeRef` and the
@@ -96,11 +108,7 @@ sv_card_payload <- function(card, preview_rows = NULL) {
     labels <- Filter(function(l) is.character(l) && length(l) == 1L, labels)
     if (length(labels)) card$col_labels <- labels
   }
-  if (!is.null(card$cdisc)) {
-    tag <- Filter(Negate(is.null), card$cdisc)
-    tag$evidence <- as.list(tag$evidence)
-    card$cdisc <- tag
-  }
+  if (!is.null(card$cdisc)) card$cdisc <- sv_cdisc_wire_tag(card$cdisc)
   if (!is.null(card$col_types) && is.character(card$col_types)) {
     card$col_types <- as.list(card$col_types)
   }
