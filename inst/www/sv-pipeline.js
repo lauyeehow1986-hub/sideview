@@ -1523,7 +1523,8 @@
       if (p.n_other > 0) top += '; +' + p.n_other + ' more';
     }
     return {
-      table: table, domain: opts.domain === undefined ? null : opts.domain, column: column, position: position, 'class': p['class'], label: p.label,
+      table: table, domain: opts.domain === undefined ? null : opts.domain,
+      column: column, position: position, 'class': p['class'], label: p.label,
       n: opts.nTotal === undefined || opts.nTotal === null ? p.n : opts.nTotal, rows_profiled: p.n,
       n_missing: p.n_missing, pct_missing: Math.round(10000 * p.pct_missing) / 100,
       n_distinct: p.n_distinct, unique_key: p.unique_key,

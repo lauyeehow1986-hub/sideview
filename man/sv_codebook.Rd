@@ -4,7 +4,7 @@
 \alias{sv_codebook}
 \title{Codebook (Data Dictionary)}
 \usage{
-sv_codebook(..., top_n = 5L, file = NULL, progress = NULL)
+sv_codebook(..., top_n = 5L, file = NULL, progress = NULL, cdisc = "auto")
 }
 \arguments{
 \item{...}{Data frames, duckdb tables or Arrow tables, or one list of them.
@@ -18,9 +18,14 @@ package). The codebook is still returned, invisibly.}
 
 \item{progress}{Optional \verb{function(table, j, n_cols)}, called before each
 column is profiled.}
+
+\item{cdisc}{Fills the \code{domain} column: \code{"auto"} (default) detects the CDISC
+domain of each table, \code{FALSE} leaves it empty, and a named character vector
+(table name to domain code) sets the domain of the tables it names.}
 }
 \value{
-A data frame with columns \code{table}, \code{column}, \code{position}, \code{class},
+A data frame with columns \code{table}, \code{domain} (the CDISC domain, \code{NA}
+when the table is not recognised), \code{column}, \code{position}, \code{class},
 \code{label}, \code{n}, \code{rows_profiled}, \code{n_missing}, \code{pct_missing}, \code{n_distinct},
 \code{unique_key}, \code{min}, \code{q1}, \code{median}, \code{q3}, \code{max} (as text, so dates fit),
 \code{mean}, \code{sd}, \code{top_values} and \code{issues}. \code{rows_profiled} is the number of

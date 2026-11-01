@@ -226,18 +226,25 @@ test_that("the JS codebook CSV equals write.csv of sv_codebook()", {
     id = 1:6, sex = c("M", "F", "f", NA, "M", "M"), age = c(40.5, 51, 62, 999, 47, NA),
     note = c("a \"quoted\" note", "x", "y", "z", "w", "v"), stringsAsFactors = FALSE
   )
-  r <- sv_codebook(patients)
+  f0 <- sv_cdisc_fixtures()
+  r <- sv_codebook(patients, ae = f0$ae)
+  expect_identical(unique(r$domain[r$table == "ae"]), "AE")
+  expect_true(all(is.na(r$domain[r$table == "patients"])))
   f <- tempfile(fileext = ".csv")
   on.exit(unlink(f), add = TRUE)
   utils::write.csv(r, f, row.names = FALSE, na = "")
-  expected <- paste0(paste(readLines(f), collapse = "\n"), "\n")
-  types <- vapply(patients, function(c) class(c)[1], character(1))
-  rows <- vapply(seq_along(patients), function(j) {
-    sprintf("P.codebookRow('patients', %s, %d, %s, %s)",
-            jsonlite::toJSON(names(patients)[j], auto_unbox = TRUE), j,
-            jsonlite::toJSON(patients[[j]], na = "null", digits = NA),
-            jsonlite::toJSON(types[[j]], auto_unbox = TRUE))
+  expected <- paste0(paste(readLines(f), collapse = "
+"), "
+")
+  js_rows <- function(tb, tname, domain) vapply(seq_along(tb), function(j) {
+    sprintf("P.codebookRow(%s, %s, %d, %s, %s, { domain: %s })",
+            jsonlite::toJSON(tname, auto_unbox = TRUE),
+            jsonlite::toJSON(names(tb)[j], auto_unbox = TRUE), j,
+            jsonlite::toJSON(tb[[j]], na = "null", digits = NA),
+            jsonlite::toJSON(class(tb[[j]])[1], auto_unbox = TRUE),
+            if (is.na(domain)) "null" else jsonlite::toJSON(domain, auto_unbox = TRUE))
   }, character(1))
+  rows <- c(js_rows(patients, "patients", NA), js_rows(f0$ae, "ae", "AE"))
   js <- run_pipeline_js(sprintf("out = P.codebookCsv([%s]);", paste(rows, collapse = ", ")))
   expect_identical(js, expected)
 })
@@ -343,4 +350,42 @@ test_that("a preview size past the integer range prints in full in the CSV file"
   expect_match(got, ",3000000000,8,", fixed = TRUE)
   # and the options are put back
   expect_equal(getOption("scipen"), 0)
+})
+
+sv_cb_export <- function(cards, cdisc = "auto") {
+  path <- tempfile(fileext = ".csv")
+  testthat::local_mocked_bindings(sv_choose_codebook_path = function() path, .env = parent.frame())
+  shiny::testServer(sideview_server(cards, cdisc = cdisc), {
+    session$setInputs(codebook_export = 1)
+  })
+  on.exit(unlink(path))
+  utils::read.csv(path, stringsAsFactors = FALSE)
+}
+
+test_that("the gadget codebook export carries the CDISC domain of tagged cards", {
+  f <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_finalize(list(sv_normalize(f$ae, name = "ae"), sv_normalize(mtcars, name = "mtcars")))
+  cb <- sv_cb_export(cards)
+  expect_true(all(cb$domain[cb$table == "ae"] == "AE"))
+  expect_true(all(!nzchar(cb$domain[cb$table == "mtcars"])))
+})
+
+test_that("the gadget codebook export honours cdisc = FALSE and user overrides", {
+  f <- sv_cdisc_fixtures()
+  raw <- list(sv_normalize(f$ae, name = "ae"), sv_normalize(mtcars, name = "mtcars"))
+  off <- sv_cb_export(sv_cdisc_finalize(raw, FALSE), cdisc = FALSE)
+  expect_true(all(is.na(off$domain)))
+  ov <- sv_cb_export(sv_cdisc_finalize(raw, c(mtcars = "XY")), cdisc = c(mtcars = "XY"))
+  expect_true(all(ov$domain[ov$table == "mtcars"] == "XY"))
+  expect_true(all(ov$domain[ov$table == "ae"] == "AE"))
+})
+
+test_that("sv_cdisc_domains skips untagged and unnamed cards", {
+  f <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_finalize(list(sv_normalize(f$ae, name = "ae"), sv_normalize(mtcars, name = "mtcars")))
+  expect_identical(sv_cdisc_domains(cards), c(ae = "AE"))
+  expect_identical(sv_cdisc_domains(cards, FALSE), FALSE)
+  expect_identical(sv_cdisc_domains(cards[2]), "auto")
+  cards[[1]]$name <- ""
+  expect_identical(sv_cdisc_domains(cards), "auto")
 })

@@ -811,6 +811,8 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
 #'   tab closes the app waits `getOption("sideview.session_grace", 5)` seconds so a
 #'   page reload does not end it. Leave `FALSE`
 #'   when embedding the server in your own multi-user Shiny app.
+#' @param cdisc CDISC setting the canvas was started with (`"auto"`, `FALSE` or a named
+#'   vector of domain codes); the codebook export uses it for its `domain` column.
 #' @param run_env Environment where **Run in R** evaluates the pipeline and
 #'   stores its result (as `sv_result` unless another name is given). Defaults
 #'   to the environment `sideview_server()` is called from.
@@ -867,7 +869,7 @@ sv_cdisc_domains <- function(cards, cdisc = "auto") {
   out <- character()
   for (card in cards) {
     d <- card$cdisc$domain
-    if (!is.null(d) && !is.null(card$name)) out[[card$name]] <- as.character(d)
+    if (!is.null(d) && length(card$name) == 1L && nzchar(card$name)) out[[card$name]] <- as.character(d)
   }
   if (!length(out)) "auto" else out
 }

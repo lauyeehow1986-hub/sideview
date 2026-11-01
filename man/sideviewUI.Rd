@@ -7,7 +7,7 @@
 \usage{
 sideviewUI(id, height = "600px", title = NULL, theme = "auto")
 
-sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL)
+sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto")
 }
 \arguments{
 \item{id}{Module id.}
@@ -30,6 +30,9 @@ object, or its JSON text (a string whose first non-blank character is an opening
 With none, the server tells the canvas to hide the AI bar and the Copilot tab.
 \code{sideviewUI()} always renders them, so they show for a moment before the first
 message arrives.}
+
+\item{cdisc}{CDISC tagging, as for \code{\link[=sideview]{sideview()}}: \code{"auto"}, \code{FALSE}, or a named
+character vector of domain codes. Tags are kept current as cards come and go.}
 }
 \value{
 \code{sideviewUI()} returns a \code{shiny.tag.list}. \code{sideviewServer()} returns a
