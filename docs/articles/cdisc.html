@@ -131,7 +131,8 @@ cannot tell on its own:</p>
 <p>The same argument is on <code><a href="../reference/sideview.html">sideview()</a></code>,
 <code><a href="../reference/save_sideview.html">save_sideview()</a></code>, <code><a href="../reference/sideviewUI.html">sideviewServer()</a></code> and
 <code><a href="../reference/sv_codebook.html">sv_codebook()</a></code>. In a Shiny module the badges follow
-<code><a href="../reference/sv_add_card.html">sv_add_card()</a></code> and <code><a href="../reference/sv_add_card.html">sv_replace_card()</a></code>.</p>
+<code><a href="../reference/sv_add_card.html">sv_add_card()</a></code>, <code><a href="../reference/sv_add_card.html">sv_replace_card()</a></code> and
+<code><a href="../reference/sv_add_card.html">sv_remove_card()</a></code>.</p>
 </div>
 <div class="section level2">
 <h2 id="domains-in-the-codebook">Domains in the codebook<a class="anchor" aria-label="anchor" href="#domains-in-the-codebook"></a>
@@ -151,8 +152,8 @@ widget’s CSV download matches it.</p>
 <h2 id="the-catalogue">The catalogue<a class="anchor" aria-label="anchor" href="#the-catalogue"></a>
 </h2>
 <div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">cat</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/sv_cdisc_catalogue.html">sv_cdisc_catalogue</a></span><span class="op">(</span><span class="op">)</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/utils/head.html" class="external-link">head</a></span><span class="op">(</span><span class="va">cat</span><span class="op">[</span>, <span class="fl">1</span><span class="op">:</span><span class="fu"><a href="https://rdrr.io/r/base/Extremes.html" class="external-link">min</a></span><span class="op">(</span><span class="fl">5</span>, <span class="fu"><a href="https://rdrr.io/r/base/nrow.html" class="external-link">ncol</a></span><span class="op">(</span><span class="va">cat</span><span class="op">)</span><span class="op">)</span><span class="op">]</span><span class="op">)</span></span>
+<code class="sourceCode R"><span><span class="va">cdisc_cat</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/sv_cdisc_catalogue.html">sv_cdisc_catalogue</a></span><span class="op">(</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/utils/head.html" class="external-link">head</a></span><span class="op">(</span><span class="va">cdisc_cat</span><span class="op">[</span>, <span class="fl">1</span><span class="op">:</span><span class="fu"><a href="https://rdrr.io/r/base/Extremes.html" class="external-link">min</a></span><span class="op">(</span><span class="fl">5</span>, <span class="fu"><a href="https://rdrr.io/r/base/nrow.html" class="external-link">ncol</a></span><span class="op">(</span><span class="va">cdisc_cat</span><span class="op">)</span><span class="op">)</span><span class="op">]</span><span class="op">)</span></span>
 <span><span class="co">#&gt;   name                      label           class standard ig_versions</span></span>
 <span><span class="co">#&gt; 1   DM               Demographics Special-Purpose     SDTM 3.2;3.3;3.4</span></span>
 <span><span class="co">#&gt; 2   CO                   Comments Special-Purpose     SDTM 3.2;3.3;3.4</span></span>
@@ -186,10 +187,16 @@ uses the network.</p>
 <ul>
 <li>The <code>ig_versions</code> in the catalogue are approximate, and
 nothing is validated against an implementation guide.</li>
-<li>For a name that is not in the catalogue, the variable prefix (for
-example <code>AE...</code>) wins over ADaM structure, so an
-<code>ADAE</code>-like table may be tagged as an SDTM <code>AE</code>
-domain.</li>
+<li>A table named <code>AD...</code> (<code>ADLB</code>,
+<code>ADAE</code>, <code>ADVS</code>) is tagged ADaM when its columns
+confirm an ADaM structure, even if it keeps SDTM-prefixed columns such
+as <code>LBTESTCD</code>; the tooltip records the prefix as a
+disagreement. With any other name, SDTM-prefixed columns still give an
+SDTM tag.</li>
+<li>Column names must be upper-case (<code>STUDYID</code>,
+<code>USUBJID</code>, <code>DOMAIN</code>). Lower-cased names, for
+example after <code><a href="https://sfirke.github.io/janitor/reference/clean_names.html" class="external-link">janitor::clean_names()</a></code>, are not
+detected.</li>
 <li>
 <code>cdisc = FALSE</code> shows no tags, but lazy (arrow / duckdb)
 cards still run detection when they are built. A named

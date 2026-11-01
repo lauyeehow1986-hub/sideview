@@ -54,7 +54,12 @@
 </ul><div class="section level4">
 <h4 id="limits-to-know-about-0-5-0">Limits to know about<a class="anchor" aria-label="anchor" href="#limits-to-know-about-0-5-0"></a></h4>
 <ul><li>The <code>ig_versions</code> column of the catalogue (SDTM, SEND and ADaM implementation guide versions) is approximate. It is for awareness, not conformance checking: sideview does not validate a dataset against an implementation guide.</li>
-<li>An uncatalogued name such as <code>ADAE</code>-like data is tagged by its variable prefix (<code>AE...</code>) before its ADaM structure is considered.</li>
+<li>A table named <code>AD...</code> (<code>ADLB</code>, <code>ADAE</code>, <code>ADVS</code>) whose columns confirm an ADaM structure is tagged ADaM even when it keeps SDTM-prefixed columns (<code>LBTESTCD</code>, <code>AETERM</code>, …); the tooltip notes the prefix as a disagreement. A table with any other name and SDTM-prefixed columns is still tagged by its prefix.</li>
+<li>Column names must be upper-case (<code>STUDYID</code>, <code>USUBJID</code>, <code>DOMAIN</code>). Lower-cased names, for example after <code><a href="https://sfirke.github.io/janitor/reference/clean_names.html" class="external-link">janitor::clean_names()</a></code>, are not detected.</li>
+<li>
+<code>sideview_server(cdisc =)</code>, used with your own <code><a href="../reference/sideview_ui.html">sideview_ui()</a></code>, only sets the <code>domain</code> column of the codebook; the badges come from the cards given to <code><a href="../reference/sideview_ui.html">sideview_ui()</a></code>.</li>
+<li>
+<code><a href="../reference/sv_read_cdisc.html">sv_read_cdisc()</a></code> skips a file found by scanning a folder, with one warning, when its reading package is not installed; a file named explicitly is still an error.</li>
 <li>
 <code>cdisc = FALSE</code> shows no tags but, for lazy (arrow / duckdb) cards, detection at construction time still runs, with its cost. A named <code>cdisc =</code> vector with several lazy cards costs more on every verb (quadratic in the number of cards).</li>
 <li>

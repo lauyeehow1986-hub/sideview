@@ -105,7 +105,10 @@ to the environment <code>sideview_server()</code> is called from.</p></dd>
 
 <dt id="arg-cdisc">cdisc<a class="anchor" aria-label="anchor" href="#arg-cdisc"></a></dt>
 <dd><p>CDISC setting the canvas was started with (<code>"auto"</code>, <code>FALSE</code> or a named
-vector of domain codes); the codebook export uses it for its <code>domain</code> column.</p></dd>
+vector of domain codes). Here it only controls the <code>domain</code> column of the
+codebook export. The badges on the canvas come from the cards given to
+<code><a href="sideview_ui.html">sideview_ui()</a></code>, so pass the same <code>cdisc</code> there (or build the page with
+<code><a href="sideview.html">sideview()</a></code> or <code><a href="sideviewUI.html">sideviewUI()</a></code>, which keep the two in step).</p></dd>
 
 </dl></div>
     <div class="section level2">

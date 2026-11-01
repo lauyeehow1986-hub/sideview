@@ -65,8 +65,15 @@ sideview_server(
 - cdisc:
 
   CDISC setting the canvas was started with (`"auto"`, `FALSE` or a
-  named vector of domain codes); the codebook export uses it for its
-  `domain` column.
+  named vector of domain codes). Here it only controls the `domain`
+  column of the codebook export. The badges on the canvas come from the
+  cards given to
+  [`sideview_ui()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_ui.md),
+  so pass the same `cdisc` there (or build the page with
+  [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)
+  or
+  [`sideviewUI()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewUI.md),
+  which keep the two in step).
 
 ## Value
 

@@ -56,7 +56,9 @@ Names are the lower-case file stems, in file order. Variable labels are kept.</p
 <dl><dt id="arg-path">path<a class="anchor" aria-label="anchor" href="#arg-path"></a></dt>
 <dd><p>A directory (its supported files are read, not recursively) or a
 character vector of files. A file with an unsupported extension is an
-error when named, and ignored when found in a directory.</p></dd>
+error when named, and ignored when found in a directory. A file whose
+package is not installed is an error when named, and skipped with one
+warning when found in a directory.</p></dd>
 
 
 <dt id="arg-lazy">lazy<a class="anchor" aria-label="anchor" href="#arg-lazy"></a></dt>

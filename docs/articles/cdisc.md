@@ -42,9 +42,10 @@ The same argument is on
 and
 [`sv_codebook()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_codebook.md).
 In a Shiny module the badges follow
-[`sv_add_card()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md)
+[`sv_add_card()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md),
+[`sv_replace_card()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md)
 and
-[`sv_replace_card()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md).
+[`sv_remove_card()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md).
 
 ## Domains in the codebook
 
@@ -57,7 +58,7 @@ With `cdisc = FALSE` the column is `NA`.
 
 ## The catalogue
 
-`cat`` ``<-`` `[`sv_cdisc_catalogue`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_cdisc_catalogue.md)`(``)`` `[`head`](https://rdrr.io/r/utils/head.html)`(``cat``[``, ``1``:`[`min`](https://rdrr.io/r/base/Extremes.html)`(``5``, `[`ncol`](https://rdrr.io/r/base/nrow.html)`(``cat``)``)``]``)`` ``#> name label class standard ig_versions`` ``#> 1 DM Demographics Special-Purpose SDTM 3.2;3.3;3.4`` ``#> 2 CO Comments Special-Purpose SDTM 3.2;3.3;3.4`` ``#> 3 SE Subject Elements Special-Purpose SDTM 3.2;3.3;3.4`` ``#> 4 SV Subject Visits Special-Purpose SDTM 3.2;3.3;3.4`` ``#> 5 SM Subject Disease Milestones Special-Purpose SDTM 3.2;3.3;3.4`` ``#> 6 AG Procedure Agents Interventions SDTM 3.2;3.3;3.4`
+`cdisc_cat`` ``<-`` `[`sv_cdisc_catalogue`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_cdisc_catalogue.md)`(``)`` `[`head`](https://rdrr.io/r/utils/head.html)`(``cdisc_cat``[``, ``1``:`[`min`](https://rdrr.io/r/base/Extremes.html)`(``5``, `[`ncol`](https://rdrr.io/r/base/nrow.html)`(``cdisc_cat``)``)``]``)`` ``#> name label class standard ig_versions`` ``#> 1 DM Demographics Special-Purpose SDTM 3.2;3.3;3.4`` ``#> 2 CO Comments Special-Purpose SDTM 3.2;3.3;3.4`` ``#> 3 SE Subject Elements Special-Purpose SDTM 3.2;3.3;3.4`` ``#> 4 SV Subject Visits Special-Purpose SDTM 3.2;3.3;3.4`` ``#> 5 SM Subject Disease Milestones Special-Purpose SDTM 3.2;3.3;3.4`` ``#> 6 AG Procedure Agents Interventions SDTM 3.2;3.3;3.4`
 
 The catalogue lists the datasets sideview knows. Its `ig_versions`
 column (implementation guide versions) is approximate. It exists so
@@ -80,9 +81,15 @@ Parquet files stay on disk as Arrow Datasets unless you pass
 
 - The `ig_versions` in the catalogue are approximate, and nothing is
   validated against an implementation guide.
-- For a name that is not in the catalogue, the variable prefix (for
-  example `AE...`) wins over ADaM structure, so an `ADAE`-like table may
-  be tagged as an SDTM `AE` domain.
+- A table named `AD...` (`ADLB`, `ADAE`, `ADVS`) is tagged ADaM when its
+  columns confirm an ADaM structure, even if it keeps SDTM-prefixed
+  columns such as `LBTESTCD`; the tooltip records the prefix as a
+  disagreement. With any other name, SDTM-prefixed columns still give an
+  SDTM tag.
+- Column names must be upper-case (`STUDYID`, `USUBJID`, `DOMAIN`).
+  Lower-cased names, for example after
+  [`janitor::clean_names()`](https://sfirke.github.io/janitor/reference/clean_names.html),
+  are not detected.
 - `cdisc = FALSE` shows no tags, but lazy (arrow / duckdb) cards still
   run detection when they are built. A named `cdisc =` vector with
   several lazy cards gets slower with each verb.
