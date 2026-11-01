@@ -389,9 +389,28 @@ test_that("the gadget codebook export honours cdisc = FALSE and user overrides",
 test_that("sv_cdisc_domains skips untagged and unnamed cards", {
   f <- sv_cdisc_fixtures()
   cards <- sv_cdisc_finalize(list(sv_normalize(f$ae, name = "ae"), sv_normalize(mtcars, name = "mtcars")))
-  expect_identical(sv_cdisc_domains(cards), c(ae = "AE"))
+  expect_identical(as.vector(sv_cdisc_domains(cards)), "AE")
+  expect_identical(names(sv_cdisc_domains(cards)), "ae")
   expect_identical(sv_cdisc_domains(cards, FALSE), FALSE)
-  expect_identical(sv_cdisc_domains(cards[2]), "auto")
+  expect_identical(sv_cdisc_domains(cards[2]), FALSE)
   cards[[1]]$name <- ""
-  expect_identical(sv_cdisc_domains(cards), "auto")
+  expect_identical(sv_cdisc_domains(cards), FALSE)
+})
+
+test_that("the gadget codebook agrees with the canvas when a tag was cleared", {
+  f <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_finalize(list(sv_normalize(f$ae, name = "ae"), sv_normalize(f$dm, name = "dm"),
+                                  sv_normalize(mtcars, name = "mtcars")))
+  # the user clears the AE tag: the codebook must not detect it again
+  cards[[1]]$cdisc <- NULL
+  cb <- sv_cb_export(cards)
+  expect_true(all(is.na(cb$domain[cb$table == "ae"]) | !nzchar(cb$domain[cb$table == "ae"])))
+  expect_true(all(cb$domain[cb$table == "dm"] == "DM"))
+  # every tag cleared on an "auto" canvas
+  cards[[2]]$cdisc <- NULL
+  cb <- sv_cb_export(cards)
+  expect_true(all(is.na(cb$domain) | !nzchar(cb$domain)))
+  # the public function still detects when asked to
+  expect_true(all(sv_codebook(ae = f$ae)$domain == "AE"))
+  expect_true(all(is.na(sv_codebook_domain(f$ae, "ae", sv_cdisc_domains(cards)))))
 })

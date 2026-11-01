@@ -866,8 +866,10 @@ sv_is_no_code <- function(code) {
   !nzchar(code) || identical(code, "# Connect two columns to generate pipeline code")
 }
 
-# Domains of the tagged cards by table name for the codebook; FALSE when the canvas was
-# started with cdisc = FALSE. Untagged cards are left out (their domain is NA).
+# Domains of the tagged cards by table name for the codebook, so the codebook agrees with
+# the badges on the canvas. FALSE when the canvas has no tags (cdisc = FALSE, or none
+# recognised or every tag cleared). The vector is "closed": a table it does not name has
+# no domain, so a cleared or untagged card is never detected again.
 sv_cdisc_domains <- function(cards, cdisc = "auto") {
   if (identical(cdisc, FALSE)) return(FALSE)
   out <- character()
@@ -875,5 +877,7 @@ sv_cdisc_domains <- function(cards, cdisc = "auto") {
     d <- card$cdisc$domain
     if (!is.null(d) && length(card$name) == 1L && nzchar(card$name)) out[[card$name]] <- as.character(d)
   }
-  if (!length(out)) "auto" else out
+  if (!length(out)) return(FALSE)
+  attr(out, "closed") <- TRUE
+  out
 }
