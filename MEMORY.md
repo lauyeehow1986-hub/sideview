@@ -127,6 +127,17 @@ Each sub-project gets its own spec, plan and build, in this order:
   (on the first probe) to collect levels; read them only when a factor column is sorted or compared, and test
   the level union across Dataset batches against `as.data.frame()`. (Final re-review, 0.4.0 part 1.)
 - Card names containing `"` or `\` are still bare R identifiers in some generated code (not `code_ref`).
+- **Module/proxy leftovers (final review 2026-11-01, deferred to sub-project 4 / UI polish):**
+  - after a join step is disabled by `disableMissing`, later left-chain steps that use the join's columns stay enabled;
+    self-join right keys are not checked;
+  - composite-key join with one key dropped: the other key's spline stays; re-enabling a step does not restore splines;
+  - `sv_lazy_place()` Arrow registrations (join checks) are not unregistered until the session ends;
+  - the mutate name scan does not strip `#` comments (can only over-disable); `warned_cards` is never cleared;
+  - about nine fixed `Sys.sleep()` waits in the module browser tests; use the polling helpers;
+  - the AI bar flashes before `sideview_llm` hides it in a module without `llm_fn` (hide is client-side only);
+  - the "Connecting ... click another column" toast lingers briefly after a drag-connect (pre-existing): dismiss it on
+    completion or show it only for click-to-connect;
+  - one non-reproducing error in "module: canvases are independent" in a combined browser run; watch it on CI.
 
 ---
 
@@ -151,6 +162,8 @@ Each sub-project gets its own spec, plan and build, in this order:
   / roxygen use plain calls, not `|>` (no `Depends: R (>= 4.1)`); more `disableMissing` cases (rule, recode, reshape, no `condCols`).
 - **Verified:** gui runner (mock DOM) scenario 11 new cases, test-pipeline.R, test-module.R, real-browser test "replace keeps the header
   sort" in test-layout-browser.R (fails with the re-apply call removed). Not re-checked in RStudio.
+- **Full suite after the fixes (f73bdfe, `NOT_CRAN=true devtools::test()`):** 24 files, 431 tests, 22,324 expectations, 0 failed,
+  0 errors, 0 skipped (lazy and real-browser files included). Scoped re-review: all findings addressed. Site rebuilt and scrubbed.
 
 ### 2026-11-01 - Shiny module and proxy: RStudio check (0.4.0, task 7)
 - **Viewer pane, `runApp("inst/examples/proxy")`:** both canvases start with their cards; a real drag joins `visits.id` to
