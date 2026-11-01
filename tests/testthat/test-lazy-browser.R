@@ -255,7 +255,7 @@ test_that("a saved widget labels a lazy card as a preview and says so in the ins
   env$wide <- data.frame(id = 1:12345)
   dir <- withr::local_tempdir()
   file <- file.path(dir, "lazy.html")
-  w <- local(sideview_widget(patients, big, wide), envir = env)
+  w <- local(sideview_widget(patients, big, wide, max_rows = Inf), envir = env)
   suppressMessages(save_sideview(w, file, selfcontained = FALSE))
   url <- paste0("file:///", gsub("\\\\", "/", normalizePath(file)))
   b <- sv_open_page(url, wait_for = "!!document.querySelector('.sideview-card .sideview-col-port')")

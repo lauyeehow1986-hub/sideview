@@ -11,7 +11,8 @@ sideview_widget(
   elementId = NULL,
   options = list(),
   theme = "auto",
-  state = NULL
+  state = NULL,
+  max_rows = 5000
 )
 }
 \arguments{
@@ -33,6 +34,13 @@ sideview_widget(
 
 \item{state}{A saved workspace to restore (see \code{\link[=sideview]{sideview()}}): a
 \code{sideview_state} or the path to a saved state file.}
+
+\item{max_rows}{Most rows of each data-frame table to embed in the widget
+(default 5000). A longer table is cut to its first \code{max_rows} rows, its
+card says "First N of M rows", and one message names the tables cut. The
+widget has no R session behind it, so every row would travel in the HTML.
+Use \code{Inf} to embed everything. Lazy (arrow / duckdb) tables already carry
+only a preview and are not affected.}
 }
 \value{
 An S3 object of class \code{c("sideview", "htmlwidget")}.

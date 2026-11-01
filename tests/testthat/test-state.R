@@ -77,7 +77,7 @@ test_that("sv_save_state and sv_load_state roundtrip with JSON", {
   loaded <- sv_load_state(tf)
   expect_s3_class(loaded, "sideview_state")
   expect_s3_class(loaded, "list")
-  expect_equal(loaded$version, "0.2.0")
+  expect_equal(loaded$version, "0.3.0")
   expect_equal(loaded$canvas$zoom, 1.5)
   expect_equal(loaded$canvas$pan_x, 100.0)
   expect_equal(loaded$canvas$pan_y, -50.0)
@@ -127,7 +127,7 @@ test_that("sv_save_state and sv_load_state roundtrip with RDS", {
   
   loaded <- sv_load_state(tf)
   expect_s3_class(loaded, "sideview_state")
-  expect_equal(loaded, sample_state)
+  expect_equal(loaded, utils::modifyList(sample_state, list(version = "0.3.0")), ignore_attr = FALSE)
 })
 
 test_that("sv_save_state supports explicit format argument", {
@@ -188,7 +188,7 @@ test_that("sv_load_state loads non-standard extensions when format is explicitly
   # With explicit format = "json", it succeeds
   loaded <- sv_load_state(tf_custom, format = "json")
   expect_s3_class(loaded, "sideview_state")
-  expect_equal(loaded$version, "0.2.0")
+  expect_equal(loaded$version, "0.3.0")
   expect_equal(loaded$canvas$zoom, 1.25)
   expect_equal(loaded$canvas$pan_x, 42)
 })
@@ -407,4 +407,41 @@ test_that("the server saves the canvas state and opens one from the file dialog"
     msgs <- session$userData$custom_messages
     expect_true(isTRUE(msgs[[length(msgs)]]$message$cancelled))
   })
+})
+
+test_that("an old or unversioned state is stamped with the current schema", {
+  old <- sv_state_from_json('{"canvas":{"zoom":1},"cards":[],"connections":[],"pipeline":{"code":"x"}}')
+  expect_equal(old$version, "0.3.0")
+  expect_equal(old$pipeline$code, "x")
+  v2 <- sv_state_from_json('{"version":"0.2.1","cards":[]}')
+  expect_equal(v2$version, "0.3.0")
+  cur <- sv_state_from_json('{"version":"0.3.0","cards":[]}')
+  expect_equal(cur$version, "0.3.0")
+})
+
+test_that("a newer state loads with one warning and is left as it is", {
+  expect_warning(st <- sv_state_from_json('{"version":"9.0.0","cards":[],"future":1}'), "newer sideview")
+  expect_equal(st$version, "9.0.0")
+  expect_equal(st$future, 1)
+  tf <- tempfile(fileext = ".json")
+  on.exit(unlink(tf))
+  writeLines('{"version":"9.0.0","cards":[]}', tf)
+  expect_warning(sv_load_state(tf), "newer sideview")
+})
+
+test_that("an unreadable version is left alone, and migrations run in order", {
+  st <- sv_state_from_json('{"version":"banana","cards":[]}')
+  expect_equal(st$version, "banana")
+  local_mocked_bindings(sv_state_migrations = list("0.2.0" = function(s) { s$migrated <- TRUE; s }))
+  m <- sv_migrate_state(list(version = "0.2.0", cards = list()))
+  expect_true(m$migrated)
+  expect_equal(m$version, "0.3.0")
+})
+
+test_that("a saved state round-trips with the current version", {
+  tf <- tempfile(fileext = ".json")
+  on.exit(unlink(tf))
+  sv_save_state(new_sideview_state(), tf)
+  expect_silent(st <- sv_load_state(tf))
+  expect_equal(st$version, "0.3.0")
 })

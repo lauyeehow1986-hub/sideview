@@ -1,5 +1,19 @@
 # sideview 0.4.0 (development)
 
+## Smaller items
+
+* **Row cap for widgets.** `sideview_widget()` and `save_sideview()` take
+  `max_rows = 5000`. A longer data-frame table is cut to its first rows, its card
+  says "First N of M rows" and one message names the tables cut (silent while
+  knitting). `max_rows = Inf` embeds everything. Lazy tables are unchanged.
+* **Positron.** Without `viewer =`, `sideview()` and `sideview_addin()` open the
+  browser in Positron, which has no dialog viewer; `viewer = "dialog"` there also
+  opens the browser, with one message.
+* **State files carry a schema version.** `sv_load_state()` and `state =` read a
+  file without a `version` as 0.2.0 and upgrade older files (stamped 0.3.0); a file
+  from a newer sideview loads with one warning.
+* **Install from r-universe:** see the README.
+
 ## Shiny module and proxy
 
 * **`sideviewUI()` / `sideviewServer()`** put an R-backed canvas into your own Shiny

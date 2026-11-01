@@ -51,6 +51,12 @@ sideview_widget_dependencies <- function() {
 #'   `bslib::bs_theme()`.
 #' @param state A saved workspace to restore (see [sideview()]): a
 #'   `sideview_state` or the path to a saved state file.
+#' @param max_rows Most rows of each data-frame table to embed in the widget
+#'   (default 5000). A longer table is cut to its first `max_rows` rows, its
+#'   card says "First N of M rows", and one message names the tables cut. The
+#'   widget has no R session behind it, so every row would travel in the HTML.
+#'   Use `Inf` to embed everything. Lazy (arrow / duckdb) tables already carry
+#'   only a preview and are not affected.
 #'
 #' @return An S3 object of class \code{c("sideview", "htmlwidget")}.
 #' @export
@@ -64,7 +70,9 @@ sideview_widget <- function(...,
                             elementId = NULL,
                             options = list(),
                             theme = "auto",
-                            state = NULL) {
+                            state = NULL,
+                            max_rows = 5000) {
+  max_rows <- sv_check_max_rows(max_rows)
   state <- sv_as_state(state)
   dots_exprs <- as.list(substitute(list(...))[-1])
   dots_vals <- list(...)
@@ -108,9 +116,11 @@ sideview_widget <- function(...,
         card$widget <- NULL
       }
       card <- sv_card_payload(card)
+      card <- sv_cap_card_rows(card, max_rows)
       card_list[[length(card_list) + 1]] <- card
     }
   }
+  sv_announce_row_cap(card_list, max_rows)
   
   # Forward options using x payload
   theme <- sv_resolve_theme(theme)
@@ -147,6 +157,42 @@ sideview_widget <- function(...,
   )
 }
 
+#' Validate `max_rows`: one number >= 1, or `Inf`
+#' @noRd
+sv_check_max_rows <- function(max_rows) {
+  if (!is.numeric(max_rows) || length(max_rows) != 1L || is.na(max_rows) || max_rows < 1) {
+    stop("`max_rows` must be a single number of at least 1 (or Inf).", call. = FALSE)
+  }
+  max_rows
+}
+
+#' Cut a data-frame card to its first `max_rows` rows
+#'
+#' Sets `truncated` (the browser then says "First N of M rows") and keeps
+#' `totalRows`. Lazy cards, already a preview, and non-data-frame cards are left alone.
+#' @noRd
+sv_cap_card_rows <- function(card, max_rows) {
+  if (!is.data.frame(card$data) || isTRUE(card$is_lazy) || !is.finite(max_rows)) return(card)
+  if (nrow(card$data) <= max_rows) return(card)
+  card$data <- utils::head(card$data, max_rows)
+  card$truncated <- TRUE
+  card
+}
+
+#' One message naming the tables a widget cut (not while knitting)
+#' @noRd
+sv_announce_row_cap <- function(cards, max_rows) {
+  cut <- Filter(function(c) isTRUE(c$truncated), cards)
+  if (!length(cut) || isTRUE(getOption("knitr.in.progress"))) return(invisible(NULL))
+  desc <- vapply(cut, function(c) {
+    sprintf("%s (%s rows)", c$name %||% "table", format(c$totalRows, big.mark = ",", scientific = FALSE))
+  }, character(1))
+  message("sideview: showing the first ", format(max_rows, big.mark = ","), " rows of ",
+          paste(desc, collapse = ", "),
+          ". Raise `max_rows` (or use Inf) to embed more.")
+  invisible(NULL)
+}
+
 #' Save Sideview Widget to a Standalone HTML File
 #'
 #' Exports a `sideview` htmlwidget or table objects to a self-contained HTML file
@@ -159,6 +205,9 @@ sideview_widget <- function(...,
 #'   all CSS and JavaScript dependencies inlined. Defaults to \code{TRUE}.
 #' @param title HTML title for the output page. Default \code{"Sideview"}.
 #' @param background Background color for the document body. Default \code{"white"}.
+#' @param max_rows Row cap used when `widget` is table data rather than a
+#'   widget (see [sideview_widget()]; default 5000). A widget you built yourself
+#'   keeps the cap it was built with.
 #' @param ... Additional arguments passed to \code{htmlwidgets::saveWidget()}.
 #'
 #' @return The normalized path to the saved file (invisibly).
@@ -174,9 +223,10 @@ save_sideview <- function(widget,
                           selfcontained = TRUE,
                           title = "Sideview",
                           background = "white",
+                          max_rows = 5000,
                           ...) {
   if (!inherits(widget, "htmlwidget")) {
-    widget <- sideview_widget(widget)
+    widget <- sideview_widget(widget, max_rows = max_rows)
   }
   
   if (!grepl("\\.html?$", file, ignore.case = TRUE)) {

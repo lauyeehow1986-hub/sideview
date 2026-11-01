@@ -146,6 +146,7 @@ sv_load_state <- function(file, tables = NULL, launch = FALSE, format = NULL, ..
   }
 
   class(state) <- c("sideview_state", "list")
+  state <- sv_migrate_state(state)
 
   if (isTRUE(launch) && sv_interactive()) {
     if (is.null(tables)) tables <- sv_state_tables(state, parent.frame())
@@ -219,7 +220,7 @@ sv_state_from_json <- function(txt) {
     stop("Invalid state: root object must be a list.", call. = FALSE)
   }
   class(state) <- c("sideview_state", "list")
-  state
+  sv_migrate_state(state)
 }
 
 #' Coerce the `state` argument of sideview()/sideview_widget()
@@ -302,4 +303,40 @@ print.sideview_state <- function(x, ...) {
   }
 
   invisible(x)
+}
+
+# The state schema this version of sideview writes and reads.
+sv_state_schema_version <- "0.3.0"
+
+# One function per schema step, named by the version it upgrades from: each takes a
+# state at that version and returns it in the next shape. 0.2.x files need no change
+# (their pipeline `code` is restored as one custom step), so the slot is empty today.
+sv_state_migrations <- list()
+
+#' Bring a loaded state up to the current schema
+#'
+#' A missing `version` is read as 0.2.0. An older state is migrated step by step and
+#' stamped with the current version. A newer one is returned as it is, with one
+#' warning: fields this version does not know are ignored. An unreadable version is
+#' left alone.
+#' @noRd
+sv_migrate_state <- function(state) {
+  if (!is.list(state)) return(state)
+  v_txt <- as.character(state$version %||% "0.2.0")[1]
+  v <- tryCatch(package_version(v_txt), error = function(e) NULL)
+  if (is.null(v)) return(state)
+  current <- package_version(sv_state_schema_version)
+  if (v > current) {
+    warning("This state was saved by a newer sideview (schema ", v_txt,
+            "; this is ", sv_state_schema_version, "). Settings this version does not know are ignored.",
+            call. = FALSE)
+    return(state)
+  }
+  if (v < current) {
+    for (from in names(sv_state_migrations)) {
+      if (package_version(from) >= v) state <- sv_state_migrations[[from]](state)
+    }
+    state$version <- sv_state_schema_version
+  }
+  state
 }
