@@ -1550,3 +1550,37 @@ test_that("a zero-row lazy table is tagged", {
   tag <- sv_cdisc_detect(dplyr::tbl(con, "ae"), "ae")
   expect_equal(tag$domain, "AE")
 })
+
+test_that("lazy CDISC detection matches in-memory on messy DOMAIN, RDOMAIN, factors and empty tables", {
+  cdisc_lazy_skip()
+  f <- sv_cdisc_fixtures()
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  as_lazy <- function(d, nm) list(duckdb = {DBI::dbWriteTable(con, nm, d); dplyr::tbl(con, nm)},
+                                  arrow = arrow::arrow_table(d))
+  check <- function(d, nm, label) {
+    lz <- as_lazy(d, paste0("t_", label))
+    mem <- sv_cdisc_detect(d, nm)
+    for (k in names(lz)) expect_equal(sv_cdisc_detect(lz[[k]], nm), mem, info = paste(k, label))
+    mem
+  }
+  # case/whitespace variants must not use up the two slots
+  d <- f$ae[1:4, ]; d$DOMAIN <- c("AE", "ae", " Ae ", "AE")
+  expect_equal(check(d, "x", "case")$domain, "AE")
+  d$DOMAIN <- c("AE", "ae", "LB", "AE")
+  check(d, "x", "twodomains")
+  d$DOMAIN <- c("AE", NA, "", " ")
+  check(d, "x", "withna")
+  d$DOMAIN <- factor(c("AE", "ae", NA, "AE"))
+  check(d, "x", "factor")
+  # RDOMAIN parity
+  s <- f$suppae; s <- s[rep(1:nrow(s), length.out = 4), ]
+  s$RDOMAIN <- c("AE", "ae", " AE", NA)
+  check(s, "x", "rdomain")
+  s$RDOMAIN <- c("AE", "ae", "LB", "AE")
+  check(s, "x", "rdomain2")
+  s$RDOMAIN <- factor(c("AE", "ae", NA, "AE"))
+  check(s, "x", "rdomain_factor")
+  # zero-row ADSL
+  expect_equal(check(f$adsl[0, ], "adsl", "adsl0")$domain, "ADSL")
+})
