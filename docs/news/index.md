@@ -1,5 +1,66 @@
 # Changelog
 
+## sideview 0.5.0
+
+### CDISC awareness
+
+- **Domain badges.** Tables that look like SDTM, SEND or ADaM datasets
+  get a small badge after the card name (`DM`, `AE`, `ADSL`, …). Hover
+  for the dataset label, the standard and class, and why sideview thinks
+  so. Supplemental qualifier tables (`SUPPAE`) say which parent they
+  supplement. Other tables are never touched.
+- **Variable labels.** Column headers show a variable’s label as a
+  tooltip, `L` shows a row of labels under the headers (saved with the
+  workspace), `Ctrl+K` also finds a card by its domain or dataset label,
+  and the column inspector shows the label.
+- **`cdisc =`** on
+  [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md),
+  [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md),
+  [`save_sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/save_sideview.md),
+  [`sideviewServer()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewUI.md)
+  and
+  [`sv_codebook()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_codebook.md):
+  `"auto"` (default), `FALSE`, or a named vector such as
+  `c(my_ae = "AE")`. Module canvases update their badges when a card is
+  added or replaced.
+- **[`sv_codebook()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_codebook.md)
+  has a `domain` column.** The widget’s CSV download matches it byte for
+  byte.
+- **[`sv_cdisc_catalogue()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_cdisc_catalogue.md)**
+  returns the dataset catalogue the detection uses.
+- **[`sv_read_cdisc()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_read_cdisc.md)**
+  reads a folder or a set of `.xpt`, `.sas7bdat`, Dataset-JSON and
+  `.parquet` files into a named list for
+  [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md),
+  keeping variable labels. Nothing goes over the network.
+- **Copilot.** The schema text sent to the LLM now includes column
+  labels and a domain line. Row data is still never sent.
+
+#### Limits to know about
+
+- The `ig_versions` column of the catalogue (SDTM, SEND and ADaM
+  implementation guide versions) is approximate. It is for awareness,
+  not conformance checking: sideview does not validate a dataset against
+  an implementation guide.
+- An uncatalogued name such as `ADAE`-like data is tagged by its
+  variable prefix (`AE...`) before its ADaM structure is considered.
+- `cdisc = FALSE` shows no tags but, for lazy (arrow / duckdb) cards,
+  detection at construction time still runs, with its cost. A named
+  `cdisc =` vector with several lazy cards costs more on every verb
+  (quadratic in the number of cards).
+- [`sv_read_cdisc()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_read_cdisc.md)
+  reads Dataset-JSON with the `datasetjson` package, which was not
+  installed when this was developed, so that path is untested against
+  the real package; if the structure differs, the file is skipped with a
+  warning.
+- The row of labels is placed using one measurement of the header
+  height; it could sit off only if a header later grows taller (for
+  example after a late font load).
+- Checked in headless Chrome. `viewer = "dialog"` and `"pane"` were not
+  checked in RStudio for this release.
+- Workspace files gain an optional `view.labels_row` field without a new
+  schema version; older sideview versions ignore it.
+
 ## sideview 0.4.0
 
 ### Smaller items

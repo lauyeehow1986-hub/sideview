@@ -17,6 +17,7 @@ sideview_widget(
   options = list(),
   theme = "auto",
   state = NULL,
+  cdisc = "auto",
   max_rows = 5000
 )
 ```
@@ -59,6 +60,13 @@ sideview_widget(
   A saved workspace to restore (see
   [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)):
   a `sideview_state` or the path to a saved state file.
+
+- cdisc:
+
+  CDISC awareness (see
+  [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)):
+  `"auto"` (default), `FALSE`, or a named character vector of domain
+  codes.
 
 - max_rows:
 

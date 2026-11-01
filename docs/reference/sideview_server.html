@@ -15,7 +15,7 @@ and RStudio console execution (send_console)."><meta property="og:image" content
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.5.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -24,6 +24,7 @@ and RStudio console execution (send_console)."><meta property="og:image" content
 
     <div id="navbar" class="collapse navbar-collapse ms-3">
       <ul class="navbar-nav me-auto"><li class="nav-item"><a class="nav-link" href="../articles/tour.html">Visual tour</a></li>
+<li class="nav-item"><a class="nav-link" href="../articles/cdisc.html">CDISC</a></li>
 <li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
@@ -58,7 +59,8 @@ and RStudio console execution (<code>send_console</code>).</p>
 <span>  insert_fn <span class="op">=</span> <span class="va">sv_insert_code</span>,</span>
 <span>  console_fn <span class="op">=</span> <span class="va">sv_send_to_console</span>,</span>
 <span>  gadget <span class="op">=</span> <span class="cn">FALSE</span>,</span>
-<span>  run_env <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/sys.parent.html" class="external-link">parent.frame</a></span><span class="op">(</span><span class="op">)</span></span>
+<span>  run_env <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/sys.parent.html" class="external-link">parent.frame</a></span><span class="op">(</span><span class="op">)</span>,</span>
+<span>  cdisc <span class="op">=</span> <span class="st">"auto"</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -99,6 +101,11 @@ when embedding the server in your own multi-user Shiny app.</p></dd>
 <dd><p>Environment where <strong>Run in R</strong> evaluates the pipeline and
 stores its result (as <code>sv_result</code> unless another name is given). Defaults
 to the environment <code>sideview_server()</code> is called from.</p></dd>
+
+
+<dt id="arg-cdisc">cdisc<a class="anchor" aria-label="anchor" href="#arg-cdisc"></a></dt>
+<dd><p>CDISC setting the canvas was started with (<code>"auto"</code>, <code>FALSE</code> or a named
+vector of domain codes); the codebook export uses it for its <code>domain</code> column.</p></dd>
 
 </dl></div>
     <div class="section level2">

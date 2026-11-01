@@ -4,11 +4,14 @@ template:
 
 navbar:
   structure:
-    left: [intro, tour, reference, news]
+    left: [intro, tour, cdisc, reference, news]
   components:
     tour:
       text: Visual tour
       href: articles/tour.html
+    cdisc:
+      text: CDISC
+      href: articles/cdisc.html
 
 reference:
   - title: "Interactive Canvas & Gadget"

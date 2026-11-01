@@ -17,7 +17,8 @@ sideview_server(
   insert_fn = sv_insert_code,
   console_fn = sv_send_to_console,
   gadget = FALSE,
-  run_env = parent.frame()
+  run_env = parent.frame(),
+  cdisc = "auto"
 )
 ```
 
@@ -60,6 +61,12 @@ sideview_server(
   Environment where **Run in R** evaluates the pipeline and stores its
   result (as `sv_result` unless another name is given). Defaults to the
   environment `sideview_server()` is called from.
+
+- cdisc:
+
+  CDISC setting the canvas was started with (`"auto"`, `FALSE` or a
+  named vector of domain codes); the codebook export uses it for its
+  `domain` column.
 
 ## Value
 

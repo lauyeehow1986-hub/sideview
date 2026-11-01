@@ -1,0 +1,120 @@
+---
+title: "CDISC datasets"
+description: >
+  Domain badges, variable labels and a codebook domain column for SDTM, SEND and ADaM tables.
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+library(sideview)
+```
+
+sideview recognises tables that look like **SDTM**, **SEND** or **ADaM** datasets and marks them with a
+badge. This is for awareness: it helps you see what each card is. It does not check a dataset against an
+implementation guide, and a table that does not look like CDISC data is left alone.
+
+Everything below uses a small synthetic study built in the page (no real patients).
+
+## A synthetic study
+
+```{r data}
+usub <- paste0("SV-001-", sprintf("%03d", 1:4))
+sid <- "SV-001"
+
+dm <- data.frame(STUDYID = sid, DOMAIN = "DM", USUBJID = usub, SUBJID = sprintf("%03d", 1:4),
+                 AGE = c(34, 51, 62, 45), SEX = c("F", "M", "F", "M"),
+                 ARM = c("A", "B", "A", "B"), stringsAsFactors = FALSE)
+attr(dm$USUBJID, "label") <- "Unique Subject Identifier"
+attr(dm$AGE, "label") <- "Age"
+attr(dm, "label") <- "Demographics"
+
+ae <- data.frame(STUDYID = sid, DOMAIN = "AE", USUBJID = usub, AESEQ = 1:4,
+                 AETERM = c("Headache", "Nausea", "Rash", "Cough"),
+                 AESEV = c("MILD", "MODERATE", "MILD", "SEVERE"),
+                 stringsAsFactors = FALSE)
+
+suppae <- data.frame(STUDYID = sid, RDOMAIN = "AE", USUBJID = usub, IDVAR = "AESEQ",
+                     IDVARVAL = as.character(1:4), QNAM = "AETRTEM",
+                     QLABEL = "Treatment Emergent", QVAL = "Y", stringsAsFactors = FALSE)
+
+adsl <- data.frame(STUDYID = sid, USUBJID = usub, TRT01P = c("A", "B", "A", "B"),
+                   TRT01A = c("A", "B", "A", "B"), AGE = dm$AGE, SAFFL = "Y",
+                   stringsAsFactors = FALSE)
+```
+
+## Badges
+
+```r
+sideview_widget(dm = dm, ae = ae, suppae = suppae, adsl = adsl)
+```
+
+Each recognised card gets a badge after its name: `DM`, `AE`, `SUPPAE` and `ADSL` here. Hover over a badge
+for the dataset label, the standard and class, and the evidence used (for example "DOMAIN column = DM" or
+"STUDYID + USUBJID"). `SUPPAE` also says which parent it supplements. Column headers show a variable's label
+as a tooltip, `L` shows a row of labels under the headers (it is saved with the workspace), and `Ctrl+K`
+finds a card by its domain or dataset label.
+
+The tags are worked out in R when the canvas is built. They are never saved in a workspace file; they are
+worked out again when it is opened.
+
+## Overrides with `cdisc =`
+
+`cdisc` is `"auto"` by default. Turn it off with `FALSE`, or name the domain of a table that sideview cannot
+tell on its own:
+
+```r
+sideview_widget(my_events = ae, cdisc = FALSE)
+sideview_widget(my_events = ae[, -2], cdisc = c(my_events = "AE"))
+```
+
+The same argument is on `sideview()`, `save_sideview()`, `sideviewServer()` and `sv_codebook()`. In a Shiny
+module the badges follow `sv_add_card()` and `sv_replace_card()`.
+
+## Domains in the codebook
+
+`sv_codebook()` gets a `domain` column, and the widget's CSV download matches it.
+
+```{r codebook}
+cb <- sv_codebook(dm = dm, ae = ae, adsl = adsl)
+unique(cb[, c("table", "domain")])
+```
+
+With `cdisc = FALSE` the column is `NA`.
+
+## The catalogue
+
+```{r catalogue}
+cat <- sv_cdisc_catalogue()
+head(cat[, 1:min(5, ncol(cat))])
+```
+
+The catalogue lists the datasets sideview knows. Its `ig_versions` column (implementation guide versions) is
+approximate. It exists so badges can say what a table is, not to validate it.
+
+## Reading CDISC files
+
+`sv_read_cdisc()` reads a folder, or a set of files, of `.xpt`, `.sas7bdat`, Dataset-JSON (`.json`) and
+`.parquet` into a named list, keeping variable labels. Names are the lower-case file stems. It needs the
+package for each format (haven, datasetjson, arrow), and it never uses the network.
+
+```{r read, eval = FALSE}
+study <- sv_read_cdisc("study/sdtm")
+sideview_widget(study)
+```
+
+Parquet files stay on disk as Arrow Datasets unless you pass `lazy = FALSE`.
+
+## What it does not do
+
+* The `ig_versions` in the catalogue are approximate, and nothing is validated against an implementation
+  guide.
+* For a name that is not in the catalogue, the variable prefix (for example `AE...`) wins over ADaM
+  structure, so an `ADAE`-like table may be tagged as an SDTM `AE` domain.
+* `cdisc = FALSE` shows no tags, but lazy (arrow / duckdb) cards still run detection when they are built.
+  A named `cdisc =` vector with several lazy cards gets slower with each verb.
+* Dataset-JSON reading was not tested against the real `datasetjson` package; if its structure differs, the
+  file is skipped with a warning.
+* The Copilot gets column labels and a domain line as schema text, never row data.
+* The label row is placed from one measurement of the header height, so it could sit off if a header grows
+  taller later.
+* The interface was checked in headless Chrome, not in RStudio's dialog or Viewer pane.

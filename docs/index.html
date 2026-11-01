@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.5.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -38,6 +38,7 @@
     <div id="navbar" class="collapse navbar-collapse ms-3">
       <ul class="navbar-nav me-auto">
 <li class="nav-item"><a class="nav-link" href="articles/tour.html">Visual tour</a></li>
+<li class="nav-item"><a class="nav-link" href="articles/cdisc.html">CDISC</a></li>
 <li class="nav-item"><a class="nav-link" href="reference/index.html">Reference</a></li>
 <li class="nav-item"><a class="nav-link" href="news/index.html">Changelog</a></li>
       </ul>
@@ -92,6 +93,8 @@
 <strong>Join diagnostics</strong> (<code><a href="reference/sv_join_diagnostics.html">sv_join_diagnostics()</a></code>) show match rates both ways, unmatched keys, 1:1 / 1:m / m:m relationships, rows per join type, and NA, spacing or case problems in keys.</li>
 </ul>
 </li>
+<li>
+<strong>CDISC Awareness</strong>: SDTM, SEND and ADaM tables get a domain badge (<code>DM</code>, <code>AE</code>, <code>ADSL</code>, …) and variable labels, and <code><a href="reference/sv_read_cdisc.html">sv_read_cdisc()</a></code> reads <code>.xpt</code>, <code>.sas7bdat</code>, Dataset-JSON and parquet files. See the <a href="https://lauyeehow1986-hub.github.io/sideview/articles/cdisc.html">CDISC article</a>. It is for awareness, not conformance checking.</li>
 <li>
 <strong>Date-Window Joins</strong>: Click the calendar on a join step to join on a date rule (a window of days, between, nearest before or after, overlaps). The join check shows the rows the rule dropped, and <strong>Strict</strong> adds dplyr’s <code>relationship</code> and <code>unmatched</code> checks.</li>
 <li>

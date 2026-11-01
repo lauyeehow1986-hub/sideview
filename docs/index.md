@@ -42,6 +42,13 @@ Or install the development version from GitHub:
     show match rates both ways, unmatched keys, 1:1 / 1:m / m:m
     relationships, rows per join type, and NA, spacing or case problems
     in keys.
+- **CDISC Awareness**: SDTM, SEND and ADaM tables get a domain badge
+  (`DM`, `AE`, `ADSL`, …) and variable labels, and
+  [`sv_read_cdisc()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_read_cdisc.md)
+  reads `.xpt`, `.sas7bdat`, Dataset-JSON and parquet files. See the
+  [CDISC
+  article](https://lauyeehow1986-hub.github.io/sideview/articles/cdisc.html).
+  It is for awareness, not conformance checking.
 - **Date-Window Joins**: Click the calendar on a join step to join on a
   date rule (a window of days, between, nearest before or after,
   overlaps). The join check shows the rows the rule dropped, and

@@ -102,6 +102,12 @@ rstudio bridge: R/rstudio.R
   `<script class="sideview-state">`; the widget passes `options.state`. Cards match by **name**; a restored
   view skips the first auto-fit. Open replaces joins and pipeline and clears undo. Save/Open use
   `rstudioapi::selectFile` only in the gadget when `data-sv-file-dialog="r"`; otherwise browser download/file picker.
+- **CDISC tags:** `sideview(..., cdisc = "auto")`, `sideview_widget()`, `save_sideview()`, `sideviewServer()` and
+  `sv_codebook()` take `cdisc`: `"auto"`, `FALSE`, or a named character vector of domains (`c(my_ae = "AE")`).
+  Tags are derived in R (`R/cdisc.R`, catalogue in `inst/extdata/cdisc_catalogue.csv`) and are **never saved in
+  state**; they are re-derived on load. `domain` is a codebook twin column (R and `codebookRow()` in JS, byte-equal
+  CSV). `workspace state` carries one optional field, `view.labels_row` (the `L` toggle), without a schema bump.
+  Only column labels and a domain line reach the LLM schema text, never rows.
 - **"No code"** is `""` on the wire. The drawer placeholder (`# Connect two columns ...`) is display text only;
   test with `sv_is_no_code()` (R) / `isNoCode()` (JS). Done with no code returns `NULL`.
 - **Gadget lifecycle:** `sv_new_lifecycle()` counts sessions; the app stops only after

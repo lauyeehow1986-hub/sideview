@@ -5,6 +5,15 @@ Each entry: **date — change — why — verification**. Keep the "Open issues"
 
 ---
 
+### 2026-11-01 - CDISC awareness: sideview 0.5.0 (Tasks 1-12)
+- **What shipped:** `R/cdisc.R` (catalogue in `inst/extdata/cdisc_catalogue.csv`, `sv_cdisc_catalogue()`, detection by DOMAIN value, variable prefix, key set and ADaM structure, SUPP-- and SEND handling, `sv_cdisc_finalize()` tagging cards), `cdisc =` on `sideview()`, `sideview_widget()`, `save_sideview()`, `sideviewServer()` and `sv_codebook()` (`"auto"`, `FALSE`, named vector), module tag updates (`sideview_cdisc_update`), codebook `domain` column (R and JS twins, byte-equal CSV), domain and label lines in the copilot schema context, the `L` labels row saved as optional `view.labels_row` (no schema bump), `sv_read_cdisc()` (xpt, sas7bdat, Dataset-JSON, parquet). Tags are never saved in state. Article `vignettes/articles/cdisc.Rmd`, NEWS 0.5.0, README bullet, DESCRIPTION 0.5.0.
+- **UI (Task 7):** `renderCdiscBadge(cardMeta)` puts `span.sideview-badge-cdisc.sv-cdisc-<std>` after the card name (text = domain, title = `<label> · <standard> <class>` + evidence + `supplements <parent>`, all set as text) and keeps `el.dataset.cdiscDomain` real (deleted when the tag is null), so `cardDomain()` feeds the widget/module codebook. `setCdiscTags()` + `onMessage('sideview_cdisc_update')` apply module updates (null clears; an unknown id is ignored quietly). `th` titles use the variable label; `searchCards()` matches domain and dataset label (rank 1); the inspector shows `<domain> · <dataset label>`. Gadget cards carry `data-cdisc` / `data-col-labels` (JSON) from `render_card_tag()`, read in `initExistingCards()`. Tokens `--sv-cdisc-{sdtm,send,adam}[-text]` in the base, dark and auto-dark blocks.
+- **Known limitations (also in NEWS):** catalogue `ig_versions` approximate (awareness, not conformance); rule 3 (variable prefix) outranks ADaM structure for uncatalogued ADAE-like names (pinned by a test); `cdisc = FALSE` still runs construction-time detection on lazy cards but shows no tags; a named `cdisc=` vector with lazy cards is O(n^2) on verbs; Dataset-JSON reading untested against the real `datasetjson` package; labels go to the LLM as schema text, never rows; `--sv-th-row-h` is measured once; RStudio dialog/pane viewers not verified in RStudio itself.
+- **Verified:** see the Task 11 entry below; Task 12 (0.5.0 release checks): `pkgdown::check_pkgdown()` no problems; `devtools::check(--no-manual)`: 0 warnings, only the usual
+  `''NULL''` check-directory NOTE; the `tests` step errored twice with chromote `timed out waiting for event Page.loadEventFired`
+  (first run FAIL 16 of 22576, second run FAIL 1 of 22732, the first browser test); `NOT_CRAN=true devtools::test(filter = "layout-browser")` alone: 0 failures.
+  Treated as intermittent load-related browser timeouts, as in Task 11, not a CDISC regression. A check with all tests green was not obtained. pkgdown site rebuilt; docs/CLAUDE.* and docs/MEMORY.* removed.
+
 ### 2026-11-01 - CDISC awareness: real-browser and manual verification (Task 11)
 - **Browser tests do run here** (Chrome at `C:\Program Files\Google\Chrome\Application\chrome.exe`, chromote + callr present). The earlier
   "timeouts" were not reproduced: `test-layout-browser.R` ran to completion with `NOT_CRAN=true` (about 2 min) both before and after the new tests.
@@ -31,10 +40,6 @@ Each entry: **date — change — why — verification**. Keep the "Open issues"
   while I had other Rscript/Chrome processes running; the identical code passed alone and in the clean rerun, so the timeout is intermittent
   and load-related (a reload-wait in `sv_module_page()`), not a CDISC regression. The full suite takes about 25 minutes here.
 - Codebook `domain` column: covered by test-codebook.R (R and byte-equal JS CSV); not opened as a downloaded file in a browser.
-
-### 2026-11-01 - CDISC task 7: domain badge, label titles, inspector line, search
-- **Change:** `renderCdiscBadge(cardMeta)` puts `span.sideview-badge-cdisc.sv-cdisc-<std>` after the card name (text = domain, title = `<label> · <standard> <class>` + evidence + `supplements <parent>`, all set as text) and keeps `el.dataset.cdiscDomain` real (deleted when the tag is null), so `cardDomain()` feeds the widget/module codebook. `setCdiscTags()` + `onMessage('sideview_cdisc_update')` apply module updates (null clears; an unknown id is ignored quietly). `th` titles use the variable label; `searchCards()` matches domain and dataset label (rank 1); the inspector shows `<domain> · <dataset label>`. Gadget cards carry `data-cdisc` / `data-col-labels` (JSON) from `render_card_tag()`, read in `initExistingCards()`. Tokens `--sv-cdisc-{sdtm,send,adam}[-text]` in the base, dark and auto-dark blocks.
-- **Verified:** mock-DOM scenario 12, test-theme contrast pairs, `render_card_tag` test. Real browser / RStudio: pending Task 11.
 
 ### 2026-10-31 - Join rules final fix wave: Strict applicability and review items (0.4.0)
 - **Change (I1):** `compose` writes Strict (`relationship =` / `unmatched =`) only where the join check's counts still describe the join: the join is the first row-changing step on its left table's chain (filter/join/distinct/slice/summarise/pivot/custom change rows; select/rename/mutate/recode/arrange do not), the right side is the raw card (not a `_prep` chain), and the chain is in R (not duckdb/arrow, which also closes M2). Otherwise the step keeps its `strict` flag and no args are written. One test, `Pipeline.prototype.strictApplies(step)` returning `{ok, reason}`, is used by `compose`, the disabled Strict checkbox (title = reason) and `strictLine()` in the join check panel.
@@ -148,8 +153,12 @@ Each sub-project gets its own spec, plan and build, in this order:
    fallback, workspace-version warning and migration slot, r-universe.
 
 ## Backlog (future rounds, not yet scheduled)
-- **CDISC / pharmaverse support** (later stage, after 0.4.0 is solid; requested 2026-10-25, do not drop):
-  recognise `USUBJID` / `STUDYID` as join keys, show SDTM/ADaM domain labels (DM, AE, LB, ADSL, ...).
+- **CDISC / pharmaverse follow-ups** (0.5.0 shipped recognition, badges, labels, codebook domain, `sv_read_cdisc()`):
+  - B: USUBJID / STUDYID join keys (suggest and pre-fill joins between domains);
+  - C: SUPPQUAL merge (fold SUPP-- rows into the parent as columns);
+  - D: admiral-style code generation for ADaM derivations;
+  - E: ARD / TLG cards (analysis results datasets and tables as cards);
+  - F: spec / define.xml checks (conformance, which 0.5.0 deliberately does not do).
 - Table version diff by key (data-lock comparisons between dataset versions).
 - Validation rules (ranges, allowed values, ID uniqueness) exporting `pointblank`-style checks.
 - PHI/PII column tagging that excludes tagged columns from the LLM schema context.
@@ -185,7 +194,7 @@ Each sub-project gets its own spec, plan and build, in this order:
   (https://github.com/lauyeehow1986-hub/sideview/releases/tag/v0.4.0, notes = the 0.4.0 NEWS section).
 - **r-universe:** `https://lauyeehow1986-hub.r-universe.dev/sideview` still returned 404 right after the tag (2026-11-01);
   likely waiting for the next scheduled build. Recheck, then confirm the README install line.
-- **Next:** CDISC/pharmaverse support (USUBJID/STUDYID join keys, SDTM/ADaM domain labels) as its own multi-part project.
+- **Next:** CDISC awareness is in 0.5.0; remaining CDISC sub-projects B-F are in the backlog.
 
 ### 2026-11-01 - Sub-project 4: small items (0.4.0)
 
