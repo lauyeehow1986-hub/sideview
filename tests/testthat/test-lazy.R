@@ -1493,3 +1493,60 @@ test_that("BIGINT, HUGEINT and DECIMAL columns work in the join check, profile a
     }
   }
 })
+
+cdisc_lazy_skip <- function() {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+}
+
+test_that("lazy CDISC tables get the in-memory tag", {
+  cdisc_lazy_skip()
+  f <- sv_cdisc_fixtures()
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  for (nm in c("ae", "labs", "ts", "adsl", "adlb", "bw")) {
+    DBI::dbWriteTable(con, nm, f[[nm]])
+    expect_equal(sv_cdisc_detect(dplyr::tbl(con, nm), nm), sv_cdisc_detect(f[[nm]], nm), info = nm)
+    expect_equal(sv_cdisc_detect(arrow::arrow_table(f[[nm]]), nm), sv_cdisc_detect(f[[nm]], nm),
+                 info = paste("arrow", nm))
+  }
+  expect_false(is.null(sv_cdisc_detect(dplyr::tbl(con, "ae"), "ae")))
+  # duplicated USUBJID, and a NA, give the in-memory answer
+  d <- f$adsl; d$USUBJID[2] <- d$USUBJID[1]
+  DBI::dbWriteTable(con, "adsl_dup", d)
+  expect_equal(sv_cdisc_detect(dplyr::tbl(con, "adsl_dup"), "adsl"), sv_cdisc_detect(d, "adsl"))
+})
+
+test_that("lazy detection runs at most two small queries", {
+  cdisc_lazy_skip()
+  f <- sv_cdisc_fixtures()
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  for (nm in c("ae", "adsl")) DBI::dbWriteTable(con, nm, f[[nm]])
+  DBI::dbWriteTable(con, "mtcars", mtcars)
+  calls <- character()
+  real <- sv_cdisc_lazy_query
+  local_mocked_bindings(sv_cdisc_lazy_query = function(tbl, kind) {
+    calls <<- c(calls, kind)
+    real(tbl, kind)
+  })
+  sv_cdisc_detect(dplyr::tbl(con, "adsl"), "adsl")
+  expect_equal(sum(calls == "domain"), 0); expect_equal(sum(calls == "adsl"), 1)
+  calls <- character()
+  sv_cdisc_detect(dplyr::tbl(con, "ae"), "ae")
+  expect_equal(sum(calls == "domain"), 1); expect_equal(sum(calls == "adsl"), 0)
+  calls <- character()
+  sv_cdisc_detect(dplyr::tbl(con, "mtcars"), "mtcars")
+  expect_length(calls, 0)
+})
+
+test_that("a zero-row lazy table is tagged", {
+  cdisc_lazy_skip()
+  f <- sv_cdisc_fixtures()
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbWriteTable(con, "ae", f$ae[0, ])
+  tag <- sv_cdisc_detect(dplyr::tbl(con, "ae"), "ae")
+  expect_equal(tag$domain, "AE")
+})

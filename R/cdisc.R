@@ -47,11 +47,24 @@ sv_cdisc_check_arg <- function(cdisc) {
 # that cost something are functions, so a rule that does not need them never
 # pays for them.
 sv_cdisc_peek <- function(data) {
-  cols <- names(data)
   clean <- function(x) {
     x <- toupper(trimws(as.character(x)))
     unique(x[!is.na(x) & nzchar(x)])
   }
+  if (sv_is_lazy_input(data)) {
+    cols <- sv_lazy_names(data)
+    return(list(
+      cols = cols,
+      domain_values = if ("DOMAIN" %in% cols) clean(sv_cdisc_lazy_query(data, "domain")) else character(),
+      usubjid_unique = function() {
+        "USUBJID" %in% cols && isTRUE(sv_cdisc_lazy_query(data, "adsl"))
+      },
+      rdomain_values = function() {
+        if ("RDOMAIN" %in% cols) clean(sv_cdisc_lazy_query(data, "rdomain")) else character()
+      }
+    ))
+  }
+  cols <- names(data)
   list(
     cols = cols,
     domain_values = if ("DOMAIN" %in% cols) clean(data[["DOMAIN"]]) else character(),
