@@ -309,8 +309,9 @@ sv_codebook <- function(..., top_n = 5L, file = NULL, progress = NULL, cdisc = "
 # The CDISC domain of one table for the codebook, or NA.
 sv_codebook_domain <- function(tb, name, cdisc) {
   if (identical(cdisc, FALSE)) return(NA_character_)
-  if (is.character(cdisc) && !is.null(names(cdisc)) && name %in% names(cdisc)) {
-    return(toupper(trimws(as.character(cdisc[[name]]))))
+  if (is.character(cdisc) && !is.null(names(cdisc))) {
+    code <- sv_cdisc_override(cdisc, name)
+    if (!is.null(code)) return(toupper(trimws(as.character(code))))
   }
   # a closed vector (from the canvas) lists every tagged table: any other has no domain
   if (is.character(cdisc) && isTRUE(attr(cdisc, "closed"))) return(NA_character_)

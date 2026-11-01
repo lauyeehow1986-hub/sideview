@@ -110,6 +110,16 @@ sv_cdisc_clean_name <- function(name) {
       basename(as.character(name)), ignore.case = TRUE)
 }
 
+# The domain code a named `cdisc` vector sets for a table, or NULL. Names are
+# compared without a data-file extension (case matters, as for table names).
+sv_cdisc_override <- function(cdisc, name) {
+  keys <- names(cdisc)
+  name <- sv_cdisc_clean_name(name)
+  if (is.null(keys) || is.null(name)) return(NULL)
+  hit <- match(name, vapply(keys, sv_cdisc_clean_name, character(1), USE.NAMES = FALSE))
+  if (is.na(hit)) NULL else unname(cdisc[[hit]])
+}
+
 sv_cdisc_name_code <- function(name) {
   name <- sv_cdisc_clean_name(name)
   if (is.null(name)) return(NA_character_)
@@ -236,7 +246,7 @@ sv_cdisc_user_tag <- function(data, code) {
 sv_cdisc_detect <- function(data, name, cdisc = "auto") {
   name <- sv_cdisc_clean_name(name)
   if (is.character(cdisc) && !is.null(names(cdisc))) {
-    cdisc <- if (!is.null(name) && name %in% names(cdisc)) cdisc[[name]] else "auto"
+    cdisc <- sv_cdisc_override(cdisc, name) %||% "auto"
   }
   if (identical(cdisc, FALSE)) return(NULL)
   if (is.character(cdisc) && length(cdisc) == 1L && !is.na(cdisc) && cdisc != "auto") {
@@ -389,13 +399,14 @@ sv_cdisc_finalize <- function(cards, cdisc = "auto") {
     return(cards)
   }
   if (is.character(cdisc) && !identical(cdisc, "auto")) {
-    keys <- if (is.null(names(cdisc))) NULL else names(cdisc)
+    keys <- if (is.null(names(cdisc))) NULL else
+      vapply(names(cdisc), sv_cdisc_clean_name, character(1), USE.NAMES = FALSE)
     clean <- vapply(cards, function(c) {
       n <- sv_cdisc_clean_name(c$name)
       if (is.null(n)) NA_character_ else n
     }, character(1))
     if (!is.null(keys)) {
-      unknown <- setdiff(keys, clean)
+      unknown <- names(cdisc)[!(keys %in% clean)]
       if (length(unknown)) {
         warning("`cdisc` names no table: ", paste(unknown, collapse = ", "), call. = FALSE)
       }

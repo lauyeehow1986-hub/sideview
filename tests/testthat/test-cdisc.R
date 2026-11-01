@@ -184,6 +184,8 @@ test_that("odd DOMAIN columns do not error", {
   d$DOMAIN <- c("AE", "CM", "AE", "CM")
   tag <- sv_cdisc_detect(d, "x")
   expect_false(any(grepl("^DOMAIN column", tag$evidence)))
+  expect_identical(tag$domain, "AE")
+  expect_true(any(grepl("^variable prefix AE", tag$evidence)))
   d$DOMAIN <- 1:4
   expect_no_error(sv_cdisc_detect(d, "x"))
 })
@@ -594,4 +596,54 @@ test_that("resolve appends the SEND reason to evidence and removes it again", {
   expect_false(any(grepl("^SEND canvas", sv_cdisc_resolve(cards[1])[[1]]$cdisc$evidence)))
   sp <- sv_cdisc_finalize(sv_cdisc_cards(dm = f$send_dm), "auto")
   expect_true("SEND canvas: DM has a SPECIES column" %in% sp[[1]]$cdisc$evidence)
+})
+
+# ---- Follow-up 1: named keys, reader and schema gaps ---------------------------
+
+test_that("named cdisc keys ignore a file extension but not case", {
+  f <- sv_cdisc_fixtures()
+  # key with extension, table without, and the other way round
+  expect_identical(sv_cdisc_detect(f$keys_only, "lab", cdisc = c("lab.csv" = "AE"))$domain, "AE")
+  expect_identical(sv_cdisc_detect(f$keys_only, "lab.csv", cdisc = c(lab = "AE"))$domain, "AE")
+  expect_identical(sv_cdisc_detect(f$keys_only, "lab.xpt", cdisc = c("lab.csv" = "AE"))$domain, "AE")
+  # case is part of a table name
+  expect_null(sv_cdisc_detect(f$keys_only, "lab", cdisc = c(LAB = "AE")))
+  cards <- sv_cdisc_cards(lab = f$keys_only)
+  expect_warning(none <- sv_cdisc_finalize(cards, c(LAB = "AE")), "names no table: LAB")
+  expect_null(none[[1]]$cdisc)
+  expect_no_warning(some <- sv_cdisc_finalize(cards, c("lab.csv" = "AE")))
+  expect_identical(some[[1]]$cdisc$domain, "AE")
+  expect_identical(sv_codebook_domain(f$keys_only, "lab", c("lab.csv" = "AE")), "AE")
+})
+
+test_that("files of different types that need one package share one message", {
+  skip_if_not_installed("withr")
+  dir <- withr::local_tempdir()
+  file.create(file.path(dir, c("dm.xpt", "ae.sas7bdat")))
+  testthat::local_mocked_bindings(sv_has_pkg = function(pkg) FALSE)
+  expect_error(sv_read_cdisc(file.path(dir, c("dm.xpt", "ae.sas7bdat"))),
+               "Reading .xpt/.sas7bdat files needs the haven package: dm.xpt, ae.sas7bdat.",
+               fixed = TRUE)
+})
+
+test_that("a folder scan where every file is skipped gives an empty list and a warning", {
+  skip_if_not_installed("withr")
+  dir <- withr::local_tempdir()
+  writeLines("{}", file.path(dir, "a.json"))
+  testthat::local_mocked_bindings(sv_has_pkg = function(pkg) FALSE)
+  expect_warning(x <- sv_read_cdisc(dir), "needs the datasetjson package: a.json", fixed = TRUE)
+  expect_identical(x, list())
+})
+
+test_that("a long column or dataset label is capped in the LLM schema text", {
+  long <- strrep("word ", 100)
+  out <- sv_schema_clean(long)
+  expect_lte(nchar(out), 200L)
+  expect_match(out, "[.][.][.]$")
+  expect_identical(sv_schema_clean("Age"), "Age")
+  expect_identical(sv_schema_clean(strrep("a", 200)), strrep("a", 200))
+  f <- sv_cdisc_fixtures()
+  tag <- sv_cdisc_detect(f$ae, "ae")
+  tag$label <- long
+  expect_lte(nchar(sv_schema_cdisc_line(tag)), 200L + 60L)
 })

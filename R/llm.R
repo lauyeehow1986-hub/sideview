@@ -8,6 +8,8 @@ sv_schema_clean <- function(x) {
   if (!(is.character(x) && length(x) == 1L && !is.na(x))) return(NULL)
   # control characters (including NEL, LS and PS) become spaces: a label cannot add a line
   x <- trimws(gsub("[[:space:][:cntrl:]\u0085\u2028\u2029]+", " ", x))
+  # user metadata goes to the model as one short line, never a paragraph
+  if (nchar(x) > 200L) x <- paste0(trimws(substr(x, 1L, 197L)), "...")
   if (nzchar(x)) x else NULL
 }
 
