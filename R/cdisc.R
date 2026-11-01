@@ -74,9 +74,20 @@ sv_cdisc_row <- function(code) {
   NULL
 }
 
+sv_cdisc_extensions <- c("xpt", "csv", "tsv", "txt", "sas7bdat", "parquet", "feather",
+                         "arrow", "rds", "rda", "xlsx", "xls", "json")
+
+# The table name without a data-file extension (case kept).
+sv_cdisc_clean_name <- function(name) {
+  if (is.null(name) || length(name) != 1L || is.na(name)) return(NULL)
+  sub(paste0("\\.(", paste(sv_cdisc_extensions, collapse = "|"), ")$"), "",
+      basename(as.character(name)), ignore.case = TRUE)
+}
+
 sv_cdisc_name_code <- function(name) {
-  if (is.null(name) || length(name) != 1L || is.na(name)) return(NA_character_)
-  toupper(sub("\\.[A-Za-z0-9]+$", "", basename(as.character(name))))
+  name <- sv_cdisc_clean_name(name)
+  if (is.null(name)) return(NA_character_)
+  toupper(name)
 }
 
 # Rule 1: one distinct DOMAIN value, known to the SDTM or SEND catalogue.
@@ -178,13 +189,16 @@ sv_cdisc_make_tag <- function(data, code, class = NULL, standard = NULL, parent 
 #' @keywords internal
 #' @noRd
 sv_cdisc_detect <- function(data, name, cdisc = "auto") {
-  if (is.character(cdisc) && length(cdisc) > 1L) {
+  name <- sv_cdisc_clean_name(name)
+  if (is.character(cdisc) && !is.null(names(cdisc))) {
     cdisc <- if (!is.null(name) && name %in% names(cdisc)) cdisc[[name]] else "auto"
   }
   if (identical(cdisc, FALSE)) return(NULL)
   if (is.character(cdisc) && length(cdisc) == 1L && !is.na(cdisc) && cdisc != "auto") {
     code <- toupper(trimws(cdisc))
-    return(sv_cdisc_make_tag(data, code, evidence = "set by cdisc =", source = "user"))
+    adam_like <- is.null(sv_cdisc_row(code)) && grepl("^AD[A-Z0-9]+$", code)
+    return(sv_cdisc_make_tag(data, code, standard = if (adam_like) "ADaM",
+                             evidence = "set by cdisc =", source = "user"))
   }
   peek <- sv_cdisc_peek(data)
   if (!("STUDYID" %in% peek$cols)) return(NULL)
@@ -197,8 +211,12 @@ sv_cdisc_detect <- function(data, name, cdisc = "auto") {
     return(NULL)
   }
 
-  independent <- list(sv_cdisc_rule_domain_col(peek), sv_cdisc_rule_name(name),
-                      sv_cdisc_rule_prefix(peek))
+  r2 <- sv_cdisc_rule_name(name)
+  # An ADaM name only counts when the structure confirms it.
+  if (!is.null(r2) && sv_cdisc_row(r2$code)$standard == "ADaM") {
+    r2 <- sv_cdisc_rule_adam(peek, name)
+  }
+  independent <- list(sv_cdisc_rule_domain_col(peek), r2, sv_cdisc_rule_prefix(peek))
   rule_names <- c("DOMAIN", "name", "prefix")
   found <- which(!vapply(independent, is.null, logical(1)))
   win <- NULL

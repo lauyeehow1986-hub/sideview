@@ -145,3 +145,56 @@ test_that("a failing detector is silent unless debugging", {
   withr::local_options(sideview.debug = TRUE)
   expect_message(sv_cdisc_detect_safely(f$ae, "ae"), "boom")
 })
+
+test_that("an ADaM table name is confirmed by structure", {
+  f <- sv_cdisc_fixtures()
+  tag <- sv_cdisc_detect(f$adsl, "adsl")
+  expect_identical(c(tag$domain, tag$class, tag$standard), c("ADSL", "ADSL", "ADaM"))
+  expect_true("ADaM structure ADSL" %in% tag$evidence)
+  dup <- rbind(f$adsl, f$adsl[1, ])
+  expect_null(sv_cdisc_detect(dup, "adsl"))
+})
+
+test_that("a named cdisc vector resolves by table name", {
+  f <- sv_cdisc_fixtures()
+  expect_identical(sv_cdisc_detect(f$keys_only, "a", cdisc = c(a = "AE"))$domain, "AE")
+  expect_null(sv_cdisc_detect(f$keys_only, "b", cdisc = c(a = "AE")))
+  tag <- sv_cdisc_detect(f$keys_only, "lab", cdisc = c(lab = "ADLB"))
+  expect_identical(c(tag$domain, tag$standard, tag$class, tag$source),
+                   c("ADLB", "ADaM", "Custom", "user"))
+})
+
+test_that("file extensions are stripped from the table name", {
+  f <- sv_cdisc_fixtures()
+  for (ext in c("xpt", "csv", "sas7bdat", "parquet")) {
+    tag <- sv_cdisc_detect(f$keys_only[0, ], paste0("ae.", ext))
+    expect_identical(tag$domain, "AE", info = ext)
+    expect_true("table name = ae" %in% tag$evidence, info = ext)
+  }
+})
+
+test_that("odd DOMAIN columns do not error", {
+  f <- sv_cdisc_fixtures()
+  d <- f$ae
+  d$DOMAIN <- c("AE", "CM", "AE", "CM")
+  tag <- sv_cdisc_detect(d, "x")
+  expect_false(any(grepl("^DOMAIN column", tag$evidence)))
+  d$DOMAIN <- 1:4
+  expect_no_error(sv_cdisc_detect(d, "x"))
+})
+
+test_that("SUPP is detected by columns alone, with its parent", {
+  f <- sv_cdisc_fixtures()
+  tag <- sv_cdisc_detect(f$suppae, "x")
+  expect_identical(tag$class, "Relationship")
+  expect_identical(tag$parent, "AE")
+  expect_true("SUPPQUAL columns" %in% tag$evidence)
+})
+
+test_that("known limitation: an ADaM-like table outside the catalogue is tagged by prefix", {
+  f <- sv_cdisc_fixtures()
+  d <- cbind(f$adae, AESEV = "MILD")
+  tag <- sv_cdisc_detect(d, "foo")
+  expect_identical(tag$domain, "AE")
+  expect_identical(tag$standard, "SDTM")
+})
