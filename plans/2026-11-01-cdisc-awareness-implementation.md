@@ -497,7 +497,8 @@ Rows to enter, with labels and versions hand-checked against each IG's section l
     `withr::local_tempdir()`. `sv_read_cdisc(dir)` has names `c("ae","dm")`, and
     `attr(x$dm$USUBJID, "label")` is kept. `sideview_widget(x)` tags both (skip if haven is missing).
   - `"parquet is lazy by default and eager on request"`: `arrow::write_parquet(ae, ...)`. The result inherits
-    `"Dataset"` by default and is a data.frame with `lazy = FALSE`. Detection gives AE either way.
+    `"Dataset"` by default and is a data.frame with `lazy = FALSE`. Detection gives AE either way, and
+    `sv_card_payload(sv_normalize(x$ae, "ae"))$col_labels` keeps the parquet labels (spec §8).
   - `"dataset-json is read when datasetjson is installed"`: `skip_if_not_installed("datasetjson")`; write with
     `datasetjson::dataset_json()` + `write_dataset_json()`, read it back, and get domain AE.
   - `"sas7bdat goes through haven::read_sas"`:
