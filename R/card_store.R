@@ -96,6 +96,11 @@ sv_card_payload <- function(card, preview_rows = NULL) {
     labels <- Filter(function(l) is.character(l) && length(l) == 1L, labels)
     if (length(labels)) card$col_labels <- labels
   }
+  if (!is.null(card$cdisc)) {
+    tag <- Filter(Negate(is.null), card$cdisc)
+    tag$evidence <- as.list(tag$evidence)
+    card$cdisc <- tag
+  }
   if (!is.null(card$col_types) && is.character(card$col_types)) {
     card$col_types <- as.list(card$col_types)
   }

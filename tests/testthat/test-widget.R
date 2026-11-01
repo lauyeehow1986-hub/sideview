@@ -233,3 +233,28 @@ test_that("outside Positron the dialog shorthand is untouched", {
   expect_silent(v <- sv_resolve_viewer("dialog", "T"))
   expect_identical(sv_resolve_viewer(shiny::paneViewer(), "T") |> class(), "function")
 })
+
+test_that("widget cards carry cdisc and keep labels past max_rows", {
+  f <- sv_cdisc_fixtures()
+  dm <- f$dm[rep(1:4, 5), ]
+  attr(dm$USUBJID, "label") <- "Unique Subject Identifier"
+  w <- sideview_widget(dm = dm, max_rows = 5)
+  expect_identical(w$x$cards[[1]]$cdisc$domain, "DM")
+  expect_identical(w$x$cards[[1]]$col_labels$USUBJID, "Unique Subject Identifier")
+})
+
+test_that("evidence is always an array", {
+  f <- sv_cdisc_fixtures()
+  w <- sideview_widget(dm = f$dm)
+  js <- jsonlite::toJSON(w$x$cards[[1]]$cdisc, auto_unbox = TRUE)
+  expect_match(as.character(js), "\"evidence\":[[]")
+})
+
+test_that("cdisc is checked and passed through save_sideview", {
+  expect_error(sideview_widget(mtcars, cdisc = TRUE), "cdisc")
+  f <- sv_cdisc_fixtures()
+  tf <- tempfile(fileext = ".html")
+  on.exit(unlink(tf))
+  save_sideview(f$dm, file = tf, cdisc = FALSE)
+  expect_false(grepl("\"cdisc\":{", paste(readLines(tf, warn = FALSE), collapse = "\n"), fixed = TRUE))
+})

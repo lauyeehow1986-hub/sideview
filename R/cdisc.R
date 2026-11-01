@@ -268,3 +268,116 @@ sv_cdisc_detect_safely <- function(data, name, cdisc = "auto") {
     NULL
   })
 }
+
+# Catalogue row for a code within one standard.
+sv_cdisc_row_std <- function(code, standard) {
+  cat <- sv_cdisc_catalogue()
+  hit <- which(cat$name == code & cat$standard == standard)
+  if (length(hit)) cat[hit[1L], , drop = FALSE] else NULL
+}
+
+# The column names of a card's table (the source for a lazy card).
+sv_cdisc_card_cols <- function(card) {
+  src <- if (!is.null(card$source)) card$source else card$data
+  tryCatch({
+    if (is.data.frame(src)) names(src) else if (sv_is_lazy_input(src)) sv_lazy_names(src) else character()
+  }, error = function(e) character())
+}
+
+#' Resolve SEND versus SDTM and SUPP parents across the canvas (internal)
+#'
+#' A domain in both standards is SEND when a SEND-only domain is on the canvas
+#' or the DM table has a `SPECIES` column, otherwise SDTM. A SUPP tag gets the
+#' id of its parent domain's card as `parent_card`. Idempotent.
+#'
+#' @param cards A list of `sideview_card` objects.
+#' @return The cards, with `cdisc` tags adjusted.
+#' @noRd
+sv_cdisc_resolve <- function(cards) {
+  cat <- sv_cdisc_catalogue()
+  sdtm <- cat$name[cat$standard == "SDTM"]
+  send <- cat$name[cat$standard == "SEND"]
+  send_only <- setdiff(send, sdtm)
+  shared <- intersect(sdtm, send)
+  tags <- lapply(cards, function(c) c$cdisc)
+  has_send <- any(vapply(seq_along(cards), function(i) {
+    t <- tags[[i]]
+    if (is.null(t)) return(FALSE)
+    if (t$domain %in% send_only) return(TRUE)
+    t$domain == "DM" && "SPECIES" %in% sv_cdisc_card_cols(cards[[i]])
+  }, logical(1)))
+  want <- if (has_send) "SEND" else "SDTM"
+  other <- if (has_send) "SDTM" else "SEND"
+  domains <- vapply(tags, function(t) if (is.null(t)) NA_character_ else t$domain, character(1))
+  for (i in seq_along(cards)) {
+    t <- tags[[i]]
+    if (is.null(t)) next
+    if (t$domain %in% shared && identical(t$source, "auto") && identical(t$standard, other)) {
+      old <- sv_cdisc_row_std(t$domain, other)
+      new <- sv_cdisc_row_std(t$domain, want)
+      if (!is.null(new)) {
+        if (identical(t$label, old$label)) t$label <- new$label
+        t$class <- new$class
+        t$standard <- want
+      }
+    }
+    if (!is.null(t$parent)) {
+      j <- which(domains == t$parent)
+      j <- setdiff(j, i)
+      t$parent_card <- if (length(j)) cards[[j[1L]]]$id else NULL
+    }
+    cards[[i]]$cdisc <- t
+  }
+  cards
+}
+
+#' Apply the `cdisc` argument to a list of cards, then resolve (internal)
+#'
+#' @param cards A list of `sideview_card` objects.
+#' @param cdisc `"auto"`, `FALSE` or a named character vector of domain codes.
+#' @return The cards with final `cdisc` tags.
+#' @noRd
+sv_cdisc_finalize <- function(cards, cdisc = "auto") {
+  if (identical(cdisc, FALSE)) {
+    for (i in seq_along(cards)) cards[[i]]$cdisc <- NULL
+    return(cards)
+  }
+  if (is.character(cdisc) && !identical(cdisc, "auto")) {
+    keys <- if (is.null(names(cdisc))) NULL else names(cdisc)
+    clean <- vapply(cards, function(c) {
+      n <- sv_cdisc_clean_name(c$name)
+      if (is.null(n)) NA_character_ else n
+    }, character(1))
+    if (!is.null(keys)) {
+      unknown <- setdiff(keys, clean)
+      if (length(unknown)) {
+        warning("`cdisc` names no table: ", paste(unknown, collapse = ", "), call. = FALSE)
+      }
+    }
+    for (i in seq_along(cards)) {
+      c <- cards[[i]]
+      if (!identical(c$type, "grid")) next
+      if (!is.null(keys) && !(clean[i] %in% keys)) next
+      src <- if (!is.null(c$source)) c$source else c$data
+      tag <- sv_cdisc_detect_safely(src, c$name, cdisc)
+      cards[[i]]$cdisc <- tag
+    }
+  }
+  sv_cdisc_resolve(cards)
+}
+
+#' The tags that changed between two card lists (internal)
+#'
+#' @param old,new Lists of cards.
+#' @return A named list `card_id -> tag | NULL` for every card in `new` whose
+#'   tag differs from its tag in `old`.
+#' @noRd
+sv_cdisc_tag_diff <- function(old, new) {
+  old_tags <- stats::setNames(lapply(old, function(c) c$cdisc), vapply(old, function(c) c$id, character(1)))
+  out <- list()
+  for (c in new) {
+    prev <- old_tags[[c$id]]
+    if (!identical(prev, c$cdisc)) out[c$id] <- list(c$cdisc)
+  }
+  out
+}

@@ -198,3 +198,82 @@ test_that("known limitation: an ADaM-like table outside the catalogue is tagged 
   expect_identical(tag$domain, "AE")
   expect_identical(tag$standard, "SDTM")
 })
+
+# ---- canvas resolve and finalize (Task 4) ----
+sv_cdisc_cards <- function(...) {
+  l <- list(...)
+  unname(Map(function(d, n) sv_normalize(d, name = n), l, names(l)))
+}
+
+test_that("a SEND-only domain flips shared domains to SEND", {
+  f <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(dm = f$dm, bw = f$bw), "auto")
+  expect_identical(cards[[1]]$cdisc$standard, "SEND")
+  send_label <- sv_cdisc_catalogue()
+  send_label <- send_label$label[send_label$name == "DM" & send_label$standard == "SEND"]
+  expect_identical(cards[[1]]$cdisc$domain, "DM")
+  expect_true(cards[[1]]$cdisc$label %in% c(send_label, "Demographics"))
+  expect_identical(cards[[2]]$cdisc$standard, "SEND")
+})
+
+test_that("SPECIES flips DM to SEND", {
+  f <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(dm = f$send_dm, ae = f$ae), "auto")
+  expect_identical(cards[[1]]$cdisc$standard, "SEND")
+  # AE has no SEND row in the catalogue, so only shared domains flip.
+  expect_identical(cards[[2]]$cdisc$standard, "SDTM")
+})
+
+test_that("without SEND evidence domains stay SDTM", {
+  f <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(dm = f$dm, ae = f$ae), "auto")
+  expect_identical(cards[[1]]$cdisc$standard, "SDTM")
+  expect_identical(cards[[2]]$cdisc$standard, "SDTM")
+})
+
+test_that("resolve flips back when the SEND evidence is gone", {
+  f <- sv_cdisc_fixtures()
+  both <- sv_cdisc_finalize(sv_cdisc_cards(dm = f$dm, bw = f$bw), "auto")
+  alone <- sv_cdisc_resolve(both[1])
+  expect_identical(alone[[1]]$cdisc$standard, "SDTM")
+})
+
+test_that("SUPP links to its parent card", {
+  f <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(ae = f$ae, suppae = f$suppae), "auto")
+  expect_identical(cards[[2]]$cdisc$parent_card, cards[[1]]$id)
+  solo <- sv_cdisc_finalize(sv_cdisc_cards(suppae = f$suppae), "auto")
+  expect_null(solo[[1]]$cdisc$parent_card)
+})
+
+test_that("cdisc = FALSE strips every tag; overrides re-tag; unknown names warn", {
+  f <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_cards(dm = f$dm, ae = f$ae)
+  off <- sv_cdisc_finalize(cards, FALSE)
+  expect_true(all(vapply(off, function(c) is.null(c$cdisc), logical(1))))
+  re <- sv_cdisc_finalize(cards, c(ae = "CM"))
+  expect_identical(re[[2]]$cdisc$domain, "CM")
+  expect_identical(re[[2]]$cdisc$source, "user")
+  expect_identical(re[[1]]$cdisc$domain, "DM")
+  expect_warning(sv_cdisc_finalize(cards, c(nope = "AE")), "names no table: nope")
+})
+
+test_that("only grid cards are tagged", {
+  skip_if_not_installed("gt")
+  g <- gt::gt(sv_cdisc_fixtures()$ae)
+  card <- sv_normalize(g, name = "ae")
+  expect_identical(card$type, "html")
+  expect_null(card$cdisc)
+})
+
+test_that("tag_diff reports changed tags only", {
+  f <- sv_cdisc_fixtures()
+  old <- sv_cdisc_finalize(sv_cdisc_cards(dm = f$dm), "auto")
+  new <- sv_cdisc_finalize(c(old, sv_cdisc_cards(bw = f$bw)), "auto")
+  d <- sv_cdisc_tag_diff(old, new)
+  expect_setequal(names(d), c(old[[1]]$id, new[[2]]$id))
+  expect_identical(d[[old[[1]]$id]]$standard, "SEND")
+  expect_length(sv_cdisc_tag_diff(new, new), 0L)
+  gone <- sv_cdisc_tag_diff(new, new[2])
+  expect_length(gone, 0L)
+})

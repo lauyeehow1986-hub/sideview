@@ -68,7 +68,15 @@ new_sideview_card <- function(id = NULL,
     code_ref <- as.character(code_ref[1])
   }
 
-  structure(
+  # Labels as the table carries them, before any row cap or preview cut.
+  col_labels <- NULL
+  if (is.data.frame(data)) {
+    labs <- lapply(data, function(col) attr(col, "label", exact = TRUE))
+    col_labels <- Filter(function(l) is.character(l) && length(l) == 1L, labs)
+    if (!length(col_labels)) col_labels <- NULL
+  }
+
+  card <- structure(
     list(
       id = id,
       name = name,
@@ -85,6 +93,12 @@ new_sideview_card <- function(id = NULL,
     ),
     class = c("sideview_card", "list")
   )
+  if (!is.null(col_labels)) card$col_labels <- col_labels
+  if (identical(type, "grid")) {
+    src <- if (!is.null(source)) source else data
+    if (!is.null(src)) card$cdisc <- sv_cdisc_detect_safely(src, name)
+  }
+  card
 }
 
 #' @export
