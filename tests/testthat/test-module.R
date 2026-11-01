@@ -440,3 +440,83 @@ test_that("replacing an Arrow card unregisters the old table from the session co
     expect_equal(n_registered(), 1L)
   })
 })
+
+# ---- CDISC tag updates --------------------------------------------------------------
+cdisc_start <- function(...) list(id = "cd", cards = list(dm = sv_cdisc_fixtures()$dm), ...)
+
+test_that("adding a SEND domain updates DM's tag", {
+  f <- sv_cdisc_fixtures()
+  shiny::testServer(sideviewServer, args = cdisc_start(), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    dm_id <- px$ctl$store$get("dm")$id
+    expect_equal(msgs(session, "sideview_card_add")[[1]]$message$card$cdisc$standard, "SDTM")
+    sv_add_card(px, f$bw, "bw")
+    add <- msgs(session, "sideview_card_add")
+    expect_equal(add[[length(add)]]$message$card$cdisc$standard, "SEND")
+    up <- msgs(session, "sideview_cdisc_update")
+    expect_length(up, 1L)
+    expect_equal(names(up[[1]]$message$tags), dm_id)
+    expect_equal(up[[1]]$message$tags[[dm_id]]$standard, "SEND")
+    expect_identical(up[[1]]$message$ns, session$ns(""))
+  })
+})
+
+test_that("removing the SEND domain flips DM back", {
+  f <- sv_cdisc_fixtures()
+  shiny::testServer(sideviewServer, args = cdisc_start(), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    dm_id <- px$ctl$store$get("dm")$id
+    sv_add_card(px, f$bw, "bw")
+    sv_remove_card(px, "bw")
+    up <- msgs(session, "sideview_cdisc_update")
+    expect_length(up, 2L)
+    expect_equal(up[[2]]$message$tags[[dm_id]]$standard, "SDTM")
+  })
+})
+
+test_that("no update when nothing changes", {
+  shiny::testServer(sideviewServer, args = cdisc_start(), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    sv_add_card(px, mtcars, "mt")
+    expect_length(msgs(session, "sideview_cdisc_update"), 0L)
+  })
+})
+
+test_that("cdisc updates before ready are queued", {
+  f <- sv_cdisc_fixtures()
+  shiny::testServer(sideviewServer, args = cdisc_start(), {
+    px <- session$getReturned()
+    sv_add_card(px, f$bw, "bw")
+    expect_length(msgs(session, "sideview_cdisc_update"), 0L)
+    session$setInputs(sideview_ready = list(nonce = 1))
+    up <- msgs(session, "sideview_cdisc_update")
+    expect_length(up, 1L)
+    expect_identical(up[[1]]$message$ns, session$ns(""))
+  })
+})
+
+test_that("a reactive re-firing with the same data replaces nothing", {
+  f <- sv_cdisc_fixtures()
+  rv <- shiny::reactiveVal(list(dm = f$dm, bw = f$bw))
+  shiny::testServer(sideviewServer, args = list(id = "cd", cards = rv), {
+    session$setInputs(sideview_ready = list(nonce = 1))
+    rv(list(dm = f$dm, bw = f$bw))
+    session$flushReact()
+    expect_length(msgs(session, "sideview_card_replace"), 0L)
+    expect_length(msgs(session, "sideview_card_add"), 2L)
+  })
+})
+
+test_that("cdisc = FALSE in a module tags nothing", {
+  f <- sv_cdisc_fixtures()
+  shiny::testServer(sideviewServer, args = cdisc_start(cdisc = FALSE), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    sv_add_card(px, f$bw, "bw")
+    for (m in msgs(session, "sideview_card_add")) expect_null(m$message$card$cdisc)
+    expect_length(msgs(session, "sideview_cdisc_update"), 0L)
+  })
+})
