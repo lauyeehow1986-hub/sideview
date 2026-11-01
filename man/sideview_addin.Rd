@@ -6,13 +6,7 @@
 \usage{
 sideview_addin(
   env = .GlobalEnv,
-  viewer = if (requireNamespace("rstudioapi", quietly = TRUE) &&
-    rstudioapi::isAvailable()) {
-     shiny::dialogViewer("Sideview Canvas", width =
-    1400, height = 900)
- } else {
-     shiny::paneViewer(minHeight = 500)
- },
+  viewer = sv_default_viewer(),
   run = interactive()
 )
 }
@@ -22,7 +16,9 @@ its result (defaults to \code{.GlobalEnv}, where RStudio addins run).}
 
 \item{viewer}{Shiny viewer gadget display mode, or character shorthand
 (\code{"browser"}, \code{"dialog"}, or \code{"pane"}). Default is \code{shiny::dialogViewer()}
-(width 1400, height 900) when RStudio is available, otherwise \code{shiny::paneViewer()}.}
+(width 1400, height 900) in RStudio, \code{shiny::browserViewer()} in Positron
+(it has no dialog viewer; \code{"dialog"} there also opens the browser, with one
+message) and \code{shiny::paneViewer()} elsewhere.}
 
 \item{run}{Logical indicating whether to execute the gadget. Default \code{interactive()}.}
 }

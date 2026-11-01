@@ -143,6 +143,27 @@ Each sub-project gets its own spec, plan and build, in this order:
 
 ## Log
 
+### 2026-11-01 - Sub-project 4: small items (0.4.0)
+
+* **Row cap:** `sideview_widget(max_rows = 5000)` and `save_sideview(max_rows = 5000)` cut
+  non-lazy data-frame cards after `sv_card_payload()` (`sv_cap_card_rows()`), set `card$truncated`
+  and keep `totalRows`; one message names the tables cut (not while `knitr.in.progress`). JS:
+  `truncated` gives the "First N of M rows" badge, `data-rows-basis="preview"`, `data-truncated`
+  and `data-preview-rows`; it does NOT set `data-lazy` (lazy-only logic keys on that).
+* **Positron:** `sv_is_positron()` (env `POSITRON` / `POSITRON_VERSION`), `sv_default_viewer()`,
+  `sv_resolve_viewer()`; Positron default and `"dialog"` give `browserViewer()` (dialog: one message).
+  An explicit `shiny::dialogViewer()` object is not rewritten.
+* **State version:** `sv_migrate_state()` runs in `sv_load_state()` and `sv_state_from_json()`;
+  missing version = 0.2.0, older is stamped 0.3.0 via the empty `sv_state_migrations` slot, newer
+  warns once and is left as is, unparseable is left alone. Old 0.2.0 test fixtures now load as 0.3.0.
+* **r-universe:** README install line and badge added. The registry repo
+  `lauyeehow1986-hub/lauyeehow1986-hub.r-universe.dev` still needs a `packages.json` entry
+  (`{"package": "sideview", "url": "https://github.com/lauyeehow1986-hub/sideview"}`); not pushed
+  without the user's yes.
+* **Verified:** test-widget (76), test-state (124), gui runner (156, incl. `truncated_card_is_preview`);
+  real browser (chromote, saved widget `max_rows = 40` on 300 rows): badge "First 40 of 300 rows",
+  small table untouched. Positron checked with the env var only (no Positron install here).
+
 ### 2026-11-01 - Shiny module and proxy: final review fixes (0.4.0)
 - **Reactive `cards`** (`sv_initial_cards()`): a `req()` at start means no cards yet, any other start error is a warning naming
   the module id; the observer fills the store when the reactive is valid. A reactive refresh whose element no longer

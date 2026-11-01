@@ -175,3 +175,61 @@ test_that("renderSideview generates a shiny render function", {
   expect_true(is.function(r_fn))
   expect_true(inherits(r_fn, "shiny.render.function"))
 })
+
+test_that("sideview_widget cuts long data-frame tables to max_rows and flags them", {
+  big <- data.frame(id = 1:50, v = rnorm(50))
+  small <- data.frame(a = 1:3)
+  expect_message(w <- sideview_widget(big, small, max_rows = 10), "first 10 rows of big [(]50 rows[)]")
+  cards <- w$x$cards
+  expect_equal(nrow(cards[[1]]$data), 10)
+  expect_true(isTRUE(cards[[1]]$truncated))
+  expect_equal(cards[[1]]$totalRows, 50L)
+  expect_equal(nrow(cards[[2]]$data), 3)
+  expect_null(cards[[2]]$truncated)
+})
+
+test_that("max_rows = Inf embeds every row and stays quiet", {
+  big <- data.frame(id = 1:50)
+  expect_silent(w <- sideview_widget(big, max_rows = Inf))
+  expect_equal(nrow(w$x$cards[[1]]$data), 50)
+  expect_null(w$x$cards[[1]]$truncated)
+})
+
+test_that("the default cap is 5000 and a bad max_rows is refused", {
+  expect_equal(formals(sideview_widget)$max_rows, 5000)
+  expect_equal(formals(save_sideview)$max_rows, 5000)
+  expect_error(sideview_widget(mtcars, max_rows = 0), "max_rows")
+  expect_error(sideview_widget(mtcars, max_rows = "a"), "max_rows")
+  expect_error(sideview_widget(mtcars, max_rows = c(1, 2)), "max_rows")
+})
+
+test_that("no row-cap message while knitting", {
+  old <- options(knitr.in.progress = TRUE)
+  on.exit(options(old))
+  expect_silent(sideview_widget(data.frame(id = 1:20), max_rows = 5))
+})
+
+test_that("save_sideview passes max_rows to the widget it builds", {
+  skip_if_not_installed("htmlwidgets")
+  out <- tempfile(fileext = ".html")
+  on.exit(unlink(out))
+  expect_message(save_sideview(data.frame(id = 1:30), file = out, max_rows = 5), "first 5 rows")
+  expect_true(file.exists(out))
+})
+
+test_that("Positron gets the browser viewer; dialog falls back there with one message", {
+  withr::local_envvar(POSITRON = "1")
+  expect_true(sv_is_positron())
+  expect_identical(deparse(body(sv_default_viewer())), deparse(body(sv_default_viewer())))
+  expect_message(v <- sv_resolve_viewer("dialog", "T"), "no dialog viewer")
+  expect_identical(format(v), format(shiny::browserViewer()))
+  expect_silent(sv_resolve_viewer("browser", "T"))
+  expect_identical(format(sv_default_viewer()), format(shiny::browserViewer()))
+})
+
+test_that("outside Positron the dialog shorthand is untouched", {
+  withr::local_envvar(POSITRON = "", POSITRON_VERSION = "")
+  expect_false(sv_is_positron())
+  expect_silent(v <- sv_resolve_viewer("dialog", "T"))
+  expect_identical(sv_resolve_viewer(shiny::paneViewer(), "T") |> class(), "function")
+})

@@ -7,13 +7,7 @@
 sideview(
   ...,
   title = "Sideview Canvas",
-  viewer = if (requireNamespace("rstudioapi", quietly = TRUE) &&
-    rstudioapi::isAvailable()) {
-     shiny::dialogViewer("Sideview Canvas", width =
-    1400, height = 900)
- } else {
-     shiny::paneViewer(minHeight = 500)
- },
+  viewer = sv_default_viewer(),
   theme = "auto",
   state = NULL,
   env = parent.frame(),
@@ -29,7 +23,9 @@ sideview(
 \item{viewer}{Shiny viewer gadget display mode (e.g. \code{shiny::paneViewer()},
 \code{shiny::dialogViewer()}, \code{shiny::browserViewer()}), or a character shorthand
 (\code{"browser"}, \code{"dialog"}, or \code{"pane"}). Default is \code{shiny::dialogViewer()}
-(width 1400, height 900) when RStudio is available, otherwise \code{shiny::paneViewer()}.}
+(width 1400, height 900) in RStudio, \code{shiny::browserViewer()} in Positron
+(it has no dialog viewer; \code{"dialog"} there also opens the browser, with one
+message) and \code{shiny::paneViewer()} elsewhere.}
 
 \item{theme}{Canvas theme: \code{"auto"} (default; follows the RStudio editor
 theme), \code{"light"}, \code{"dark"}, an \code{\link[=sv_theme]{sv_theme()}} or a \code{bslib::bs_theme()}.}

@@ -1266,6 +1266,11 @@ function runAllScenarios() {
   s11_r.remote_lazy_is_full = s11_lzr.dataset.rowsBasis === 'full' && s11_badge(s11_lzr).indexOf('First') < 0 &&
     s11_badge(s11_lzr) === '1,000 \u00d7 1' && s11_lzr.dataset.lazy === 'duckdb' && s11_lzr.dataset.tableRows === '1000';
   s11_r.widget_lazy_is_preview = s11_lzw.dataset.rowsBasis === 'preview' && s11_badge(s11_lzw) === 'First 50 of 1,000 rows';
+  // a row-capped data-frame card (max_rows) is labelled a preview, but is not a lazy table
+  shinyHandlers.sideview_card_add({ ns: 'm-', card: s11_lazyCard('card_trc', 'trunc_widget', { lazy: undefined, truncated: true }) });
+  const s11_trc = s11_byName(s11_g, 'trunc_widget').element;
+  s11_r.truncated_card_is_preview = s11_trc.dataset.rowsBasis === 'preview' && s11_badge(s11_trc) === 'First 50 of 1,000 rows' &&
+    s11_trc.dataset.lazy === undefined && s11_trc.dataset.truncated === 'true' && s11_trc.dataset.previewRows === '50';
   // a lost link (toast with `card`) then downgrades the remote card to the preview label
   shinyHandlers.sideview_toast({ ns: 'm-', text: 'link lost', type: 'warning', card: 'card_lzr' });
   s11_r.remote_lazy_lost_link_downgrades = s11_lzr.dataset.rowsBasis === 'preview' &&

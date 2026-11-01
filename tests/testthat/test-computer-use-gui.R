@@ -406,7 +406,7 @@ test_that("Computer Use GUI: Scenario 11 - a module canvas takes cards, state an
                "replace_toast", "replace_clears_join_checks", "replace_removes_spline_visually", "remove_card",
                "hostile_name", "unknown_card_warns", "highlight_columns", "highlight_uses_swatch", "state_set",
                "module_save_is_browser", "module_codebook_asks_r", "codebook_csv_downloads",
-               "prune_destroys_engine", "remote_lazy_is_full", "widget_lazy_is_preview", "remote_lazy_lost_link_downgrades",
+               "prune_destroys_engine", "remote_lazy_is_full", "widget_lazy_is_preview", "truncated_card_is_preview", "remote_lazy_lost_link_downgrades",
                "replace_keeps_sort_filter", "replace_drops_view_of_dropped_column", "replace_disables_mutate", "failed_init_keeps_registry",
                "snapshot_debounced", "snapshot_skips_checks", "snapshot_empty_code",
                "gadget_no_snapshot")) {

@@ -942,7 +942,7 @@ function sendToShiny(name, value) {
     names.forEach(function (name) {
       if (!name) return;
       var el = engine.cardElByName(name);
-      if (!el || !el.dataset.lazy) return;
+      if (!el || !(el.dataset.lazy || el.dataset.truncated)) return;
       var n = parseInt(el.dataset.previewRows, 10), total = tableRows(el);
       if (!isNaN(n) && !isNaN(total)) parts.push({ n: n, total: total, name: name });
     });
@@ -2839,15 +2839,17 @@ function sendToShiny(name, value) {
     var tableRowCount = cardData.totalRows != null ? Number(cardData.totalRows) : NaN;
     var isLazyCard = !!cardData.lazy;
     // A module card with `remote` is served whole by R (row windows, sorts, checks), however few rows it carries.
-    var isPreviewCard = isLazyCard && !cardData.remote;
+    var isTruncated = !!cardData.truncated;
+    var isPreviewCard = (isLazyCard || isTruncated) && !cardData.remote;
     if (isPreviewCard && shownRows != null && tableRowCount > shownRows) {
       dimsText = previewBadgeText(shownRows, tableRowCount);
     }
     if (!isNaN(tableRowCount)) cardEl.dataset.tableRows = String(tableRowCount);
     if (isLazyCard) cardEl.dataset.lazy = String(cardData.lazy);
+    if (isTruncated) cardEl.dataset.truncated = 'true';
     if (cardData.codeRef) cardEl.dataset.codeRef = String(cardData.codeRef);
     cardEl.dataset.rowsBasis = isPreviewCard ? 'preview' : 'full';
-    if (isLazyCard && shownRows != null) cardEl.dataset.previewRows = String(shownRows);
+    if ((isLazyCard || isTruncated) && shownRows != null) cardEl.dataset.previewRows = String(shownRows);
     header.innerHTML = [
       '<div class="sideview-card-title-group">',
       '  <span class="sideview-card-title">' + escapeHtml(cardName) + '</span>',

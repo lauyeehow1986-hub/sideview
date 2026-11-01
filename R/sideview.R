@@ -42,7 +42,9 @@ sv_find_tables <- function(env = parent.frame()) {
 #' @param viewer Shiny viewer gadget display mode (e.g. `shiny::paneViewer()`,
 #'   `shiny::dialogViewer()`, `shiny::browserViewer()`), or a character shorthand
 #'   (`"browser"`, `"dialog"`, or `"pane"`). Default is `shiny::dialogViewer()`
-#'   (width 1400, height 900) when RStudio is available, otherwise `shiny::paneViewer()`.
+#'   (width 1400, height 900) in RStudio, `shiny::browserViewer()` in Positron
+#'   (it has no dialog viewer; `"dialog"` there also opens the browser, with one
+#'   message) and `shiny::paneViewer()` elsewhere.
 #' @param theme Canvas theme: `"auto"` (default; follows the RStudio editor
 #'   theme), `"light"`, `"dark"`, an [sv_theme()] or a `bslib::bs_theme()`.
 #' @param state A saved workspace to restore: a `sideview_state` (see
@@ -148,27 +150,14 @@ sv_find_tables <- function(env = parent.frame()) {
 #' }
 sideview <- function(...,
                      title = "Sideview Canvas",
-                     viewer = if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
-                       shiny::dialogViewer("Sideview Canvas", width = 1400, height = 900)
-                     } else {
-                       shiny::paneViewer(minHeight = 500)
-                     },
+                     viewer = sv_default_viewer(),
                      theme = "auto",
                      state = NULL,
                      env = parent.frame(),
                      run = interactive()) {
   force(env) # parent.frame() is lazy: resolve it before sideview() returns
   state <- sv_as_state(state)
-  # Normalize character shorthand for viewer ("browser", "dialog", "pane")
-  if (is.character(viewer) && length(viewer) == 1L) {
-    v_type <- match.arg(tolower(viewer), c("browser", "dialog", "pane"))
-    viewer <- switch(
-      v_type,
-      "browser" = shiny::browserViewer(),
-      "dialog"  = shiny::dialogViewer(title, width = 1400, height = 900),
-      "pane"    = shiny::paneViewer(minHeight = 500)
-    )
-  }
+  viewer <- sv_resolve_viewer(viewer, title)
 
   # Capture expressions and evaluate items
   dots_exprs <- as.list(substitute(list(...))[-1])
@@ -239,28 +228,17 @@ sideview <- function(...,
 #'   its result (defaults to `.GlobalEnv`, where RStudio addins run).
 #' @param viewer Shiny viewer gadget display mode, or character shorthand
 #'   (`"browser"`, `"dialog"`, or `"pane"`). Default is `shiny::dialogViewer()`
-#'   (width 1400, height 900) when RStudio is available, otherwise `shiny::paneViewer()`.
+#'   (width 1400, height 900) in RStudio, `shiny::browserViewer()` in Positron
+#'   (it has no dialog viewer; `"dialog"` there also opens the browser, with one
+#'   message) and `shiny::paneViewer()` elsewhere.
 #' @param run Logical indicating whether to execute the gadget. Default `interactive()`.
 #'
 #' @return Result of `sideview(...)`, invisibly when the gadget was run.
 #' @export
 sideview_addin <- function(env = .GlobalEnv,
-                           viewer = if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
-                             shiny::dialogViewer("Sideview Canvas", width = 1400, height = 900)
-                           } else {
-                             shiny::paneViewer(minHeight = 500)
-                           },
+                           viewer = sv_default_viewer(),
                            run = interactive()) {
-  # Normalize character shorthand for viewer ("browser", "dialog", "pane")
-  if (is.character(viewer) && length(viewer) == 1L) {
-    v_type <- match.arg(tolower(viewer), c("browser", "dialog", "pane"))
-    viewer <- switch(
-      v_type,
-      "browser" = shiny::browserViewer(),
-      "dialog"  = shiny::dialogViewer("Sideview Canvas", width = 1400, height = 900),
-      "pane"    = shiny::paneViewer(minHeight = 500)
-    )
-  }
+  viewer <- sv_resolve_viewer(viewer, "Sideview Canvas")
 
   tables <- sv_find_tables(env)
   
@@ -277,4 +255,41 @@ sideview_addin <- function(env = .GlobalEnv,
   # RStudio calls the addin at top level: don't print NULL (Cancel) or the code
   # it already inserted. Without `run` the Shiny app object is returned visibly.
   if (isTRUE(run)) invisible(res) else res
+}
+
+#' Is the session running in Positron?
+#' @noRd
+sv_is_positron <- function() {
+  nzchar(Sys.getenv("POSITRON")) || nzchar(Sys.getenv("POSITRON_VERSION"))
+}
+
+#' The viewer used when `viewer =` is not given
+#' @noRd
+sv_default_viewer <- function() {
+  if (sv_is_positron()) {
+    shiny::browserViewer()
+  } else if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
+    shiny::dialogViewer("Sideview Canvas", width = 1400, height = 900)
+  } else {
+    shiny::paneViewer(minHeight = 500)
+  }
+}
+
+#' Turn a character viewer shorthand into a viewer function
+#'
+#' Positron has no dialog viewer, so `"dialog"` opens the browser there, with one message.
+#' @noRd
+sv_resolve_viewer <- function(viewer, title) {
+  if (!(is.character(viewer) && length(viewer) == 1L)) return(viewer)
+  v_type <- match.arg(tolower(viewer), c("browser", "dialog", "pane"))
+  if (v_type == "dialog" && sv_is_positron()) {
+    message("sideview: Positron has no dialog viewer; opening in the browser.")
+    v_type <- "browser"
+  }
+  switch(
+    v_type,
+    "browser" = shiny::browserViewer(),
+    "dialog"  = shiny::dialogViewer(title, width = 1400, height = 900),
+    "pane"    = shiny::paneViewer(minHeight = 500)
+  )
 }

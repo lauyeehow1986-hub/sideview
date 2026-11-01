@@ -10,6 +10,7 @@ save_sideview(
   selfcontained = TRUE,
   title = "Sideview",
   background = "white",
+  max_rows = 5000,
   ...
 )
 }
@@ -25,6 +26,10 @@ all CSS and JavaScript dependencies inlined. Defaults to \code{TRUE}.}
 \item{title}{HTML title for the output page. Default \code{"Sideview"}.}
 
 \item{background}{Background color for the document body. Default \code{"white"}.}
+
+\item{max_rows}{Row cap used when \code{widget} is table data rather than a
+widget (see \code{\link[=sideview_widget]{sideview_widget()}}; default 5000). A widget you built yourself
+keeps the cap it was built with.}
 
 \item{...}{Additional arguments passed to \code{htmlwidgets::saveWidget()}.}
 }
