@@ -570,6 +570,160 @@
     });
   };
 
+
+  /**
+   * The names an R expression uses as variables: backticked names, and bare names outside string
+   * literals that are not called (`f(`), not a member (`x$a`, `pkg::a`) and not an argument name
+   * (`f(a = 1)`). A scan, not a parser: it only has to find a column that is no longer there.
+   */
+  function exprNames(expr) {
+    var text = String(expr == null ? '' : expr);
+    var names = [];
+    var bare = '';
+    var i = 0;
+    function flush() { if (bare) { scanBare(bare); bare = ''; } }
+    function scanBare(t) {
+      var re = /[\p{L}.][\p{L}\p{N}._]*/gu;
+      var m;
+      while ((m = re.exec(t)) !== null) {
+        var before = t.slice(Math.max(0, m.index - 2), m.index).replace(/\s+$/, '');
+        var after = t.slice(m.index + m[0].length);
+        if (/[$@]$/.test(before) || /::$/.test(before)) continue;
+        if (/^\s*\(/.test(after)) continue;
+        if (/^\s*=(?!=)/.test(after)) continue;
+        if (/^\d/.test(m[0]) || /^\.\d/.test(m[0])) continue;
+        if (names.indexOf(m[0]) < 0) names.push(m[0]);
+      }
+    }
+    while (i < text.length) {
+      var ch = text.charAt(i);
+      if (ch === '"' || ch === "'" || ch === '`') {
+        flush();
+        var j = i + 1;
+        while (j < text.length && text.charAt(j) !== ch) j += text.charAt(j) === '\\' ? 2 : 1;
+        if (ch === '`') {
+          var nm = text.slice(i + 1, j);
+          if (nm && names.indexOf(nm) < 0) names.push(nm);
+        }
+        i = j + 1;
+      } else {
+        bare += ch;
+        i++;
+      }
+    }
+    flush();
+    return names;
+  }
+
+  /**
+   * Disable the enabled steps of `table` that need a column its refreshed data no longer has
+   * (`columns`: the new column names), or every step on it and every join with it (`columns` null:
+   * the table is gone). Columns are tracked along the table's chain (rename, mutate); after an
+   * enabled join, summarise, reshape or custom step they are unknown and later steps are kept.
+   * `oldColumns` (the names the table had) lets a mutate expression be checked: it is disabled
+   * when it uses a name that was a column and is not any more; without it mutate is not checked.
+   * One undoable change; when something was disabled, undo and redo history is dropped.
+   * Returns { disabled: [{id, kind, missing}], missing: [unique columns] }.
+   */
+  Pipeline.prototype.disableMissing = function (table, columns, oldColumns) {
+    var self = this;
+    var found = {};
+    var order = [];
+    function note(s, miss) {
+      if (!found[s.id]) { found[s.id] = { id: s.id, kind: s.kind, missing: [] }; order.push(s.id); }
+      miss.forEach(function (c) { if (found[s.id].missing.indexOf(c) < 0) found[s.id].missing.push(c); });
+    }
+    function lack(cols, need) {
+      var out = [];
+      need.forEach(function (c) {
+        if (c !== undefined && c !== null && c !== '' && cols.indexOf(c) < 0 && out.indexOf(c) < 0) out.push(c);
+      });
+      return out;
+    }
+    function ruleCols(rule, side) {
+      if (!rule) return [];
+      return side === 'x' ? [rule.xCol, rule.xFrom, rule.xTo] : [rule.yCol, rule.yFrom, rule.yTo];
+    }
+    function leftNeeds(s, cols) {
+      var n = [];
+      switch (s.kind) {
+        case 'arrange': (s.cols || []).forEach(function (c) { n.push(c.col); }); break;
+        case 'filter':
+          // conds are R expression strings; their columns travel in condCols (or specs / cond objects)
+          (s.conds || []).forEach(function (c, i) {
+            var sp = s.specs && s.specs[i];
+            if (c && typeof c === 'object') n.push(c.col);
+            else if (s.condCols && s.condCols[i] !== undefined) n.push(s.condCols[i]);
+            else if (sp && sp.col !== undefined) n.push(sp.col);
+          });
+          break;
+        case 'recode': n.push(s.col); break;
+        case 'rename': n.push(s.from); break;
+        case 'mutate':
+          if (oldColumns) {
+            exprNames(s.expr).forEach(function (c) {
+              if (oldColumns.indexOf(c) >= 0 && cols.indexOf(c) < 0) n.push(c);
+            });
+          }
+          break;
+        case 'summarise':
+          (s.groups || []).forEach(function (g) { n.push(g); });
+          (s.aggs || []).forEach(function (a) { n.push(a.col); });
+          break;
+        case 'reshape':
+          if (s.type === 'pivot_longer') (s.cols || []).forEach(function (c) { n.push(c); });
+          else { n.push(s.namesFrom); n.push(s.valuesFrom); }
+          break;
+        case 'join':
+          (s.by || []).forEach(function (b) { n.push(b.left); });
+          n = n.concat(ruleCols(s.rule, 'x'));
+          break;
+      }
+      return n;
+    }
+
+    this.change('refresh', function () {
+      var live = function (s) { return s.enabled !== false; };
+      if (columns === null || columns === undefined) {
+        self.steps.forEach(function (s) {
+          if (live(s) && (s.table === table || (s.kind === 'join' && s.right === table))) {
+            note(s, []);
+            s.enabled = false;
+          }
+        });
+        return;
+      }
+      var cols = columns.slice();
+      var unknown = false;
+      self.steps.forEach(function (s) {
+        if (s.table !== table || !live(s)) return;
+        if (!unknown) {
+          var miss = lack(cols, leftNeeds(s, cols));
+          if (miss.length) { note(s, miss); s.enabled = false; return; }
+          if (s.kind === 'rename') {
+            var i = cols.indexOf(s.from);
+            if (i >= 0) cols[i] = s.to;
+          } else if (s.kind === 'mutate') {
+            if (cols.indexOf(s.name) < 0) cols.push(s.name);
+          }
+        }
+        if (s.kind === 'join' || s.kind === 'summarise' || s.kind === 'reshape' || s.kind === 'custom') unknown = true;
+      });
+      var endCols = unknown ? null : cols;
+      self.steps.forEach(function (s) {
+        if (s.kind !== 'join' || s.right !== table || s.table === table || !live(s) || !endCols) return;
+        var need = (s.by || []).map(function (b) { return b.right; }).concat(ruleCols(s.rule, 'y'));
+        var miss = lack(endCols, need);
+        if (miss.length) { note(s, miss); s.enabled = false; }
+      });
+    });
+
+    var disabled = order.map(function (id) { return found[id]; });
+    var missing = [];
+    disabled.forEach(function (d) { d.missing.forEach(function (c) { if (missing.indexOf(c) < 0) missing.push(c); }); });
+    if (disabled.length) { this.undoStack = []; this.redoStack = []; }
+    return { disabled: disabled, missing: missing };
+  };
   Pipeline.prototype.canUndo = function () { return this.undoStack.length > 0; };
   Pipeline.prototype.canRedo = function () { return this.redoStack.length > 0; };
 

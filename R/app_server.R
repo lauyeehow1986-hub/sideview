@@ -16,43 +16,25 @@
 #'   the window or the last browser tab stop the app and return to the console.
 #' @param lifecycle Environment shared by all sessions of one app (from
 #'   `sv_new_lifecycle()`), so the app stops once and only after the last tab closes.
+#' @param module If `TRUE`, the canvas is a Shiny module (`sideviewServer()`): every
+#'   message carries `ns`, the code-running inputs are refused, cards are sent on
+#'   `sideview_ready`, and snapshots from the browser feed the read-back reactives.
+#' @return Invisibly `list(store, send, forget, ctl)`: the card store, the message sender,
+#'   a function that drops the caches of a card id, and (module only) the control
+#'   environment of the proxy.
 #' @noRd
 sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_fn, console_fn,
-                                 gadget = FALSE, lifecycle = NULL, run_env = globalenv()) {
-  # Normalize input cards
-  card_list <- if (inherits(cards, "sideview_card") || is.data.frame(cards) ||
-                   inherits(cards, c("gt_tbl", "flextable", "table"))) {
-    list(cards)
-  } else if (is.list(cards)) {
-    cards
-  } else {
-    list(cards)
-  }
-
-  normalized_cards <- list()
-  cards_by_name <- list()
-  cards_by_id <- list()
-
-  for (i in seq_along(card_list)) {
-    c_item <- card_list[[i]]
-    if (!inherits(c_item, "sideview_card")) {
-      nm <- names(card_list)[i]
-      if (is.null(nm) || !nzchar(nm)) nm <- paste0("Table_", i)
-      c_item <- tryCatch(sv_normalize(c_item, name = nm), error = function(e) NULL)
-    }
-    if (!is.null(c_item)) {
-      normalized_cards[[length(normalized_cards) + 1]] <- c_item
-      if (!is.null(c_item$name) && nzchar(c_item$name)) {
-        cards_by_name[[c_item$name]] <- c_item
-      }
-      if (!is.null(c_item$id) && nzchar(c_item$id)) {
-        cards_by_id[[c_item$id]] <- c_item
-      }
-    }
-  }
+                                 gadget = FALSE, lifecycle = NULL, run_env = globalenv(),
+                                 module = FALSE) {
+  # One mutable store is the single source of truth for the cards.
+  card_store <- sv_card_store(sv_normalize_cards(cards))
+  # The cards as they are now (a module changes them while it runs).
+  current_cards <- function() unname(card_store$all())
+  ns_prefix <- if (isTRUE(module)) session$ns("") else NULL
 
   # Helper to dispatch custom messages and record them for testing/audit
   dispatch_message <- function(type, message) {
+    if (isTRUE(module)) message$ns <- ns_prefix
     if (is.null(session$userData$custom_messages)) {
       session$userData$custom_messages <- list()
     }
@@ -66,9 +48,8 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
   # Lazy (arrow / duckdb) cards: one private connection per session, closed when the
   # session ends. `lazy_failed` holds the ids of cards whose whole-table request
   # failed; they answer from their preview rows from then on.
-  con_env <- sv_lazy_env()
+  con_env <- sv_session_lazy_env(session)
   lazy_failed <- new.env(parent = emptyenv())
-  session$onSessionEnded(function() sv_lazy_close(con_env))
 
   card_full <- function(card) sv_card_is_lazy(card) && is.null(lazy_failed[[card$id]])
 
@@ -275,7 +256,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
   shiny::observeEvent(input$sideview_rows_request, {
     req <- input$sideview_rows_request
     if (is.null(req) || is.null(req$card_id)) return()
-    card <- cards_by_id[[req$card_id]] %||% cards_by_name[[req$card_id]]
+    card <- card_store$get(req$card_id)
     if (is.null(card) || !is.data.frame(card$data)) return()
     win <- tryCatch(
       lazy_or_preview(
@@ -299,8 +280,8 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     if (is.data.frame(by)) by <- lapply(seq_len(nrow(by)), function(i) as.list(by[i, , drop = FALSE]))
     left_cols <- vapply(by, function(p) as.character(p$left), character(1))
     right_cols <- vapply(by, function(p) as.character(p$right), character(1))
-    cx <- cards_by_name[[req$left]] %||% cards_by_id[[req$left]]
-    cy <- cards_by_name[[req$right]] %||% cards_by_id[[req$right]]
+    cx <- card_store$get(req$left)
+    cy <- card_store$get(req$right)
     rule <- sv_rule_from_shiny(req$rule)
     # the rule's columns must exist too, with the same message as a missing key; a malformed
     # rule (no shape, a non-text column) is left for the rule check to word
@@ -353,7 +334,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
   shiny::observeEvent(input$column_profile_request, {
     req <- input$column_profile_request
     if (is.null(req) || is.null(req$table) || is.null(req$column)) return()
-    card <- cards_by_name[[req$table]] %||% cards_by_id[[req$table]]
+    card <- card_store$get(req$table)
     result <- tryCatch({
       if (is.null(card) || !is.data.frame(card$data)) {
         stop("The inspector needs this table as a data frame in memory.", call. = FALSE)
@@ -380,10 +361,10 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
   # profiled in full; one that has lost its source is profiled from its preview
   # rows and reports the table's true size.
   shiny::observeEvent(input$codebook_export, {
-    tables <- Filter(function(c) is.data.frame(c$data), cards_by_name)
+    tables <- Filter(function(c) is.data.frame(c$data), card_store$all())
     result <- tryCatch({
       if (!length(tables)) stop("No tables to describe.", call. = FALSE)
-      path <- sv_choose_codebook_path()
+      path <- if (isTRUE(module)) tempfile(fileext = ".csv") else sv_choose_codebook_path()
       if (is.null(path)) {
         list(cancelled = TRUE)
       } else {
@@ -409,12 +390,24 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
         run <- function() sv_codebook(inputs(), progress = progress)
         cb <- lazy_or_preview(unname(tables), run, run)
         sv_write_codebook(cb, path)
-        list(path = normalizePath(path, winslash = "/", mustWork = FALSE), n_tables = length(tables))
+        if (isTRUE(module)) {
+          # a deployed app has no file dialog: the browser saves the text
+          csv <- readChar(path, file.size(path), useBytes = TRUE)
+          Encoding(csv) <- "UTF-8"
+          unlink(path)
+          list(csv = csv,
+               filename = "codebook.csv", n_tables = length(tables))
+        } else {
+          list(path = normalizePath(path, winslash = "/", mustWork = FALSE), n_tables = length(tables))
+        }
       }
     }, error = function(e) list(error = conditionMessage(e)))
     dispatch_message("sideview_codebook_saved", result)
   }, ignoreInit = FALSE)
 
+  # Workspace Save/Open go through R's file dialog in the gadget only; a module's
+  # browser saves and opens files itself.
+  if (!isTRUE(module)) {
   # Workspace Save: the canvas sends its state as JSON text; R writes the file.
   shiny::observeEvent(input$state_save, {
     evt <- input$state_save
@@ -446,6 +439,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     }, error = function(e) list(error = conditionMessage(e)))
     dispatch_message("sideview_state_loaded", result)
   }, ignoreInit = FALSE)
+  }
 
   # 2. Column Renamed -> Rename Code Generation
   shiny::observeEvent(input$column_renamed, {
@@ -485,8 +479,8 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
 
     tryCatch({
       # Resolve card data
-      c1 <- cards_by_name[[tbl1]] %||% cards_by_id[[tbl1]]
-      c2 <- cards_by_name[[tbl2]] %||% cards_by_id[[tbl2]]
+      c1 <- card_store$get(tbl1)
+      c2 <- card_store$get(tbl2)
 
       x_vec <- if (!is.null(c1) && !is.null(c1$data) && col1 %in% colnames(c1$data)) {
         c1$data[[col1]]
@@ -527,7 +521,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     }
 
     tryCatch({
-      suggestions <- sv_suggest_mappings(normalized_cards, min_confidence = min_conf)
+      suggestions <- sv_suggest_mappings(current_cards(), min_confidence = min_conf)
       candidates <- if (is.data.frame(suggestions) && nrow(suggestions) > 0) {
         lapply(seq_len(nrow(suggestions)), function(i) {
           as.list(suggestions[i, , drop = FALSE])
@@ -557,7 +551,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
       pipe <- isTRUE(evt$pipe)
 
       # A lazy (arrow / duckdb) table is named by its code_ref and the code ends in collect().
-      card <- cards_by_name[[tbl]]
+      card <- card_store$get(tbl)
       lazy <- !is.null(card) && isTRUE(card$is_lazy)
       # code_ref is the card's name unless the card is written as an expression (a duckdb tbl()).
       is_code <- lazy && !identical(card$code_ref, tbl)
@@ -576,12 +570,15 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     evt <- input$run_ai_prompt
     if (is.null(evt) || is.null(evt$prompt) || !nzchar(evt$prompt)) return()
 
-    schema <- sv_build_schema_context(normalized_cards)
+    schema <- sv_build_schema_context(current_cards())
     prompt_obj <- sv_build_prompt(evt$prompt, schema_context = schema)
-    backend <- evt$backend %||% getOption("sideview.llm_backend", Sys.getenv("SIDEVIEW_LLM_BACKEND", "ollama"))
-    model <- evt$model %||% getOption("sideview.llm_model", NULL)
-    endpoint <- evt$endpoint %||% getOption("sideview.llm_endpoint", NULL)
-    api_key <- evt$api_key %||% getOption("sideview.llm_api_key", NULL)
+    # In a module the browser is untrusted: backend, model, endpoint and key come only
+    # from the options / environment, never from the input.
+    from_evt <- if (isTRUE(module)) list() else evt
+    backend <- from_evt$backend %||% getOption("sideview.llm_backend", Sys.getenv("SIDEVIEW_LLM_BACKEND", "ollama"))
+    model <- from_evt$model %||% getOption("sideview.llm_model", NULL)
+    endpoint <- from_evt$endpoint %||% getOption("sideview.llm_endpoint", NULL)
+    api_key <- from_evt$api_key %||% getOption("sideview.llm_api_key", NULL)
 
     ai_err <- NULL
     ai_code <- tryCatch({
@@ -643,7 +640,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
       current_code <- NULL
     }
 
-    schema <- sv_build_schema_context(normalized_cards)
+    schema <- sv_build_schema_context(current_cards())
     prompt_obj <- sv_build_chat_prompt(
       user_message = user_msg,
       history = history,
@@ -651,10 +648,11 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
       schema_context = schema
     )
 
-    backend <- if (is.list(evt) && !is.null(evt$backend)) evt$backend else getOption("sideview.llm_backend", Sys.getenv("SIDEVIEW_LLM_BACKEND", "ollama"))
-    model <- if (is.list(evt) && !is.null(evt$model)) evt$model else getOption("sideview.llm_model", NULL)
-    endpoint <- if (is.list(evt) && !is.null(evt$endpoint)) evt$endpoint else getOption("sideview.llm_endpoint", NULL)
-    api_key <- if (is.list(evt) && !is.null(evt$api_key)) evt$api_key else getOption("sideview.llm_api_key", NULL)
+    cfg <- if (isTRUE(module) || !is.list(evt)) list() else evt
+    backend <- cfg$backend %||% getOption("sideview.llm_backend", Sys.getenv("SIDEVIEW_LLM_BACKEND", "ollama"))
+    model <- cfg$model %||% getOption("sideview.llm_model", NULL)
+    endpoint <- cfg$endpoint %||% getOption("sideview.llm_endpoint", NULL)
+    api_key <- cfg$api_key %||% getOption("sideview.llm_api_key", NULL)
 
     chat_err <- NULL
     reply_text <- tryCatch({
@@ -705,6 +703,9 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     }
   }, ignoreInit = FALSE)
 
+  # Code the browser sends is run only in the gadget: in a deployed module any
+  # visitor could forge it, so these inputs get no handler.
+  if (!isTRUE(module)) {
   # 5. Inject Script -> rstudioapi insertion
   shiny::observeEvent(input$inject_script, {
     evt <- input$inject_script
@@ -765,11 +766,30 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     })
     dispatch_message("sideview_eval_result", eval_res)
   }, ignoreInit = FALSE)
+  }
 
   # 7. Highlight Changes
   shiny::observeEvent(input$sideview_highlight_changed, {
     # Highlight events can be captured or relayed if needed
   }, ignoreInit = FALSE)
+
+  # Caches that belong to a card id: row order, the converted lazy table, the lost-link flag.
+  forget <- function(id) {
+    for (e in list(row_order_caches, lazy_order_caches, lazy_failed)) {
+      if (!is.null(e[[id]])) rm(list = id, envir = e)
+    }
+    if (!is.null(con_env$tbls[[id]])) {
+      sv_lazy_release(con_env$tbls[[id]], con_env)
+      con_env$tbls[[id]] <- NULL
+    }
+    invisible(NULL)
+  }
+
+  ctl <- NULL
+  if (isTRUE(module)) {
+    ctl <- sv_module_wire(input, session, card_store, dispatch_message)
+  }
+  invisible(list(store = card_store, send = dispatch_message, forget = forget, ctl = ctl))
 }
 
 #' Sideview Server Logic

@@ -641,6 +641,14 @@ function sendToShiny(name, value) {
       cards: []
     }, options);
 
+    // Namespace prefix of this engine's Shiny inputs and routed messages:
+    // options.ns (a module), else data-sv-ns on the container, else "" (the gadget).
+    var dataNs = this.container.getAttribute ? this.container.getAttribute('data-sv-ns') : null;
+    this.ns = typeof this.options.ns === 'string' ? this.options.ns
+      : (typeof dataNs === 'string' ? dataNs : '');
+    this._handlers = {};
+    this._registeredAs = null;
+
     // Global (window/document) listeners registered through listenGlobal() are
     // removed again by destroy(), so re-rendered widgets don't leak handlers.
     this._globalListeners = [];
@@ -671,7 +679,11 @@ function sendToShiny(name, value) {
     this.ruleDraft = null;
     this.pipeline = new global.SideviewPipeline.Pipeline({
       pipe: this.options.pipe,
-      onChange: function () { self.renderPipeline(); }
+      onChange: function (_p, label) {
+        self.renderPipeline();
+        // a join check result is not a change of the work; everything else is
+        if (label !== 'checks') self.scheduleSnapshot();
+      }
     });
 
     this.initDOM();
@@ -707,6 +719,16 @@ function sendToShiny(name, value) {
     this.registerShinyHandlers();
     this.initMinimap();
     this.initLayoutObserver();
+
+    // Registered last: an engine whose setup threw never replaces a working one for this ns.
+    this.registerEngine();
+
+    // A module tells R it is ready (R then sends its cards) and reports its work back.
+    this._constructed = true;
+    if (typeof this.options.ns === 'string') {
+      this.sendReady(0);
+      this.scheduleSnapshot();
+    }
   }
 
   // ---- icons ----------------------------------------------------------------
@@ -950,6 +972,69 @@ function sendToShiny(name, value) {
     return rows;
   }
 
+  // ---- Shiny transport: namespaced inputs and an ns-routed engine registry ------
+  // Every input an engine sends is prefixed with its namespace; every R message
+  // carries `ns` and reaches the engine registered under it. Only module engines
+  // (a string ns) and the gadget (mode 'standalone', key "") register, so an
+  // embedded htmlwidget never receives or steals R messages.
+  SideviewEngine.prototype.send = function (name, value) {
+    return sendToShiny(this.ns + name, value);
+  };
+
+  /** True when an R session backs this engine: the gadget, or a module. */
+  SideviewEngine.prototype.hasR = function () {
+    if (typeof global.Shiny === 'undefined') return false;
+    return typeof this.options.ns === 'string' || this.options.mode !== 'embedded';
+  };
+
+  SideviewEngine.prototype.registerEngine = function () {
+    var registers = typeof this.options.ns === 'string' || this.options.mode === 'standalone';
+    if (!registers) return;
+    var reg = global.__sideviewEngines = global.__sideviewEngines || {};
+    var old = reg[this.ns];
+    if (old && old !== this && typeof old.destroy === 'function') {
+      try { old.destroy(); } catch (e) {}
+    }
+    reg[this.ns] = this;
+    this._registeredAs = this.ns;
+  };
+
+  SideviewEngine.prototype.unregisterEngine = function () {
+    var reg = global.__sideviewEngines;
+    if (reg && this._registeredAs !== null && reg[this._registeredAs] === this) {
+      delete reg[this._registeredAs];
+    }
+    this._registeredAs = null;
+  };
+
+  /** Register fn for a message type; Shiny sees one handler per type, which routes by data.ns. */
+  SideviewEngine.prototype.onMessage = function (type, fn) {
+    this._handlers[type] = fn;
+    var routed = global.__sideviewRouted = global.__sideviewRouted || {};
+    if (routed[type]) return;
+    routed[type] = true;
+    global.Shiny.addCustomMessageHandler(type, function (data) {
+      var reg = global.__sideviewEngines || {};
+      Object.keys(reg).forEach(function (k) {
+        var c = reg[k] && reg[k].container;
+        if (c && c.isConnected === false) {
+          var gone = reg[k];
+          delete reg[k];
+          try { if (typeof gone.destroy === 'function') gone.destroy(); } catch (e) {}
+        }
+      });
+      var key = (data && typeof data.ns === 'string') ? data.ns : '';
+      var target = reg[key];
+      if (!target || typeof target._handlers[type] !== 'function') {
+        if (typeof console !== 'undefined' && console.warn) {
+          console.warn('[Sideview] no engine for message "' + type + '" (ns "' + key + '")');
+        }
+        return;
+      }
+      target._handlers[type](data);
+    });
+  };
+
   SideviewEngine.prototype.listenGlobal = function (target, type, fn, opts) {
     target.addEventListener(type, fn, opts);
     this._globalListeners.push([target, type, fn, opts]);
@@ -996,6 +1081,7 @@ function sendToShiny(name, value) {
       if (self._needsInitialLayout && self.container.clientWidth > 0) {
         self._needsInitialLayout = false;
         if (self.arrangeCards(true) && !self._restoredView) self.fitAll({ maxScale: 1, minScale: READABLE_SCALE });
+        self.scheduleSnapshot();
       }
       self.scheduleConnectorUpdate();
     };
@@ -1476,6 +1562,9 @@ function sendToShiny(name, value) {
   };
 
   SideviewEngine.prototype.destroy = function () {
+    this.unregisterEngine();
+    if (this._snapshotTimer) { clearTimeout(this._snapshotTimer); this._snapshotTimer = null; }
+    if (this._cardResizeObserver) { this._cardResizeObserver.disconnect(); this._cardResizeObserver = null; }
     this._globalListeners.forEach(function (l) {
       try { l[0].removeEventListener(l[1], l[2], l[3]); } catch (e) {}
     });
@@ -1492,6 +1581,7 @@ function sendToShiny(name, value) {
     }
     if (lastActiveEngine === this) lastActiveEngine = null;
     if (this.container._sideviewInstance === this) this.container._sideviewInstance = null;
+    this._destroyed = true;
   };
 
   // ---- theme ------------------------------------------------------------------
@@ -1679,6 +1769,7 @@ function sendToShiny(name, value) {
     }
     if (!minimized && card._virtualTable && card._virtualTable.render) card._virtualTable.render();
     this.scheduleConnectorUpdate();
+    this.scheduleSnapshot();
   };
 
   // Maximize moves the card out of the transformed viewport into the overlay
@@ -1911,8 +2002,8 @@ function sendToShiny(name, value) {
         '      </div>',
         '    </div>',
         '    <div class="sideview-chat-input-wrap">',
-        '      <input type="text" id="sideview-chat-input" class="sideview-chat-input" placeholder="Ask Copilot... (e.g. filter rows where age > 30)" />',
-        '      <button id="sideview-chat-send" class="sideview-btn sideview-btn-primary sideview-chat-send">Send</button>',
+        '      <input type="text" class="sideview-chat-input" placeholder="Ask Copilot... (e.g. filter rows where age > 30)" />',
+        '      <button class="sideview-btn sideview-btn-primary sideview-chat-send">Send</button>',
         '    </div>',
         '  </div>',
         '</div>',
@@ -2063,9 +2154,9 @@ function sendToShiny(name, value) {
         self.showToast('Evaluating in R environment...', 'info');
       } else if (action === 'gadget-done') {
         self.showToast('Returning code to R...', 'success');
-        sendToShiny('sideview_done', { code: isNoCode(self.generatedCode) ? '' : self.generatedCode });
+        self.send('sideview_done', { code: isNoCode(self.generatedCode) ? '' : self.generatedCode });
       } else if (action === 'gadget-cancel') {
-        sendToShiny('sideview_cancel', { at: Date.now() });
+        self.send('sideview_cancel', { at: Date.now() });
       } else if (action === 'copy-code') {
         if (navigator.clipboard && self.generatedCode) {
           navigator.clipboard.writeText(self.generatedCode);
@@ -2089,7 +2180,7 @@ function sendToShiny(name, value) {
       } else if (action === 'apply-auto-clean') {
         var disc = self.lastDiscrepancy || {};
         var lastConn = self.connections.length > 0 ? self.connections[self.connections.length - 1] : null;
-        sendToShiny('apply_auto_clean', {
+        self.send('apply_auto_clean', {
           discrepancy: disc,
           from_table: disc.from_table || (lastConn ? lastConn.fromTable : 'df'),
           to_table: disc.to_table || (lastConn ? lastConn.toTable : null),
@@ -2153,7 +2244,7 @@ function sendToShiny(name, value) {
       if (tabName === 'discrepancy') self.renderJoinCheck();
       if (tabName === 'discrepancy' && self.connections.length > 0) {
         var lastConn = self.connections[self.connections.length - 1];
-        sendToShiny('discrepancy_check', {
+        self.send('discrepancy_check', {
           table1: lastConn.fromTable,
           col1: lastConn.fromCol,
           table2: lastConn.toTable,
@@ -2166,7 +2257,7 @@ function sendToShiny(name, value) {
 
     // Copilot Chat Submit Handling
     function submitCopilotChat() {
-      var chatInput = self.container.querySelector('#sideview-chat-input');
+      var chatInput = self.container.querySelector('.sideview-chat-input');
       var chatMessages = self.container.querySelector('.sideview-chat-messages');
       if (!chatInput) return;
       var msg = chatInput.value.trim();
@@ -2185,7 +2276,7 @@ function sendToShiny(name, value) {
 
       chatInput.value = '';
 
-      if (sendToShiny('send_copilot_chat', {
+      if (self.send('send_copilot_chat', {
         message: msg,
         current_code: self.generatedCode || ''
       })) {
@@ -2194,7 +2285,7 @@ function sendToShiny(name, value) {
     }
 
     this.container.addEventListener('click', function (e) {
-      if (e.target.closest('#sideview-chat-send') || e.target.closest('.sideview-chat-send')) {
+      if (e.target.closest('.sideview-chat-send')) {
         submitCopilotChat();
       }
 
@@ -2213,13 +2304,13 @@ function sendToShiny(name, value) {
         var bubble = insBtn.closest('.sideview-chat-bubble');
         var codeBlock = bubble ? bubble.querySelector('.sideview-chat-code') : null;
         if (codeBlock && codeBlock.textContent) {
-          sendToShiny('inject_script', { code: codeBlock.textContent.trim() });
+          self.send('inject_script', { code: codeBlock.textContent.trim() });
         }
       }
     });
 
     this.container.addEventListener('keydown', function (e) {
-      if (e.target && e.target.id === 'sideview-chat-input' && e.key === 'Enter') {
+      if (e.target && e.target.classList && e.target.classList.contains('sideview-chat-input') && e.key === 'Enter') {
         e.preventDefault();
         submitCopilotChat();
       }
@@ -2236,7 +2327,7 @@ function sendToShiny(name, value) {
 
       var tableNames = Array.from(self.cards.values()).map(function (c) { return c.name; });
       if (self.aiBusy) return;
-      var sent = sendToShiny('run_ai_prompt', {
+      var sent = self.send('run_ai_prompt', {
         prompt: prompt,
         tables: tableNames
       });
@@ -2275,21 +2366,9 @@ function sendToShiny(name, value) {
         var cardId = cardEl ? cardEl.dataset.cardId : null;
         var colName = th.dataset.colName;
 
-        if (table && table._virtualTable) {
-          table._virtualTable.setColumnHighlight(colName, self.selectedColor);
-        } else if (table) {
-          var highlightClass = self.selectedColor === 'clear' ? '' : 'sv-highlight-' + self.selectedColor;
-          var allCellsInCol = table.querySelectorAll('tbody tr td:nth-child(' + (colIdx + 1) + ')');
+        if (table) self.highlightColumnIn(table, colIdx, colName, self.selectedColor);
 
-          allCellsInCol.forEach(function (cell) {
-            cell.className = cell.className.replace(/sv-highlight-\w+/g, '').replace('sideview-cell-highlight', '').trim();
-            if (highlightClass) {
-              cell.classList.add(highlightClass, 'sideview-cell-highlight');
-            }
-          });
-        }
-
-        sendToShiny('sideview_highlight_changed', {
+        self.send('sideview_highlight_changed', {
           card_id: cardId,
           col_name: colName,
           row_idx: null,
@@ -2314,7 +2393,7 @@ function sendToShiny(name, value) {
           }
         }
 
-        sendToShiny('sideview_highlight_changed', {
+        self.send('sideview_highlight_changed', {
           card_id: cellCard ? cellCard.dataset.cardId : null,
           col_name: thCol ? thCol.dataset.colName : null,
           row_idx: rawRowIdx,
@@ -2690,7 +2769,7 @@ function sendToShiny(name, value) {
             if (port) port.dataset.colName = newName;
           }
           self.pipeline.add({ kind: 'rename', table: cardName, from: currentName, to: newName }, 'rename');
-          sendToShiny('column_renamed', {
+          self.send('column_renamed', {
             table: cardName,
             old_col: currentName,
             new_col: newName
@@ -2759,13 +2838,15 @@ function sendToShiny(name, value) {
     var shownRows = previewRowCount(cardData.data);
     var tableRowCount = cardData.totalRows != null ? Number(cardData.totalRows) : NaN;
     var isLazyCard = !!cardData.lazy;
-    if (isLazyCard && shownRows != null && tableRowCount > shownRows) {
+    // A module card with `remote` is served whole by R (row windows, sorts, checks), however few rows it carries.
+    var isPreviewCard = isLazyCard && !cardData.remote;
+    if (isPreviewCard && shownRows != null && tableRowCount > shownRows) {
       dimsText = previewBadgeText(shownRows, tableRowCount);
     }
     if (!isNaN(tableRowCount)) cardEl.dataset.tableRows = String(tableRowCount);
     if (isLazyCard) cardEl.dataset.lazy = String(cardData.lazy);
     if (cardData.codeRef) cardEl.dataset.codeRef = String(cardData.codeRef);
-    cardEl.dataset.rowsBasis = isLazyCard ? 'preview' : 'full';
+    cardEl.dataset.rowsBasis = isPreviewCard ? 'preview' : 'full';
     if (isLazyCard && shownRows != null) cardEl.dataset.previewRows = String(shownRows);
     header.innerHTML = [
       '<div class="sideview-card-title-group">',
@@ -2858,6 +2939,15 @@ function sendToShiny(name, value) {
     // Setup Synchronized Scroll
     this.setupScrollSync(cardMeta);
     this.syncTableMeta();
+
+    // R pages the rest of a remote card: the preview is what the card holds.
+    if (cardData.remote && cardEl._virtualTable) {
+      if (!isNaN(tableRowCount)) cardEl.dataset.totalRows = String(tableRowCount);
+      cardMeta.virtualTable = cardEl._virtualTable;
+      this.attachRemoteRows(cardEl, cardId, cardName, cardEl._virtualTable);
+    }
+    this.observeCardSize(cardEl);
+    this.scheduleSnapshot();
   };
 
   /**
@@ -2990,11 +3080,12 @@ function sendToShiny(name, value) {
         document.removeEventListener(upType, onPointerUp);
         self.updateConnectors();
 
-        sendToShiny('sideview_card_moved', {
+        self.send('sideview_card_moved', {
           card_id: cardMeta.id,
           x: cardMeta.x,
           y: cardMeta.y
         });
+        self.scheduleSnapshot();
       }
 
       document.addEventListener(moveType, onPointerMove);
@@ -3078,7 +3169,7 @@ function sendToShiny(name, value) {
     var total = parseInt(cardEl.dataset ? cardEl.dataset.totalRows : '', 10);
     // Shiny.setInputValue only appears once the session connects, which is
     // after this runs; requests made before then are retried.
-    var hasShiny = typeof global.Shiny !== 'undefined';
+    var hasShiny = this.hasR();
     if (!hasShiny || isNaN(total) || total <= vTable.totalRows) return;
     vTable.onRemoteCount = function (count, fullTotal) {
       var f = vTable.currentFilter;
@@ -3087,7 +3178,7 @@ function sendToShiny(name, value) {
       }
     };
     vTable.enableRemote(cardId, total, function (req) {
-      return sendToShiny('sideview_rows_request', req);
+      return self.send('sideview_rows_request', req);
     });
   };
 
@@ -3171,7 +3262,7 @@ function sendToShiny(name, value) {
   };
 
   SideviewEngine.prototype.requestSuggestedMappings = function (minConfidence) {
-    sendToShiny('request_suggested_mappings', {
+    this.send('request_suggested_mappings', {
       min_confidence: typeof minConfidence === 'number' ? minConfidence : 0.70
     });
   };
@@ -3341,12 +3432,296 @@ function sendToShiny(name, value) {
     this.pipeline.addJoinKey(connData.fromTable, connData.toTable,
       connData.fromCol, connData.toCol, connData.type || 'left_join');
 
-    sendToShiny('column_mapped', {
+    self.send('column_mapped', {
       from_table: connData.fromTable,
       from_col: connData.fromCol,
       to_table: connData.toTable,
       to_col: connData.toCol,
       join_type: connData.type || 'left_join'
+    });
+  };
+
+  // ---- cards, state and highlights driven from R (a module's proxy) -------------
+
+  SideviewEngine.prototype.cardMetaByName = function (name) {
+    var found = null;
+    this.cards.forEach(function (m) { if (m.name === name) found = m; });
+    return found;
+  };
+
+  function warnNoCard(name) {
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[Sideview] no card named "' + name + '"');
+    }
+  }
+
+  // The port element of a column, found without building a selector from table text.
+  function portOf(meta, col) {
+    var ports = meta.element.querySelectorAll('.sideview-col-port');
+    for (var i = 0; i < ports.length; i++) {
+      if (ports[i].dataset && ports[i].dataset.colName === col) return ports[i];
+    }
+    return null;
+  }
+
+  /** A card sent by R: placed to the right of the others unless it brings a position. */
+  SideviewEngine.prototype.addCardFromR = function (card) {
+    if (!card || !card.name) return;
+    // R re-sends every card on each ready: a name already on the canvas is refreshed, not doubled
+    if (this.cardMetaByName(card.name)) { this.replaceCard(card); return; }
+    var data = Object.assign({}, card);
+    if (!data.type && data.data) data.type = 'grid';
+    if (!data.id || this.cards.has(data.id)) {
+      var n = this.cards.size + 1;
+      while (this.cards.has('card_r' + n)) n++;
+      data.id = 'card_r' + n;
+    }
+    var placed = data.x != null || data.y != null;
+    if (!placed && this.cards.size) {
+      var right = 0;
+      this.cards.forEach(function (m) {
+        var el = m.element;
+        right = Math.max(right, (parseFloat(el.style.left) || 0) + (el.offsetWidth || 340));
+      });
+      data.x = right + 24;
+      data.y = 60;
+      placed = true;
+    }
+    this.addCard(data, this.cards.size);
+    var meta = this.cards.get(data.id);
+    if (meta && placed) delete meta.element.dataset.autoPlace;
+    this.scheduleConnectorUpdate();
+  };
+
+  // Take a connection off the canvas only: the join step is disabled by the pipeline, and R
+  // is not told (the work did not change, the data under it did).
+  SideviewEngine.prototype.dropConnectionVisually = function (conn) {
+    var i = this.connections.indexOf(conn);
+    if (i < 0) return;
+    if (conn.path && conn.path.parentNode) conn.path.parentNode.removeChild(conn.path);
+    this.connections.splice(i, 1);
+    pruneHitPaths(this);
+  };
+
+  // What a refresh or removal invalidates: join checks and column profiles are rebuilt on demand.
+  SideviewEngine.prototype.resetDataCaches = function () {
+    this.pipeline.clearJoinChecks();
+    this.joinDiag = {};
+    this.joinDiagPending = {};
+    this.colProfiles = {};
+    this.colProfilePending = {};
+    this.joinCheckStepId = null;
+    this.renderPipeline();
+    this.renderJoinCheck();
+    this.renderInspector();
+  };
+
+  function stepsPhrase(n) { return n + ' step' + (n === 1 ? '' : 's') + ' disabled'; }
+
+  /**
+   * Rebuild a card from new data under the same name, keeping where it is and how big, and the
+   * header sort / filter and highlights on columns that are still there.
+   * Steps that need a column the new data lacks are disabled; splines on a dropped column go.
+   * Returns { disabled, missing }, or null when no card has that name.
+   */
+  SideviewEngine.prototype.replaceCard = function (cardData) {
+    var name = cardData && cardData.name;
+    var meta = this.cardMetaByName(name);
+    if (!meta) { warnNoCard(name); return null; }
+    var el = meta.element;
+    if (el.classList.contains('is-maximized')) {
+      this.toggleMaximizeCard(el, el.querySelector('[data-action="maximize-card"]'));
+    }
+    var minimized = el.classList.contains('is-minimized');
+    var geo = {
+      x: parseFloat(el.style.left) || 0,
+      y: parseFloat(el.style.top) || 0,
+      width: el.style.width || '',
+      height: minimized ? (el._svRestoreHeight || '') : (el.style.height || ''),
+      sized: el.classList.contains('sv-sized'),
+      auto: el.dataset.autoPlace
+    };
+    var oldVt = el._virtualTable;
+    var view = cardViewOf(el);
+    var oldColumns = [];
+    el.querySelectorAll('.sideview-col-port').forEach(function (port) {
+      if (port.dataset && port.dataset.colName !== undefined) oldColumns.push(port.dataset.colName);
+    });
+    var highlights = [];
+    if (oldVt && oldVt.highlightedColumns) {
+      oldVt.highlightedColumns.forEach(function (color, col) { highlights.push([col, color]); });
+    }
+    if (oldVt && oldVt.destroy) oldVt.destroy();
+    if (this._cardResizeObserver) this._cardResizeObserver.unobserve(el);
+    if (el.parentNode) el.parentNode.removeChild(el);
+    this.syncScrollCards.delete(meta.id);
+
+    var data = Object.assign({}, cardData, { id: meta.id, x: geo.x, y: geo.y });
+    if (!data.type && data.data) data.type = 'grid';
+    this.addCard(data, 0);
+    var next = this.cards.get(meta.id);
+    var nel = next.element;
+    if (geo.width) nel.style.width = geo.width;
+    if (geo.height) nel.style.height = geo.height;
+    if (geo.sized) nel.classList.add('sv-sized');
+    if (geo.auto === undefined) delete nel.dataset.autoPlace;
+    if (minimized) this.toggleMinimizeCard(nel, nel.querySelector('[data-action="minimize-card"]'));
+
+    var columns = Object.keys(cardData.data || {});
+    var nvt = nel._virtualTable;
+    if (nvt) {
+      highlights.forEach(function (h) { if (columns.indexOf(h[0]) >= 0) nvt.highlightedColumns.set(h[0], h[1]); });
+      if (highlights.length) nvt.render();
+    }
+
+    // Splines: drop those on a column that is gone; point the rest at the new ports.
+    var self = this;
+    this.connections.slice().forEach(function (c) {
+      var touchesFrom = c.fromTable === name, touchesTo = c.toTable === name;
+      if (!touchesFrom && !touchesTo) return;
+      if ((touchesFrom && columns.indexOf(c.fromCol) < 0) || (touchesTo && columns.indexOf(c.toCol) < 0)) {
+        self.dropConnectionVisually(c);
+        return;
+      }
+      if (touchesFrom) c.fromElement = portOf(next, c.fromCol) || c.fromElement;
+      if (touchesTo) c.toElement = portOf(next, c.toCol) || c.toElement;
+    });
+
+    var out = this.pipeline.disableMissing(name, columns, oldColumns);
+    // The header sort / filter stays on the card where its column is still there and its step was not disabled.
+    var self2 = this;
+    var offIds = {};
+    out.disabled.forEach(function (d) { offIds[d.id] = true; });
+    var stillOn = function (kind, col) {
+      return !self2.pipeline.steps.some(function (st) {
+        if (!offIds[st.id] || st.table !== name || st.kind !== kind) return false;
+        return kind === 'arrange'
+          ? (st.cols || []).some(function (c) { return c && c.col === col; })
+          : (st.condCols || []).indexOf(col) >= 0;
+      });
+    };
+    var keepSort = view.sorts.filter(function (v) { return columns.indexOf(v.col) >= 0 && stillOn('arrange', v.col); })[0];
+    var keepFilter = view.filters.filter(function (v) { return columns.indexOf(v.col) >= 0 && stillOn('filter', v.col); })[0];
+    if (keepSort || keepFilter) this.applyCardView(nel, keepSort, keepFilter);
+    this.resetDataCaches();
+    if (out.disabled.length) {
+      this.showToast(name + ' refreshed: ' + stepsPhrase(out.disabled.length) +
+        ' (' + out.missing.join(', ') + ' not found)', 'warning');
+    }
+    this.scheduleConnectorUpdate();
+    this.scheduleSnapshot();
+    return out;
+  };
+
+  /** Take a card off the canvas; its steps and joins are disabled, not deleted. */
+  SideviewEngine.prototype.removeCard = function (name) {
+    var meta = this.cardMetaByName(name);
+    if (!meta) { warnNoCard(name); return null; }
+    var self = this;
+    this.connections.slice().forEach(function (c) {
+      if (c.fromTable === name || c.toTable === name) self.dropConnectionVisually(c);
+    });
+    var el = meta.element;
+    if (el.classList.contains('is-maximized')) {
+      this.toggleMaximizeCard(el, el.querySelector('[data-action="maximize-card"]'));
+    }
+    var vt = el._virtualTable;
+    if (vt && vt.destroy) vt.destroy();
+    if (this._cardResizeObserver) this._cardResizeObserver.unobserve(el);
+    if (el.parentNode) el.parentNode.removeChild(el);
+    this.cards.delete(meta.id);
+    this.syncScrollCards.delete(meta.id);
+    this.syncTableMeta();
+
+    var out = this.pipeline.disableMissing(name, null);
+    this.resetDataCaches();
+    if (out.disabled.length) {
+      this.showToast(name + ' removed: ' + stepsPhrase(out.disabled.length), 'warning');
+    }
+    this.scheduleConnectorUpdate();
+    this.scheduleSnapshot();
+    return out;
+  };
+
+  /** Highlight a column of a table the way a header click does (one swatch colour). */
+  SideviewEngine.prototype.highlightColumnIn = function (table, colIdx, colName, color) {
+    if (table._virtualTable) {
+      table._virtualTable.setColumnHighlight(colName, color);
+      return;
+    }
+    var cls = color === 'clear' ? '' : 'sv-highlight-' + color;
+    var cells = table.querySelectorAll('tbody tr td:nth-child(' + (colIdx + 1) + ')');
+    cells.forEach(function (cell) {
+      cell.className = cell.className.replace(/sv-highlight-\w+/g, '').replace('sideview-cell-highlight', '').trim();
+      if (cls) cell.classList.add(cls, 'sideview-cell-highlight');
+    });
+  };
+
+  /**
+   * Set the highlighted columns of a card from R: those listed (and present) take the selected
+   * swatch, or blue when none is selected or it is "clear"; any other column is unhighlighted.
+   */
+  SideviewEngine.prototype.highlightColumns = function (name, cols) {
+    var meta = this.cardMetaByName(name);
+    if (!meta) { warnNoCard(name); return; }
+    var table = meta.element.querySelector('.sideview-table');
+    if (!table) return;
+    var color = (this.selectedColor && this.selectedColor !== 'clear') ? this.selectedColor : 'blue';
+    var want = asArray(cols).map(String);
+    var ths = table.querySelectorAll('thead th');
+    for (var i = 0; i < ths.length; i++) {
+      var col = ths[i].dataset.colName;
+      if (col === undefined) continue;
+      this.highlightColumnIn(table, ths[i].cellIndex !== undefined ? ths[i].cellIndex : i, col,
+        want.indexOf(col) >= 0 ? color : 'clear');
+    }
+  };
+
+  // ---- module readiness and snapshot -------------------------------------------
+
+  // Tell R this canvas is on the page (it answers with its cards). Shiny.setInputValue appears
+  // only once the session connects: retry until then.
+  SideviewEngine.prototype.sendReady = function (attempt) {
+    var self = this;
+    if (this._destroyed) return;
+    if (this.send('sideview_ready', { nonce: Date.now() })) return;
+    if (attempt >= 120 || !this.container.isConnected) return;
+    setTimeout(function () { self.sendReady(attempt + 1); }, 250);
+  };
+
+  // A card resized by hand (CSS resize) changes the saved view: report it, debounced.
+  SideviewEngine.prototype.observeCardSize = function (cardEl) {
+    if (typeof this.options.ns !== 'string' || typeof global.ResizeObserver !== 'function') return;
+    var self = this;
+    if (!this._cardResizeObserver) {
+      this._cardResizeObserver = new global.ResizeObserver(function () { self.scheduleSnapshot(); });
+    }
+    this._cardResizeObserver.observe(cardEl);
+  };
+
+  var SNAPSHOT_DELAY = 300;
+
+  /** Module only: send the pipeline, code and workspace to R once changes have settled. */
+  SideviewEngine.prototype.scheduleSnapshot = function () {
+    if (typeof this.options.ns !== 'string' || !this._constructed || this._destroyed) return;
+    var self = this;
+    if (this._snapshotTimer) clearTimeout(this._snapshotTimer);
+    this._snapshotTimer = setTimeout(function () {
+      self._snapshotTimer = null;
+      self.sendSnapshot();
+    }, SNAPSHOT_DELAY);
+  };
+
+  SideviewEngine.prototype.sendSnapshot = function () {
+    if (this.container.isConnected === false) return;
+    var code = this.pipeline.compose();
+    var names = [];
+    this.cards.forEach(function (m) { names.push(m.name); });
+    this.send('sideview_snapshot', {
+      code: isNoCode(code) ? '' : code,
+      pipeline: JSON.stringify(this.pipeline.steps),
+      state: JSON.stringify(this.getState()),
+      cards: names
     });
   };
 
@@ -3377,7 +3752,7 @@ function sendToShiny(name, value) {
     this.pipeline.removeJoinKey(conn.fromTable, conn.toTable, conn.fromCol, conn.toCol);
 
     this.showToast('Disconnected ' + conn.fromCol + ' ↔ ' + conn.toCol, 'info');
-    sendToShiny('column_disconnected', {
+    self.send('column_disconnected', {
       conn_id: connId,
       from_table: conn.fromTable,
       from_col: conn.fromCol,
@@ -3552,7 +3927,7 @@ function sendToShiny(name, value) {
     if (!silent) {
       this.showToast('Tidyverse operations and connectors cleared.', 'info');
     }
-    sendToShiny('clear_operations', { timestamp: Date.now() });
+    self.send('clear_operations', { timestamp: Date.now() });
   };
 
   // ---- drawer: tabs, pipeline view, builders --------------------------------
@@ -4007,7 +4382,7 @@ function sendToShiny(name, value) {
       by: (s.by || []).map(function (p) { return { left: p.left, right: p.right }; })
     };
     if (s.rule) req.rule = JSON.parse(JSON.stringify(s.rule));
-    if (this.options.mode !== 'embedded' && typeof global.Shiny !== 'undefined') {
+    if (this.hasR()) {
       this.joinDiagPending[sig] = true;
       this.requestJoinDiag(req, 0);
       return null;
@@ -4024,7 +4399,7 @@ function sendToShiny(name, value) {
   // Shiny.setInputValue appears only once the session connects; retry until then.
   SideviewEngine.prototype.requestJoinDiag = function (req, attempt) {
     var self = this;
-    if (sendToShiny('join_diagnostics_request', req)) return;
+    if (self.send('join_diagnostics_request', req)) return;
     if (attempt >= 40 || !this.container.isConnected) {
       delete this.joinDiagPending[req.id];
       this.joinDiag[req.id] = { id: req.id, error: 'The R session did not answer.' };
@@ -4073,6 +4448,8 @@ function sendToShiny(name, value) {
 
   SideviewEngine.prototype.onJoinDiagnostics = function (data) {
     if (!data || !data.id) return;
+    // a reply to a check the engine no longer waits for (the table was replaced meanwhile) is stale
+    if (!this.joinDiagPending[data.id]) return;
     delete this.joinDiagPending[data.id];
     // a check that could not run (a missing column, a rule that does not hold) is an error state:
     // the message, no counts, and nothing for Strict to use
@@ -4130,7 +4507,7 @@ function sendToShiny(name, value) {
     this.renderJoinCheck();
     var s = this.pipeline.find(stepId);
     if (s && s.by && s.by.length) {
-      sendToShiny('discrepancy_check', {
+      this.send('discrepancy_check', {
         table1: s.table, col1: s.by[0].left, table2: s.right, col2: s.by[0].right
       });
     }
@@ -4313,7 +4690,7 @@ function sendToShiny(name, value) {
 
   /** Send an input that only the gadget's R session handles; warn (never claim success) without one. */
   SideviewEngine.prototype.sendToR = function (name, value, label) {
-    if (this.isGadget() && sendToShiny(name, value)) return true;
+    if (this.isGadget() && this.send(name, value)) return true;
     this.showToast(label + ' needs the R session (run sideview() from R). Use Copy instead.', 'warning');
     return false;
   };
@@ -4326,7 +4703,7 @@ function sendToShiny(name, value) {
     var sig = JSON.stringify([table, column]);
     if (this.colProfiles[sig]) return this.colProfiles[sig];
     if (this.colProfilePending[sig]) return null;
-    if (this.isGadget()) {
+    if (this.hasR()) {
       this.colProfilePending[sig] = true;
       this.requestColumnProfile({ id: sig, table: table, column: column }, 0);
       return null;
@@ -4340,7 +4717,7 @@ function sendToShiny(name, value) {
 
   SideviewEngine.prototype.requestColumnProfile = function (req, attempt) {
     var self = this;
-    if (sendToShiny('column_profile_request', req)) return;
+    if (self.send('column_profile_request', req)) return;
     if (attempt >= 40 || !this.container.isConnected) {
       delete this.colProfilePending[req.id];
       this.colProfiles[req.id] = { error: 'The R session did not answer.' };
@@ -4488,8 +4865,9 @@ function sendToShiny(name, value) {
 
   /** Export codebook: R writes the file in the gadget; the widget downloads a CSV. */
   SideviewEngine.prototype.exportCodebook = function () {
-    if (this.isGadget()) {
-      if (!sendToShiny('codebook_export', Date.now())) this.showToast('The R session is not connected.', 'warning');
+    // a module is R-backed too (lazy tables, full data) but downloads the CSV in the browser
+    if (this.isGadget() || (typeof this.options.ns === 'string' && this.hasR())) {
+      if (!this.send('codebook_export', Date.now())) this.showToast('The R session is not connected.', 'warning');
       return;
     }
     var P = global.SideviewPipeline, self = this, rows = [];
@@ -4547,6 +4925,19 @@ function sendToShiny(name, value) {
     }
   }
 
+  // The header sort and filter a card shows, as state stores them: { sorts: [], filters: [] }.
+  function cardViewOf(el) {
+    var vt = el && el._virtualTable;
+    var sorts = [], filters = [];
+    if (vt && vt.sortState && vt.sortState.colName && vt.sortState.direction && vt.sortState.direction !== 'none') {
+      sorts.push({ col: vt.sortState.colName, dir: vt.sortState.direction });
+    }
+    if (vt && vt.currentFilter && vt.currentFilter.colName) {
+      filters.push({ col: vt.currentFilter.colName, op: vt.currentFilter.operator, val: String(vt.currentFilter.value) });
+    }
+    return { sorts: sorts, filters: filters };
+  }
+
   SideviewEngine.prototype.getState = function () {
     var pz = this.panzoom;
     var pan = pz && pz.getPan ? pz.getPan() : { x: 0, y: 0 };
@@ -4561,14 +4952,8 @@ function sendToShiny(name, value) {
       } else if (el.classList.contains('is-minimized')) {
         h = parseFloat(el._svRestoreHeight) || null;
       }
-      var vt = el._virtualTable;
-      var sorts = [], filters = [];
-      if (vt && vt.sortState && vt.sortState.colName && vt.sortState.direction && vt.sortState.direction !== 'none') {
-        sorts.push({ col: vt.sortState.colName, dir: vt.sortState.direction });
-      }
-      if (vt && vt.currentFilter && vt.currentFilter.colName) {
-        filters.push({ col: vt.currentFilter.colName, op: vt.currentFilter.operator, val: String(vt.currentFilter.value) });
-      }
+      var view = cardViewOf(el);
+      var sorts = view.sorts, filters = view.filters;
       cards.push({
         id: card.id,
         name: card.name,
@@ -4725,7 +5110,7 @@ function sendToShiny(name, value) {
     var json = JSON.stringify(this.getState(), null, 2);
     this.lastStateJson = json;
     if (this.isGadget()) {
-      if (!sendToShiny('state_save', { json: json, nonce: Date.now() })) {
+      if (!this.send('state_save', { json: json, nonce: Date.now() })) {
         this.showToast('The R session is not connected.', 'warning');
       }
       return;
@@ -4742,7 +5127,7 @@ function sendToShiny(name, value) {
   SideviewEngine.prototype.openWorkspace = function () {
     var self = this;
     if (this.isGadget() && this.container.getAttribute('data-sv-file-dialog') === 'r') {
-      if (!sendToShiny('state_open_request', Date.now())) this.showToast('The R session is not connected.', 'warning');
+      if (!self.send('state_open_request', Date.now())) this.showToast('The R session is not connected.', 'warning');
       return;
     }
     var input = document.createElement('input');
@@ -4866,7 +5251,8 @@ function sendToShiny(name, value) {
         step = {
           kind: 'filter', table: table, conds: conds, combine: fieldValue(builder, 'combine'),
           // "contains" is rewritten for the chain's engine when the code is composed
-          specs: parts.map(function (c) { return c.op === 'contains' ? c : null; })
+          specs: parts.map(function (c) { return c.op === 'contains' ? c : null; }),
+          condCols: parts.map(function (c) { return c.col; })
         };
       }
     } else if (kind === 'arrange') {
@@ -5066,7 +5452,7 @@ function sendToShiny(name, value) {
         var arrangeCode = self.recordSort(cardName, colName, nextState);
         self.showToast('Sorted ' + colName + ' (' + (nextState === 'asc' ? 'ascending' : 'descending') + ')', 'success');
 
-        sendToShiny('column_sorted', {
+        self.send('column_sorted', {
           table: cardName,
           column: colName,
           direction: nextState,
@@ -5113,7 +5499,7 @@ function sendToShiny(name, value) {
         var arrangeCodeFallback = self.recordSort(cardNameFallback, colName, nextState);
         self.showToast('Sorted ' + colName + ' (' + (nextState === 'asc' ? 'ascending' : 'descending') + ')', 'success');
 
-        sendToShiny('column_sorted', {
+        self.send('column_sorted', {
           table: cardNameFallback,
           column: colName,
           direction: nextState,
@@ -5374,7 +5760,8 @@ function sendToShiny(name, value) {
       self.pipeline.add({
         kind: 'filter', key: headerFilterKey(cardName), table: cardName,
         conds: [condExpr], source: 'header',
-        specs: [op === 'contains' ? { col: colName, op: op, val: val, numeric: numericForCode } : null]
+        specs: [op === 'contains' ? { col: colName, op: op, val: val, numeric: numericForCode } : null],
+        condCols: [colName]
       }, 'filter');
       var filterCode = self.generatedCode;
       // Server-paged tables report their count when the first block arrives.
@@ -5382,7 +5769,7 @@ function sendToShiny(name, value) {
         self.showToast('Filtered ' + colName + ' (' + matchedCount + '/' + totalRowsCount + ' rows)', 'success');
       }
 
-      sendToShiny('column_filtered', {
+      self.send('column_filtered', {
         table: cardName,
         column: colName,
         operator: op,
@@ -5479,19 +5866,19 @@ function sendToShiny(name, value) {
     }
 
     // Code update from R server
-    global.Shiny.addCustomMessageHandler('sideview_console_result', function (data) {
+    self.onMessage('sideview_console_result', function (data) {
       if (data && data.message) {
         self.showToast(data.message, data.success ? 'success' : 'warning');
       }
     });
 
-    global.Shiny.addCustomMessageHandler('sideview_inject_result', function (data) {
+    self.onMessage('sideview_inject_result', function (data) {
       if (data && data.message) {
         self.showToast(data.message, data.success ? 'success' : 'warning');
       }
     });
 
-    global.Shiny.addCustomMessageHandler('sideview_eval_result', function (data) {
+    self.onMessage('sideview_eval_result', function (data) {
       if (data && data.message) {
         var text = data.message;
         // A step that works on a data frame may have no arrow / duckdb translation.
@@ -5504,7 +5891,7 @@ function sendToShiny(name, value) {
     // (source "event") are ignored, Copilot replies wait for the user to press
     // "Replace pipeline", auto-clean code is appended as a step, and anything
     // else (AI bar, older servers) replaces the pipeline, undoably.
-    global.Shiny.addCustomMessageHandler('sideview_code_update', function (data) {
+    self.onMessage('sideview_code_update', function (data) {
       if (!data) return;
       var src = data.source || '';
       if (src === 'event' || src === 'copilot') return;
@@ -5518,14 +5905,14 @@ function sendToShiny(name, value) {
       self.updateDrawerCode(data.code, src === 'ai' ? 'AI code' : 'code from R');
     });
 
-    global.Shiny.addCustomMessageHandler('sideview_ai_status', function (data) {
+    self.onMessage('sideview_ai_status', function (data) {
       self.setAiBusy(false);
       if (data && data.message) {
         self.showToast(data.message, data.success ? 'success' : 'danger');
       }
     });
 
-    global.Shiny.addCustomMessageHandler('sideview_copilot_reply', function (data) {
+    self.onMessage('sideview_copilot_reply', function (data) {
       self.setAiBusy(false);
       if (!data) return;
       var chatMessages = self.container.querySelector('.sideview-chat-messages');
@@ -5581,7 +5968,7 @@ function sendToShiny(name, value) {
     });
 
     // Row window for a large card (reply to sideview_rows_request)
-    global.Shiny.addCustomMessageHandler('sideview_rows', function (data) {
+    self.onMessage('sideview_rows', function (data) {
       if (!data || data.card_id === undefined) return;
       var meta = self.cards.get(data.card_id);
       if (!meta) {
@@ -5599,26 +5986,26 @@ function sendToShiny(name, value) {
     });
 
     // Suggested mappings from server
-    global.Shiny.addCustomMessageHandler('sideview_suggested_mappings', function (data) {
+    self.onMessage('sideview_suggested_mappings', function (data) {
       if (data) {
         self.renderSuggestedSplines(data);
       }
     });
 
     // Column profile computed in R on the full data (reply to column_profile_request)
-    global.Shiny.addCustomMessageHandler('sideview_column_profile', function (data) {
+    self.onMessage('sideview_column_profile', function (data) {
       self.onColumnProfile(data);
     });
 
     // Workspace written by R (reply to state_save)
-    global.Shiny.addCustomMessageHandler('sideview_state_saved', function (data) {
+    self.onMessage('sideview_state_saved', function (data) {
       if (!data || data.cancelled) return;
       if (data.error) self.showToast('Workspace not saved: ' + data.error, 'danger');
       else self.showToast('Workspace saved to ' + data.path, 'success');
     });
 
     // Workspace chosen in RStudio's dialog (reply to state_open_request)
-    global.Shiny.addCustomMessageHandler('sideview_state_loaded', function (data) {
+    self.onMessage('sideview_state_loaded', function (data) {
       if (!data || data.cancelled) return;
       if (data.error) { self.showToast('Workspace not opened: ' + data.error, 'danger'); return; }
       try { self.openState(JSON.parse(data.json)); } catch (err) {
@@ -5626,8 +6013,40 @@ function sendToShiny(name, value) {
       }
     });
 
+    // Cards, state and highlights driven from R (a module's sideview_proxy)
+    self.onMessage('sideview_card_add', function (data) {
+      if (!data || !data.card) return;
+      self.addCardFromR(data.card);
+    });
+    self.onMessage('sideview_card_replace', function (data) {
+      if (data && data.card) self.replaceCard(data.card);
+    });
+    self.onMessage('sideview_card_remove', function (data) {
+      if (data) self.removeCard(data.name);
+    });
+    self.onMessage('sideview_state_set', function (data) {
+      if (!data || data.state === undefined || data.state === null) return;
+      var state;
+      try { state = typeof data.state === 'string' ? JSON.parse(data.state) : data.state; } catch (err) {
+        self.showToast('State not applied: ' + err.message, 'danger');
+        return;
+      }
+      self.clearOperations(true);
+      var out = self.applyState(state);
+      self.pipeline.undoStack = [];
+      self.pipeline.redoStack = [];
+      if (out.missing.length) self.showToast(stateSummary(out), 'warning');
+    });
+    // A module started without llm_fn: hide the AI bar and the Copilot tab.
+    self.onMessage('sideview_llm', function (data) {
+      self.container.classList.toggle('sv-no-llm', !!data && data.enabled === false);
+    });
+    self.onMessage('sideview_highlight', function (data) {
+      if (data) self.highlightColumns(data.name, data.cols);
+    });
+
     // A short notice from R (the preview fallback, codebook progress). showToast uses textContent.
-    global.Shiny.addCustomMessageHandler('sideview_toast', function (data) {
+    self.onMessage('sideview_toast', function (data) {
       if (!data || !data.text) return;
       self.showToast(String(data.text), data.type || 'info', data.id);
       // The notice is about a card whose link was lost: it answers from its preview from now on.
@@ -5635,19 +6054,30 @@ function sendToShiny(name, value) {
     });
 
     // Codebook written by R (reply to codebook_export)
-    global.Shiny.addCustomMessageHandler('sideview_codebook_saved', function (data) {
+    self.onMessage('sideview_codebook_saved', function (data) {
       if (!data || data.cancelled) return;
-      if (data.error) self.showToast('Codebook not saved: ' + data.error, 'danger');
-      else self.showToast('Codebook saved to ' + data.path, 'success');
+      if (data.error) { self.showToast('Codebook not saved: ' + data.error, 'danger'); return; }
+      if (typeof data.csv === 'string') {
+        // a module: R sends the text, the browser saves it
+        self.lastCodebookCsv = data.csv;
+        try {
+          downloadText(data.csv, String(data.filename || 'codebook.csv'), 'text/csv');
+          self.showToast('Codebook downloaded.', 'success');
+        } catch (err) {
+          self.showToast('Download blocked: ' + err.message, 'danger');
+        }
+        return;
+      }
+      self.showToast('Codebook saved to ' + data.path, 'success');
     });
 
     // Join diagnostics computed in R on the full data (reply to join_diagnostics_request)
-    global.Shiny.addCustomMessageHandler('sideview_join_diagnostics', function (data) {
+    self.onMessage('sideview_join_diagnostics', function (data) {
       self.onJoinDiagnostics(data);
     });
 
     // Discrepancy report update
-    global.Shiny.addCustomMessageHandler('sideview_discrepancies', function (data) {
+    self.onMessage('sideview_discrepancies', function (data) {
       if (!data) return;
       // Shiny serialises data frames column-wise and length-1 vectors as scalars.
       data.fuzzy_matches = rowsFromColumns(data.fuzzy_matches);

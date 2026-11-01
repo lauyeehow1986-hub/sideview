@@ -197,7 +197,7 @@ if (want("search")) {
 if (want("copilot")) {
   reset()
   run("openDrawer(); tab('chat'); await sleep(200);
-       const inp = q('#sideview-chat-input'); setVal(inp, 'Mean systolic BP by site for patients over 50');
+       const inp = q('.sideview-chat-input'); setVal(inp, 'Mean systolic BP by site for patients over 50');
        q('.sideview-chat-send').click();
        await until(() => document.querySelectorAll('.sideview-chat-assistant').length > 1, 8000);
        await sleep(400); toasts(); return 1;")

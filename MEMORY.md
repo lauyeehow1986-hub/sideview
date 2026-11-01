@@ -109,8 +109,10 @@ Each sub-project gets its own spec, plan and build, in this order:
    codebook on the whole table; generated code stays lazy and uses `collect()`.
 2. **Join rules**: `relationship` / `unmatched` arguments from the join check; date-window and
    nearest-match joins (`join_by()` with `between()` / `closest()`), with R and JS join-check twins.
-3. **`sideviewProxy()`**: update a `sideviewOutput()` canvas from server code in the user's own Shiny app
-   (add/remove/replace cards, set state, read the pipeline). Wanted by the user.
+3. **Shiny module + proxy** (done 2026-10-31): `sideviewUI()` / `sideviewServer()` put an R-backed canvas into the user's own
+   Shiny app; `sideviewProxy()` and `sv_add_card()` / `sv_replace_card()` / `sv_remove_card()` / `sv_set_state()` /
+   `sv_highlight()` drive it, `$code()` / `$pipeline()` / `$state()` / `$cards()` read it back. A proxy for the
+   `sideviewOutput()` htmlwidget is a non-goal: the widget stays browser-only (spec section 3).
 4. **Small items**: `save_sideview()` row cap and message, Positron check plus a `viewer = "dialog"`
    fallback, workspace-version warning and migration slot, r-universe.
 
@@ -125,10 +127,81 @@ Each sub-project gets its own spec, plan and build, in this order:
   (on the first probe) to collect levels; read them only when a factor column is sorted or compared, and test
   the level union across Dataset batches against `as.data.frame()`. (Final re-review, 0.4.0 part 1.)
 - Card names containing `"` or `\` are still bare R identifiers in some generated code (not `code_ref`).
+- **Module/proxy leftovers (final review 2026-11-01, deferred to sub-project 4 / UI polish):**
+  - after a join step is disabled by `disableMissing`, later left-chain steps that use the join's columns stay enabled;
+    self-join right keys are not checked;
+  - composite-key join with one key dropped: the other key's spline stays; re-enabling a step does not restore splines;
+  - `sv_lazy_place()` Arrow registrations (join checks) are not unregistered until the session ends;
+  - the mutate name scan does not strip `#` comments (can only over-disable); `warned_cards` is never cleared;
+  - about nine fixed `Sys.sleep()` waits in the module browser tests; use the polling helpers;
+  - the AI bar flashes before `sideview_llm` hides it in a module without `llm_fn` (hide is client-side only);
+  - the "Connecting ... click another column" toast lingers briefly after a drag-connect (pre-existing): dismiss it on
+    completion or show it only for click-to-connect;
+  - one non-reproducing error in "module: canvases are independent" in a combined browser run; watch it on CI.
 
 ---
 
 ## Log
+
+### 2026-11-01 - Shiny module and proxy: final review fixes (0.4.0)
+- **Reactive `cards`** (`sv_initial_cards()`): a `req()` at start means no cards yet, any other start error is a warning naming
+  the module id; the observer fills the store when the reactive is valid. A reactive refresh whose element no longer
+  normalises keeps the old card and warns once per card name (`sv_normalize_cards(on_drop =)`, `sv_sync_cards(keep =)`).
+- **Remote lazy cards** (`cardData.remote`): `rowsBasis` is `full` and the badge shows the true size; the widget's lazy card
+  (no `remote`) is unchanged ("First 50 of ..."), and the lost-link toast with `card` still downgrades a module card.
+- **Replace keeps the view:** `cardViewOf(el)` is shared by `getState()` and `replaceCard()`; the sort / filter is re-applied with
+  `applyCardView()` where the column still exists and its step was not disabled by this refresh.
+- **Arrow cleanup:** `sv_lazy_tbl()` records the views it registered (`sv_arrow_views` attribute); `forget()` unregisters them via
+  `sv_lazy_release()` (never fails). A user's duckdb tbl is untouched. Registrations made by `sv_lazy_place()` for joins are not
+  tracked (not per card; left as is).
+- **Mutate disable:** `disableMissing(table, columns, oldColumns)` scans a mutate `expr` (`exprNames()`: outside string literals,
+  backticked names too, not `f(`, `x$a`, `pkg::a`, `f(a = )`) for names that were columns and are gone. Without `oldColumns` mutate
+  is not checked.
+- **Minors:** `height` through `validateCssUnit()`; module codebook csv read with `readChar()` (byte-equal to `write.csv()`);
+  engine registered at the end of the constructor; `card_store$replace()` rename branch deleted (nothing used it); README / example
+  / roxygen use plain calls, not `|>` (no `Depends: R (>= 4.1)`); more `disableMissing` cases (rule, recode, reshape, no `condCols`).
+- **Verified:** gui runner (mock DOM) scenario 11 new cases, test-pipeline.R, test-module.R, real-browser test "replace keeps the header
+  sort" in test-layout-browser.R (fails with the re-apply call removed). Not re-checked in RStudio.
+- **Full suite after the fixes (f73bdfe, `NOT_CRAN=true devtools::test()`):** 24 files, 431 tests, 22,324 expectations, 0 failed,
+  0 errors, 0 skipped (lazy and real-browser files included). Scoped re-review: all findings addressed. Site rebuilt and scrubbed.
+
+### 2026-11-01 - Shiny module and proxy: RStudio check (0.4.0, task 7)
+- **Viewer pane, `runApp("inst/examples/proxy")`:** both canvases start with their cards; a real drag joins `visits.id` to
+  `labs.id` and `$code()` shows `visits %>% dplyr::left_join(labs, by = "id")`; canvas B has no connector and no step
+  badge. Refresh with same columns, drop `lab_date` and no rows: card position kept, spline re-anchored to the `labs.id`
+  port, the zero-row card is empty (`0 x 4`) with the key-check toast. Add card, Remove added card, Highlight labs
+  columns, and Save / restore workspace (toast, then restore) all work. The page scrolls past the canvases.
+- **Gadget, `sideview(v, l)` in the default dialog:** connect, Done returned `v %>% dplyr::left_join(l, by = "id")`, which
+  parses.
+- **Not checked:** the external browser for the example app; the disabled-step toast (needs a step on the dropped
+  column; the real-browser test covers it).
+- **Environment note:** after an interrupted gadget the console hung and the dialog sat behind a maximised RStudio. A
+  restart fixed it; not a package bug. Keep RStudio un-maximised for dialog checks.
+
+### 2026-10-31 - Shiny module and proxy: example app, real-browser tests, docs (0.4.0, task 6)
+- **Example:** `inst/examples/proxy/app.R`: two canvases (`a`, `b`) on a `bslib::page_fillable(fillable = FALSE)` (plain
+  `fluidPage` without bslib), synthetic `visits` / `labs`, buttons `add`, `replace`, `remove`, `state`, `highlight` on
+  canvas `a` through `sideviewProxy("a")`, a radio (`same` / `drop lab_date` / `no rows`) for what the refresh sends, and
+  `verbatimTextOutput("code")` for `px$code()`. `sv_start_app(app_file =)` runs it in the browser tests.
+- **Real browser (chromote, `NOT_CRAN=true`), 8 new tests in `test-layout-browser.R`, real mouse input for ports, buttons and
+  radios:** both canvases start with their cards, no JS errors, no run-code buttons, no AI bar or Copilot tab; replace keeps
+  the card's rectangle (within 1 px) and every spline end within 2 px of its port; a replace that drops `lab_date` shows
+  `labs refreshed: 1 step disabled (lab_date not found)` and disables the arrange step; connecting in A leaves B with no
+  connector and F with focus in A moves only A's view; the page scrolls on a wheel turn outside the canvases; `#code` text
+  `parse()`s; a zero-row replace shows a `0 x n` card without errors and refills after. Found on the way: `scrollIntoView`
+  must be `behavior: 'instant'` in tests (the bslib page scrolls smoothly, so ports were measured before the scroll ended).
+- **Small fixes folded in:** `sideviewServer()` without `llm_fn` sends `sideview_llm {enabled: false}` and the canvas hides the
+  AI bar and Copilot tab (`sv-no-llm`); a join-check reply with no pending request is dropped (stale after a replace);
+  `_destroyed` guards `sendReady` retries and `scheduleSnapshot`; `tools/tour-screenshots.R` uses `.sideview-chat-input`.
+  Known gap: a stale reply that arrives after a new request for the same join signature is still accepted (no epoch counter).
+- **Docs:** README "In your own Shiny app", NEWS 0.4.0 "Shiny module and proxy", roxygen notes (`state` text, `llm_fn`, one
+  server per id), `_pkgdown.yml` group already listed, CLAUDE.md (module/card-store lines, new inputs and messages, `ns`
+  routing, untrusted-client rule, codebook `csv`), roadmap line 3 above replaced per spec section 3.
+- **Verified:** `devtools::test(filter = 'layout-browser|pipeline|card-store|computer-use|widget|e2e|features|assets|theme|state')`
+  1642 pass, 0 fail (`NOT_CRAN=true`, mock GUI runner included; `s9_show` now marks the join check pending first); `module` filter
+  100 pass; `pkgdown::check_pkgdown()` clean; `devtools::check(args = '--no-manual')`: 0 errors, 0 warnings, 1 NOTE (the Windows
+  `''NULL''` check-directory note); site rebuilt, `docs/CLAUDE.*` / `docs/MEMORY.*` and their sitemap / search entries removed.
+  Not done here: the RStudio Viewer / dialog pass of the example app and the gadget regression pass (needs RStudio).
 
 ### 2026-10-26 - CI fix: Arrow time-zone filters under duckdb 2.0
 - **Bug:** R-CMD-check on 27290e9 (run 40244887020) failed on windows-latest and ubuntu release/oldrel-1/devel (macOS passed): 12 failures at test-lazy.R:1101, gt/gte filters on an Arrow POSIXct column with a time zone gave 0 rows. CI had arrow 26.0.0, duckdb 2.0.0, dbplyr 2.6.0; locally arrow 23 / duckdb 1.4.3 / dbplyr 2.5.1 passed.

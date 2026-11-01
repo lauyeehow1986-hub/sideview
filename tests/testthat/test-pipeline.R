@@ -663,3 +663,193 @@ test_that("a three-way chain across duckdb, a data frame and arrow equals the da
     if (!is.null(got)) expect_same_rows(got, want, info = label)
   }
 })
+
+test_that("disableMissing keeps steps whose columns exist", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.add({kind:'arrange', key:'a', table:'labs', cols:[{col:'id'}]});
+    p.add({kind:'filter', table:'labs', conds:[P.condition('val', 'gt', '1', true)], condCols:['val'], combine:'and'});
+    const n = p.undoStack.length;
+    const r = p.disableMissing('labs', ['id', 'val']);
+    out = { r: r, en: p.steps.map(s => s.enabled), same: p.undoStack.length === n };
+  ")
+  expect_length(out$r$disabled, 0)
+  expect_length(out$r$missing, 0)
+  expect_equal(unlist(out$en), c(TRUE, TRUE))
+  expect_true(out$same)
+})
+
+test_that("disableMissing disables a filter on a dropped column", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.add({kind:'arrange', key:'a', table:'labs', cols:[{col:'id'}]});
+    const f = p.add({kind:'filter', table:'labs', conds:[P.condition('lab_dt', 'is_na', '', true)], condCols:['lab_dt'], combine:'and'});
+    const r = p.disableMissing('labs', ['id', 'val']);
+    out = { r: r, fid: f.id, en: p.steps.map(s => s.enabled), u: p.undoStack.length, d: p.redoStack.length };
+  ")
+  expect_equal(out$r$disabled[[1]]$id, out$fid)
+  expect_equal(out$r$disabled[[1]]$kind, "filter")
+  expect_equal(unlist(out$r$disabled[[1]]$missing), "lab_dt")
+  expect_equal(unlist(out$r$missing), "lab_dt")
+  expect_equal(unlist(out$en), c(TRUE, FALSE))
+  expect_equal(c(out$u, out$d), c(0, 0))
+})
+
+test_that("disableMissing follows renames and mutates", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.add({kind:'rename', table:'labs', from:'lab_dt', to:'d'});
+    p.add({kind:'arrange', key:'a', table:'labs', cols:[{col:'d'}]});
+    p.add({kind:'mutate', table:'labs', name:'z', expr:'1'});
+    p.add({kind:'filter', table:'labs', conds:[P.condition('z', 'gt', '0', true)], condCols:['z'], combine:'and'});
+    const r = p.disableMissing('labs', ['lab_dt', 'val']);
+    out = { r: r, en: p.steps.map(s => s.enabled) };
+  ")
+  expect_length(out$r$disabled, 0)
+  expect_equal(unlist(out$en), rep(TRUE, 4))
+})
+
+test_that("disableMissing stops checking after a summarise", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.add({kind:'summarise', table:'labs', groups:['id'], aggs:[{fn:'n'}]});
+    p.add({kind:'filter', table:'labs', conds:[P.condition('nope', 'gt', '0', true)], condCols:['nope'], combine:'and'});
+    const r = p.disableMissing('labs', ['id']);
+    out = { r: r, en: p.steps.map(s => s.enabled) };
+  ")
+  expect_length(out$r$disabled, 0)
+  expect_equal(unlist(out$en), c(TRUE, TRUE))
+})
+
+test_that("disableMissing checks both sides of a join", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.addJoinKey('visits', 'labs', 'id', 'pid');
+    const left = p.disableMissing('visits', ['id']);
+    const right = p.disableMissing('labs', ['id', 'val']);
+    out = { left: left, right: right, en: p.steps.map(s => s.enabled) };
+  ")
+  expect_length(out$left$disabled, 0)
+  expect_equal(unlist(out$right$disabled[[1]]$missing), "pid")
+  expect_equal(unlist(out$right$missing), "pid")
+  expect_equal(unlist(out$en), FALSE)
+})
+
+test_that("disableMissing with null disables everything on the table", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.add({kind:'arrange', key:'a', table:'labs', cols:[{col:'id'}]});
+    p.add({kind:'arrange', key:'b', table:'visits', cols:[{col:'id'}]});
+    p.addJoinKey('visits', 'labs', 'id', 'pid');
+    const r = p.disableMissing('labs', null);
+    out = { r: r, en: p.steps.map(s => s.enabled), u: p.undoStack.length };
+  ")
+  expect_length(out$r$disabled, 2)
+  expect_length(out$r$missing, 0)
+  expect_equal(unlist(out$en), c(FALSE, TRUE, FALSE))
+  expect_equal(out$u, 0)
+})
+
+test_that("disableMissing checks mutate expressions against the dropped columns", {
+  out <- run_pipeline_js("
+    const old = ['id', 'weight', 'height', 'lab value'];
+    const t = (expr, now, name) => {
+      const p = new P.Pipeline();
+      const s = p.add({kind:'mutate', table:'t', name: name || 'z', expr: expr});
+      const r = p.disableMissing('t', now, old);
+      return { en: p.steps[0].enabled, miss: r.missing, off: r.disabled.length };
+    };
+    out = {
+      dropped: t('weight / height^2', ['id', 'weight', 'lab value'], 'bmi'),
+      other_dropped: t('weight / height^2', ['id', 'weight', 'height'], 'bmi'),
+      backtick: t('`lab value` * 2', ['id', 'weight', 'height']),
+      in_string: t('paste0(\"height\", id)', ['id', 'weight', 'lab value']),
+      in_string_single: t(\"paste('height', id)\", ['id', 'weight', 'lab value']),
+      function_name: t('round(weight, 1)', ['id', 'weight', 'height', 'lab value']),
+      fn_named_like_col: t('height(weight)', ['id', 'weight', 'lab value']),
+      new_variable: t('bmi_old * 2', ['id', 'weight', 'height']),
+      list_member: t('x$height + weight', ['id', 'weight', 'lab value']),
+      arg_name: t('round(weight, digits = 1)', ['id', 'weight', 'lab value']),
+      no_old: (() => { const p = new P.Pipeline();
+        p.add({kind:'mutate', table:'t', name:'z', expr:'height * 2'});
+        const r = p.disableMissing('t', ['id']); return { en: p.steps[0].enabled, off: r.disabled.length }; })()
+    };
+  ")
+  expect_false(out$dropped$en)
+  expect_equal(unlist(out$dropped$miss), "height")
+  expect_true(out$other_dropped$en)
+  expect_false(out$backtick$en)
+  expect_equal(unlist(out$backtick$miss), "lab value")
+  expect_true(out$in_string$en)
+  expect_true(out$in_string_single$en)
+  expect_true(out$function_name$en)
+  expect_true(out$fn_named_like_col$en)
+  expect_true(out$new_variable$en)
+  expect_true(out$list_member$en)
+  expect_true(out$arg_name$en)
+  # without the old columns the check cannot tell a function from a column: the step is kept
+  expect_true(out$no_old$en)
+})
+
+test_that("disableMissing: a column made by an earlier step is not a dropped column", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.add({kind:'mutate', table:'t', name:'height', expr:'1'});
+    p.add({kind:'mutate', table:'t', name:'z', expr:'height * 2'});
+    const r = p.disableMissing('t', ['id'], ['id', 'height']);
+    out = { en: p.steps.map(s => s.enabled), off: r.disabled.length };
+  ")
+  expect_equal(unlist(out$en), c(TRUE, TRUE))
+})
+
+test_that("disableMissing covers join rule, recode, reshape and filters without condCols", {
+  out <- run_pipeline_js("
+    const rule = new P.Pipeline();
+    rule.addJoinKey('visits', 'labs', 'id', 'id');
+    rule.setTables({visits: {kinds: {visit_date: 'Date'}}, labs: {kinds: {lab_date: 'Date'}}});
+    rule.setJoinRule(rule.steps[0].id, {shape: 'window', xCol: 'visit_date', yCol: 'lab_date', from: -7, to: 7});
+    const rl = rule.disableMissing('visits', ['id']);
+    const rr = new P.Pipeline();
+    rr.addJoinKey('visits', 'labs', 'id', 'id');
+    rr.setTables({visits: {kinds: {visit_date: 'Date'}}, labs: {kinds: {lab_date: 'Date'}}});
+    rr.setJoinRule(rr.steps[0].id, {shape: 'window', xCol: 'visit_date', yCol: 'lab_date', from: -7, to: 7});
+    const rrr = rr.disableMissing('labs', ['id']);
+
+    const rec = new P.Pipeline();
+    rec.add({kind:'recode', table:'t', col:'sex', map:[{from:'f', to:'F'}]});
+    const rc = rec.disableMissing('t', ['id']);
+
+    const lng = new P.Pipeline();
+    lng.add({kind:'reshape', type:'pivot_longer', table:'t', cols:['sbp','dbp'], namesTo:'m', valuesTo:'v'});
+    const rs = lng.disableMissing('t', ['id', 'sbp']);
+    const wid = new P.Pipeline();
+    wid.add({kind:'reshape', type:'pivot_wider', table:'t', namesFrom:'visit', valuesFrom:'sbp'});
+    const rw = wid.disableMissing('t', ['id', 'visit']);
+
+    const nocols = new P.Pipeline();
+    nocols.add({kind:'filter', table:'t', conds:['gone > 1'], combine:'and'});
+    const rn = nocols.disableMissing('t', ['id']);
+    out = { rl: rl, rrr: rrr, rc: rc, rs: rs, rw: rw, rn: rn, nocols: nocols.steps[0].enabled };
+  ")
+  expect_equal(unlist(out$rl$missing), "visit_date")
+  expect_equal(unlist(out$rrr$missing), "lab_date")
+  expect_equal(unlist(out$rc$missing), "sex")
+  expect_equal(unlist(out$rs$missing), "dbp")
+  expect_equal(unlist(out$rw$missing), "sbp")
+  expect_length(out$rn$disabled, 0)
+  expect_true(out$nocols)
+})
+
+test_that("compose skips disabled steps and still parses", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.add({kind:'arrange', key:'a', table:'labs', cols:[{col:'id'}]});
+    p.add({kind:'filter', table:'labs', conds:[P.condition('lab_dt', 'is_na', '', true)], condCols:['lab_dt'], combine:'and'});
+    p.addJoinKey('visits', 'labs', 'id', 'pid');
+    p.disableMissing('labs', ['id', 'val']);
+    out = p.compose();
+  ")
+  expect_parses(out)
+  expect_false(grepl("lab_dt", out, fixed = TRUE))
+  expect_false(grepl("pid", out, fixed = TRUE))
+})

@@ -2785,3 +2785,9 @@ html.sv-standalone body {
 .sideview-container.sv-embedded .sideview-drawer-actions [data-r-only] {
   display: none;
 }
+
+/* A module canvas started without llm_fn has no AI bar and no Copilot tab */
+.sideview-container.sv-no-llm .sideview-ai-bar,
+.sideview-container.sv-no-llm .sideview-drawer-tab[data-tab="chat"] {
+  display: none;
+}

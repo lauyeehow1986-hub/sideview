@@ -1,5 +1,26 @@
 # sideview 0.4.0 (development)
 
+## Shiny module and proxy
+
+* **`sideviewUI()` / `sideviewServer()`** put an R-backed canvas into your own Shiny
+  app, several per page. The server returns a proxy with the reactives `code()`,
+  `pipeline()`, `state()` and `cards()`, and `sideviewProxy(id)` reaches the same
+  canvas from elsewhere in the session. `cards =` can be a reactive; `req()` in it
+  means "no cards yet". Lazy (arrow / duckdb) cards in a module show their true
+  size, not "First 500 of ...", because R serves the whole table.
+* **Verbs:** `sv_add_card()`, `sv_replace_card()`, `sv_remove_card()`,
+  `sv_set_state()` and `sv_highlight()`, which pipe. A replace keeps the card's
+  place and size, re-checks the join keys, and **disables, not deletes**, any
+  pipeline step that names a column the new table lacks (a `mutate` expression
+  that uses it included), with one toast. A replace also keeps the card's header
+  sort and filter, so the canvas still agrees with the code.
+* **Code execution is off in a module** (Insert Script, Run & Exit, Run in R, Run
+  Console). `$code()` is composed in the browser: treat it as untrusted text.
+* A module takes no AI settings from the browser, and shows the AI bar and the
+  Copilot tab only when `llm_fn` is given.
+* The example app `inst/examples/proxy/app.R` has two canvases and a button for
+  each verb. The gadget and the widget are unchanged.
+
 ## Date-window joins
 
 A join step can carry a **date rule**, so "labs within 7 days of the visit" is a

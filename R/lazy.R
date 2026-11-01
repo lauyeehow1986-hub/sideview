@@ -139,6 +139,26 @@ sv_lazy_decode_dictionaries <- function(source) {
   )
 }
 
+#' The Arrow tables registered on a duckdb connection (names; empty when unknown)
+#' @noRd
+sv_lazy_arrow_views <- function(con) {
+  tryCatch(as.character(duckdb::duckdb_list_arrow(con)), error = function(e) character())
+}
+
+#' Let go of the Arrow tables a cached lazy table registered on the session connection
+#'
+#' A user's own duckdb table carries no such names and is left alone. Never fails.
+#' @noRd
+sv_lazy_release <- function(tbl, con_env) {
+  views <- attr(tbl, "sv_arrow_views", exact = TRUE)
+  if (length(views) && !is.null(con_env$con)) {
+    for (nm in views) {
+      tryCatch(duckdb::duckdb_unregister_arrow(con_env$con, nm), error = function(e) NULL)
+    }
+  }
+  invisible(NULL)
+}
+
 #' A duckdb tbl for a lazy source
 #'
 #' A duckdb tbl is returned as is. An arrow object is handed to duckdb on the
@@ -156,11 +176,14 @@ sv_lazy_decode_dictionaries <- function(source) {
 sv_lazy_tbl <- function(source, con_env, key = NULL, levels = TRUE) {
   if (inherits(source, "tbl_duckdb_connection")) return(source)
   if (!is.null(key) && !is.null(con_env$tbls[[key]])) return(con_env$tbls[[key]])
-  tbl <- arrow::to_duckdb(sv_lazy_decode_dictionaries(source),
-                          con = sv_lazy_con(con_env), auto_disconnect = FALSE)
+  con <- sv_lazy_con(con_env)
+  was <- sv_lazy_arrow_views(con)
+  tbl <- arrow::to_duckdb(sv_lazy_decode_dictionaries(source), con = con, auto_disconnect = FALSE)
   tbl <- sv_lazy_with_zones(tbl, sv_lazy_zones(source))
   factors <- sv_lazy_factors(source, levels = levels)
   if (length(factors)) attr(tbl, "sv_factors") <- factors
+  # what this conversion registered on the connection, so a cached table can let it go
+  attr(tbl, "sv_arrow_views") <- setdiff(sv_lazy_arrow_views(con), was)
   if (!is.null(key)) con_env$tbls[[key]] <- tbl
   tbl
 }

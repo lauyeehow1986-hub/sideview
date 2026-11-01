@@ -18,6 +18,24 @@ standalone.
 - [`sv_theme()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_theme.md)
   : Canvas Theme
 
+## Shiny module
+
+Put an R-backed canvas into your own Shiny app and drive it from the
+server.
+
+- [`sideviewUI()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewUI.md)
+  [`sideviewServer()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewUI.md)
+  : Sideview canvas as a Shiny module
+- [`sideviewProxy()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewProxy.md)
+  : Reach the proxy of a canvas from elsewhere in the session
+- [`sv_add_card()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md)
+  [`sv_replace_card()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md)
+  [`sv_remove_card()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md)
+  [`sv_set_state()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md)
+  [`sv_highlight()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_add_card.md)
+  : Add, replace or remove a card, set the workspace or highlight
+  columns
+
 ## Standalone HTMLWidget & Export
 
 Export interactive canvases to self-contained, portable HTML reports or
