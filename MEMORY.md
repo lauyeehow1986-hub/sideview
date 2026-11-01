@@ -5,7 +5,7 @@ Each entry: **date — change — why — verification**. Keep the "Open issues"
 
 ---
 
-### 2026-11-01 - CDISC task 7: domain badge, label titles, inspector line, search (0.5.0)
+### 2026-11-01 - CDISC task 7: domain badge, label titles, inspector line, search
 - **Change:** `renderCdiscBadge(cardMeta)` puts `span.sideview-badge-cdisc.sv-cdisc-<std>` after the card name (text = domain, title = `<label> · <standard> <class>` + evidence + `supplements <parent>`, all set as text) and keeps `el.dataset.cdiscDomain` real (deleted when the tag is null), so `cardDomain()` feeds the widget/module codebook. `setCdiscTags()` + `onMessage('sideview_cdisc_update')` apply module updates (null clears; an unknown id is ignored quietly). `th` titles use the variable label; `searchCards()` matches domain and dataset label (rank 1); the inspector shows `<domain> · <dataset label>`. Gadget cards carry `data-cdisc` / `data-col-labels` (JSON) from `render_card_tag()`, read in `initExistingCards()`. Tokens `--sv-cdisc-{sdtm,send,adam}[-text]` in the base, dark and auto-dark blocks.
 - **Verified:** mock-DOM scenario 12, test-theme contrast pairs, `render_card_tag` test. Real browser / RStudio: pending Task 11.
 

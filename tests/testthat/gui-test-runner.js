@@ -1352,7 +1352,7 @@ function runAllScenarios() {
   const s12_aeCard = {
     id: 'card_ae', name: 'ae', type: 'grid', x: 10, y: 10, dims: [2, 2],
     data: { USUBJID: ['a', 'b'], AETERM: ['x', 'y'] }, col_types: { USUBJID: 'character', AETERM: 'character' },
-    col_labels: { USUBJID: 'Unique Subject Identifier' }, cdisc: s12_tag
+    col_labels: { USUBJID: 'Unique Subject Identifier', AETERM: '<img src=x onerror=alert(2)>' }, cdisc: s12_tag
   };
   const s12_hostileTag = Object.assign({}, s12_tag, { domain: 'ZZ', label: '<img src=x onerror=alert(1)>', standard: 'ADaM' });
   const s12_plain = { id: 'card_pl', name: 'plain', type: 'grid', x: 400, y: 10, dims: [2, 1],
@@ -1375,10 +1375,12 @@ function runAllScenarios() {
     s12_hb.title.indexOf('<img src=x onerror=alert(1)> · ADaM Events') === 0 &&
     !s11_byName(s12, 'hz').element.querySelector('img');
   s12_r.header_label_title = s12_ae.querySelector('th[data-col-name="USUBJID"]').title === 'Unique Subject Identifier' &&
-    s12_ae.querySelector('th[data-col-name="AETERM"]').title === 'AETERM (character)';
+    s12_ae.querySelector('th[data-col-name="AETERM"]').title === '<img src=x onerror=alert(2)>' &&
+    !s12_ae.querySelector('img');
   // search: domain and dataset label, and a hit on the card (not a column)
   const s12_hit = s12e.searchCards('adverse').filter(function (h) { return h.name === 'ae' && h.col === null; })[0];
   s12_r.search_label = !!s12_hit && s12_hit.rank === 1;
+  s12_r.search_dims_not_domain = !!s12_hit && s12_hit.dims === '2 × 2';
   s12_r.search_domain = s12e.searchCards('zz').some(function (h) { return h.name === 'hz' && h.col === null; });
   s12_r.search_name_prefix_first = s12e.searchCards('ae')[0].name === 'ae' && s12e.searchCards('ae')[0].rank === 0;
   // tag update: a new tag, then a user-cleared one
@@ -1404,6 +1406,21 @@ function runAllScenarios() {
     s12e.inspectorDatasetHtml('hz').indexOf('&lt;img') > 0 && s12e.inspectorDatasetHtml('hz').indexOf('<img') < 0;
   // the codebook export reads the domain through cardDomain()
   s12_r.codebook_domain_source = s12e.cardDomain('plain') === 'LB';
+  const s12_gad = new MockElement('DIV');
+  s12_gad.className = 'sideview-container';
+  const s12_gc = new MockElement('DIV');
+  s12_gc.className = 'sideview-card';
+  s12_gc.dataset.cardId = 'card_g'; s12_gc.dataset.cardName = 'g';
+  s12_gc.setAttribute('data-cdisc', JSON.stringify(s12_hostileTag));
+  s12_gc.setAttribute('data-col-labels', JSON.stringify({ id: '<img src=x onerror=alert(3)>' }));
+  const s12_gh = new MockElement('DIV'); s12_gh.className = 'sideview-card-header';
+  const s12_gg = new MockElement('DIV'); s12_gg.className = 'sideview-card-title-group';
+  const s12_gt = new MockElement('SPAN'); s12_gt.className = 'sideview-card-title'; s12_gt.textContent = 'g';
+  s12_gg.appendChild(s12_gt); s12_gh.appendChild(s12_gg); s12_gc.appendChild(s12_gh);
+  s12e.renderCdiscBadge({ element: s12_gc, cdisc: parseGad(s12_gc) });
+  function parseGad(el) { return JSON.parse(el.getAttribute('data-cdisc')); }
+  const s12_gb = s12_gc.querySelector('.sideview-badge-cdisc');
+  s12_r.gadget_attr_hostile_is_text = !!s12_gb && s12_gb.title.indexOf('<img') === 0 && !s12_gc.querySelector('img');
   s12e.destroy();
   console.warn = s11_origWarn;
   results.scenario12 = s12_r;

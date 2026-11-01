@@ -227,6 +227,12 @@ render_card_tag <- function(card, index = 1L) {
     if (!sv_has_duckdb()) badge_title <- "Install duckdb to check the whole table"
   }
   
+  # variable labels (a "label" attribute), once: header titles and the engine's data-col-labels
+  col_labels <- if (is.data.frame(card$data)) {
+    Filter(function(l) is.character(l) && length(l) == 1L && !is.na(l),
+           lapply(card$data, function(x) attr(x, "label", exact = TRUE)))
+  } else list()
+
   # Header
   header_tag <- htmltools::tags$div(
     class = "sideview-card-header",
@@ -268,8 +274,6 @@ render_card_tag <- function(card, index = 1L) {
     df <- card$data
     col_names <- colnames(df)
     col_types <- card$col_types %||% character(0)
-    col_labels <- lapply(df, function(x) attr(x, "label", exact = TRUE))
-    col_labels <- Filter(function(l) is.character(l) && length(l) == 1L && !is.na(l), col_labels)
     
     # Table header
     th_tags <- lapply(col_names, function(col) {
@@ -343,10 +347,6 @@ render_card_tag <- function(card, index = 1L) {
   }
   
   body_tag <- htmltools::tags$div(class = "sideview-card-body", body_content)
-  card_labels <- if (is.data.frame(card$data)) {
-    Filter(function(l) is.character(l) && length(l) == 1L && !is.na(l),
-           lapply(card$data, function(x) attr(x, "label", exact = TRUE)))
-  } else list()
   
   htmltools::tags$div(
     class = "sideview-card panzoom-exclude",
@@ -363,8 +363,8 @@ render_card_tag <- function(card, index = 1L) {
     `data-cdisc` = if (!is.null(card$cdisc)) {
       as.character(jsonlite::toJSON(sv_cdisc_wire_tag(card$cdisc), auto_unbox = TRUE, null = "null"))
     },
-    `data-col-labels` = if (length(card_labels)) {
-      as.character(jsonlite::toJSON(card_labels, auto_unbox = TRUE))
+    `data-col-labels` = if (length(col_labels)) {
+      as.character(jsonlite::toJSON(col_labels, auto_unbox = TRUE))
     },
     `data-rows-basis` = if (!is.data.frame(card$data)) NULL else if (preview_only) "preview" else "full",
     # No saved position: the engine flows these cards into a grid on load.

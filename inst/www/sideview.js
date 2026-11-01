@@ -1414,7 +1414,7 @@ function sendToShiny(name, value) {
       var el = card.element;
       if (!el) return;
       var name = el.dataset.cardName || card.name || String(id);
-      var dimsEl = el.querySelector('.sideview-card-header .sideview-badge:not(.sideview-badge-type)');
+      var dimsEl = el.querySelector('.sideview-card-header .sideview-badge-dims');
       var dims = dimsEl ? dimsEl.textContent.trim() : '';
       var lname = name.toLowerCase();
       var at = q ? lname.indexOf(q) : 0;
