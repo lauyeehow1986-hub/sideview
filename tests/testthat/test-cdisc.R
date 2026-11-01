@@ -35,3 +35,113 @@ test_that("ADaM rows have empty keys and class equal to name", {
   expect_true(all(adam$keys == ""))
   expect_identical(adam$class, adam$name)
 })
+
+test_that("each fixture gets its domain", {
+  f <- sv_cdisc_fixtures()
+  want <- list(
+    list("dm", "dm", "DM", "Special-Purpose", "SDTM"),
+    list("ae", "ae", "AE", "Events", "SDTM"),
+    list("suppae", "suppae", "SUPPAE", "Relationship", "SDTM"),
+    list("labs", "labs", "LB", "Findings", "SDTM"),
+    list("ts", "ts", "TS", "Trial Design", "SDTM"),
+    list("xy", "xy", "XY", "Custom", "SDTM"),
+    list("adsl", "adsl", "ADSL", "ADSL", "ADaM"),
+    list("adlb", "adlb", "ADLB", "BDS", "ADaM"),
+    list("adtte", "adtte", "ADTTE", "TTE", "ADaM"),
+    list("adae", "adae", "ADAE", "OCCDS", "ADaM"),
+    list("bw", "bw", "BW", "Findings", "SEND"))
+  for (w in want) {
+    tag <- sv_cdisc_detect(f[[w[[1]]]], w[[2]])
+    info <- paste("fixture", w[[1]])
+    expect_false(is.null(tag), info = info)
+    expect_identical(tag$domain, w[[3]], info = info)
+    expect_identical(tag$class, w[[4]], info = info)
+    expect_identical(tag$standard, w[[5]], info = info)
+    expect_identical(tag$source, "auto", info = info)
+    expect_null(tag$parent_card, info = info)
+  }
+  expect_identical(sv_cdisc_detect(f$suppae, "suppae")$parent, "AE")
+  expect_null(sv_cdisc_detect(f$ae, "ae")$parent)
+  expect_true("STUDYID + trial-design DOMAIN TS" %in% sv_cdisc_detect(f$ts, "ts")$evidence)
+  expect_true("variable prefix LB (6 columns)" %in% sv_cdisc_detect(f$labs, "labs")$evidence)
+  expect_true("ADaM structure BDS" %in% sv_cdisc_detect(f$adlb, "adlb")$evidence)
+  expect_true("custom domain XY" %in% sv_cdisc_detect(f$xy, "xy")$evidence)
+  expect_true("SUPP name suppae" %in% sv_cdisc_detect(f$suppae, "suppae")$evidence)
+  ev <- sv_cdisc_detect(f$ae, "ae")$evidence
+  expect_true(all(c("DOMAIN column = AE", "STUDYID + USUBJID") %in% ev))
+})
+
+test_that("negatives get no tag", {
+  f <- sv_cdisc_fixtures()
+  expect_null(sv_cdisc_detect(f$mtcars, "mtcars"))
+  expect_null(sv_cdisc_detect(f$iris, "iris"))
+  expect_null(sv_cdisc_detect(f$ae_nostudy, "ae"))
+  expect_null(sv_cdisc_detect(f$studyid_only, "studyid_only"))
+  expect_null(sv_cdisc_detect(f$keys_only, "keys_only"))
+})
+
+test_that("DOMAIN beats the name and records the conflict", {
+  f <- sv_cdisc_fixtures()
+  tag <- sv_cdisc_detect(f$ae, "cm")
+  expect_identical(tag$domain, "AE")
+  expect_true("name cm disagrees with DOMAIN AE" %in% tag$evidence)
+  f$ae$DOMAIN <- NULL
+  tag <- sv_cdisc_detect(f$ae, "cm")
+  expect_identical(tag$domain, "CM")
+  expect_true("prefix AE disagrees with name CM" %in% tag$evidence)
+  tag <- sv_cdisc_detect(sv_cdisc_fixtures()$ae, "ae.xpt")
+  expect_identical(tag$domain, "AE")
+  expect_false(any(grepl("disagrees", tag$evidence)))
+})
+
+test_that("labels come from the attribute, else the catalogue", {
+  f <- sv_cdisc_fixtures()
+  expect_identical(sv_cdisc_detect(f$dm, "dm")$label, "Demographics")
+  cat <- sv_cdisc_catalogue()
+  expect_identical(sv_cdisc_detect(f$ae, "ae")$label,
+                   cat$label[cat$name == "AE" & cat$standard == "SDTM"])
+})
+
+test_that("messy DOMAIN values still match", {
+  f <- sv_cdisc_fixtures()
+  d <- f$ae[1:3, ]
+  d$DOMAIN <- factor(c(" ae", "AE", NA))
+  expect_identical(sv_cdisc_detect(d, "x")$domain, "AE")
+  l <- f$labs
+  l$DOMAIN <- NA_character_
+  expect_identical(sv_cdisc_detect(l, "x")$domain, "LB")
+})
+
+test_that("zero-row tables are tagged without error", {
+  f <- sv_cdisc_fixtures()
+  expect_identical(sv_cdisc_detect(f$ae[0, ], "ae")$domain, "AE")
+})
+
+test_that("cdisc = FALSE and a user code", {
+  f <- sv_cdisc_fixtures()
+  expect_null(sv_cdisc_detect(f$ae, "ae", cdisc = FALSE))
+  tag <- sv_cdisc_detect(f$keys_only, "keys_only", cdisc = "LB")
+  expect_identical(tag$domain, "LB")
+  expect_identical(tag$source, "user")
+  expect_identical(tag$evidence, "set by cdisc =")
+  expect_identical(sv_cdisc_detect(f$mtcars, "m", cdisc = "QQ")$class, "Custom")
+})
+
+test_that("bad cdisc values are refused", {
+  expect_error(sv_cdisc_check_arg(TRUE), "cdisc")
+  expect_error(sv_cdisc_check_arg(1), "cdisc")
+  expect_error(sv_cdisc_check_arg(c("AE", "LB")), "cdisc")
+  expect_error(sv_cdisc_check_arg(NA), "cdisc")
+  expect_identical(sv_cdisc_check_arg("auto"), "auto")
+  expect_identical(sv_cdisc_check_arg(FALSE), FALSE)
+  expect_identical(sv_cdisc_check_arg(c(a = "AE")), c(a = "AE"))
+})
+
+test_that("a failing detector is silent unless debugging", {
+  f <- sv_cdisc_fixtures()
+  testthat::local_mocked_bindings(sv_cdisc_rule_domain_col = function(...) stop("boom"))
+  expect_silent(res <- sv_cdisc_detect_safely(f$ae, "ae"))
+  expect_null(res)
+  withr::local_options(sideview.debug = TRUE)
+  expect_message(sv_cdisc_detect_safely(f$ae, "ae"), "boom")
+})
