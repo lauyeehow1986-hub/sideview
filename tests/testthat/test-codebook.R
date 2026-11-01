@@ -99,7 +99,7 @@ test_that("sv_codebook has one row per column and writes CSV", {
   visits <- data.frame(pid = c(1, 1, 2), visit = c("v1", "v2", "v1"))
   cb <- sv_codebook(patients, visits)
   expect_s3_class(cb, "data.frame")
-  expect_identical(names(cb), c("table", "column", "position", "class", "label", "n", "rows_profiled",
+  expect_identical(names(cb), c("table", "domain", "column", "position", "class", "label", "n", "rows_profiled",
                                 "n_missing", "pct_missing", "n_distinct", "unique_key", "min", "q1", "median", "q3",
                                 "max", "mean", "sd", "top_values", "issues"))
   expect_identical(cb$table, c(rep("patients", 4), rep("visits", 2)))
@@ -131,7 +131,7 @@ test_that("sv_codebook has one row per column and writes CSV", {
 test_that("codebook has rows_profiled after n", {
   df <- data.frame(a = 1:7, b = letters[1:7])
   cb <- sv_codebook(df)
-  expect_identical(names(cb)[6:7], c("n", "rows_profiled"))
+  expect_identical(names(cb)[7:8], c("n", "rows_profiled"))
   expect_identical(cb$rows_profiled, cb$n)
 })
 
@@ -140,7 +140,7 @@ test_that("preview codebook row reports table size", {
   row <- sv_codebook_row("t", "a", 1, df$a[1:50], 5, n_total = 1000)
   expect_equal(row$n, 1000)
   expect_equal(row$rows_profiled, 50)
-  expect_identical(names(row)[6:7], c("n", "rows_profiled"))
+  expect_identical(names(row)[7:8], c("n", "rows_profiled"))
   # n_missing and the rest describe the profiled rows
   expect_equal(row$n_missing, 0)
   # a preview table among the inputs: n is the true size
@@ -204,6 +204,21 @@ test_that("the JS twin profiles columns like R", {
   d <- as.Date("2024-01-01") + c(0, 10, 20, 30, NA)
   js <- run_pipeline_js(sprintf("out = P.columnProfile(%s, 'Date');", jsonlite::toJSON(d, na = "null")))
   expect_identical(js$stats, sv_column_profile(d)$stats)
+})
+
+test_that("codebook has a domain column after table", {
+  f <- sv_cdisc_fixtures()
+  cb <- sv_codebook(ae = f$ae, mtcars = mtcars)
+  expect_identical(names(cb)[1:3], c("table", "domain", "column"))
+  expect_true(all(cb$domain[cb$table == "ae"] == "AE"))
+  expect_true(all(is.na(cb$domain[cb$table == "mtcars"])))
+  ov <- sv_codebook(ae = f$ae, cdisc = c(ae = "XY"))
+  expect_true(all(ov$domain == "XY"))
+})
+
+test_that("codebook cdisc = FALSE leaves domain empty", {
+  f <- sv_cdisc_fixtures()
+  expect_true(all(is.na(sv_codebook(ae = f$ae, cdisc = FALSE)$domain)))
 })
 
 test_that("the JS codebook CSV equals write.csv of sv_codebook()", {

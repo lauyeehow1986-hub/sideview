@@ -25,7 +25,7 @@
 #' @noRd
 sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_fn, console_fn,
                                  gadget = FALSE, lifecycle = NULL, run_env = globalenv(),
-                                 module = FALSE) {
+                                 module = FALSE, cdisc = "auto") {
   # One mutable store is the single source of truth for the cards.
   card_store <- sv_card_store(sv_normalize_cards(cards))
   # The cards as they are now (a module changes them while it runs).
@@ -387,7 +387,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
             }
           })
         }
-        run <- function() sv_codebook(inputs(), progress = progress)
+        run <- function() sv_codebook(inputs(), progress = progress, cdisc = sv_cdisc_domains(tables, cdisc))
         cb <- lazy_or_preview(unname(tables), run, run)
         sv_write_codebook(cb, path)
         if (isTRUE(module)) {
@@ -823,7 +823,8 @@ sideview_server <- function(cards = list(),
                             insert_fn = sv_insert_code,
                             console_fn = sv_send_to_console,
                             gadget = FALSE,
-                            run_env = parent.frame()) {
+                            run_env = parent.frame(),
+                            cdisc = "auto") {
   force(run_env) # parent.frame() is lazy: resolve it while the caller is on the stack
   dots <- list(...)
   # If invoked directly as sideview_server(input, output, session, ...)
@@ -833,13 +834,13 @@ sideview_server <- function(cards = list(),
     session <- dots[[2]]
     extra_cards <- if (length(dots) >= 3) dots[[3]] else list()
     return(sideview_server_impl(input, output, session, extra_cards, llm_fn, insert_fn, console_fn,
-                                gadget = gadget, run_env = run_env))
+                                gadget = gadget, run_env = run_env, cdisc = cdisc))
   }
 
   lifecycle <- sv_new_lifecycle()
   function(input, output, session) {
     sideview_server_impl(input, output, session, cards, llm_fn, insert_fn, console_fn,
-                         gadget = gadget, lifecycle = lifecycle, run_env = run_env)
+                         gadget = gadget, lifecycle = lifecycle, run_env = run_env, cdisc = cdisc)
   }
 }
 
@@ -857,4 +858,16 @@ sv_is_no_code <- function(code) {
   if (!is.character(code) || length(code) != 1L || is.na(code)) return(TRUE)
   code <- trimws(code)
   !nzchar(code) || identical(code, "# Connect two columns to generate pipeline code")
+}
+
+# Domains of the tagged cards by table name for the codebook; FALSE when the canvas was
+# started with cdisc = FALSE. Untagged cards are left out (their domain is NA).
+sv_cdisc_domains <- function(cards, cdisc = "auto") {
+  if (identical(cdisc, FALSE)) return(FALSE)
+  out <- character()
+  for (card in cards) {
+    d <- card$cdisc$domain
+    if (!is.null(d) && !is.null(card$name)) out[[card$name]] <- as.character(d)
+  }
+  if (!length(out)) "auto" else out
 }

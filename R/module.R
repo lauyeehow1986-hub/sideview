@@ -74,7 +74,8 @@ sideviewServer <- function(id, cards = list(), state = NULL, llm_fn = NULL, cdis
     } else {
       sv_cdisc_finalize(initial, cdisc)
     }
-    impl <- sideview_server_impl(input, output, session, initial, llm, NULL, NULL, module = TRUE)
+    impl <- sideview_server_impl(input, output, session, initial, llm, NULL, NULL, module = TRUE,
+                                cdisc = cdisc)
     ctl <- impl$ctl
     ctl$forget <- impl$forget
     ctl$cdisc <- cdisc

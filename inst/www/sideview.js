@@ -4865,6 +4865,16 @@ function sendToShiny(name, value) {
       escapeHtml(fmtNum(h.breaks[h.breaks.length - 1])) + '</span></figcaption></figure>';
   };
 
+  /**
+   * The CDISC domain tagged on a card, or null. Tags are not yet stored client-side
+   * (the tag handler arrives later): read an optional data-cdisc-domain attribute.
+   */
+  SideviewEngine.prototype.cardDomain = function (name) {
+    var el = this.cardElByName(name);
+    var d = el && el.dataset ? el.dataset.cdiscDomain : null;
+    return d ? d : null;
+  };
+
   /** Export codebook: R writes the file in the gadget; the widget downloads a CSV. */
   SideviewEngine.prototype.exportCodebook = function () {
     // a module is R-backed too (lazy tables, full data) but downloads the CSV in the browser
@@ -4881,7 +4891,8 @@ function sendToShiny(name, value) {
       var total = el && el.dataset.lazy ? tableRows(el) : NaN;
       s.columns.forEach(function (c, j) {
         rows.push(P.codebookRow(s.name, c.name, j + 1, x.cols[c.name], x.types[c.name] || c.type,
-          { label: self.columnLabel(s.name, c.name), nTotal: isNaN(total) ? null : total }));
+          { label: self.columnLabel(s.name, c.name), nTotal: isNaN(total) ? null : total,
+            domain: self.cardDomain(s.name) }));
       });
     });
     if (!rows.length) { this.showToast('No tables to describe.', 'warning'); return; }

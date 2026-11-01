@@ -1502,6 +1502,7 @@
   /**
    * One codebook row; mirrors sv_codebook_row() in R. `opts.nTotal` is the true row count of a
    * table profiled from a preview: `n` reports it and `rows_profiled` the rows used.
+   * `opts.domain` is the table's CDISC domain (null when untagged).
    */
   function codebookRow(table, column, position, values, type, opts) {
     opts = opts || {};
@@ -1522,7 +1523,7 @@
       if (p.n_other > 0) top += '; +' + p.n_other + ' more';
     }
     return {
-      table: table, column: column, position: position, 'class': p['class'], label: p.label,
+      table: table, domain: opts.domain === undefined ? null : opts.domain, column: column, position: position, 'class': p['class'], label: p.label,
       n: opts.nTotal === undefined || opts.nTotal === null ? p.n : opts.nTotal, rows_profiled: p.n,
       n_missing: p.n_missing, pct_missing: Math.round(10000 * p.pct_missing) / 100,
       n_distinct: p.n_distinct, unique_key: p.unique_key,
@@ -1532,10 +1533,10 @@
     };
   }
 
-  var CODEBOOK_FIELDS = ['table', 'column', 'position', 'class', 'label', 'n', 'rows_profiled', 'n_missing',
+  var CODEBOOK_FIELDS = ['table', 'domain', 'column', 'position', 'class', 'label', 'n', 'rows_profiled', 'n_missing',
     'pct_missing',
     'n_distinct', 'unique_key', 'min', 'q1', 'median', 'q3', 'max', 'mean', 'sd', 'top_values', 'issues'];
-  var CODEBOOK_TEXT = { table: 1, column: 1, 'class': 1, label: 1, min: 1, q1: 1, median: 1, q3: 1, max: 1,
+  var CODEBOOK_TEXT = { table: 1, domain: 1, column: 1, 'class': 1, label: 1, min: 1, q1: 1, median: 1, q3: 1, max: 1,
     top_values: 1, issues: 1 };
 
   /** Codebook rows as CSV, laid out like utils::write.csv(row.names = FALSE, na = ""). */

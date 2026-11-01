@@ -211,7 +211,7 @@ sideview <- function(...,
   # Build Shiny application object
   ui <- sideview_ui(card_list, title = title, gadget = TRUE,
                     theme = sv_resolve_theme(theme, rstudio = TRUE), state = state)
-  server <- sideview_server(card_list, gadget = TRUE, run_env = env)
+  server <- sideview_server(card_list, gadget = TRUE, run_env = env, cdisc = cdisc)
   app <- shiny::shinyApp(ui = ui, server = server)
   
   # Attach cards metadata
