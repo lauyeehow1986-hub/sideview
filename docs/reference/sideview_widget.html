@@ -13,7 +13,7 @@ exporting via save_sideview()."><meta property="og:image" content="https://lauye
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -55,7 +55,8 @@ exporting via <code><a href="save_sideview.html">save_sideview()</a></code>.</p>
 <span>  elementId <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  options <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  theme <span class="op">=</span> <span class="st">"auto"</span>,</span>
-<span>  state <span class="op">=</span> <span class="cn">NULL</span></span>
+<span>  state <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  max_rows <span class="op">=</span> <span class="fl">5000</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -94,6 +95,15 @@ exporting via <code><a href="save_sideview.html">save_sideview()</a></code>.</p>
 <dt id="arg-state">state<a class="anchor" aria-label="anchor" href="#arg-state"></a></dt>
 <dd><p>A saved workspace to restore (see <code><a href="sideview.html">sideview()</a></code>): a
 <code>sideview_state</code> or the path to a saved state file.</p></dd>
+
+
+<dt id="arg-max-rows">max_rows<a class="anchor" aria-label="anchor" href="#arg-max-rows"></a></dt>
+<dd><p>Most rows of each data-frame table to embed in the widget
+(default 5000). A longer table is cut to its first <code>max_rows</code> rows, its
+card says "First N of M rows", and one message names the tables cut. The
+widget has no R session behind it, so every row would travel in the HTML.
+Use <code>Inf</code> to embed everything. Lazy (arrow / duckdb) tables already carry
+only a preview and are not affected.</p></dd>
 
 </dl></div>
     <div class="section level2">

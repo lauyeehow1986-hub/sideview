@@ -11,13 +11,7 @@ generation.
 sideview(
   ...,
   title = "Sideview Canvas",
-  viewer = if (requireNamespace("rstudioapi", quietly = TRUE) &&
-    rstudioapi::isAvailable()) {
-     shiny::dialogViewer("Sideview Canvas", width =
-    1400, height = 900)
- } else {
-     shiny::paneViewer(minHeight = 500)
- },
+  viewer = sv_default_viewer(),
   theme = "auto",
   state = NULL,
   env = parent.frame(),
@@ -45,8 +39,12 @@ sideview(
   or a character shorthand (`"browser"`, `"dialog"`, or `"pane"`).
   Default is
   [`shiny::dialogViewer()`](https://rdrr.io/pkg/shiny/man/viewer.html)
-  (width 1400, height 900) when RStudio is available, otherwise
-  [`shiny::paneViewer()`](https://rdrr.io/pkg/shiny/man/viewer.html).
+  (width 1400, height 900) in RStudio,
+  [`shiny::browserViewer()`](https://rdrr.io/pkg/shiny/man/viewer.html)
+  in Positron (it has no dialog viewer; `"dialog"` there also opens the
+  browser, with one message) and
+  [`shiny::paneViewer()`](https://rdrr.io/pkg/shiny/man/viewer.html)
+  elsewhere.
 
 - theme:
 

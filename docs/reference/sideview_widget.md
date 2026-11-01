@@ -16,7 +16,8 @@ sideview_widget(
   elementId = NULL,
   options = list(),
   theme = "auto",
-  state = NULL
+  state = NULL,
+  max_rows = 5000
 )
 ```
 
@@ -58,6 +59,15 @@ sideview_widget(
   A saved workspace to restore (see
   [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)):
   a `sideview_state` or the path to a saved state file.
+
+- max_rows:
+
+  Most rows of each data-frame table to embed in the widget (default
+  5000). A longer table is cut to its first `max_rows` rows, its card
+  says "First N of M rows", and one message names the tables cut. The
+  widget has no R session behind it, so every row would travel in the
+  HTML. Use `Inf` to embed everything. Lazy (arrow / duckdb) tables
+  already carry only a preview and are not affected.
 
 ## Value
 

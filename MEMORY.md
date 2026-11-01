@@ -143,6 +143,14 @@ Each sub-project gets its own spec, plan and build, in this order:
 
 ## Log
 
+### 2026-11-01 - Release 0.4.0 checks
+- **Change:** DESCRIPTION 0.3.0 -> 0.4.0; NEWS head "(development)" dropped.
+- **Verified on `main` (1e4e2e1, PR #3 merged):** `devtools::test()` with `NOT_CRAN=true` -> 442 tests, 0 failed / 0 errors / 0 skipped
+  (includes the real-browser files). `devtools::check(--no-manual)` -> 0 errors, 0 warnings, 1 NOTE
+  ("non-standard things in the check directory: ''NULL''", a Windows artifact, not the package).
+- **Sub-project 4 follow-ups:** Positron check done by the user (`sideview()` default and `viewer = "dialog"` fallback: "looks ok").
+  r-universe registry entry pushed (`lauyeehow1986-hub.r-universe.dev`, bbda7e8); the build and the README install line are not yet confirmed live.
+
 ### 2026-11-01 - Sub-project 4: small items (0.4.0)
 
 * **Row cap:** `sideview_widget(max_rows = 5000)` and `save_sideview(max_rows = 5000)` cut

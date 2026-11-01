@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -33,7 +33,18 @@
     </div>
 
     <div class="section level2">
-<h2 class="pkg-version" data-toc-text="0.4.0" id="sideview-040-development">sideview 0.4.0 (development)<a class="anchor" aria-label="anchor" href="#sideview-040-development"></a></h2>
+<h2 class="pkg-version" data-toc-text="0.4.0" id="sideview-040">sideview 0.4.0<a class="anchor" aria-label="anchor" href="#sideview-040"></a></h2>
+<div class="section level3">
+<h3 id="smaller-items-0-4-0">Smaller items<a class="anchor" aria-label="anchor" href="#smaller-items-0-4-0"></a></h3>
+<ul><li>
+<strong>Row cap for widgets.</strong> <code><a href="../reference/sideview_widget.html">sideview_widget()</a></code> and <code><a href="../reference/save_sideview.html">save_sideview()</a></code> take <code>max_rows = 5000</code>. A longer data-frame table is cut to its first rows, its card says “First N of M rows” and one message names the tables cut (silent while knitting). <code>max_rows = Inf</code> embeds everything. Lazy tables are unchanged.</li>
+<li>
+<strong>Positron.</strong> Without <code>viewer =</code>, <code><a href="../reference/sideview.html">sideview()</a></code> and <code><a href="../reference/sideview_addin.html">sideview_addin()</a></code> open the browser in Positron, which has no dialog viewer; <code>viewer = "dialog"</code> there also opens the browser, with one message.</li>
+<li>
+<strong>State files carry a schema version.</strong> <code><a href="../reference/sv_load_state.html">sv_load_state()</a></code> and <code>state =</code> read a file without a <code>version</code> as 0.2.0 and upgrade older files (stamped 0.3.0); a file from a newer sideview loads with one warning.</li>
+<li>
+<strong>Install from r-universe:</strong> see the README.</li>
+</ul></div>
 <div class="section level3">
 <h3 id="shiny-module-and-proxy-0-4-0">Shiny module and proxy<a class="anchor" aria-label="anchor" href="#shiny-module-and-proxy-0-4-0"></a></h3>
 <ul><li>

@@ -9,7 +9,7 @@ with all styles, fonts, and JavaScript embedded."><meta property="og:image" cont
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.4.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -48,6 +48,7 @@ with all styles, fonts, and JavaScript embedded.</p>
 <span>  selfcontained <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  title <span class="op">=</span> <span class="st">"Sideview"</span>,</span>
 <span>  background <span class="op">=</span> <span class="st">"white"</span>,</span>
+<span>  max_rows <span class="op">=</span> <span class="fl">5000</span>,</span>
 <span>  <span class="va">...</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
@@ -76,6 +77,12 @@ all CSS and JavaScript dependencies inlined. Defaults to <code>TRUE</code>.</p><
 
 <dt id="arg-background">background<a class="anchor" aria-label="anchor" href="#arg-background"></a></dt>
 <dd><p>Background color for the document body. Default <code>"white"</code>.</p></dd>
+
+
+<dt id="arg-max-rows">max_rows<a class="anchor" aria-label="anchor" href="#arg-max-rows"></a></dt>
+<dd><p>Row cap used when <code>widget</code> is table data rather than a
+widget (see <code><a href="sideview_widget.html">sideview_widget()</a></code>; default 5000). A widget you built yourself
+keeps the cap it was built with.</p></dd>
 
 
 <dt id="arg--">...<a class="anchor" aria-label="anchor" href="#arg--"></a></dt>
