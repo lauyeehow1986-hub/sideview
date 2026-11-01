@@ -258,3 +258,25 @@ test_that("cdisc is checked and passed through save_sideview", {
   save_sideview(f$dm, file = tf, cdisc = FALSE)
   expect_false(grepl("\"cdisc\":{", paste(readLines(tf, warn = FALSE), collapse = "\n"), fixed = TRUE))
 })
+
+test_that("evidence stays an array when it has one element", {
+  f <- sv_cdisc_fixtures()
+  w <- sideview_widget(dm = f$dm, cdisc = c(dm = "DM"))
+  expect_length(w$x$cards[[1]]$cdisc$evidence, 1L)
+  js <- as.character(jsonlite::toJSON(w$x$cards[[1]]$cdisc, auto_unbox = TRUE))
+  expect_match(js, "\"evidence\":[[]\"set by cdisc =\"[]]")
+})
+
+test_that("save_sideview writes the tag for auto and not for FALSE", {
+  skip_if_not(rmarkdown::pandoc_available(), "pandoc is not available")
+  f <- sv_cdisc_fixtures()
+  read_html <- function(cdisc) {
+    tf <- tempfile(fileext = ".html")
+    on.exit(unlink(tf))
+    save_sideview(f$dm, file = tf, cdisc = cdisc)
+    paste(readLines(tf, warn = FALSE), collapse = "
+")
+  }
+  expect_true(grepl("\"cdisc\":{", read_html("auto"), fixed = TRUE))
+  expect_false(grepl("\"cdisc\":{", read_html(FALSE), fixed = TRUE))
+})

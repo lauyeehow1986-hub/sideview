@@ -207,12 +207,14 @@ sv_cdisc_cards <- function(...) {
 
 test_that("a SEND-only domain flips shared domains to SEND", {
   f <- sv_cdisc_fixtures()
-  cards <- sv_cdisc_finalize(sv_cdisc_cards(dm = f$dm, bw = f$bw), "auto")
+  dm <- f$dm
+  attr(dm, "label") <- NULL
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(dm = dm, bw = f$bw), "auto")
   expect_identical(cards[[1]]$cdisc$standard, "SEND")
   send_label <- sv_cdisc_catalogue()
   send_label <- send_label$label[send_label$name == "DM" & send_label$standard == "SEND"]
   expect_identical(cards[[1]]$cdisc$domain, "DM")
-  expect_true(cards[[1]]$cdisc$label %in% c(send_label, "Demographics"))
+  expect_identical(cards[[1]]$cdisc$label, send_label)
   expect_identical(cards[[2]]$cdisc$standard, "SEND")
 })
 
@@ -276,4 +278,30 @@ test_that("tag_diff reports changed tags only", {
   expect_length(sv_cdisc_tag_diff(new, new), 0L)
   gone <- sv_cdisc_tag_diff(new, new[2])
   expect_length(gone, 0L)
+})
+
+test_that("a user-set tag is not flipped by a SEND-only card", {
+  f <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(dm = f$dm, bw = f$bw), c(dm = "DM"))
+  expect_identical(cards[[1]]$cdisc$source, "user")
+  expect_identical(cards[[1]]$cdisc$standard, "SDTM")
+  expect_identical(cards[[2]]$cdisc$standard, "SEND")
+})
+
+test_that("SUPP parent_card is cleared when the parent card is removed", {
+  f <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(ae = f$ae, suppae = f$suppae), "auto")
+  expect_identical(cards[[2]]$cdisc$parent_card, cards[[1]]$id)
+  after <- sv_cdisc_resolve(cards[2])
+  expect_null(after[[1]]$cdisc$parent_card)
+  expect_identical(sv_cdisc_resolve(after), after)
+})
+
+test_that("sideview() checks cdisc and cdisc = FALSE leaves cards untagged", {
+  f <- sv_cdisc_fixtures()
+  expect_error(sideview(f$dm, cdisc = "bad", run = FALSE), "cdisc")
+  app <- sideview(dm = f$dm, ae = f$ae, cdisc = FALSE, run = FALSE)
+  expect_true(all(vapply(app$cards, function(c) is.null(c$cdisc), logical(1))))
+  tagged <- sideview(dm = f$dm, run = FALSE)
+  expect_identical(tagged$cards[[1]]$cdisc$domain, "DM")
 })
