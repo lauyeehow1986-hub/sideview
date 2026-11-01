@@ -80,8 +80,10 @@ A SEND domain whose name matches an SDTM domain has its own row with `standard =
    2. **Table name:** the name, upper-cased and with any file extension removed, is a catalogue `name`
       (`ae`, `adsl`).
    3. **Variable prefix:** three or more columns start with the same two-letter catalogue domain code and
-      end in a standard SDTM suffix (`TERM`, `DECOD`, `SEV`, `STDTC`, `ENDTC`, `SEQ`, `TESTCD`, `ORRES`,
-      `STRESN`, ...). For example, `AETERM` + `AESEV` + `AESTDTC` gives AE.
+      end in one of these SDTM suffixes: `SEQ`, `TERM`, `DECOD`, `TRT`, `CAT`, `SCAT`, `SEV`, `SER`,
+      `STDTC`, `ENDTC`, `DTC`, `DY`, `TESTCD`, `TEST`, `ORRES`, `ORRESU`, `STRESC`, `STRESN`, `STRESU`,
+      `STAT`, `BLFL`, `DOSE`, `DOSU`. For example, `AETERM` + `AESEV` + `AESTDTC` gives AE. The list is a
+      constant in `R/cdisc.R`.
    4. **ADaM structure,** when the name matches `^AD[A-Z0-9]*$` (case-insensitive) or rule 2 found an ADaM name.
       The first of these that matches wins:
       - **ADSL:** one row per `USUBJID`, plus `TRT01P` or `TRT01A`.
@@ -114,7 +116,8 @@ A named list:
 - `domain`: e.g. `"AE"`.
 - `label`: the data frame's `label` attribute when it is a single string, otherwise the catalogue label.
 - `class`, `standard`.
-- `parent`: `NULL`, except for SUPP datasets.
+- `parent`: `NULL`, except for SUPP datasets (the parent domain code).
+- `parent_card`: `NULL`, or the id of the parent card once `sv_cdisc_resolve()` (§6) finds it on the canvas.
 - `evidence`: a character vector, e.g. `c("DOMAIN column = AE", "STUDYID + USUBJID")`.
 - `source`: `"auto"` or `"user"`.
 
