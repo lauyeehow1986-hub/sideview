@@ -94,3 +94,8 @@ reference:
     desc: "Convert heterogeneous tabular objects into standardized sideview cards."
     contents:
       - sv_normalize
+
+  - title: "CDISC"
+    desc: "Recognise SDTM, SEND and ADaM datasets."
+    contents:
+      - sv_cdisc_catalogue
