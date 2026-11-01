@@ -150,6 +150,11 @@ Each sub-project gets its own spec, plan and build, in this order:
   ("non-standard things in the check directory: ''NULL''", a Windows artifact, not the package).
 - **Sub-project 4 follow-ups:** Positron check done by the user (`sideview()` default and `viewer = "dialog"` fallback: "looks ok").
   r-universe registry entry pushed (`lauyeehow1986-hub.r-universe.dev`, bbda7e8); the build and the README install line are not yet confirmed live.
+- **Released:** PR #4 merged (main = f6b29d3); annotated tag `v0.4.0` on f6b29d3 pushed and the GitHub release created
+  (https://github.com/lauyeehow1986-hub/sideview/releases/tag/v0.4.0, notes = the 0.4.0 NEWS section).
+- **r-universe:** `https://lauyeehow1986-hub.r-universe.dev/sideview` still returned 404 right after the tag (2026-11-01);
+  likely waiting for the next scheduled build. Recheck, then confirm the README install line.
+- **Next:** CDISC/pharmaverse support (USUBJID/STUDYID join keys, SDTM/ADaM domain labels) as its own multi-part project.
 
 ### 2026-11-01 - Sub-project 4: small items (0.4.0)
 
