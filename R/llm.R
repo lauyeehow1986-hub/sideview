@@ -6,7 +6,8 @@
 # Schema text from user data (labels, CDISC names): one line, single spaces.
 sv_schema_clean <- function(x) {
   if (!(is.character(x) && length(x) == 1L && !is.na(x))) return(NULL)
-  x <- trimws(gsub("[[:space:]]+", " ", x))
+  # control characters (including NEL, LS and PS) become spaces: a label cannot add a line
+  x <- trimws(gsub("[[:space:][:cntrl:]\u0085\u2028\u2029]+", " ", x))
   if (nzchar(x)) x else NULL
 }
 

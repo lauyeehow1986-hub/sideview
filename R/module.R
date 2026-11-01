@@ -429,6 +429,9 @@ sv_module_wire <- function(input, session, store, send) {
     }
     queued <- ctl$queue
     ctl$queue <- list()
+    # The cards above already carry their current tags; a tag update queued before
+    # ready is older than that payload and could only overwrite it with a stale one.
+    queued <- Filter(function(q) !identical(q$type, "sideview_cdisc_update"), queued)
     ctl$ready <- TRUE
     for (q in queued) send(q$type, q$message)
   }, ignoreInit = FALSE)

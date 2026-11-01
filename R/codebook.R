@@ -310,7 +310,7 @@ sv_codebook <- function(..., top_n = 5L, file = NULL, progress = NULL, cdisc = "
 sv_codebook_domain <- function(tb, name, cdisc) {
   if (identical(cdisc, FALSE)) return(NA_character_)
   if (is.character(cdisc) && !is.null(names(cdisc)) && name %in% names(cdisc)) {
-    return(as.character(cdisc[[name]]))
+    return(toupper(trimws(as.character(cdisc[[name]]))))
   }
   tag <- sv_cdisc_detect_safely(tb, name, "auto")
   if (is.null(tag) || is.null(tag$domain)) NA_character_ else as.character(tag$domain)

@@ -485,16 +485,34 @@ test_that("no update when nothing changes", {
   })
 })
 
-test_that("cdisc updates before ready are queued", {
+test_that("cdisc updates before ready are not replayed: the cards carry current tags", {
   f <- sv_cdisc_fixtures()
   shiny::testServer(sideviewServer, args = cdisc_start(), {
     px <- session$getReturned()
     sv_add_card(px, f$bw, "bw")
     expect_length(msgs(session, "sideview_cdisc_update"), 0L)
     session$setInputs(sideview_ready = list(nonce = 1))
-    up <- msgs(session, "sideview_cdisc_update")
-    expect_length(up, 1L)
-    expect_identical(up[[1]]$message$ns, session$ns(""))
+    expect_length(msgs(session, "sideview_cdisc_update"), 0L)
+    adds <- msgs(session, "sideview_card_add")
+    expect_equal(vapply(adds, function(m) m$message$card$cdisc$standard, ""), c("SEND", "SEND"))
+  })
+})
+
+test_that("a queued cdisc update cannot overwrite a fresher payload at ready", {
+  f <- sv_cdisc_fixtures()
+  shiny::testServer(sideviewServer, args = cdisc_start(), {
+    px <- session$getReturned()
+    old_id <- px$ctl$store$get("dm")$id
+    sv_add_card(px, f$bw, "bw")                 # queues {dm: SEND}
+    sv_replace_card(px, "dm", mtcars)           # dm is no longer taggable
+    new_id <- px$ctl$store$get("dm")$id
+    session$setInputs(sideview_ready = list(nonce = 1))
+    updates <- msgs(session, "sideview_cdisc_update")
+    stale <- Filter(function(m) any(c(old_id, new_id) %in% names(m$message$tags)), updates)
+    expect_length(stale, 0L)
+    dm_add <- Filter(function(m) identical(m$message$card$name, "dm"),
+                     msgs(session, "sideview_card_add"))
+    expect_null(dm_add[[1]]$message$card$cdisc)
   })
 })
 

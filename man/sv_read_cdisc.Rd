@@ -9,7 +9,9 @@ sv_read_cdisc(path, lazy = TRUE)
 \arguments{
 \item{path}{A directory (its supported files are read, not recursively) or a
 character vector of files. A file with an unsupported extension is an
-error when named, and ignored when found in a directory.}
+error when named, and ignored when found in a directory. A file whose
+package is not installed is an error when named, and skipped with one
+warning when found in a directory.}
 
 \item{lazy}{When \code{TRUE} (the default), parquet files are opened as Arrow
 Datasets and stay on disk. When \code{FALSE} they are read into data frames.}

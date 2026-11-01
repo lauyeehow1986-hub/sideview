@@ -88,7 +88,7 @@ test_that("DOMAIN beats the name and records the conflict", {
   f$ae$DOMAIN <- NULL
   tag <- sv_cdisc_detect(f$ae, "cm")
   expect_identical(tag$domain, "CM")
-  expect_true("prefix AE disagrees with name CM" %in% tag$evidence)
+  expect_true("variable prefix AE disagrees with name CM" %in% tag$evidence)
   tag <- sv_cdisc_detect(sv_cdisc_fixtures()$ae, "ae.xpt")
   expect_identical(tag$domain, "AE")
   expect_false(any(grepl("disagrees", tag$evidence)))
@@ -135,6 +135,11 @@ test_that("bad cdisc values are refused", {
   expect_identical(sv_cdisc_check_arg("auto"), "auto")
   expect_identical(sv_cdisc_check_arg(FALSE), FALSE)
   expect_identical(sv_cdisc_check_arg(c(a = "AE")), c(a = "AE"))
+})
+
+test_that("a named cdisc vector with duplicate names is refused", {
+  expect_error(sv_cdisc_check_arg(c(a = "AE", a = "LB")), "duplicate.*a")
+  expect_identical(sv_cdisc_check_arg(c(a = "AE", b = "AE")), c(a = "AE", b = "AE"))
 })
 
 test_that("a failing detector is silent unless debugging", {
@@ -191,12 +196,48 @@ test_that("SUPP is detected by columns alone, with its parent", {
   expect_true("SUPPQUAL columns" %in% tag$evidence)
 })
 
-test_that("known limitation: an ADaM-like table outside the catalogue is tagged by prefix", {
+test_that("an AD* table with SDTM-prefixed columns is ADaM when the structure confirms it", {
   f <- sv_cdisc_fixtures()
-  d <- cbind(f$adae, AESEV = "MILD")
-  tag <- sv_cdisc_detect(d, "foo")
-  expect_identical(tag$domain, "AE")
-  expect_identical(tag$standard, "SDTM")
+  for (case in list(list("adlb", "adlb_pfx", "ADLB", "BDS"),
+                    list("advs", "advs_pfx", "ADVS", "BDS"),
+                    list("adae", "adae_pfx", "ADAE", "OCCDS"),
+                    list("ADLB.xpt", "adlb_pfx", "ADLB", "BDS"))) {
+    tag <- sv_cdisc_detect(f[[case[[2]]]], case[[1]])
+    info <- case[[1]]
+    expect_identical(c(tag$domain, tag$standard, tag$class), c(case[[3]], "ADaM", case[[4]]), info = info)
+    expect_true(paste("ADaM structure", case[[4]]) %in% tag$evidence, info = info)
+  }
+  tag <- sv_cdisc_detect(f$adlb_pfx, "adlb")
+  expect_true("variable prefix LB disagrees with ADaM ADLB" %in% tag$evidence)
+  tag <- sv_cdisc_detect(f$adae_pfx, "adae")
+  expect_true("variable prefix AE disagrees with ADaM ADAE" %in% tag$evidence)
+  # the same table with a catalogue ADaM name (rule 2) also stays ADaM
+  expect_identical(sv_cdisc_detect(f$adlb_pfx, "bds")$standard, "ADaM")
+})
+
+test_that("a DOMAIN column still beats ADaM structure", {
+  f <- sv_cdisc_fixtures()
+  d <- f$adlb_pfx
+  d$DOMAIN <- "LB"
+  tag <- sv_cdisc_detect(d, "adlb")
+  expect_identical(c(tag$domain, tag$standard), c("LB", "SDTM"))
+  expect_true("ADaM ADLB disagrees with DOMAIN LB" %in% tag$evidence)
+})
+
+test_that("an AD* table whose structure is not confirmed falls through to the old order", {
+  f <- sv_cdisc_fixtures()
+  d <- f$adlb_pfx[, setdiff(names(f$adlb_pfx), c("PARAMCD", "PARAM", "AVAL"))]
+  tag <- sv_cdisc_detect(d, "adlb")
+  expect_identical(c(tag$domain, tag$standard), c("LB", "SDTM"))
+  expect_false(any(grepl("disagrees", tag$evidence)))
+})
+
+test_that("a table not named AD* still follows the variable-prefix rule", {
+  f <- sv_cdisc_fixtures()
+  tag <- sv_cdisc_detect(f$adlb_pfx, "foo")
+  expect_identical(c(tag$domain, tag$standard), c("LB", "SDTM"))
+  tag <- sv_cdisc_detect(f$adae_pfx, "foo")
+  expect_identical(c(tag$domain, tag$standard), c("AE", "SDTM"))
 })
 
 # ---- canvas resolve and finalize (Task 4) ----
@@ -367,13 +408,37 @@ test_that("sas7bdat goes through haven::read_sas", {
   expect_identical(sv_normalize(x$ae, "ae")$cdisc$domain, "AE")
 })
 
-test_that("sv_read_cdisc names a missing package", {
+test_that("sv_read_cdisc names a missing package for a file named explicitly", {
   skip_if_not_installed("withr")
   dir <- withr::local_tempdir()
   file.create(file.path(dir, c("dm.xpt", "ae.xpt")))
   testthat::local_mocked_bindings(sv_has_pkg = function(pkg) FALSE)
-  expect_error(sv_read_cdisc(dir),
-               "Reading .xpt files needs the haven package: ae.xpt, dm.xpt.", fixed = TRUE)
+  expect_error(sv_read_cdisc(file.path(dir, c("dm.xpt", "ae.xpt"))),
+               "Reading .xpt files needs the haven package: dm.xpt, ae.xpt.", fixed = TRUE)
+})
+
+test_that("a folder scan warns once and skips files whose package is missing", {
+  skip_if_not_installed("haven")
+  skip_if_not_installed("withr")
+  f <- sv_cdisc_fixtures()
+  dir <- withr::local_tempdir()
+  haven::write_xpt(f$dm, file.path(dir, "dm.xpt"))
+  writeLines("{}", file.path(dir, "config.json"))
+  writeLines("{}", file.path(dir, "other.json"))
+  testthat::local_mocked_bindings(sv_has_pkg = function(pkg) pkg != "datasetjson")
+  warns <- character()
+  x <- withCallingHandlers(sv_read_cdisc(dir), warning = function(w) {
+    warns <<- c(warns, conditionMessage(w))
+    invokeRestart("muffleWarning")
+  })
+  expect_identical(names(x), "dm")
+  expect_length(warns, 1L)
+  expect_match(warns, "Reading .json files needs the datasetjson package: config.json, other.json",
+               fixed = TRUE)
+  expect_match(warns, "skipped", fixed = TRUE)
+  # named explicitly, the same file is still an error
+  expect_error(sv_read_cdisc(file.path(dir, "other.json")),
+               "Reading .json files needs the datasetjson package: other.json.", fixed = TRUE)
 })
 
 test_that("sv_read_cdisc rejects a named unsupported file", {

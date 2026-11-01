@@ -1216,3 +1216,9 @@ test_that("render_card_tag carries the CDISC tag and variable labels for the gad
   expect_false(grepl("data-cdisc=", plain, fixed = TRUE))
   expect_false(grepl("data-col-labels=", plain, fixed = TRUE))
 })
+
+test_that("sideview_server refuses a bad cdisc argument", {
+  expect_error(sideview_server(list(), cdisc = TRUE), "cdisc")
+  expect_error(sideview_server(list(), cdisc = c(a = "AE", a = "LB")), "duplicate")
+  expect_no_error(sideview_server(list(), cdisc = c(a = "AE")))
+})

@@ -24,8 +24,15 @@
 * The `ig_versions` column of the catalogue (SDTM, SEND and ADaM implementation guide versions) is
   approximate. It is for awareness, not conformance checking: sideview does not validate a dataset against
   an implementation guide.
-* An uncatalogued name such as `ADAE`-like data is tagged by its variable prefix (`AE...`) before its ADaM
-  structure is considered.
+* A table named `AD...` (`ADLB`, `ADAE`, `ADVS`) whose columns confirm an ADaM structure is tagged ADaM even
+  when it keeps SDTM-prefixed columns (`LBTESTCD`, `AETERM`, ...); the tooltip notes the prefix as a
+  disagreement. A table with any other name and SDTM-prefixed columns is still tagged by its prefix.
+* Column names must be upper-case (`STUDYID`, `USUBJID`, `DOMAIN`). Lower-cased names, for example after
+  `janitor::clean_names()`, are not detected.
+* `sideview_server(cdisc =)`, used with your own `sideview_ui()`, only sets the `domain` column of the
+  codebook; the badges come from the cards given to `sideview_ui()`.
+* `sv_read_cdisc()` skips a file found by scanning a folder, with one warning, when its reading package is
+  not installed; a file named explicitly is still an error.
 * `cdisc = FALSE` shows no tags but, for lazy (arrow / duckdb) cards, detection at construction time still
   runs, with its cost. A named `cdisc =` vector with several lazy cards costs more on every verb
   (quadratic in the number of cards).

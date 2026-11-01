@@ -40,6 +40,11 @@ sv_cdisc_check_arg <- function(cdisc) {
     stop("`cdisc` must be \"auto\", FALSE, or a named character vector of domain codes ",
          "such as c(my_ae = \"AE\").", call. = FALSE)
   }
+  if (is.character(cdisc) && anyDuplicated(names(cdisc))) {
+    stop("`cdisc` has duplicate names: ",
+         paste(unique(names(cdisc)[duplicated(names(cdisc))]), collapse = ", "),
+         ". Name each table once.", call. = FALSE)
+  }
   cdisc
 }
 
@@ -229,8 +234,11 @@ sv_cdisc_detect <- function(data, name, cdisc = "auto") {
   if (!is.null(r2) && sv_cdisc_row(r2$code)$standard == "ADaM") {
     r2 <- sv_cdisc_rule_adam(peek, name)
   }
-  independent <- list(sv_cdisc_rule_domain_col(peek), r2, sv_cdisc_rule_prefix(peek))
-  rule_names <- c("DOMAIN", "name", "prefix")
+  # A table named AD* (ADLB, ADAE) is ADaM when the structure confirms it, even
+  # though it keeps SDTM-prefixed columns: this runs before the prefix rule.
+  adam <- if (is.null(r2)) sv_cdisc_rule_adam(peek, name) else NULL
+  independent <- list(sv_cdisc_rule_domain_col(peek), r2, adam, sv_cdisc_rule_prefix(peek))
+  rule_names <- c("DOMAIN", "name", "ADaM", "variable prefix")
   found <- which(!vapply(independent, is.null, logical(1)))
   win <- NULL
   winner_rule <- NULL
@@ -238,8 +246,7 @@ sv_cdisc_detect <- function(data, name, cdisc = "auto") {
     winner_rule <- found[1L]
     win <- independent[[winner_rule]]
   } else {
-    win <- sv_cdisc_rule_adam(peek, name)
-    if (is.null(win)) win <- sv_cdisc_rule_suppqual(peek, name)
+    win <- sv_cdisc_rule_suppqual(peek, name)
     if (is.null(win)) win <- sv_cdisc_rule_custom(peek)
   }
   if (is.null(win)) return(NULL)
@@ -422,7 +429,9 @@ sv_read_dataset_json <- function(path) {
 #'
 #' @param path A directory (its supported files are read, not recursively) or a
 #'   character vector of files. A file with an unsupported extension is an
-#'   error when named, and ignored when found in a directory.
+#'   error when named, and ignored when found in a directory. A file whose
+#'   package is not installed is an error when named, and skipped with one
+#'   warning when found in a directory.
 #' @param lazy When `TRUE` (the default), parquet files are opened as Arrow
 #'   Datasets and stay on disk. When `FALSE` they are read into data frames.
 #' @return A named list of data frames (and Arrow Datasets for lazy parquet).
@@ -439,6 +448,7 @@ sv_read_cdisc <- function(path, lazy = TRUE) {
   }
   supported <- names(sv_read_cdisc_pkg)
   files <- character()
+  scanned <- logical()
   for (p in path) {
     if (dir.exists(p)) {
       all <- list.files(p, full.names = TRUE)
@@ -448,11 +458,13 @@ sv_read_cdisc <- function(path, lazy = TRUE) {
         stop(sprintf("No .xpt, .sas7bdat, .json or .parquet files in %s.", p), call. = FALSE)
       }
       files <- c(files, found)
+      scanned <- c(scanned, rep(TRUE, length(found)))
     } else if (file.exists(p)) {
       if (!(tolower(tools::file_ext(p)) %in% supported)) {
         stop(sprintf("Unsupported file type: %s.", basename(p)), call. = FALSE)
       }
       files <- c(files, p)
+      scanned <- c(scanned, FALSE)
     } else {
       stop(sprintf("Not found: %s.", p), call. = FALSE)
     }
@@ -460,14 +472,22 @@ sv_read_cdisc <- function(path, lazy = TRUE) {
 
   exts <- tolower(tools::file_ext(files))
   pkgs <- unname(sv_read_cdisc_pkg[exts])
+  keep <- rep(TRUE, length(files))
   for (pkg in unique(pkgs)) {
     if (!sv_has_pkg(pkg)) {
       hit <- pkgs == pkg
-      stop(sprintf("Reading .%s files needs the %s package: %s.",
-                   paste(unique(exts[hit]), collapse = "/."), pkg,
-                   paste(basename(files[hit]), collapse = ", ")), call. = FALSE)
+      what <- sprintf("Reading .%s files needs the %s package: %s",
+                      paste(unique(exts[hit]), collapse = "/."), pkg,
+                      paste(basename(files[hit]), collapse = ", "))
+      # A file named by the caller is an error; one only found by scanning a
+      # folder (a stray .json, say) is skipped with one warning.
+      if (any(hit & !scanned)) stop(what, ".", call. = FALSE)
+      warning(what, "; skipped.", call. = FALSE)
+      keep[hit] <- FALSE
     }
   }
+  files <- files[keep]
+  exts <- exts[keep]
 
   stems <- tolower(tools::file_path_sans_ext(basename(files)))
   dup <- unique(stems[duplicated(stems)])

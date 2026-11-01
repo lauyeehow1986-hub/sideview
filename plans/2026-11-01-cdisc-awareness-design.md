@@ -79,12 +79,18 @@ A SEND domain whose name matches an SDTM domain has its own row with `standard =
    1. **`DOMAIN` column:** exactly one distinct non-missing value, and that value is in the catalogue.
    2. **Table name:** the name, upper-cased and with any file extension removed, is a catalogue `name`
       (`ae`, `adsl`).
-   3. **Variable prefix:** three or more columns start with the same two-letter catalogue domain code and
+   3. **ADaM structure for an `AD*` name** (amendment 2026-11-01, see the note below): when the name matches
+      `^AD[A-Z0-9]*$` (case-insensitive) and the structure test of rule 5 confirms an ADaM class, that result is
+      used here, before the variable-prefix rule, so an admiral-style `ADLB` that keeps `LBTESTCD`,
+      `LBSEQ` and so on is ADaM, not SDTM `LB`. The rule 1 `DOMAIN` column still goes first. The losing
+      prefix result goes into `evidence` as a disagreement (`"variable prefix LB disagrees with ADaM ADLB"`).
+      When the structure does not confirm, nothing happens here and the order continues unchanged.
+   4. **Variable prefix:** three or more columns start with the same two-letter catalogue domain code and
       end in one of these SDTM suffixes: `SEQ`, `TERM`, `DECOD`, `TRT`, `CAT`, `SCAT`, `SEV`, `SER`,
       `STDTC`, `ENDTC`, `DTC`, `DY`, `TESTCD`, `TEST`, `ORRES`, `ORRESU`, `STRESC`, `STRESN`, `STRESU`,
       `STAT`, `BLFL`, `DOSE`, `DOSU`. For example, `AETERM` + `AESEV` + `AESTDTC` gives AE. The list is a
       constant in `R/cdisc.R`.
-   4. **ADaM structure,** when the name matches `^AD[A-Z0-9]*$` (case-insensitive) or rule 2 found an ADaM name.
+   5. **ADaM structure,** when the name matches `^AD[A-Z0-9]*$` (case-insensitive) or rule 2 found an ADaM name.
       The first of these that matches wins:
       - **ADSL:** one row per `USUBJID`, plus `TRT01P` or `TRT01A`.
       - **TTE:** `PARAMCD` + `PARAM` + `AVAL` + `CNSR`.
@@ -92,10 +98,17 @@ A SEND domain whose name matches an SDTM domain has its own row with `standard =
       - **OCCDS:** a `--TERM` or `--DECOD` column, and no `PARAMCD`.
 
       ADaM tags use `domain` = the dataset name (`ADLB`) and `class` = the matched class.
-   5. **SUPPQUAL:** the name matches `^SUPP[A-Z]{2}$`, or the columns `RDOMAIN`, `IDVAR`, `IDVARVAL`,
+   6. **SUPPQUAL:** the name matches `^SUPP[A-Z]{2}$`, or the columns `RDOMAIN`, `IDVAR`, `IDVARVAL`,
       `QNAM` and `QVAL` are all present. The class is `Relationship` and `parent` is the single `RDOMAIN`
       value (or the name suffix).
-   6. **Custom domain:** a single `DOMAIN` value matching `^[XYZ][A-Z]$` gives class `Custom`.
+   7. **Custom domain:** a single `DOMAIN` value matching `^[XYZ][A-Z]$` gives class `Custom`.
+
+*Amendment, 2026-11-01 (final branch review):* real admiral ADaM datasets (`ADLB`, `ADAE`, `ADVS`, ...)
+keep SDTM-prefixed columns, and with the variable-prefix rule ahead of the ADaM structure they were tagged
+SDTM. The ADaM structure check (rule 5 defines the classes) now runs at position 3, ahead of the prefix
+rule, for `AD*` names only, and wins when it confirms; because it only applies to `AD*` names, it is no
+longer tried again after the prefix rule. A table with a different name and SDTM-prefixed columns still
+follows the prefix rule.
 
 When two rules disagree (for example `DOMAIN = "AE"` in a table named `cm`), the rule that comes first wins
 and `evidence` records the conflict (`"name cm disagrees with DOMAIN AE"`).

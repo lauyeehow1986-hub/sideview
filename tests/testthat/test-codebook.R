@@ -216,6 +216,12 @@ test_that("codebook has a domain column after table", {
   expect_true(all(ov$domain == "XY"))
 })
 
+test_that("a codebook override is normalised like the detector does", {
+  f <- sv_cdisc_fixtures()
+  expect_identical(unique(sv_codebook(ae = f$ae, cdisc = c(ae = " ae "))$domain), "AE")
+  expect_identical(sv_codebook_domain(f$ae, "x", c(x = " ae ")), "AE")
+})
+
 test_that("codebook cdisc = FALSE leaves domain empty", {
   f <- sv_cdisc_fixtures()
   expect_true(all(is.na(sv_codebook(ae = f$ae, cdisc = FALSE)$domain)))

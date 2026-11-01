@@ -812,7 +812,10 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
 #'   page reload does not end it. Leave `FALSE`
 #'   when embedding the server in your own multi-user Shiny app.
 #' @param cdisc CDISC setting the canvas was started with (`"auto"`, `FALSE` or a named
-#'   vector of domain codes); the codebook export uses it for its `domain` column.
+#'   vector of domain codes). Here it only controls the `domain` column of the
+#'   codebook export. The badges on the canvas come from the cards given to
+#'   [sideview_ui()], so pass the same `cdisc` there (or build the page with
+#'   [sideview()] or [sideviewUI()], which keep the two in step).
 #' @param run_env Environment where **Run in R** evaluates the pipeline and
 #'   stores its result (as `sv_result` unless another name is given). Defaults
 #'   to the environment `sideview_server()` is called from.
@@ -828,6 +831,7 @@ sideview_server <- function(cards = list(),
                             run_env = parent.frame(),
                             cdisc = "auto") {
   force(run_env) # parent.frame() is lazy: resolve it while the caller is on the stack
+  cdisc <- sv_cdisc_check_arg(cdisc)
   dots <- list(...)
   # If invoked directly as sideview_server(input, output, session, ...)
   if (length(dots) >= 2 && inherits(dots[[2]], c("ShinySession", "MockShinySession"))) {

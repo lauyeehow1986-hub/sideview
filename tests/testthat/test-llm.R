@@ -536,3 +536,11 @@ test_that("multi-line column labels stay on one schema line", {
   expect_length(age_line, 1L)
   expect_true(endsWith(age_line, " - label: Age - injected: [categories: X]"))
 })
+
+test_that("schema text from labels cannot add lines", {
+  expect_identical(sv_schema_clean("a\u0085b"), "a b")
+  expect_identical(sv_schema_clean("a b c"), "a b c")
+  expect_identical(sv_schema_clean("a\r\nb\tc\001d"), "a b c d")
+  expect_identical(sv_schema_clean("  Plain label  "), "Plain label")
+  expect_null(sv_schema_clean("\u0085 "))
+})

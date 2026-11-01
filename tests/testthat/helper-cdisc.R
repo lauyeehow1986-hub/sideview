@@ -37,12 +37,34 @@ sv_cdisc_fixtures <- function() {
   adtte <- cbind(bds, CNSR = rep(c(0L, 1L), 4))
   adae <- data.frame(STUDYID = sid, USUBJID = usub, AETERM = ae$AETERM, AEDECOD = ae$AEDECOD,
                      TRTA = c("A", "B", "A", "B"), stringsAsFactors = FALSE)
+  # admiral-style ADaM that keeps its SDTM-prefixed columns
+  adlb_pfx <- data.frame(STUDYID = rep(sid, 2), USUBJID = rep(usub, 2), LBSEQ = 1:8,
+                         LBTESTCD = "ALT", LBTEST = "Alanine Aminotransferase", LBCAT = "CHEMISTRY",
+                         LBORRES = as.character(c(20, 31, 18, 40, 22, 30, 19, 41)),
+                         LBSTRESN = c(20, 31, 18, 40, 22, 30, 19, 41),
+                         PARAMCD = "ALT", PARAM = "Alanine Aminotransferase",
+                         AVAL = c(20, 31, 18, 40, 22, 30, 19, 41),
+                         AVISIT = rep(c("Baseline", "Week 4"), each = n),
+                         BASE = rep(c(20, 31, 18, 40), 2), CHG = c(0, 0, 0, 0, 2, -1, 1, 1),
+                         stringsAsFactors = FALSE)
+  adae_pfx <- data.frame(STUDYID = sid, USUBJID = usub, TRTA = c("A", "B", "A", "B"),
+                         AESEQ = 1:n, AETERM = ae$AETERM, AEDECOD = ae$AEDECOD,
+                         AESEV = ae$AESEV, AECAT = "GENERAL", AESTDTC = ae$AESTDTC,
+                         stringsAsFactors = FALSE)
+  advs_pfx <- data.frame(STUDYID = rep(sid, 2), USUBJID = rep(usub, 2), VSSEQ = 1:8,
+                         VSTESTCD = "SYSBP", VSTEST = "Systolic Blood Pressure", VSCAT = "VITALS",
+                         VSORRES = as.character(c(120, 130, 125, 118, 121, 129, 126, 119)),
+                         VSSTRESN = c(120, 130, 125, 118, 121, 129, 126, 119),
+                         PARAMCD = "SYSBP", PARAM = "Systolic Blood Pressure",
+                         AVAL = c(120, 130, 125, 118, 121, 129, 126, 119),
+                         stringsAsFactors = FALSE)
   send_dm <- cbind(dm, SPECIES = "RAT")
   bw <- data.frame(STUDYID = sid, DOMAIN = "BW", USUBJID = usub, BWSEQ = 1:n,
                    BWTESTCD = "BW", BWORRES = c("250", "260", "255", "270"),
                    stringsAsFactors = FALSE)
   list(dm = dm, ae = ae, suppae = suppae, labs = labs, ts = ts, xy = xy, adsl = adsl,
-       adlb = adlb, adtte = adtte, adae = adae, send_dm = send_dm, bw = bw,
+       adlb = adlb, adtte = adtte, adae = adae, adlb_pfx = adlb_pfx,
+       adae_pfx = adae_pfx, advs_pfx = advs_pfx, send_dm = send_dm, bw = bw,
        mtcars = mtcars, iris = iris,
        ae_nostudy = ae[, setdiff(names(ae), "STUDYID")],
        studyid_only = data.frame(STUDYID = sid, x = 1:n),

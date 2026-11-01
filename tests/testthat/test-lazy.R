@@ -1512,6 +1512,14 @@ test_that("lazy CDISC tables get the in-memory tag", {
                  info = paste("arrow", nm))
   }
   expect_false(is.null(sv_cdisc_detect(dplyr::tbl(con, "ae"), "ae")))
+  # ADaM tables that keep SDTM-prefixed columns: the lazy twin agrees (ADaM wins)
+  for (case in list(c("adlb", "adlb_pfx"), c("adae", "adae_pfx"), c("advs", "advs_pfx"))) {
+    DBI::dbWriteTable(con, paste0(case[1], "_p"), f[[case[2]]])
+    lazy <- sv_cdisc_detect(dplyr::tbl(con, paste0(case[1], "_p")), case[1])
+    expect_equal(lazy, sv_cdisc_detect(f[[case[2]]], case[1]), info = case[1])
+    expect_identical(lazy$standard, "ADaM", info = case[1])
+    expect_equal(sv_cdisc_detect(arrow::arrow_table(f[[case[2]]]), case[1]), lazy, info = case[1])
+  }
   # duplicated USUBJID, and a NA, give the in-memory answer
   d <- f$adsl; d$USUBJID[2] <- d$USUBJID[1]
   DBI::dbWriteTable(con, "adsl_dup", d)
