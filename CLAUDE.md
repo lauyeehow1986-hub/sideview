@@ -79,7 +79,10 @@ rstudio bridge: R/rstudio.R
 - **Codebook:** `sv_codebook()` has a `rows_profiled` column after `n` (`n` = true row count, `rows_profiled` =
   rows profiled; equal except for a preview-only card). `SideviewPipeline.codebookRow()`/`codebookCsv()` write the
   same column, so the byte-equal CSV test still holds.
-- **Join diagnostics:** `sv_join_diagnostics()` (R/diagnostics.R) and `SideviewPipeline.joinDiagnostics()`
+- **Join diagnostics:** `cdisc_notes` (list of strings, maybe empty) is an R-only field of the
+  `sideview_join_diagnostics` reply, added by the `join_diagnostics_request` handler and shown under a "CDISC"
+  heading after the warnings; the widget's browser-computed diagnostics never carry it, and the twins below
+  do not produce it. `sv_join_diagnostics()` (R/diagnostics.R) and `SideviewPipeline.joinDiagnostics()`
   (sv-pipeline.js) are twins with the same snake_case fields; `test-diagnostics.R` checks parity and that row
   counts equal dplyr (NA matches NA, as `na_matches = "na"`). The gadget asks R (`join_diagnostics_request`,
   full data); the widget computes in the browser. Change both together. The date-rule check is a third twin:

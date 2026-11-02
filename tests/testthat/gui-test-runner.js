@@ -997,6 +997,14 @@ function runAllScenarios() {
     rows: { left_join: 40, right_join: 3, inner_join: 40, full_join: 43, semi_join: 40, anti_join: 0 } });
   const s9_plainClean = s9_tPlain.indexOf('Dropped by the rule') < 0 && s9_tPlain.indexOf('rule:') < 0 &&
     s9_tPlain.indexOf('Unknown for right and full joins') < 0;
+  // CDISC key-check notes: heading + escaped items; none when empty or absent
+  const s9_tCd = s9_show({ cdisc_notes: ['USUBJID is the subject key', '<b>x</b> & y'] });
+  const s9_cdiscShown = s9_tCd.indexOf('CDISC') >= 0 && s9_tCd.indexOf('USUBJID is the subject key') >= 0;
+  const s9_cdiscEscaped = s9_tCd.indexOf('<b>x</b>') < 0 && s9_tCd.indexOf('&lt;b&gt;x&lt;/b&gt;') >= 0;
+  const s9_tCd0 = s9_show({ cdisc_notes: [] });
+  const s9_cdiscEmpty = s9_tCd0.indexOf('CDISC') < 0;
+  const s9_tCd1 = s9_show({});
+  const s9_cdiscAbsent = s9_tCd1.indexOf('CDISC') < 0;
   // A filter before the join: the panel says why Strict writes nothing instead of what it would write
   const s9_filterStep = engine.pipeline.add({
     kind: 'filter', table: 'visits', conds: ['TRUE'], combine: 'and'
@@ -1022,7 +1030,11 @@ function runAllScenarios() {
     strict_right_reason_counts_table: s9_right,
     strict_semi_anti: s9_semi,
     strict_needs_a_match: s9_none,
-    no_rule_no_rule_rows: s9_plainClean
+    no_rule_no_rule_rows: s9_plainClean,
+    cdisc_notes_shown: s9_cdiscShown,
+    cdisc_notes_escaped: s9_cdiscEscaped,
+    cdisc_notes_empty_hidden: s9_cdiscEmpty,
+    cdisc_notes_absent_hidden: s9_cdiscAbsent
   };
 
   // SCENARIO 10: namespaced inputs and the ns-routed message registry (Shiny module transport)

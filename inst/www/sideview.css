@@ -1628,6 +1628,17 @@ html.sv-standalone body {
   color: var(--sv-warning-text);
 }
 
+.sideview-container .sideview-joincheck-cdisc-title {
+  margin: 6px 0 2px;
+  color: var(--sv-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sideview-container .sideview-joincheck-cdisc li {
+  color: var(--sv-text-muted);
+}
+
 .sideview-container .sideview-joincheck-errors li {
   color: var(--sv-danger-text);
 }

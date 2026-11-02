@@ -4782,6 +4782,9 @@ function sendToShiny(name, value) {
       ]),
       list(d.type_issues, 'sideview-joincheck-errors'),
       list(d.warnings, 'sideview-joincheck-warnings'),
+      // R-only field: key-check notes from the CDISC catalogue (the widget's diagnostics never carry it)
+      (Array.isArray(d.cdisc_notes) && d.cdisc_notes.length)
+        ? '<p class="sideview-joincheck-cdisc-title">CDISC</p>' + list(d.cdisc_notes, 'sideview-joincheck-cdisc') : '',
       '<dl class="sideview-joincheck-stats">',
       '<dt>Relationship</dt><dd>' + esc(d.relationship) + '</dd>',
       '<dt>' + esc(s.table) + ' rows matched</dt><dd>' + fmt(d.matched_x) + ' of ' + fmt(d.n_x) + ' (' + pct(d.match_rate_x) + ')</dd>',
