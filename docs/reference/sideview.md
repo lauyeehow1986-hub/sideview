@@ -14,6 +14,7 @@ sideview(
   viewer = sv_default_viewer(),
   theme = "auto",
   state = NULL,
+  cdisc = "auto",
   env = parent.frame(),
   run = interactive()
 )
@@ -62,6 +63,13 @@ sideview(
   [`sv_save_state()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_save_state.md).
   Card positions and sizes, zoom and pan, sorts, filters, joins and the
   pipeline come back; cards are matched to tables by name.
+
+- cdisc:
+
+  CDISC awareness: `"auto"` (default) tags tables that look like SDTM,
+  SEND or ADaM datasets; `FALSE` turns it off; a named character vector
+  such as `c(my_ae = "AE")` sets a table's domain by name (other tables
+  are still detected).
 
 - env:
 

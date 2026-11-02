@@ -1722,10 +1722,8 @@ sv_module_page <- function() {
     .sv_module$page <- sv_open_page(.sv_module$app$url, wait_for = ready_js)
   } else {
     b <- .sv_module$page
-    b$Page$navigate(.sv_module$app$url, wait_ = FALSE)
-    b$Page$loadEventFired()
-    ok <- FALSE
-    for (i in 1:80) { ok <- isTRUE(sv_js(b, ready_js)); if (ok) break; Sys.sleep(0.25) }
+    sv_navigate(b, .sv_module$app$url)
+    ok <- sv_wait_js(b, ready_js, timeout = 60)
     attr(b, "sv_ready") <- ok
   }
   b <- .sv_module$page
@@ -1976,3 +1974,140 @@ test_that("module: a stale join-check reply is ignored and a destroyed engine st
   expect_false(r$timer)
 })
 
+
+# ---- CDISC awareness: badge, label titles, label row (gadget on dm, ae, suppae, adsl, adlb) ----
+.sv_cdisc <- new.env()
+
+sv_cdisc_page <- function() {
+  skip_if_no_browser()
+  root <- sv_pkg_root()
+  if (!nzchar(root)) skip("CDISC browser tests need the source tree (helper-cdisc.R)")
+  if (is.null(.sv_cdisc$page)) {
+    helper <- normalizePath(file.path(root, "tests", "testthat", "helper-cdisc.R"), winslash = "/")
+    .sv_cdisc$app <- sv_start_app(app_expr = sprintf(
+      "{ source('%s'); f <- sv_cdisc_fixtures(); sideview(dm = f$dm, ae = f$ae, suppae = f$suppae, adsl = f$adsl, adlb = f$adlb, run = FALSE) }",
+      helper))
+    .sv_cdisc$page <- sv_open_page(.sv_cdisc$app$url)
+    withr::defer({
+      try(.sv_cdisc$page$close(), silent = TRUE)
+      try(.sv_cdisc$app$proc$kill(), silent = TRUE)
+      .sv_cdisc$page <- NULL
+    }, envir = testthat::teardown_env())
+  }
+  b <- .sv_cdisc$page
+  sv_set_viewport(b, 1400, 900)
+  b
+}
+
+test_that("cdisc badge sits in the title bar without overlap", {
+  b <- sv_cdisc_page()
+  expect_true(attr(b, "sv_ready"))
+  for (sz in list(c(1400, 900), c(1024, 700), c(560, 520))) {
+    sv_set_viewport(b, sz[1], sz[2])
+    r <- sv_js(b, "(() => {
+      const out = { badges: 0, bad: [] };
+      document.querySelectorAll('.sideview-badge-cdisc').forEach(badge => {
+        out.badges++;
+        const card = badge.closest('.sideview-card');
+        const head = card.querySelector('.sideview-card-header');
+        const bb = badge.getBoundingClientRect(), hb = head.getBoundingClientRect();
+        const name = card.getAttribute('data-card-name');
+        if (!(bb.width && bb.height)) { out.bad.push(name + ': badge has no size'); return; }
+        if (bb.left < hb.left - 0.5 || bb.right > hb.right + 0.5 || bb.top < hb.top - 0.5 || bb.bottom > hb.bottom + 0.5)
+          out.bad.push(name + ': badge outside header');
+        head.querySelectorAll('button').forEach(btn => {
+          const x = btn.getBoundingClientRect();
+          if (!(x.width && x.height)) return;
+          if (bb.left < x.right && x.left < bb.right && bb.top < x.bottom && x.top < bb.bottom)
+            out.bad.push(name + ': badge overlaps ' + (btn.getAttribute('data-action') || btn.className));
+        });
+      });
+      return out;
+    })()")
+    label <- paste(sz, collapse = "x")
+    expect_gte(r$badges, 4, label = paste("badge count", label))
+    expect_equal(length(r$bad), 0, info = paste(label, paste(unlist(r$bad), collapse = "; ")))
+    rects <- sv_js(b, "(() => {
+      const r = s => { const e = document.querySelector(s); if (!e || getComputedStyle(e).display === 'none' || getComputedStyle(e).visibility === 'hidden') return null; const x = e.getBoundingClientRect(); return x.width && x.height ? x.toJSON() : null; };
+      return { toolbar: r('.sideview-toolbar'), palette: r('.sideview-palette'), ai: r('.sideview-ai-bar') };
+    })()")
+    expect_false(rect_overlap(rects$toolbar, rects$palette), info = paste("toolbar/palette", label))
+    expect_false(rect_overlap(rects$toolbar, rects$ai), info = paste("toolbar/ai", label))
+  }
+  sv_set_viewport(b, 1400, 900)
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("labelled headers carry titles", {
+  b <- sv_cdisc_page()
+  title <- sv_js(b, sprintf("%s.querySelector('th[data-col-name=\"USUBJID\"]').getAttribute('title')", sv_card_js("dm")))
+  expect_identical(title, "Unique Subject Identifier")
+})
+
+test_that("L toggles labels and splines stay on their ports", {
+  b <- sv_cdisc_page()
+  m <- sv_mouse(b)
+  centre <- function(card, col) sv_js(b, sprintf("(() => {
+    const r = %s.querySelector('.sideview-col-port[data-col-name=\"%s\"]').getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  })()", sv_card_js(card), col))
+  # Put dm and ae side by side so both ports are clear of other cards.
+  sv_js(b, "(() => { const e = window._sideviewInstance;
+    const c = n => document.querySelector('.sideview-card[data-card-name=\"' + n + '\"]');
+    c('dm').style.left = '40px'; c('dm').style.top = '120px';
+    c('ae').style.left = '620px'; c('ae').style.top = '120px';
+    e.updateConnectors(); return true; })()")
+  Sys.sleep(0.3)
+  on.exit(sv_js(b, "(() => { const e = window._sideviewInstance; if (e.labelsRow) e.toggleLabelsRow(false);
+    const x = document.querySelector('[data-action=\"clear-operation\"]'); if (x) x.click(); return true; })()"), add = TRUE)
+  p1 <- centre("dm", "USUBJID"); p2 <- centre("ae", "USUBJID")
+  m$click(p1)
+  for (t in seq(0.2, 1, by = 0.2)) b$Input$dispatchMouseEvent(type = "mouseMoved", x = p1$x + (p2$x - p1$x) * t, y = p1$y + (p2$y - p1$y) * t)
+  m$click(p2)
+  Sys.sleep(0.4)
+  ends <- function() sv_js(b, sprintf("(() => {
+    const path = document.querySelector('.sideview-connector-path:not(.sideview-connector-draft):not(.sideview-spline-suggested)');
+    if (!path) return null;
+    const len = path.getTotalLength(), m = path.getScreenCTM();
+    const pt = p => new DOMPoint(p.x, p.y).matrixTransform(m);
+    const a = pt(path.getPointAtLength(0)), z = pt(path.getPointAtLength(len));
+    const c = el => { const x = el.getBoundingClientRect(); return { x: x.x + x.width / 2, y: x.y + x.height / 2 }; };
+    const c1 = c(%s.querySelector('.sideview-col-port[data-col-name=\"USUBJID\"]'));
+    const c2 = c(%s.querySelector('.sideview-col-port[data-col-name=\"USUBJID\"]'));
+    const d = (u, v) => Math.hypot(u.x - v.x, u.y - v.y);
+    return { start: Math.min(d(a, c1), d(a, c2)), end: Math.min(d(z, c1), d(z, c2)),
+             rows: document.querySelectorAll('.sv-label-row').length };
+  })()", sv_card_js("dm"), sv_card_js("ae")))
+  e0 <- ends()
+  expect_false(is.null(e0))
+  expect_equal(e0$rows, 0)
+  expect_lte(e0$start, 2); expect_lte(e0$end, 2)
+  b$Input$dispatchKeyEvent(type = "rawKeyDown", key = "l", code = "KeyL", windowsVirtualKeyCode = 76, text = "l")
+  b$Input$dispatchKeyEvent(type = "keyUp", key = "l", code = "KeyL", windowsVirtualKeyCode = 76)
+  Sys.sleep(0.5)
+  e1 <- ends()
+  expect_gt(e1$rows, 0)
+  expect_lte(e1$start, 2); expect_lte(e1$end, 2)
+  b$Input$dispatchKeyEvent(type = "rawKeyDown", key = "l", code = "KeyL", windowsVirtualKeyCode = 76, text = "l")
+  b$Input$dispatchKeyEvent(type = "keyUp", key = "l", code = "KeyL", windowsVirtualKeyCode = 76)
+  Sys.sleep(0.5)
+  e2 <- ends()
+  expect_equal(e2$rows, 0)
+  expect_lte(e2$start, 2); expect_lte(e2$end, 2)
+})
+
+test_that("a module snapshot carries view.labels_row and follows the L toggle", {
+  b <- sv_module_page()
+  r <- sv_js(b, sprintf("(async () => { %s
+    const e = C('a-')._sideviewInstance;
+    const snap = () => { const v = Shiny.shinyapp.$inputValues['a-sideview_snapshot']; return v ? JSON.parse(v.state).view : null; };
+    e.toggleLabelsRow(false); e.scheduleSnapshot(); await sleep(900);
+    const off = snap();
+    e.toggleLabelsRow(true); e.scheduleSnapshot(); await sleep(900);
+    const on = snap();
+    e.toggleLabelsRow(false);
+    return { off: off && off.labels_row, on: on && on.labels_row };
+  })()", sv_module_js))
+  expect_identical(r$off, FALSE)
+  expect_identical(r$on, TRUE)
+})

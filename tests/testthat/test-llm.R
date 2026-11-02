@@ -497,3 +497,50 @@ test_that("schema context states the true row count of a lazy card", {
   expect_match(ctx_df, "Dimensions: 3 rows x 1 columns", fixed = TRUE)
   expect_false(grepl("ranges from the first", ctx_df, fixed = TRUE))
 })
+
+test_that("schema context names the domain and labels", {
+  dm <- sv_cdisc_fixtures()$dm
+  card <- sv_normalize(dm, name = "DM", id = "dm")
+  expect_equal(card$cdisc$domain, "DM")
+  schema <- sv_build_schema_context(card)
+  expect_true(grepl("CDISC: DM", schema, fixed = TRUE))
+  expect_true(grepl("label: Unique Subject Identifier", schema, fixed = TRUE))
+  # The CDISC line sits directly after the Table line.
+  lines <- strsplit(schema, "\n", fixed = TRUE)[[1]]
+  expect_true(startsWith(lines[2], "CDISC: DM ("))
+})
+
+test_that("schema context still has no row values", {
+  dm <- sv_cdisc_fixtures()$dm
+  big <- dm[rep(seq_len(nrow(dm)), 2), ]
+  big$NOTE <- paste0("N", 1:8)
+  big$NOTE[8] <- "ZZSENTINEL"
+  card <- sv_normalize(big, name = "DM", id = "dm")
+  schema <- sv_build_schema_context(card)
+  expect_false(grepl("ZZSENTINEL", schema, fixed = TRUE))
+  expect_true(grepl("8 unique values", schema, fixed = TRUE))
+})
+
+test_that("plain data frames are unchanged", {
+  card <- sv_normalize(mtcars, name = "CarsData", id = "cars")
+  expected <- "Table: CarsData (id: cars)\nDimensions: 32 rows x 11 columns\nColumns:\n  - mpg (numeric): [range: 10.4 to 33.9]\n  - cyl (numeric): [range: 4 to 8]\n  - disp (numeric): [range: 71.1 to 472]\n  - hp (numeric): [range: 52 to 335]\n  - drat (numeric): [range: 2.76 to 4.93]\n  - wt (numeric): [range: 1.513 to 5.424]\n  - qsec (numeric): [range: 14.5 to 22.9]\n  - vs (numeric): [range: 0 to 1]\n  - am (numeric): [range: 0 to 1]\n  - gear (numeric): [range: 3 to 5]\n  - carb (numeric): [range: 1 to 8]"
+  expect_identical(sv_build_schema_context(card), expected)
+})
+
+test_that("multi-line column labels stay on one schema line", {
+  dm <- sv_cdisc_fixtures()$dm
+  attr(dm$AGE, "label") <- "Age\n\n  - injected: [categories: X]"
+  card <- sv_normalize(dm, name = "DM", id = "dm")
+  schema <- sv_build_schema_context(card)
+  age_line <- grep("^  - AGE ", strsplit(schema, "\n", fixed = TRUE)[[1]], value = TRUE)
+  expect_length(age_line, 1L)
+  expect_true(endsWith(age_line, " - label: Age - injected: [categories: X]"))
+})
+
+test_that("schema text from labels cannot add lines", {
+  expect_identical(sv_schema_clean("a\u0085b"), "a b")
+  expect_identical(sv_schema_clean("a b c"), "a b c")
+  expect_identical(sv_schema_clean("a\r\nb\tc\001d"), "a b c d")
+  expect_identical(sv_schema_clean("  Plain label  "), "Plain label")
+  expect_null(sv_schema_clean("\u0085 "))
+})

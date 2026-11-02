@@ -5,6 +5,68 @@ Each entry: **date — change — why — verification**. Keep the "Open issues"
 
 ---
 
+### 2026-11-02 - Real-browser tests no longer time out under load (test infrastructure only)
+- **Root cause:** `sv_open_page()` (tests/testthat/helper-browser.R) waited for `Page$loadEventFired()` with chromote's default 10 s event timeout (`default_timeout`), and every later `Runtime$evaluate` had the same 10 s. With the suite or `devtools::check()` running (Chrome, duckdb, callr app starts all competing for CPU) the first paint of the callr app took longer, giving "timed out waiting for Page.loadEventFired". Only helper-browser.R starts Chrome (test-layout-browser.R, test-lazy-browser.R); shinytest2 `AppDriver` is used once, behind `SIDEVIEW_HEADED_QA`, so it is off by default.
+- **Change:** one shared timeout, `sv_browser_timeout()` (90 s, env `SIDEVIEW_BROWSER_TIMEOUT`), set as the session's `default_timeout`; `sv_navigate()` (navigate + load event, one retry); `sv_wait_js()` (poll a JS condition to a deadline, replaces the fixed 15 s ready loops); `ChromoteSession$new` retried once; app start wait raised from 30 s to 2 min. The module page re-navigation uses `sv_navigate()`. Pages were already shared per file. No assertion or geometry threshold changed.
+- **test-lazy.R:** the 1M-row duckdb join check bound went from 5 s to 15 s (7 s measured here, also on the older commit); the comment says it guards a collect-to-R or quadratic regression, which takes minutes.
+- **Verified:** full `NOT_CRAN=true devtools::test()` with no failures (layout-browser, lazy-browser, lazy included); `devtools::check(args = "--no-manual")` result in followup-2-report.md.
+
+### 2026-11-01 - CDISC awareness: follow-up 1 (deferred minors closed)
+- **Case-insensitive columns:** `sv_cdisc_peek()` upper-cases column names for the rules and reads values through the real name; `sv_cdisc_lazy_query(tbl, kind, col)` takes that name (arrow/duckdb twins unchanged otherwise).
+- **User tags:** `sv_cdisc_user_tag()` gives `AD*` the ADaM class from `sv_cdisc_rule_adam()` (Custom if no structure confirms) and `SUPPxx`/`SUPPQUAL` Relationship plus parent. Auto SUPP tags flip with the SEND canvas (`sv_cdisc_resolve()`), user tags never; a flipped tag gets `SEND canvas: ...` evidence (removed again when the evidence goes).
+- **Codebook drift:** `sv_cdisc_domains()` returns a "closed" vector (attribute `closed`) or `FALSE`; `sv_codebook_domain()` gives NA to a table a closed vector does not name, so a cleared tag is not re-detected. Public `sv_codebook()` unchanged.
+- **Named keys:** `sv_cdisc_override()` compares `cdisc =` names with the table name without extension (case still matters); the unknown-name warning shows the key as typed.
+- **LLM schema:** `sv_schema_clean()` caps text at 200 characters (`...`).
+- **Tests added:** lower-case columns (in-memory and duckdb), ADaM/SUPP overrides, SUPP on SEND, resolve evidence, multi-value DOMAIN asserts AE, named-key extension/case, real `datasetjson` 0.4.1 labels (column and dataset), mixed-extension message, all-skipped folder, label cap, cleared-tag codebook.
+- **Docs:** NEWS, article (case limit removed, Dataset-JSON now checked, `view.labels_row` named), spec amendment in 5.1. No JS change (the widget codebook reads the badge's domain).
+
+### 2026-11-01 - CDISC awareness: final whole-branch review fixes (0.5.0)
+- **ADaM before prefix (ruling):** a table named `^AD[A-Z0-9]*$` runs `sv_cdisc_rule_adam()` before the variable-prefix rule. If the structure confirms, ADaM wins (the DOMAIN column still goes first) and the prefix result is recorded as `variable prefix LB disagrees with ADaM ADLB`; if not, the old order applies. Admiral-style `adlb`/`adae`/`advs` with `LBTESTCD`, `AETERM`, ... are now ADaM (BDS/OCCDS), in memory and lazy (test-lazy.R twin). The "rule 3 limitation" test was replaced; a non-`AD*` name still follows the prefix rule. Spec section 5.1 amended (dated note), NEWS and article updated.
+- **`sideview_server(cdisc =)`** now goes through `sv_cdisc_check_arg()`; roxygen says it only sets the codebook `domain` column (badges come from `sideview_ui()` cards). `sv_cdisc_check_arg()` also rejects duplicate names in a named vector.
+- **`sv_codebook()` override** is normalised with `toupper(trimws())`.
+- **Module:** queued `sideview_cdisc_update` messages are dropped at `sideview_ready` (the cards sent there already carry current tags), so a stale tag cannot overwrite a fresh payload.
+- **`sv_read_cdisc()`:** a file found by scanning a folder whose package is missing is skipped with one warning; a named file is still an error.
+- **`sv_schema_clean()`** also collapses control characters, NEL, LS and PS to a space.
+- **Docs:** upper-case column names limit in NEWS and article; article says `sv_remove_card()` updates module badges; article chunk variable `cat` renamed `cdisc_cat`.
+- **Deferred (not done):** SUPP override class/parent on a user override and the SEND-canvas SUPP flip; codebook-vs-canvas drift for untagged cards; case-insensitive column detection.
+- **Verified:** `NOT_CRAN=true devtools::test(filter = "cdisc|normalize|card-store|widget|llm|codebook|module|state")` plus the two lazy CDISC tests. No UI code changed, so no browser pass was repeated.
+
+### 2026-11-01 - CDISC awareness: sideview 0.5.0 (Tasks 1-12)
+- **What shipped:** `R/cdisc.R` (catalogue in `inst/extdata/cdisc_catalogue.csv`, `sv_cdisc_catalogue()`, detection by DOMAIN value, variable prefix, key set and ADaM structure, SUPP-- and SEND handling, `sv_cdisc_finalize()` tagging cards), `cdisc =` on `sideview()`, `sideview_widget()`, `save_sideview()`, `sideviewServer()` and `sv_codebook()` (`"auto"`, `FALSE`, named vector), module tag updates (`sideview_cdisc_update`), codebook `domain` column (R and JS twins, byte-equal CSV), domain and label lines in the copilot schema context, the `L` labels row saved as optional `view.labels_row` (no schema bump), `sv_read_cdisc()` (xpt, sas7bdat, Dataset-JSON, parquet). Tags are never saved in state. Article `vignettes/articles/cdisc.Rmd`, NEWS 0.5.0, README bullet, DESCRIPTION 0.5.0.
+- **UI (Task 7):** `renderCdiscBadge(cardMeta)` puts `span.sideview-badge-cdisc.sv-cdisc-<std>` after the card name (text = domain, title = `<label> · <standard> <class>` + evidence + `supplements <parent>`, all set as text) and keeps `el.dataset.cdiscDomain` real (deleted when the tag is null), so `cardDomain()` feeds the widget/module codebook. `setCdiscTags()` + `onMessage('sideview_cdisc_update')` apply module updates (null clears; an unknown id is ignored quietly). `th` titles use the variable label; `searchCards()` matches domain and dataset label (rank 1); the inspector shows `<domain> · <dataset label>`. Gadget cards carry `data-cdisc` / `data-col-labels` (JSON) from `render_card_tag()`, read in `initExistingCards()`. Tokens `--sv-cdisc-{sdtm,send,adam}[-text]` in the base, dark and auto-dark blocks.
+- **Known limitations (also in NEWS):** catalogue `ig_versions` approximate (awareness, not conformance); `cdisc = FALSE` still runs construction-time detection on lazy cards but shows no tags; a named `cdisc=` vector with lazy cards is O(n^2) on verbs; labels go to the LLM as schema text, never rows; `--sv-th-row-h` is measured once; RStudio dialog/pane viewers not verified in RStudio itself.
+- **Verified:** see the Task 11 entry below; Task 12 (0.5.0 release checks): `pkgdown::check_pkgdown()` no problems; `devtools::check(--no-manual)`: 0 warnings, only the usual
+  `''NULL''` check-directory NOTE; the `tests` step errored twice with chromote `timed out waiting for event Page.loadEventFired`
+  (first run FAIL 16 of 22576, second run FAIL 1 of 22732, the first browser test); `NOT_CRAN=true devtools::test(filter = "layout-browser")` alone: 0 failures.
+  Treated as intermittent load-related browser timeouts, as in Task 11, not a CDISC regression. A check with all tests green was not obtained. pkgdown site rebuilt; docs/CLAUDE.* and docs/MEMORY.* removed.
+
+### 2026-11-01 - CDISC awareness: real-browser and manual verification (Task 11)
+- **Browser tests do run here** (Chrome at `C:\Program Files\Google\Chrome\Application\chrome.exe`, chromote + callr present). The earlier
+  "timeouts" were not reproduced: `test-layout-browser.R` ran to completion with `NOT_CRAN=true` (about 2 min) both before and after the new tests.
+- **New tests (test-layout-browser.R), all passed on first run:** `cdisc badge sits in the title bar without overlap` (1400x900, 1024x700,
+  560x520: every badge inside its header, no title-bar button overlapped, toolbar/palette/ai-bar still clear); `labelled headers carry titles`;
+  `L toggles labels and splines stay on their ports` (real drag connects dm.USUBJID to ae.USUBJID; spline ends within 2 px of the port centres
+  with the row off, on, off again); `a module snapshot carries view.labels_row and follows the L toggle` (proxy example app, `a-` canvas).
+  They passed without a code change, so there was no failing-first step and no Task 7-8 bug was found.
+- **Manual pass done in headless Chrome via chromote (gadget, dm/ae/suppae/adsl/adlb, `run = FALSE` app), NOT in RStudio:**
+  badge text and tooltip (e.g. "Demographics . SDTM Special-Purpose / DOMAIN column = DM / STUDYID + USUBJID"); th tooltip
+  ("Unique Subject Identifier"); `L` shows/hides the row; Ctrl+K "adverse" finds the `ae` card by its label; inspector for dm.USUBJID shows
+  the "Unique Subject Identifier" label line; dark theme (T) toggles.
+- **Parked: `--sv-th-row-h` staleness.** Measured 71 px layout height in light, after T (dark), zoomed in x2, after the container font changed, and
+  with the card narrowed; the labels row stayed flush under the header after scrolling the card body (gap 0 in light, dark and zoomed).
+  Headers are `white-space: nowrap`, so their height does not change with theme or zoom. It would only go stale if the header height changed
+  after the row was built (e.g. a late web-font load); forcing that by padding the th did leave the cached value at 71 px. Not fixed (no
+  realistic trigger found); left as a known limitation.
+- **Parked: module `test-module.R` warning:** `devtools::test(filter = "module")` gives 1 warning, `nothing is sent before ready`:
+  "package 'shiny' was built under R version 4.5.3" (installed shiny built for a newer R than 4.5.2). Environmental, not package code.
+- **NOT verified (needs real RStudio):** `viewer = "dialog"` and `viewer = "pane"` with the five tables; RStudio's Viewer pane rendering of the
+  badge and tooltip. `viewer = "browser"` equivalent covered only by headless Chrome above, not a user-visible browser window.
+- **Full suite, `NOT_CRAN=true devtools::test()`:** 22759 expectations, 0 failed, 0 errors, 0 warnings, 1 skipped (`datasetjson` not installed). One
+  earlier full run hit a real `Chromote: timed out waiting for event Page.loadEventFired` at `module: zero-row replace` (test-layout-browser.R:1943)
+  while I had other Rscript/Chrome processes running; the identical code passed alone and in the clean rerun, so the timeout is intermittent
+  and load-related (a reload-wait in `sv_module_page()`), not a CDISC regression. The full suite takes about 25 minutes here.
+- Codebook `domain` column: covered by test-codebook.R (R and byte-equal JS CSV); not opened as a downloaded file in a browser.
+
 ### 2026-10-31 - Join rules final fix wave: Strict applicability and review items (0.4.0)
 - **Change (I1):** `compose` writes Strict (`relationship =` / `unmatched =`) only where the join check's counts still describe the join: the join is the first row-changing step on its left table's chain (filter/join/distinct/slice/summarise/pivot/custom change rows; select/rename/mutate/recode/arrange do not), the right side is the raw card (not a `_prep` chain), and the chain is in R (not duckdb/arrow, which also closes M2). Otherwise the step keeps its `strict` flag and no args are written. One test, `Pipeline.prototype.strictApplies(step)` returning `{ok, reason}`, is used by `compose`, the disabled Strict checkbox (title = reason) and `strictLine()` in the join check panel.
 - **Change (M1):** the pipeline step label uses `pipeline.describe` (so an invalid rule reads "Rule needs fixing"); `describe` adds " · " only when `ruleLabel` is non-empty. **M3:** NEWS.md and the roxygen "Known differences" in R/sideview.R reworded (man/sideview.Rd regenerated); `docs/` untouched. **M4:** the widget's missing-column message is `Not in <table>: <col>`, as R. **M5:** `print.sv_join_diagnostics` uses `"
@@ -117,8 +179,12 @@ Each sub-project gets its own spec, plan and build, in this order:
    fallback, workspace-version warning and migration slot, r-universe.
 
 ## Backlog (future rounds, not yet scheduled)
-- **CDISC / pharmaverse support** (later stage, after 0.4.0 is solid; requested 2026-10-25, do not drop):
-  recognise `USUBJID` / `STUDYID` as join keys, show SDTM/ADaM domain labels (DM, AE, LB, ADSL, ...).
+- **CDISC / pharmaverse follow-ups** (0.5.0 shipped recognition, badges, labels, codebook domain, `sv_read_cdisc()`):
+  - B: USUBJID / STUDYID join keys (suggest and pre-fill joins between domains);
+  - C: SUPPQUAL merge (fold SUPP-- rows into the parent as columns);
+  - D: admiral-style code generation for ADaM derivations;
+  - E: ARD / TLG cards (analysis results datasets and tables as cards);
+  - F: spec / define.xml checks (conformance, which 0.5.0 deliberately does not do).
 - Table version diff by key (data-lock comparisons between dataset versions).
 - Validation rules (ranges, allowed values, ID uniqueness) exporting `pointblank`-style checks.
 - PHI/PII column tagging that excludes tagged columns from the LLM schema context.
@@ -143,6 +209,28 @@ Each sub-project gets its own spec, plan and build, in this order:
 
 ## Log
 
+### 2026-11-02 - CDISC follow-up 1 closed: browser-test stability and RStudio pass
+- **Change:** deferred minors (case-insensitive column names, ADaM/SUPP user-tag classes, SEND-canvas SUPP flip,
+  codebook agrees with the canvas incl. cleared tags, test gaps, LLM label cap) are done in f5056ba..1e54a84 and
+  reviewed; 73cc162 folds case in the canvas SPECIES check; 5622d77 makes the real-browser tests robust under load
+  (shared timeout, navigate retry, polling) and relaxes the 1M-row duckdb join timing bound 5 s -> 15 s (it measured
+  7 s on this machine under load, not a regression).
+- **Verified (full suite, `NOT_CRAN=true`):** 532 tests, 22802 expectations, 0 failed / 0 errors / 0 warnings, 1 skipped.
+  `devtools::check()` clean apart from the known Windows "NULL" NOTE.
+- **Dataset-JSON:** real `datasetjson` 0.4.1 installed; column and dataset labels survive the reader.
+- **RStudio 2026-11-02 (R 4.5.1, one RStudio instance, five synthetic tables dm/ae/suppae/adsl/adlb):**
+  - `viewer = "dialog"`: badges DM/AE/SUPPAE/ADSL/ADLB; badge tooltip; `th` tooltip "Unique Subject Identifier";
+    `L` labels row; Ctrl+K "adverse" finds `ae`; `T` dark theme legible; inspector shows the label and the
+    "DM - Demographics" line; Export codebook writes a CSV with the `domain` and `label` columns (checked the file);
+    Cancel returns `NULL`.
+  - `viewer = "pane"` (also with the Viewer pane maximised): the chrome wraps in the narrow pane, no overlap with badges;
+    `L`, Ctrl+K, `T` all work. Native `title` tooltips do not show in screen captures here; the title text itself is
+    asserted by the real-browser tests and was read from the DOM.
+  - `viewer = "browser"` (Edge, then the built-in browser on the same server): badges and tooltips read from the DOM,
+    `th` title, `L` on/off (2 label rows, then 0), `T` toggles `sv-theme-dark`.
+- **Gotcha:** starting RStudio with `Start-Process` and then `open_application` creates a second instance with its own
+  rsession; the console then looks hung. Use one instance, and press Return again if a pasted command does not run.
+
 ### 2026-11-01 - Release 0.4.0 checks
 - **Change:** DESCRIPTION 0.3.0 -> 0.4.0; NEWS head "(development)" dropped.
 - **Verified on `main` (1e4e2e1, PR #3 merged):** `devtools::test()` with `NOT_CRAN=true` -> 442 tests, 0 failed / 0 errors / 0 skipped
@@ -154,7 +242,7 @@ Each sub-project gets its own spec, plan and build, in this order:
   (https://github.com/lauyeehow1986-hub/sideview/releases/tag/v0.4.0, notes = the 0.4.0 NEWS section).
 - **r-universe:** `https://lauyeehow1986-hub.r-universe.dev/sideview` still returned 404 right after the tag (2026-11-01);
   likely waiting for the next scheduled build. Recheck, then confirm the README install line.
-- **Next:** CDISC/pharmaverse support (USUBJID/STUDYID join keys, SDTM/ADaM domain labels) as its own multi-part project.
+- **Next:** CDISC awareness is in 0.5.0; remaining CDISC sub-projects B-F are in the backlog.
 
 ### 2026-11-01 - Sub-project 4: small items (0.4.0)
 

@@ -3,6 +3,32 @@
   if (is.null(x)) y else x
 }
 
+# Schema text from user data (labels, CDISC names): one line, single spaces.
+sv_schema_clean <- function(x) {
+  if (!(is.character(x) && length(x) == 1L && !is.na(x))) return(NULL)
+  # control characters (including NEL, LS and PS) become spaces: a label cannot add a line
+  x <- trimws(gsub("[[:space:][:cntrl:]\u0085\u2028\u2029]+", " ", x))
+  # user metadata goes to the model as one short line, never a paragraph
+  if (nchar(x) > 200L) x <- paste0(trimws(substr(x, 1L, 197L)), "...")
+  if (nzchar(x)) x else NULL
+}
+
+# The CDISC line of a tagged card, e.g. "CDISC: AE (Adverse Events), SDTM Events".
+# NULL for an untagged card. Missing parts are left out, never shown as NA.
+sv_schema_cdisc_line <- function(tag) {
+  if (is.null(tag) || !is.list(tag)) return(NULL)
+  domain <- sv_schema_clean(tag$domain)
+  if (is.null(domain)) return(NULL)
+  label <- sv_schema_clean(tag$label)
+  std_class <- paste(Filter(Negate(is.null), list(sv_schema_clean(tag$standard),
+                                                 sv_schema_clean(tag$class))),
+                     collapse = " ")
+  out <- paste0("CDISC: ", domain)
+  if (!is.null(label)) out <- paste0(out, " (", label, ")")
+  if (nzchar(std_class)) out <- paste0(out, ", ", std_class)
+  out
+}
+
 # The "Dimensions" line of a card. A lazy card reports the table's true row count;
 # its column ranges and levels still come from the preview rows.
 sv_schema_dimensions <- function(card, nr, nc) {
@@ -61,8 +87,10 @@ sv_build_schema_context <- function(cards, max_categories = 5L) {
     nr <- nrow(df)
     nc <- ncol(df)
 
+    cdisc_line <- sv_schema_cdisc_line(card$cdisc)
     lines <- c(
       sprintf("Table: %s (id: %s)", c_name, c_id),
+      cdisc_line,
       sv_schema_dimensions(card, nr, nc),
       "Columns:"
     )
@@ -133,7 +161,10 @@ sv_build_schema_context <- function(cards, max_categories = 5L) {
           detail <- sprintf("[%s]", col_type)
         }
 
-        lines <- c(lines, sprintf("  - %s (%s): %s", col, col_type, detail))
+        col_label <- sv_schema_clean(card$col_labels[[col]]) %||%
+          sv_schema_clean(attr(val, "label", exact = TRUE))
+        label_txt <- if (is.null(col_label)) "" else paste0(" - label: ", col_label)
+        lines <- c(lines, sprintf("  - %s (%s): %s%s", col, col_type, detail, label_txt))
       }
     }
 

@@ -227,6 +227,12 @@ render_card_tag <- function(card, index = 1L) {
     if (!sv_has_duckdb()) badge_title <- "Install duckdb to check the whole table"
   }
   
+  # variable labels (a "label" attribute), once: header titles and the engine's data-col-labels
+  col_labels <- if (is.data.frame(card$data)) {
+    Filter(function(l) is.character(l) && length(l) == 1L && !is.na(l),
+           lapply(card$data, function(x) attr(x, "label", exact = TRUE)))
+  } else list()
+
   # Header
   header_tag <- htmltools::tags$div(
     class = "sideview-card-header",
@@ -278,7 +284,7 @@ render_card_tag <- function(card, index = 1L) {
       htmltools::tags$th(
         `data-col-name` = col,
         `data-col-type` = if (is.numeric(col_vals)) "numeric" else if (nzchar(c_type) && !is.na(c_type)) c_type else NULL,
-        title = if (nzchar(c_type)) sprintf("%s (%s)", col, c_type) else col,
+        title = if (!is.null(col_labels[[col]])) col_labels[[col]] else if (nzchar(c_type)) sprintf("%s (%s)", col, c_type) else col,
         htmltools::tags$div(
           class = "col-header-wrap",
           htmltools::tags$div(
@@ -353,6 +359,13 @@ render_card_tag <- function(card, index = 1L) {
     # the rows R holds for a lazy card: checks that run on them say so (discrepancy, Auto Map)
     `data-preview-rows` = if (is_lazy && !is.na(n_preview)) plain_count(n_preview) else NULL,
     `data-code-ref` = card$code_ref,
+    # CDISC tag and variable labels for the engine (badge, header titles, inspector); JSON text
+    `data-cdisc` = if (!is.null(card$cdisc)) {
+      as.character(jsonlite::toJSON(sv_cdisc_wire_tag(card$cdisc), auto_unbox = TRUE, null = "null"))
+    },
+    `data-col-labels` = if (length(col_labels)) {
+      as.character(jsonlite::toJSON(col_labels, auto_unbox = TRUE))
+    },
     `data-rows-basis` = if (!is.data.frame(card$data)) NULL else if (preview_only) "preview" else "full",
     # No saved position: the engine flows these cards into a grid on load.
     `data-auto-place` = if (is.null(card$x) && is.null(card$y)) "true" else NULL,

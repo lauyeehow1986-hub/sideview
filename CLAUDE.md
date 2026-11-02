@@ -43,6 +43,7 @@ rstudio bridge: R/rstudio.R
   `sideview_console_result`, `sideview_eval_result`, `sideview_rows`, `sideview_ai_status`,
   `sideview_join_diagnostics`, `sideview_column_profile`, `sideview_codebook_saved` (module: carries `csv`, the file text, plus `filename`; the browser downloads it),
   `sideview_state_saved`, `sideview_state_loaded`,
+  `sideview_cdisc_update` (module: `{tags: {<card_id>: tag | null}}`, the badges only; an unknown card id is ignored quietly),
   `sideview_card_add`, `sideview_card_replace`, `sideview_card_remove`, `sideview_state_set`, `sideview_highlight`,
   `sideview_llm` (module without `llm_fn`: hide the AI bar and Copilot tab),
   `sideview_toast` (`{text, type, id?, card?}`: a notice from R, e.g. the lazy-to-preview fallback; a toast with the same `id` is updated in place, as for codebook progress; `card` is the id of the card the notice is about: the browser then sets that card's `data-rows-basis` to `preview`, as for a lost link).
@@ -101,6 +102,12 @@ rstudio bridge: R/rstudio.R
   `<script class="sideview-state">`; the widget passes `options.state`. Cards match by **name**; a restored
   view skips the first auto-fit. Open replaces joins and pipeline and clears undo. Save/Open use
   `rstudioapi::selectFile` only in the gadget when `data-sv-file-dialog="r"`; otherwise browser download/file picker.
+- **CDISC tags:** `sideview(..., cdisc = "auto")`, `sideview_widget()`, `save_sideview()`, `sideviewServer()` and
+  `sv_codebook()` take `cdisc`: `"auto"`, `FALSE`, or a named character vector of domains (`c(my_ae = "AE")`).
+  Tags are derived in R (`R/cdisc.R`, catalogue in `inst/extdata/cdisc_catalogue.csv`) and are **never saved in
+  state**; they are re-derived on load. `domain` is a codebook twin column (R and `codebookRow()` in JS, byte-equal
+  CSV). `workspace state` carries one optional field, `view.labels_row` (the `L` toggle), without a schema bump.
+  Only column labels and a domain line reach the LLM schema text, never rows.
 - **"No code"** is `""` on the wire. The drawer placeholder (`# Connect two columns ...`) is display text only;
   test with `sv_is_no_code()` (R) / `isNoCode()` (JS). Done with no code returns `NULL`.
 - **Gadget lifecycle:** `sv_new_lifecycle()` counts sessions; the app stops only after
@@ -117,7 +124,7 @@ rstudio bridge: R/rstudio.R
 - **Mode-aware overrides:** a custom colour that must differ by mode uses `-light`/`-dark` variables:
   the base block has `--sv-primary-text: var(--sv-primary-text-light, #...)`, the dark blocks use
   `var(--sv-primary-text-dark, #...)`. Use `--sv-primary-text` (not `--sv-primary`) for primary-coloured *text*.
-- **Keyboard:** single-key shortcuts (F, 0, +/-, T, D, M, /, ?) and Ctrl+K (card search) only fire when the
+- **Keyboard:** single-key shortcuts (F, 0, +/-, T, D, M, L, /, ?) and Ctrl+K (card search) only fire when the
   canvas owns the keyboard (`ownsKeyboard()`: standalone, or focus inside an embedded widget) and never while
   typing. Ctrl+Enter submits a drawer builder. Add new shortcuts to the `?` dialog list too.
 - **Navigation:** `zoomToCard()` (title double-click, minimap click, Ctrl+K result), the minimap (`renderMinimap()`,

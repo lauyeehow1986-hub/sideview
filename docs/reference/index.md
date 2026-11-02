@@ -155,3 +155,12 @@ Convert heterogeneous tabular objects into standardized sideview cards.
 
 - [`sv_normalize()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_normalize.md)
   : Universal Normalization Engine for Sideview Cards
+
+## CDISC
+
+Recognise SDTM, SEND and ADaM datasets.
+
+- [`sv_cdisc_catalogue()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_cdisc_catalogue.md)
+  : CDISC dataset catalogue
+- [`sv_read_cdisc()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_read_cdisc.md)
+  : Read CDISC datasets from files

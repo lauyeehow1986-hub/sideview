@@ -17,7 +17,7 @@ the user's work is read back with the reactives of the returned proxy.
 ``` r
 sideviewUI(id, height = "600px", title = NULL, theme = "auto")
 
-sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL)
+sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto")
 ```
 
 ## Arguments
@@ -64,6 +64,13 @@ sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL)
   With none, the server tells the canvas to hide the AI bar and the
   Copilot tab. `sideviewUI()` always renders them, so they show for a
   moment before the first message arrives.
+
+- cdisc:
+
+  CDISC tagging, as for
+  [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md):
+  `"auto"`, `FALSE`, or a named character vector of domain codes. Tags
+  are kept current as cards come and go.
 
 ## Value
 

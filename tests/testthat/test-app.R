@@ -1204,3 +1204,21 @@ test_that("the gadget toolbar offers every action of the widget toolbar, plus Au
   expect_false("suggest-mappings" %in% js_actions)
   expect_setequal(r_actions, c(js_actions, "suggest-mappings", "gadget-cancel", "gadget-done"))
 })
+
+test_that("render_card_tag carries the CDISC tag and variable labels for the gadget", {
+  fx <- sv_cdisc_fixtures()
+  card <- sv_cdisc_finalize(list(sv_normalize(fx$dm, name = "dm")), "auto")[[1]]
+  html <- as.character(render_card_tag(card))
+  expect_match(html, "data-cdisc=", fixed = TRUE)
+  expect_match(html, "data-col-labels=", fixed = TRUE)
+  expect_match(html, 'title="Unique Subject Identifier"', fixed = TRUE)
+  plain <- as.character(render_card_tag(sv_normalize(data.frame(x = 1), name = "p")))
+  expect_false(grepl("data-cdisc=", plain, fixed = TRUE))
+  expect_false(grepl("data-col-labels=", plain, fixed = TRUE))
+})
+
+test_that("sideview_server refuses a bad cdisc argument", {
+  expect_error(sideview_server(list(), cdisc = TRUE), "cdisc")
+  expect_error(sideview_server(list(), cdisc = c(a = "AE", a = "LB")), "duplicate")
+  expect_no_error(sideview_server(list(), cdisc = c(a = "AE")))
+})

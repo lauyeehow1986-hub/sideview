@@ -413,3 +413,29 @@ test_that("Computer Use GUI: Scenario 11 - a module canvas takes cards, state an
     expect_true(isTRUE(s11[[nm]]), info = nm)
   }
 })
+
+# ==============================================================================
+# Scenario 12: CDISC badge, label titles, tag updates, search and inspector
+# ==============================================================================
+test_that("Computer Use GUI: Scenario 12 - CDISC badge, header labels, tag updates and search", {
+  res <- run_gui_test_scenarios()
+  s12 <- res$scenario12
+
+  expect_gt(length(s12), 0)
+  for (nm in names(s12)) {
+    expect_true(isTRUE(s12[[nm]]), info = nm)
+  }
+})
+
+# ==============================================================================
+# Scenario 13: the L label row and view.labels_row
+# ==============================================================================
+test_that("Computer Use GUI: Scenario 13 - label row toggle and saved view", {
+  res <- run_gui_test_scenarios()
+  s13 <- res$scenario13
+
+  expect_gt(length(s13), 0)
+  for (nm in names(s13)) {
+    expect_true(isTRUE(s13[[nm]]), info = nm)
+  }
+})

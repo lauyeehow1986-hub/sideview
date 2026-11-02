@@ -13,6 +13,7 @@ save_sideview(
   title = "Sideview",
   background = "white",
   max_rows = 5000,
+  cdisc = "auto",
   ...
 )
 ```
@@ -48,6 +49,12 @@ save_sideview(
   [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md);
   default 5000). A widget you built yourself keeps the cap it was built
   with.
+
+- cdisc:
+
+  CDISC awareness when `widget` is table data (see
+  [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md)).
+  A widget you built yourself keeps its own setting.
 
 - ...:
 

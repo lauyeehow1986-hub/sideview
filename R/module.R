@@ -28,6 +28,8 @@
 #'   With none, the server tells the canvas to hide the AI bar and the Copilot tab.
 #'   `sideviewUI()` always renders them, so they show for a moment before the first
 #'   message arrives.
+#' @param cdisc CDISC tagging, as for [sideview()]: `"auto"`, `FALSE`, or a named
+#'   character vector of domain codes. Tags are kept current as cards come and go.
 #'
 #' @return `sideviewUI()` returns a `shiny.tag.list`. `sideviewServer()` returns a
 #'   `sideview_proxy`: a list with the reactives `code()` (the composed code, `""`
@@ -57,16 +59,26 @@ sideviewUI <- function(id, height = "600px", title = NULL, theme = "auto") {
 
 #' @rdname sideviewUI
 #' @export
-sideviewServer <- function(id, cards = list(), state = NULL, llm_fn = NULL) {
+sideviewServer <- function(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto") {
   force(cards)
+  cdisc <- sv_cdisc_check_arg(cdisc)
   force(state)
   force(llm_fn)
   shiny::moduleServer(id, function(input, output, session) {
     initial <- if (is.function(cards)) sv_initial_cards(cards, id) else cards
     llm <- llm_fn %||% function(...) stop("No llm_fn was given to sideviewServer().", call. = FALSE)
-    impl <- sideview_server_impl(input, output, session, sv_module_cards(initial), llm, NULL, NULL, module = TRUE)
+    initial <- sv_module_cards(initial)
+    # an override may name a card that arrives later: warn only when the cards are all here
+    initial <- if (is.function(cards) || !length(initial)) {
+      suppressWarnings(sv_cdisc_finalize(initial, cdisc))
+    } else {
+      sv_cdisc_finalize(initial, cdisc)
+    }
+    impl <- sideview_server_impl(input, output, session, initial, llm, NULL, NULL, module = TRUE,
+                                cdisc = cdisc)
     ctl <- impl$ctl
     ctl$forget <- impl$forget
+    ctl$cdisc <- cdisc
 
     ns <- session$ns("")
     proxy <- structure(
@@ -303,10 +315,13 @@ sv_module_state <- function(state) {
 sv_proxy_add <- function(proxy, card) {
   ctl <- proxy$ctl
   ctl$store$add(card)
+  tags <- sv_module_refinalize(ctl, except = card$id)
+  card <- ctl$store$get(card$name)
   ctl$cards_rv(ctl$store$names())
   if (isTRUE(ctl$ready)) {
     ctl$send("sideview_card_add", list(card = sv_card_payload(card, sv_preview_rows)))
   }
+  sv_emit_cdisc(ctl, tags)
   invisible(proxy)
 }
 
@@ -317,10 +332,13 @@ sv_proxy_replace <- function(proxy, card) {
   if (!is.null(old)) ctl$forget(old$id)
   ctl$forget(card$id)
   ctl$store$replace(card$name, card)
+  tags <- sv_module_refinalize(ctl, except = card$id)
+  card <- ctl$store$get(card$name)
   ctl$cards_rv(ctl$store$names())
   if (isTRUE(ctl$ready)) {
     ctl$send("sideview_card_replace", list(card = sv_card_payload(card, sv_preview_rows)))
   }
+  sv_emit_cdisc(ctl, tags)
   invisible(proxy)
 }
 
@@ -329,9 +347,37 @@ sv_proxy_remove <- function(proxy, name) {
   old <- ctl$store$get(name)
   if (!is.null(old)) ctl$forget(old$id)
   ctl$store$remove(name)
+  tags <- sv_module_refinalize(ctl)
   ctl$cards_rv(ctl$store$names())
   if (isTRUE(ctl$ready)) ctl$send("sideview_card_remove", list(name = name))
+  sv_emit_cdisc(ctl, tags)
   invisible(proxy)
+}
+
+# Re-run the CDISC resolution over the store after it changed. Cards whose tag moved are
+# updated in place; the tags that changed on cards other than `except` (the card that
+# was just added or replaced carries its own tag in its payload) are returned.
+sv_module_refinalize <- function(ctl, except = NULL) {
+  old <- unname(ctl$store$all())
+  if (!length(old)) return(list())
+  new <- suppressWarnings(sv_cdisc_finalize(old, ctl$cdisc %||% "auto"))
+  diff <- sv_cdisc_tag_diff(old, new)
+  for (card in new) {
+    if (card$id %in% names(diff)) ctl$store$replace(card$name, card)
+  }
+  diff <- diff[setdiff(names(diff), except)]
+  lapply(diff, sv_cdisc_wire_tag)
+}
+
+sv_emit_cdisc <- function(ctl, tags) {
+  if (length(tags)) ctl$emit("sideview_cdisc_update", list(tags = tags))
+  invisible(NULL)
+}
+
+# Tags are resolved across the canvas, so a re-firing reactive is compared without them.
+sv_without_cdisc <- function(card) {
+  card$cdisc <- NULL
+  card
 }
 
 # A reactive `cards =`: replace what changed, add what is new, remove what is gone.
@@ -342,7 +388,7 @@ sv_sync_cards <- function(proxy, new_cards, keep = character()) {
     if (!store$has(card$name)) next
     old <- store$get(card$name)
     card$id <- old$id
-    if (!identical(card, old)) sv_proxy_replace(proxy, card)
+    if (!identical(sv_without_cdisc(card), sv_without_cdisc(old))) sv_proxy_replace(proxy, card)
   }
   for (card in new_cards) {
     if (!store$has(card$name)) sv_proxy_add(proxy, card)
@@ -383,6 +429,9 @@ sv_module_wire <- function(input, session, store, send) {
     }
     queued <- ctl$queue
     ctl$queue <- list()
+    # The cards above already carry their current tags; a tag update queued before
+    # ready is older than that payload and could only overwrite it with a stale one.
+    queued <- Filter(function(q) !identical(q$type, "sideview_cdisc_update"), queued)
     ctl$ready <- TRUE
     for (q in queued) send(q$type, q$message)
   }, ignoreInit = FALSE)

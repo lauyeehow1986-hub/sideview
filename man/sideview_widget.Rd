@@ -12,6 +12,7 @@ sideview_widget(
   options = list(),
   theme = "auto",
   state = NULL,
+  cdisc = "auto",
   max_rows = 5000
 )
 }
@@ -34,6 +35,9 @@ sideview_widget(
 
 \item{state}{A saved workspace to restore (see \code{\link[=sideview]{sideview()}}): a
 \code{sideview_state} or the path to a saved state file.}
+
+\item{cdisc}{CDISC awareness (see \code{\link[=sideview]{sideview()}}): \code{"auto"} (default), \code{FALSE},
+or a named character vector of domain codes.}
 
 \item{max_rows}{Most rows of each data-frame table to embed in the widget
 (default 5000). A longer table is cut to its first \code{max_rows} rows, its

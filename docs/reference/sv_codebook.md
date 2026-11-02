@@ -9,7 +9,7 @@ analysis.
 ## Usage
 
 ``` r
-sv_codebook(..., top_n = 5L, file = NULL, progress = NULL)
+sv_codebook(..., top_n = 5L, file = NULL, progress = NULL, cdisc = "auto")
 ```
 
 ## Arguments
@@ -36,10 +36,17 @@ sv_codebook(..., top_n = 5L, file = NULL, progress = NULL)
   Optional `function(table, j, n_cols)`, called before each column is
   profiled.
 
+- cdisc:
+
+  Fills the `domain` column: `"auto"` (default) detects the CDISC domain
+  of each table, `FALSE` leaves it empty, and a named character vector
+  (table name to domain code) sets the domain of the tables it names.
+
 ## Value
 
-A data frame with columns `table`, `column`, `position`, `class`,
-`label`, `n`, `rows_profiled`, `n_missing`, `pct_missing`, `n_distinct`,
+A data frame with columns `table`, `domain` (the CDISC domain, `NA` when
+the table is not recognised), `column`, `position`, `class`, `label`,
+`n`, `rows_profiled`, `n_missing`, `pct_missing`, `n_distinct`,
 `unique_key`, `min`, `q1`, `median`, `q3`, `max` (as text, so dates
 fit), `mean`, `sd`, `top_values` and `issues`. `rows_profiled` is the
 number of rows the profile used; it equals `n` except for a preview of a
@@ -60,10 +67,10 @@ profiled from its first 50 rows: `n` is still the true row count,
 ``` r
 patients <- data.frame(id = 1:4, sex = c("M", "F", "f", NA), age = c(40, 51, 62, 999))
 sv_codebook(patients)
-#>      table column position     class label n rows_profiled n_missing
-#> 1 patients     id        1   integer  <NA> 4             4         0
-#> 2 patients    sex        2 character  <NA> 4             4         1
-#> 3 patients    age        3   numeric  <NA> 4             4         0
+#>      table domain column position     class label n rows_profiled n_missing
+#> 1 patients   <NA>     id        1   integer  <NA> 4             4         0
+#> 2 patients   <NA>    sex        2 character  <NA> 4             4         1
+#> 3 patients   <NA>    age        3   numeric  <NA> 4             4         0
 #>   pct_missing n_distinct unique_key  min    q1 median     q3  max  mean
 #> 1           0          4       TRUE    1  1.75    2.5   3.25    4   2.5
 #> 2          25          3      FALSE <NA>  <NA>   <NA>   <NA> <NA>    NA

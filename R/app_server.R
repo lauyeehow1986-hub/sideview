@@ -25,7 +25,7 @@
 #' @noRd
 sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_fn, console_fn,
                                  gadget = FALSE, lifecycle = NULL, run_env = globalenv(),
-                                 module = FALSE) {
+                                 module = FALSE, cdisc = "auto") {
   # One mutable store is the single source of truth for the cards.
   card_store <- sv_card_store(sv_normalize_cards(cards))
   # The cards as they are now (a module changes them while it runs).
@@ -387,7 +387,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
             }
           })
         }
-        run <- function() sv_codebook(inputs(), progress = progress)
+        run <- function() sv_codebook(inputs(), progress = progress, cdisc = sv_cdisc_domains(tables, cdisc))
         cb <- lazy_or_preview(unname(tables), run, run)
         sv_write_codebook(cb, path)
         if (isTRUE(module)) {
@@ -811,6 +811,11 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
 #'   tab closes the app waits `getOption("sideview.session_grace", 5)` seconds so a
 #'   page reload does not end it. Leave `FALSE`
 #'   when embedding the server in your own multi-user Shiny app.
+#' @param cdisc CDISC setting the canvas was started with (`"auto"`, `FALSE` or a named
+#'   vector of domain codes). Here it only controls the `domain` column of the
+#'   codebook export. The badges on the canvas come from the cards given to
+#'   [sideview_ui()], so pass the same `cdisc` there (or build the page with
+#'   [sideview()] or [sideviewUI()], which keep the two in step).
 #' @param run_env Environment where **Run in R** evaluates the pipeline and
 #'   stores its result (as `sv_result` unless another name is given). Defaults
 #'   to the environment `sideview_server()` is called from.
@@ -823,8 +828,10 @@ sideview_server <- function(cards = list(),
                             insert_fn = sv_insert_code,
                             console_fn = sv_send_to_console,
                             gadget = FALSE,
-                            run_env = parent.frame()) {
+                            run_env = parent.frame(),
+                            cdisc = "auto") {
   force(run_env) # parent.frame() is lazy: resolve it while the caller is on the stack
+  cdisc <- sv_cdisc_check_arg(cdisc)
   dots <- list(...)
   # If invoked directly as sideview_server(input, output, session, ...)
   if (length(dots) >= 2 && inherits(dots[[2]], c("ShinySession", "MockShinySession"))) {
@@ -833,13 +840,13 @@ sideview_server <- function(cards = list(),
     session <- dots[[2]]
     extra_cards <- if (length(dots) >= 3) dots[[3]] else list()
     return(sideview_server_impl(input, output, session, extra_cards, llm_fn, insert_fn, console_fn,
-                                gadget = gadget, run_env = run_env))
+                                gadget = gadget, run_env = run_env, cdisc = cdisc))
   }
 
   lifecycle <- sv_new_lifecycle()
   function(input, output, session) {
     sideview_server_impl(input, output, session, cards, llm_fn, insert_fn, console_fn,
-                         gadget = gadget, lifecycle = lifecycle, run_env = run_env)
+                         gadget = gadget, lifecycle = lifecycle, run_env = run_env, cdisc = cdisc)
   }
 }
 
@@ -857,4 +864,20 @@ sv_is_no_code <- function(code) {
   if (!is.character(code) || length(code) != 1L || is.na(code)) return(TRUE)
   code <- trimws(code)
   !nzchar(code) || identical(code, "# Connect two columns to generate pipeline code")
+}
+
+# Domains of the tagged cards by table name for the codebook, so the codebook agrees with
+# the badges on the canvas. FALSE when the canvas has no tags (cdisc = FALSE, or none
+# recognised or every tag cleared). The vector is "closed": a table it does not name has
+# no domain, so a cleared or untagged card is never detected again.
+sv_cdisc_domains <- function(cards, cdisc = "auto") {
+  if (identical(cdisc, FALSE)) return(FALSE)
+  out <- character()
+  for (card in cards) {
+    d <- card$cdisc$domain
+    if (!is.null(d) && length(card$name) == 1L && nzchar(card$name)) out[[card$name]] <- as.character(d)
+  }
+  if (!length(out)) return(FALSE)
+  attr(out, "closed") <- TRUE
+  out
 }

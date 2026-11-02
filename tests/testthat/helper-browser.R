@@ -67,7 +67,7 @@ sv_start_app <- function(app_expr = "sideview(patients, visits, labs, run = FALS
   )
   url <- sprintf("http://127.0.0.1:%d", port)
   ok <- FALSE
-  for (i in 1:120) {
+  for (i in 1:480) {  # up to ~2 min: a cold R start is slow under load
     if (!proc$is_alive()) break
     con <- url(url)
     ok <- tryCatch(length(readLines(con, n = 1, warn = FALSE)) > 0,
@@ -84,22 +84,52 @@ sv_start_app <- function(app_expr = "sideview(patients, visits, labs, run = FALS
   list(proc = proc, url = url)
 }
 
+# Generous protocol timeouts. chromote's default is 10 s per command or awaited
+# event, which a loaded machine (full test suite, R CMD check, parallel Chrome)
+# overruns: "timed out waiting for Page.loadEventFired". One place to tune it.
+sv_browser_timeout <- function() as.numeric(Sys.getenv("SIDEVIEW_BROWSER_TIMEOUT", "90"))
+
+# Navigate and wait for the load event, retrying once (a slow first paint under
+# load is the usual cause; a second attempt almost always succeeds).
+sv_navigate <- function(b, url, attempts = 2) {
+  err <- NULL
+  for (i in seq_len(attempts)) {
+    ok <- tryCatch({
+      b$Page$navigate(url, wait_ = FALSE)
+      b$Page$loadEventFired(timeout_ = sv_browser_timeout())
+      TRUE
+    }, error = function(e) { err <<- e; FALSE })
+    if (ok) return(invisible(TRUE))
+  }
+  stop(err)
+}
+
+# Poll a JS condition until true or `timeout` seconds pass (no fixed sleeps).
+sv_wait_js <- function(b, expr, timeout = 30, interval = 0.1) {
+  deadline <- Sys.time() + timeout
+  repeat {
+    ok <- isTRUE(tryCatch(sv_js(b, expr), error = function(e) FALSE))
+    if (ok || Sys.time() > deadline) return(ok)
+    Sys.sleep(interval)
+  }
+}
+
 # Open a headless Chrome tab at a given viewport size and wait for the engine.
 sv_open_page <- function(url, width = 1400, height = 900, wait_for = "window.sideviewInitialized === true") {
-  b <- chromote::ChromoteSession$new(width = width, height = height)
+  b <- NULL
+  for (i in 1:2) {
+    b <- tryCatch(chromote::ChromoteSession$new(width = width, height = height),
+                  error = function(e) if (i == 2) stop(e) else NULL)
+    if (!is.null(b)) break
+  }
+  b$default_timeout <- sv_browser_timeout()
   b$Runtime$enable()
   errors <- character()
   b$Runtime$exceptionThrown(callback_ = function(msg) {
     errors <<- c(errors, msg$exceptionDetails$exception$description %||% msg$exceptionDetails$text)
   }, wait_ = FALSE)
-  b$Page$navigate(url, wait_ = FALSE)
-  b$Page$loadEventFired()
-  ready <- FALSE
-  for (i in 1:60) {
-    ready <- isTRUE(sv_js(b, wait_for))
-    if (ready) break
-    Sys.sleep(0.25)
-  }
+  sv_navigate(b, url)
+  ready <- sv_wait_js(b, wait_for, timeout = 60)
   attr(b, "sv_errors") <- function() errors
   attr(b, "sv_ready") <- ready
   b

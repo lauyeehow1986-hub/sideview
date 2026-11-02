@@ -1,3 +1,57 @@
+# sideview 0.5.0
+
+## CDISC awareness
+
+* **Domain badges.** Tables that look like SDTM, SEND or ADaM datasets get a small badge after the card
+  name (`DM`, `AE`, `ADSL`, ...). Hover for the dataset label, the standard and class, and why sideview
+  thinks so. Supplemental qualifier tables (`SUPPAE`) say which parent they supplement. Other tables are
+  never touched.
+* **Variable labels.** Column headers show a variable's label as a tooltip, `L` shows a row of labels under
+  the headers (saved with the workspace as `view.labels_row`), `Ctrl+K` also finds a card by its domain or dataset label, and the
+  column inspector shows the label.
+* **`cdisc =`** on `sideview()`, `sideview_widget()`, `save_sideview()`, `sideviewServer()` and
+  `sv_codebook()`: `"auto"` (default), `FALSE`, or a named vector such as `c(my_ae = "AE")`. Module canvases
+  update their badges when a card is added or replaced.
+* **`sv_codebook()` has a `domain` column.** The widget's CSV download matches it byte for byte.
+* **`sv_cdisc_catalogue()`** returns the dataset catalogue the detection uses.
+* **`sv_read_cdisc()`** reads a folder or a set of `.xpt`, `.sas7bdat`, Dataset-JSON and `.parquet` files into
+  a named list for `sideview()`, keeping variable labels. Nothing goes over the network.
+* **Copilot.** The schema text sent to the LLM now includes column labels and a domain line. Row data is
+  still never sent.
+
+* **Overrides.** A table you tag yourself (`cdisc = c(my_adae = "ADAE")`) gets the same class as an
+  auto-detected one: ADaM tags take BDS, OCCDS, TTE or ADSL from the table's columns, and `SUPPAE`-style tags
+  get Relationship and their parent. On a SEND canvas an auto-detected SUPP table is SEND too; your own tags
+  are never flipped. The hover text says why a table is SEND. Names in `cdisc =` ignore a file extension
+  (`"lab.csv"` names the table `lab`); case still matters.
+* **Codebook and canvas agree.** The gadget's codebook uses the badges on the canvas, so a tag you cleared
+  stays cleared in the CSV. Labels sent to the Copilot are cut to 200 characters.
+
+### Limits to know about
+
+* The `ig_versions` column of the catalogue (SDTM, SEND and ADaM implementation guide versions) is
+  approximate. It is for awareness, not conformance checking: sideview does not validate a dataset against
+  an implementation guide.
+* A table named `AD...` (`ADLB`, `ADAE`, `ADVS`) whose columns confirm an ADaM structure is tagged ADaM even
+  when it keeps SDTM-prefixed columns (`LBTESTCD`, `AETERM`, ...); the tooltip notes the prefix as a
+  disagreement. A table with any other name and SDTM-prefixed columns is still tagged by its prefix.
+* Column names are matched whatever their case (`STUDYID`, `studyid`, `StudyID`), so tables cleaned with
+  `janitor::clean_names()` are still recognised. A `STUDYID` column is still required.
+* `sideview_server(cdisc =)`, used with your own `sideview_ui()`, only sets the `domain` column of the
+  codebook; the badges come from the cards given to `sideview_ui()`.
+* `sv_read_cdisc()` skips a file found by scanning a folder, with one warning, when its reading package is
+  not installed; a file named explicitly is still an error.
+* `cdisc = FALSE` shows no tags but, for lazy (arrow / duckdb) cards, detection at construction time still
+  runs, with its cost. A named `cdisc =` vector with several lazy cards costs more on every verb
+  (quadratic in the number of cards).
+* `sv_read_cdisc()` reads Dataset-JSON with the `datasetjson` package (checked against datasetjson 0.4.1,
+  with column and dataset labels); if a file's structure differs, it is skipped with a warning.
+* The row of labels is placed using one measurement of the header height; it could sit off only if a header
+  later grows taller (for example after a late font load).
+* Checked in headless Chrome. `viewer = "dialog"` and `"pane"` were not checked in RStudio for this release.
+* Workspace files gain an optional `view.labels_row` field without a new schema version; older sideview
+  versions ignore it.
+
 # sideview 0.4.0
 
 ## Smaller items

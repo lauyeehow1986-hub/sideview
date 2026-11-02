@@ -10,6 +10,7 @@ sideview(
   viewer = sv_default_viewer(),
   theme = "auto",
   state = NULL,
+  cdisc = "auto",
   env = parent.frame(),
   run = interactive()
 )
@@ -35,6 +36,11 @@ theme), \code{"light"}, \code{"dark"}, an \code{\link[=sv_theme]{sv_theme()}} or
 \strong{Save} button or \code{\link[=sv_save_state]{sv_save_state()}}. Card positions and sizes, zoom and
 pan, sorts, filters, joins and the pipeline come back; cards are matched
 to tables by name.}
+
+\item{cdisc}{CDISC awareness: \code{"auto"} (default) tags tables that look like
+SDTM, SEND or ADaM datasets; \code{FALSE} turns it off; a named character vector
+such as \code{c(my_ae = "AE")} sets a table's domain by name (other tables are
+still detected).}
 
 \item{env}{Environment where \strong{Run in R} evaluates the generated code and
 stores its result (as \code{sv_result} unless you name it). Defaults to the

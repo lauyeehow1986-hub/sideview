@@ -11,7 +11,8 @@ sideview_server(
   insert_fn = sv_insert_code,
   console_fn = sv_send_to_console,
   gadget = FALSE,
-  run_env = parent.frame()
+  run_env = parent.frame(),
+  cdisc = "auto"
 )
 }
 \arguments{
@@ -35,6 +36,12 @@ when embedding the server in your own multi-user Shiny app.}
 \item{run_env}{Environment where \strong{Run in R} evaluates the pipeline and
 stores its result (as \code{sv_result} unless another name is given). Defaults
 to the environment \code{sideview_server()} is called from.}
+
+\item{cdisc}{CDISC setting the canvas was started with (\code{"auto"}, \code{FALSE} or a named
+vector of domain codes). Here it only controls the \code{domain} column of the
+codebook export. The badges on the canvas come from the cards given to
+\code{\link[=sideview_ui]{sideview_ui()}}, so pass the same \code{cdisc} there (or build the page with
+\code{\link[=sideview]{sideview()}} or \code{\link[=sideviewUI]{sideviewUI()}}, which keep the two in step).}
 }
 \value{
 A Shiny server function \verb{function(input, output, session)}.

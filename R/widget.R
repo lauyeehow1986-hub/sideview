@@ -51,6 +51,8 @@ sideview_widget_dependencies <- function() {
 #'   `bslib::bs_theme()`.
 #' @param state A saved workspace to restore (see [sideview()]): a
 #'   `sideview_state` or the path to a saved state file.
+#' @param cdisc CDISC awareness (see [sideview()]): `"auto"` (default), `FALSE`,
+#'   or a named character vector of domain codes.
 #' @param max_rows Most rows of each data-frame table to embed in the widget
 #'   (default 5000). A longer table is cut to its first `max_rows` rows, its
 #'   card says "First N of M rows", and one message names the tables cut. The
@@ -71,8 +73,10 @@ sideview_widget <- function(...,
                             options = list(),
                             theme = "auto",
                             state = NULL,
+                            cdisc = "auto",
                             max_rows = 5000) {
   max_rows <- sv_check_max_rows(max_rows)
+  cdisc <- sv_cdisc_check_arg(cdisc)
   state <- sv_as_state(state)
   dots_exprs <- as.list(substitute(list(...))[-1])
   dots_vals <- list(...)
@@ -115,11 +119,14 @@ sideview_widget <- function(...,
         card$html_content <- as.character(htmltools::as.tags(card$widget))
         card$widget <- NULL
       }
-      card <- sv_card_payload(card)
-      card <- sv_cap_card_rows(card, max_rows)
       card_list[[length(card_list) + 1]] <- card
     }
   }
+  card_list <- sv_cdisc_finalize(card_list, cdisc)
+  card_list <- lapply(card_list, function(card) {
+    card <- sv_card_payload(card)
+    sv_cap_card_rows(card, max_rows)
+  })
   sv_announce_row_cap(card_list, max_rows)
   
   # Forward options using x payload
@@ -208,6 +215,8 @@ sv_announce_row_cap <- function(cards, max_rows) {
 #' @param max_rows Row cap used when `widget` is table data rather than a
 #'   widget (see [sideview_widget()]; default 5000). A widget you built yourself
 #'   keeps the cap it was built with.
+#' @param cdisc CDISC awareness when `widget` is table data (see
+#'   [sideview_widget()]). A widget you built yourself keeps its own setting.
 #' @param ... Additional arguments passed to \code{htmlwidgets::saveWidget()}.
 #'
 #' @return The normalized path to the saved file (invisibly).
@@ -224,9 +233,10 @@ save_sideview <- function(widget,
                           title = "Sideview",
                           background = "white",
                           max_rows = 5000,
+                          cdisc = "auto",
                           ...) {
   if (!inherits(widget, "htmlwidget")) {
-    widget <- sideview_widget(widget, max_rows = max_rows)
+    widget <- sideview_widget(widget, max_rows = max_rows, cdisc = cdisc)
   }
   
   if (!grepl("\\.html?$", file, ignore.case = TRUE)) {

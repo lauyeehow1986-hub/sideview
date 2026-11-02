@@ -203,6 +203,7 @@ sv_state_scrub <- function(state) {
   state$cards <- lapply(state$cards, function(card) {
     if (!is.list(card)) return(card)
     card$source <- NULL
+    card$cdisc <- NULL # the tag is re-derived on load, never saved
     if (inherits(card, "sideview_card")) card <- unclass(card)
     card
   })

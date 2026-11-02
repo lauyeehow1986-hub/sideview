@@ -11,6 +11,7 @@ save_sideview(
   title = "Sideview",
   background = "white",
   max_rows = 5000,
+  cdisc = "auto",
   ...
 )
 }
@@ -30,6 +31,9 @@ all CSS and JavaScript dependencies inlined. Defaults to \code{TRUE}.}
 \item{max_rows}{Row cap used when \code{widget} is table data rather than a
 widget (see \code{\link[=sideview_widget]{sideview_widget()}}; default 5000). A widget you built yourself
 keeps the cap it was built with.}
+
+\item{cdisc}{CDISC awareness when \code{widget} is table data (see
+\code{\link[=sideview_widget]{sideview_widget()}}). A widget you built yourself keeps its own setting.}
 
 \item{...}{Additional arguments passed to \code{htmlwidgets::saveWidget()}.}
 }

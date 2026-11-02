@@ -236,7 +236,12 @@ sv_format_issues <- function(p, counts) {
 #' @param progress Optional `function(table, j, n_cols)`, called before each
 #'   column is profiled.
 #'
-#' @return A data frame with columns `table`, `column`, `position`, `class`,
+#' @param cdisc Fills the `domain` column: `"auto"` (default) detects the CDISC
+#'   domain of each table, `FALSE` leaves it empty, and a named character vector
+#'   (table name to domain code) sets the domain of the tables it names.
+#'
+#' @return A data frame with columns `table`, `domain` (the CDISC domain, `NA`
+#'   when the table is not recognised), `column`, `position`, `class`,
 #'   `label`, `n`, `rows_profiled`, `n_missing`, `pct_missing`, `n_distinct`,
 #'   `unique_key`, `min`, `q1`, `median`, `q3`, `max` (as text, so dates fit),
 #'   `mean`, `sd`, `top_values` and `issues`. `rows_profiled` is the number of
@@ -249,7 +254,8 @@ sv_format_issues <- function(p, counts) {
 #' out <- tempfile(fileext = ".csv")
 #' sv_codebook(patients, visits, file = out)
 #' unlink(out)
-sv_codebook <- function(..., top_n = 5L, file = NULL, progress = NULL) {
+sv_codebook <- function(..., top_n = 5L, file = NULL, progress = NULL, cdisc = "auto") {
+  cdisc <- sv_cdisc_check_arg(cdisc)
   tables <- list(...)
   exprs <- as.list(substitute(list(...))[-1])
   if (length(tables) == 1L && sv_is_table_list(tables[[1]])) {
@@ -282,11 +288,13 @@ sv_codebook <- function(..., top_n = 5L, file = NULL, progress = NULL) {
       tb <- tb$data
     }
     lazy <- sv_is_lazy_input(tb)
+    domain <- sv_codebook_domain(tb, nms[i], cdisc)
     cols <- if (lazy) sv_lazy_names(tb) else names(tb)
     for (j in seq_along(cols)) {
       if (is.function(progress)) progress(nms[i], j, length(cols))
       x <- if (lazy) list(tbl = tb, column = cols[j], con_env = con_env) else tb[[j]]
-      rows[[length(rows) + 1L]] <- sv_codebook_row(nms[i], cols[j], j, x, top_n, n_total = n_total)
+      rows[[length(rows) + 1L]] <- sv_codebook_row(nms[i], cols[j], j, x, top_n, n_total = n_total,
+                                                      domain = domain)
     }
   }
   out <- do.call(rbind, rows)
@@ -298,9 +306,23 @@ sv_codebook <- function(..., top_n = 5L, file = NULL, progress = NULL) {
   out
 }
 
+# The CDISC domain of one table for the codebook, or NA.
+sv_codebook_domain <- function(tb, name, cdisc) {
+  if (identical(cdisc, FALSE)) return(NA_character_)
+  if (is.character(cdisc) && !is.null(names(cdisc))) {
+    code <- sv_cdisc_override(cdisc, name)
+    if (!is.null(code)) return(toupper(trimws(as.character(code))))
+  }
+  # a closed vector (from the canvas) lists every tagged table: any other has no domain
+  if (is.character(cdisc) && isTRUE(attr(cdisc, "closed"))) return(NA_character_)
+  tag <- sv_cdisc_detect_safely(tb, name, "auto")
+  if (is.null(tag) || is.null(tag$domain)) NA_character_ else as.character(tag$domain)
+}
+
 # `x` is a column vector, or list(tbl, column, con_env) for a lazy table. `n_total` is the
 # true row count of a table profiled from a preview: `n` reports it, `rows_profiled` the rows used.
-sv_codebook_row <- function(table, column, position, x, top_n, n_total = NULL) {
+sv_codebook_row <- function(table, column, position, x, top_n, n_total = NULL,
+                            domain = NA_character_) {
   p <- if (is.list(x) && !is.data.frame(x) && sv_is_lazy_input(x$tbl)) {
     if (is.null(x$con_env)) {
       # no shared connection: the profile opens its own and closes it
@@ -326,7 +348,7 @@ sv_codebook_row <- function(table, column, position, x, top_n, n_total = NULL) {
     if (p$n_other > 0L) paste0(s, "; +", p$n_other, " more") else s
   } else NA_character_
   data.frame(
-    table = table, column = column, position = position, class = p$class,
+    table = table, domain = as.character(domain)[1L], column = column, position = position, class = p$class,
     label = p$label %||% NA_character_,
     # an integer (a double only past the integer range), so write.csv prints 100000, not 1e+05
     n = if (is.null(n_total)) p$n else sv_lazy_count(n_total), rows_profiled = p$n,

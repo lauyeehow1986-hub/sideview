@@ -440,3 +440,199 @@ test_that("replacing an Arrow card unregisters the old table from the session co
     expect_equal(n_registered(), 1L)
   })
 })
+
+# ---- CDISC tag updates --------------------------------------------------------------
+cdisc_start <- function(...) list(id = "cd", cards = list(dm = sv_cdisc_fixtures()$dm), ...)
+
+test_that("adding a SEND domain updates DM's tag", {
+  f <- sv_cdisc_fixtures()
+  shiny::testServer(sideviewServer, args = cdisc_start(), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    dm_id <- px$ctl$store$get("dm")$id
+    expect_equal(msgs(session, "sideview_card_add")[[1]]$message$card$cdisc$standard, "SDTM")
+    sv_add_card(px, f$bw, "bw")
+    add <- msgs(session, "sideview_card_add")
+    expect_equal(add[[length(add)]]$message$card$cdisc$standard, "SEND")
+    up <- msgs(session, "sideview_cdisc_update")
+    expect_length(up, 1L)
+    expect_equal(names(up[[1]]$message$tags), dm_id)
+    expect_equal(up[[1]]$message$tags[[dm_id]]$standard, "SEND")
+    expect_identical(up[[1]]$message$ns, session$ns(""))
+  })
+})
+
+test_that("removing the SEND domain flips DM back", {
+  f <- sv_cdisc_fixtures()
+  shiny::testServer(sideviewServer, args = cdisc_start(), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    dm_id <- px$ctl$store$get("dm")$id
+    sv_add_card(px, f$bw, "bw")
+    sv_remove_card(px, "bw")
+    up <- msgs(session, "sideview_cdisc_update")
+    expect_length(up, 2L)
+    expect_equal(up[[2]]$message$tags[[dm_id]]$standard, "SDTM")
+  })
+})
+
+test_that("no update when nothing changes", {
+  shiny::testServer(sideviewServer, args = cdisc_start(), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    sv_add_card(px, mtcars, "mt")
+    expect_length(msgs(session, "sideview_cdisc_update"), 0L)
+  })
+})
+
+test_that("cdisc updates before ready are not replayed: the cards carry current tags", {
+  f <- sv_cdisc_fixtures()
+  shiny::testServer(sideviewServer, args = cdisc_start(), {
+    px <- session$getReturned()
+    sv_add_card(px, f$bw, "bw")
+    expect_length(msgs(session, "sideview_cdisc_update"), 0L)
+    session$setInputs(sideview_ready = list(nonce = 1))
+    expect_length(msgs(session, "sideview_cdisc_update"), 0L)
+    adds <- msgs(session, "sideview_card_add")
+    expect_equal(vapply(adds, function(m) m$message$card$cdisc$standard, ""), c("SEND", "SEND"))
+  })
+})
+
+test_that("a queued cdisc update cannot overwrite a fresher payload at ready", {
+  f <- sv_cdisc_fixtures()
+  shiny::testServer(sideviewServer, args = cdisc_start(), {
+    px <- session$getReturned()
+    old_id <- px$ctl$store$get("dm")$id
+    sv_add_card(px, f$bw, "bw")                 # queues {dm: SEND}
+    sv_replace_card(px, "dm", mtcars)           # dm is no longer taggable
+    new_id <- px$ctl$store$get("dm")$id
+    session$setInputs(sideview_ready = list(nonce = 1))
+    updates <- msgs(session, "sideview_cdisc_update")
+    stale <- Filter(function(m) any(c(old_id, new_id) %in% names(m$message$tags)), updates)
+    expect_length(stale, 0L)
+    dm_add <- Filter(function(m) identical(m$message$card$name, "dm"),
+                     msgs(session, "sideview_card_add"))
+    expect_null(dm_add[[1]]$message$card$cdisc)
+  })
+})
+
+test_that("a reactive re-firing with the same data replaces nothing", {
+  f <- sv_cdisc_fixtures()
+  rv <- shiny::reactiveVal(list(dm = f$dm, bw = f$bw))
+  shiny::testServer(sideviewServer, args = list(id = "cd", cards = rv), {
+    session$setInputs(sideview_ready = list(nonce = 1))
+    rv(list(dm = f$dm, bw = f$bw))
+    session$flushReact()
+    expect_length(msgs(session, "sideview_card_replace"), 0L)
+    expect_length(msgs(session, "sideview_card_add"), 2L)
+  })
+})
+
+test_that("cdisc = FALSE in a module tags nothing", {
+  f <- sv_cdisc_fixtures()
+  shiny::testServer(sideviewServer, args = cdisc_start(cdisc = FALSE), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    sv_add_card(px, f$bw, "bw")
+    for (m in msgs(session, "sideview_card_add")) expect_null(m$message$card$cdisc)
+    expect_length(msgs(session, "sideview_cdisc_update"), 0L)
+  })
+})
+
+# ---- CDISC fix round 1 ----------------------------------------------------------------
+test_that("sideviewServer validates cdisc", {
+  for (bad in list(TRUE, c("AE", "LB"), "foo")) {
+    expect_error(shiny::testServer(sideviewServer, args = cdisc_start(cdisc = bad), {}), "cdisc")
+  }
+})
+
+test_that("a tag in the update is normalised like the card payload", {
+  f <- sv_cdisc_fixtures()
+  shiny::testServer(sideviewServer, args = cdisc_start(), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    dm_id <- px$ctl$store$get("dm")$id
+    sv_add_card(px, f$bw, "bw")
+    tag <- msgs(session, "sideview_cdisc_update")[[1]]$message$tags[[dm_id]]
+    expect_type(tag$evidence, "list")
+    expect_false(any(vapply(tag, is.null, TRUE)))
+  })
+  tag1 <- sv_cdisc_wire_tag(list(domain = "DM", evidence = "one", extra = NULL))
+  expect_type(tag1$evidence, "list")
+  expect_null(sv_cdisc_wire_tag(NULL))
+})
+
+test_that("a re-firing reactive with other data replaces only what changed", {
+  f <- sv_cdisc_fixtures()
+  rv <- shiny::reactiveVal(list(dm = f$dm, bw = f$bw))
+  shiny::testServer(sideviewServer, args = list(id = "cd", cards = rv), {
+    session$setInputs(sideview_ready = list(nonce = 1))
+    rv(list(dm = f$dm, bw = f$bw, mt = mtcars))
+    session$flushReact()
+    expect_length(msgs(session, "sideview_card_replace"), 0L)
+    adds <- vapply(msgs(session, "sideview_card_add"), function(m) m$message$card$name, "")
+    expect_equal(adds, c("dm", "bw", "mt"))
+  })
+})
+
+test_that("changed data and a moved tag give a replace and an update", {
+  f <- sv_cdisc_fixtures()
+  rv <- shiny::reactiveVal(list(dm = f$dm, bw = f$bw))
+  shiny::testServer(sideviewServer, args = list(id = "cd", cards = rv), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    dm_id <- px$ctl$store$get("dm")$id
+    expect_equal(px$ctl$store$get("dm")$cdisc$standard, "SEND")
+    rv(list(dm = f$dm, bw = mtcars))
+    session$flushReact()
+    rep <- msgs(session, "sideview_card_replace")
+    expect_length(rep, 1L)
+    expect_equal(rep[[1]]$message$card$name, "bw")
+    up <- msgs(session, "sideview_cdisc_update")
+    expect_equal(up[[length(up)]]$message$tags[[dm_id]]$standard, "SDTM")
+  })
+})
+
+test_that("a named override applies in a module, also to a later card", {
+  f <- sv_cdisc_fixtures()
+  suppressWarnings(shiny::testServer(sideviewServer, args = cdisc_start(cdisc = c(odd = "AE")), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    sv_add_card(px, f$labs, "odd")
+    add <- msgs(session, "sideview_card_add")
+    expect_equal(add[[length(add)]]$message$card$cdisc$domain, "AE")
+    expect_equal(add[[length(add)]]$message$card$cdisc$source, "user")
+  }))
+})
+
+test_that("sv_replace_card emits an update for other cards", {
+  f <- sv_cdisc_fixtures()
+  shiny::testServer(sideviewServer, args = cdisc_start(), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    sv_add_card(px, mtcars, "bw")
+    expect_length(msgs(session, "sideview_cdisc_update"), 0L)
+    dm_id <- px$ctl$store$get("dm")$id
+    sv_replace_card(px, "bw", f$bw)
+    up <- msgs(session, "sideview_cdisc_update")
+    expect_length(up, 1L)
+    expect_equal(up[[1]]$message$tags[[dm_id]]$standard, "SEND")
+  })
+})
+
+test_that("unknown override names warn once at start for static cards only", {
+  expect_warning(
+    shiny::testServer(sideviewServer, args = cdisc_start(cdisc = c(nope = "AE")), {
+      px <- session$getReturned()
+      sv_add_card(px, mtcars, "mt")
+    }),
+    "names no table"
+  ) |> suppressMessages()
+  rv <- shiny::reactiveVal(list())
+  expect_no_warning(
+    shiny::testServer(sideviewServer, args = list(id = "cd", cards = rv, cdisc = c(later = "AE")), {
+      rv(list(later = sv_cdisc_fixtures()$labs))
+      session$flushReact()
+    })
+  )
+})

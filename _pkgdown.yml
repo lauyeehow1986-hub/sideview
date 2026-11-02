@@ -4,11 +4,14 @@ template:
 
 navbar:
   structure:
-    left: [intro, tour, reference, news]
+    left: [intro, tour, cdisc, reference, news]
   components:
     tour:
       text: Visual tour
       href: articles/tour.html
+    cdisc:
+      text: CDISC
+      href: articles/cdisc.html
 
 reference:
   - title: "Interactive Canvas & Gadget"
@@ -94,3 +97,9 @@ reference:
     desc: "Convert heterogeneous tabular objects into standardized sideview cards."
     contents:
       - sv_normalize
+
+  - title: "CDISC"
+    desc: "Recognise SDTM, SEND and ADaM datasets."
+    contents:
+      - sv_cdisc_catalogue
+      - sv_read_cdisc
