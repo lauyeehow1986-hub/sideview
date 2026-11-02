@@ -2130,6 +2130,15 @@ html.sv-standalone body {
   filter: drop-shadow(0 0 5px var(--sv-suggested-glow));
 }
 
+/* A CDISC key set: slightly heavier than a heuristic suggestion; hover is inherited */
+.sideview-spline-suggested-cdisc {
+  stroke-width: 3px;
+}
+
+.sideview-spline-suggested-cdisc.is-hover {
+  stroke-width: 3.5px;
+}
+
 /* Tooltip for suggested splines */
 .sideview-suggested-tooltip {
   position: absolute;

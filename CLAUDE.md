@@ -39,7 +39,7 @@ rstudio bridge: R/rstudio.R
   `sideview_done`, `sideview_cancel`,
   `cancel` (miniUI dialog close).
 - Custom messages (R → client): `sideview_code_update`, `sideview_discrepancies`,
-  `sideview_suggested_mappings`, `sideview_copilot_reply`, `sideview_inject_result`,
+  `sideview_suggested_mappings` (candidates carry `group`, e.g. `"cdisc:adae~ae"`, and `kind`, `"trace"|"subject"|"visit"`, both null for heuristic rows; a group is drawn as dashed paths with class `sideview-spline-suggested-cdisc` and accepted as one join by `addConnections()`: one undo step, one `column_mapped` per key), `sideview_copilot_reply`, `sideview_inject_result`,
   `sideview_console_result`, `sideview_eval_result`, `sideview_rows`, `sideview_ai_status`,
   `sideview_join_diagnostics`, `sideview_column_profile`, `sideview_codebook_saved` (module: carries `csv`, the file text, plus `filename`; the browser downloads it),
   `sideview_state_saved`, `sideview_state_loaded`,
