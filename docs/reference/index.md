@@ -162,5 +162,7 @@ Recognise SDTM, SEND and ADaM datasets.
 
 - [`sv_cdisc_catalogue()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_cdisc_catalogue.md)
   : CDISC dataset catalogue
+- [`sv_cdisc_join_keys()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_cdisc_join_keys.md)
+  : CDISC join keys
 - [`sv_read_cdisc()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_read_cdisc.md)
   : Read CDISC datasets from files

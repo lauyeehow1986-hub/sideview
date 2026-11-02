@@ -8,7 +8,7 @@ compatibility (20%), and Jaccard value overlap (40%).
 ## Usage
 
 ``` r
-sv_suggest_mappings(cards, ..., min_confidence = 0.6)
+sv_suggest_mappings(cards, ..., min_confidence = 0.6, cdisc = "auto")
 ```
 
 ## Arguments
@@ -26,6 +26,17 @@ sv_suggest_mappings(cards, ..., min_confidence = 0.6)
 
   Minimum confidence threshold (numeric between 0 and 1) for returned
   suggestions (default `0.6`).
+
+- cdisc:
+
+  `"auto"` (default) or anything but `FALSE` to suggest the CDISC join
+  keys (see
+  [`sv_cdisc_join_keys()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_cdisc_join_keys.md))
+  for pairs of tagged tables; `FALSE` keeps the heuristic suggestions
+  only. Rule rows have confidence 1, come first and are never filtered
+  by `min_confidence`. A pair of CDISC tables that can take part
+  (tagged, with `USUBJID`) but has no rule gets no heuristic rows
+  either.
 
 ## Value
 
@@ -55,6 +66,15 @@ A `data.frame` with columns:
 
   Human-readable justification describing similarity components.
 
+- `group`:
+
+  `NA` for heuristic rows; `"cdisc:<from>~<to>"` for the rows of one
+  CDISC key (the columns of one join).
+
+- `kind`:
+
+  `NA` for heuristic rows; `"trace"`, `"subject"` or `"visit"`.
+
 ## Examples
 
 ``` r
@@ -63,6 +83,8 @@ df2 <- data.frame(patient_id = 3:7, score = c(10, 20, 30, 40, 50))
 sv_suggest_mappings(list(patients = df1, visits = df2))
 #>   from_table   from_col to_table     to_col confidence
 #> 1   patients patient_id   visits patient_id     0.7714
-#>                                                                reason
-#> 1 Exact name match with ID suffix; identical types; 43% value overlap
+#>                                                                reason group
+#> 1 Exact name match with ID suffix; identical types; 43% value overlap  <NA>
+#>   kind
+#> 1 <NA>
 ```

@@ -180,7 +180,11 @@ Each sub-project gets its own spec, plan and build, in this order:
 
 ## Backlog (future rounds, not yet scheduled)
 - **CDISC / pharmaverse follow-ups** (0.5.0 shipped recognition, badges, labels, codebook domain, `sv_read_cdisc()`):
-  - B: USUBJID / STUDYID join keys (suggest and pre-fill joins between domains);
+  - Join keys (0.6.0) minors, deferred: `format(dup)` prints `1e+05` at R/cdisc_keys.R:232 (use `scientific = FALSE, trim = TRUE`);
+    an ADSL without STUDYID joined by USUBJID alone gets no note 3 (`sv_keys_natural`); `spell` uses the left card's spelling for
+    every key, the spec says each table's own; the `join_diagnostics_request` test asserts only that `cdisc_notes` is present, not the
+    note 3 text; browser test 3 should assert `connections.length == 0` after undo; browser test 2 needs a comment on the final
+    `mouseMoved` point.
   - C: SUPPQUAL merge (fold SUPP-- rows into the parent as columns);
   - D: admiral-style code generation for ADaM derivations;
   - E: ARD / TLG cards (analysis results datasets and tables as cards);
@@ -208,6 +212,19 @@ Each sub-project gets its own spec, plan and build, in this order:
 ---
 
 ## Log
+
+### 2026-11-02 - CDISC join keys: sideview 0.6.0 (Tasks 1-8)
+- **What shipped:** `sv_cdisc_join_keys(cards)` (R/cdisc_keys.R, exported): ADaM-to-SDTM trace (`STUDYID`, `USUBJID`, `<D>SEQ`), subject level
+  (`STUDYID` + `USUBJID`, DM/ADSL as the lookup), visit level (`VISITNUM` to SV); SUPP--/RELREC/no-USUBJID tables excluded. `sv_suggest_mappings()`
+  gained `group`/`kind` columns and `cdisc =`; rule rows first, confidence 1. Browser: grouped dashed splines (`sideview-spline-suggested-cdisc`),
+  hover lights the group, one click = one multi-key `left_join` = one undo (`Pipeline.addJoinKeys`). Join check: R-side `cdisc_notes`
+  (`sv_cdisc_key_notes()`), shown under a "CDISC" heading in the gadget and modules; the widget has no rules or notes. NEWS 0.6.0, article "Join keys" section, DESCRIPTION 0.6.0.
+- **Verified (Task 8):** full suite `NOT_CRAN=true devtools::test()`: FAIL 0 | WARN 0 | SKIP 0 | PASS 23067 (the lazy 1M-row timing test passed).
+  `devtools::check(--no-manual)`: 0 errors, 0 warnings, 1 NOTE (the known Windows `''NULL''` check-directory note). `pkgdown::check_pkgdown()`: no problems.
+  Site rebuilt; docs/CLAUDE.* and docs/MEMORY.* and their sitemap.xml / search.json entries removed.
+- **Real browser (Task 7, chromote with real mouse input):** six new tests in test-layout-browser.R, all pass (grouped splines on dm/ae/adsl/adae, group hover, one-click join and one undo, toast, `ae` x `lb` notes in the join check). Tasks 5-6 were checked against the mock DOM (gui-test-runner.js).
+- **RStudio pass: pending (controller)** (dialog, pane, external browser with `dm, ae, adsl, adae_pfx, lb`; Auto Map, accept, one undo, join check notes on `ae` x `lb` by `USUBJID`; remember the one-RStudio-instance gotcha above). The article's "checked in headless Chrome" limit line should be updated with the result.
+- **Deferred minors:** in the Backlog (join keys minors).
 
 ### 2026-11-02 - CDISC follow-up 1 closed: browser-test stability and RStudio pass
 - **Change:** deferred minors (case-insensitive column names, ADaM/SUPP user-tag classes, SEND-canvas SUPP flip,

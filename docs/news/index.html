@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.5.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.6.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -33,6 +33,39 @@
       <small>Source: <a href="https://github.com/lauyeehow1986-hub/sideview/blob/HEAD/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.6.0" id="sideview-060">sideview 0.6.0<a class="anchor" aria-label="anchor" href="#sideview-060"></a></h2>
+<div class="section level3">
+<h3 id="cdisc-join-keys-0-6-0">CDISC join keys<a class="anchor" aria-label="anchor" href="#cdisc-join-keys-0-6-0"></a></h3>
+<ul><li>
+<strong>Auto Map knows CDISC keys.</strong> For tables tagged SDTM, SEND or ADaM it suggests the keys a study programmer would use, instead of guessing from column names:
+<ul><li>
+<em>ADaM to SDTM trace:</em> <code>STUDYID</code>, <code>USUBJID</code> and <code>&lt;D&gt;SEQ</code> (<code>adae</code> to <code>ae</code> by <code>AESEQ</code>).</li>
+<li>
+<em>Subject level:</em> <code>STUDYID</code> + <code>USUBJID</code>, with <code>DM</code> (SDTM, SEND) or <code>ADSL</code> (ADaM) as the lookup table.</li>
+<li>
+<em>Visit level:</em> a table with <code>VISITNUM</code> to <code>SV</code>, by the subject key and <code>VISITNUM</code>. Where a table has no <code>STUDYID</code>, the subject key is <code>USUBJID</code> alone, and the reason says so.</li>
+</ul></li>
+<li>
+<strong>One click, one join, one undo.</strong> A key set is drawn as a group of dashed splines (class <code>sideview-spline-suggested-cdisc</code>). Hovering one lights up the group, and a click accepts all of it as one <code>left_join</code> (one undo step). A partial key set is never offered, because it would give a many-to-many join.</li>
+<li>
+<strong>Key checks in the join check.</strong> The join check panel gets a “CDISC” note list: a missing key for a pair with a rule (<code>Add AESEQ: ...</code>), a many-to-many join with no rule (for example two Findings tables), and a natural key that repeats (<code>STUDYID, USUBJID, AESEQ should identify one AE record, but 3 keys repeat</code>). The notes are worked out in R, so they appear in the gadget and in Shiny modules; the widget has none.</li>
+<li>
+<strong><code>sv_cdisc_join_keys(cards)</code></strong> (new, exported) returns the suggested key sets for a list of cards.</li>
+<li>
+<strong><code><a href="../reference/sv_suggest_mappings.html">sv_suggest_mappings()</a></code></strong> gains the columns <code>group</code> and <code>kind</code> (both <code>NA</code> for heuristic rows) and a <code>cdisc</code> argument (<code>"auto"</code>, <code>FALSE</code> or a named vector, as in <code><a href="../reference/sv_codebook.html">sv_codebook()</a></code>). Rule rows come first with confidence 1 and are never dropped by <code>min_confidence</code>. Between two tagged tables the old <code>DOMAIN</code> and lone-<code>STUDYID</code> guesses are gone.</li>
+</ul><div class="section level4">
+<h4 id="limits-to-know-about-0-6-0">Limits to know about<a class="anchor" aria-label="anchor" href="#limits-to-know-about-0-6-0"></a></h4>
+<ul><li>
+<code>SUPP--</code> and <code>RELREC</code> tables are not suggested as joins (folding them into their parent is future work). Neither are tables without a <code>USUBJID</code> column (for example <code>TS</code>, <code>TA</code>, <code>TE</code>).</li>
+<li>A sponsor sequence variable that is not called <code>&lt;D&gt;SEQ</code> is not traced; the pair still gets the subject rule.</li>
+<li>Two Findings tables (<code>LB</code> with <code>VS</code>) get no suggestion, only a note: that join is many-to-many by nature.</li>
+<li>The widget has no Auto Map rules and no key-check notes; they need R.</li>
+<li>
+<code>cdisc = FALSE</code> turns the rules and the notes off.</li>
+</ul></div>
+</div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.5.0" id="sideview-050">sideview 0.5.0<a class="anchor" aria-label="anchor" href="#sideview-050"></a></h2>
 <div class="section level3">

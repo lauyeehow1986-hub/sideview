@@ -78,6 +78,56 @@ format (haven, datasetjson, arrow), and it never uses the network.
 Parquet files stay on disk as Arrow Datasets unless you pass
 `lazy = FALSE`.
 
+## Join keys
+
+Tagged tables join on known keys. With the tables above on the canvas,
+**Auto Map** (gadget or Shiny module) suggests them as dashed splines,
+drawn as one group per join:
+
+[`sideview`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)`(``dm ``=`` ``dm``, ae ``=`` ``ae``, adsl ``=`` ``adsl``)`
+
+| Pair | Keys | Kind |
+|----|----|----|
+| `adae` to `ae` | `STUDYID`, `USUBJID`, `AESEQ` | ADaM to SDTM trace |
+| `ae` to `dm`, `adlb` to `adsl` | `STUDYID`, `USUBJID` | subject level (the hub is the lookup) |
+| `lb` to `sv` | `STUDYID`, `USUBJID`, `VISITNUM` | visit level |
+
+An SDTM or SEND table links to `DM`; an ADaM table links to `ADSL` (the
+other hub is used when the preferred one is not on the canvas). Hover
+one spline and the whole group lights up. A click accepts all of it as
+one `left_join`, and one undo takes it back. A partial key set is never
+offered. Without a `STUDYID` column the subject key is `USUBJID` alone,
+and the suggestion’s reason says so.
+
+The rules are also available as a function, and
+[`sv_suggest_mappings()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_suggest_mappings.md)
+returns them first, with `group` and `kind` columns:
+
+[`sv_suggest_mappings`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_suggest_mappings.md)`(`[`list`](https://rdrr.io/r/base/list.html)`(``dm ``=`` ``dm``, ae ``=`` ``ae``, adsl ``=`` ``adsl``)``)``[``, `[`c`](https://rdrr.io/r/base/c.html)`(``"from_table"``, ``"to_table"``, ``"from_col"``, ``"to_col"``, ``"kind"``)``]`` ``#> from_table to_table from_col to_col kind`` ``#> 1 ae dm STUDYID STUDYID subject`` ``#> 2 ae dm USUBJID USUBJID subject`` ``#> 3 adsl dm STUDYID STUDYID subject`` ``#> 4 adsl dm USUBJID USUBJID subject`
+
+### Key checks
+
+Open the join check on a join between two tagged tables and a **CDISC**
+list appears below the usual warnings. It names a key the join lacks
+(`Add AESEQ: the CDISC key for adae and ae is STUDYID, USUBJID, AESEQ.`),
+explains a many-to-many join with no rule (two Findings tables such as
+`LB` and `VS` should be filtered to one test, or summarised, first) and
+warns when a natural key repeats. The notes use the catalogue and the
+counts already in the check, so they cost no extra pass over the data,
+and they work for arrow and duckdb cards too. They do not change what
+Strict writes.
+
+### What join keys do not do
+
+- `SUPP--` and `RELREC` tables, and tables without `USUBJID` (`TS`,
+  `TA`, `TE`), are not suggested.
+- Sponsor sequence names other than `<D>SEQ` are not traced; those pairs
+  get the subject rule.
+- Findings with findings (`LB` with `VS`) get a note, not a suggestion.
+- The widget has no Auto Map rules and no notes; they are worked out in
+  R, in the gadget and in modules.
+- `cdisc = FALSE` turns both off.
+
 ## What it does not do
 
 - The `ig_versions` in the catalogue are approximate, and nothing is
@@ -98,5 +148,5 @@ Parquet files stay on disk as Arrow Datasets unless you pass
   row data.
 - The label row is placed from one measurement of the header height, so
   it could sit off if a header grows taller later.
-- The interface was checked in headless Chrome, not in RStudio’s dialog
-  or Viewer pane.
+- The interface was checked in headless Chrome, not yet in RStudio’s
+  dialog or Viewer pane (see the log for the release).

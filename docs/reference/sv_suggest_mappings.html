@@ -11,7 +11,7 @@ on name similarity (40%), data type compatibility (20%), and Jaccard value overl
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.5.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.6.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -46,7 +46,7 @@ on name similarity (40%), data type compatibility (20%), and Jaccard value overl
 
     <div class="section level2">
     <h2 id="ref-usage">Usage<a class="anchor" aria-label="anchor" href="#ref-usage"></a></h2>
-    <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">sv_suggest_mappings</span><span class="op">(</span><span class="va">cards</span>, <span class="va">...</span>, min_confidence <span class="op">=</span> <span class="fl">0.6</span><span class="op">)</span></span></code></pre></div>
+    <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">sv_suggest_mappings</span><span class="op">(</span><span class="va">cards</span>, <span class="va">...</span>, min_confidence <span class="op">=</span> <span class="fl">0.6</span>, cdisc <span class="op">=</span> <span class="st">"auto"</span><span class="op">)</span></span></code></pre></div>
     </div>
 
     <div class="section level2">
@@ -65,6 +65,15 @@ individual cards or tables can be passed via <code>...</code>.</p></dd>
 <dt id="arg-min-confidence">min_confidence<a class="anchor" aria-label="anchor" href="#arg-min-confidence"></a></dt>
 <dd><p>Minimum confidence threshold (numeric between 0 and 1) for
 returned suggestions (default <code>0.6</code>).</p></dd>
+
+
+<dt id="arg-cdisc">cdisc<a class="anchor" aria-label="anchor" href="#arg-cdisc"></a></dt>
+<dd><p><code>"auto"</code> (default) or anything but <code>FALSE</code> to suggest the CDISC
+join keys (see <code><a href="sv_cdisc_join_keys.html">sv_cdisc_join_keys()</a></code>) for pairs of tagged tables; <code>FALSE</code>
+keeps the heuristic suggestions only. Rule rows have confidence 1, come
+first and are never filtered by <code>min_confidence</code>. A pair of CDISC tables
+that can take part (tagged, with <code>USUBJID</code>) but has no rule gets no
+heuristic rows either.</p></dd>
 
 </dl></div>
     <div class="section level2">
@@ -87,6 +96,13 @@ returned suggestions (default <code>0.6</code>).</p></dd>
 <dt><code>reason</code></dt>
 <dd><p>Human-readable justification describing similarity components.</p></dd>
 
+<dt><code>group</code></dt>
+<dd><p><code>NA</code> for heuristic rows; <code>"cdisc:&lt;from&gt;~&lt;to&gt;"</code> for the rows of
+one CDISC key (the columns of one join).</p></dd>
+
+<dt><code>kind</code></dt>
+<dd><p><code>NA</code> for heuristic rows; <code>"trace"</code>, <code>"subject"</code> or <code>"visit"</code>.</p></dd>
+
 
 </dl></div>
 
@@ -97,8 +113,10 @@ returned suggestions (default <code>0.6</code>).</p></dd>
 <span class="r-in"><span><span class="fu">sv_suggest_mappings</span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>patients <span class="op">=</span> <span class="va">df1</span>, visits <span class="op">=</span> <span class="va">df2</span><span class="op">)</span><span class="op">)</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   from_table   from_col to_table     to_col confidence</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> 1   patients patient_id   visits patient_id     0.7714</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>                                                                reason</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1 Exact name match with ID suffix; identical types; 43% value overlap</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>                                                                reason group</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1 Exact name match with ID suffix; identical types; 43% value overlap  &lt;NA&gt;</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   kind</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1 &lt;NA&gt;</span>
 </code></pre></div>
     </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
