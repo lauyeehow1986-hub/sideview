@@ -845,8 +845,19 @@ function sendToShiny(name, value) {
     if (path.dataset.connId) hit.dataset.connId = path.dataset.connId;
     var title = path.querySelector('title');
     if (title) hit.appendChild(title);
-    hit.addEventListener('mouseenter', function () { path.classList.add('is-hover'); });
-    hit.addEventListener('mouseleave', function () { path.classList.remove('is-hover'); });
+    // A suggestion group (a CDISC key set) lights up as one: hover on a member marks all.
+    function setHover(on) {
+      var g = path.dataset.group;
+      var members = [path];
+      if (g && engine.svg) {
+        members = [];
+        var all = engine.svg.querySelectorAll('.sideview-spline-suggested-cdisc');
+        for (var i = 0; i < all.length; i++) if (all[i].dataset.group === g) members.push(all[i]);
+      }
+      members.forEach(function (m) { m.classList.toggle('is-hover', on); });
+    }
+    hit.addEventListener('mouseenter', function () { setHover(true); });
+    hit.addEventListener('mouseleave', function () { setHover(false); });
     if (path.dataset.suggested) {
       hit.addEventListener('click', function (e) {
         e.stopPropagation();
@@ -3331,7 +3342,21 @@ function sendToShiny(name, value) {
     var mapNote = basisNoteText(previewParts(self, names));
     if (mapNote) self.showToast('Suggested joins: ' + mapNote.charAt(0).toLowerCase() + mapNote.slice(1) + '.', 'info');
 
+    // Rule rows (a `group`, e.g. "cdisc:adae~ae") are drawn and accepted as one key set.
+    var groups = {};
+    var groupOrder = [];
+    var heuristic = [];
     candidates.forEach(function (c) {
+      if (c && c.group) {
+        if (!groups[c.group]) { groups[c.group] = []; groupOrder.push(c.group); }
+        groups[c.group].push(c);
+      } else {
+        heuristic.push(c);
+      }
+    });
+    groupOrder.forEach(function (g) { self.renderSuggestedGroup(g, groups[g]); });
+
+    heuristic.forEach(function (c) {
       var fromTable = c.from_table || c.fromTable || c.table1;
       var fromCol = c.from_col || c.fromCol || c.col1;
       var toTable = c.to_table || c.toTable || c.table2;
@@ -3420,6 +3445,179 @@ function sendToShiny(name, value) {
     });
 
     self.updateConnectors();
+  };
+
+  var CDISC_KIND_LABELS = {
+    trace: 'ADaM to SDTM trace',
+    subject: 'subject key',
+    visit: 'visit key'
+  };
+
+  // One CDISC key set: a dashed path per key, accepted together as a single join.
+  SideviewEngine.prototype.renderSuggestedGroup = function (groupId, rows) {
+    var self = this;
+    var pairs = [];
+    rows.forEach(function (c) {
+      var ft = c.from_table || c.fromTable || c.table1;
+      var fc = c.from_col || c.fromCol || c.col1;
+      var tt = c.to_table || c.toTable || c.table2;
+      var tc = c.to_col || c.toCol || c.col2;
+      if (ft && fc && tt && tc) pairs.push({ fromTable: ft, fromCol: fc, toTable: tt, toCol: tc });
+    });
+    if (!pairs.length) return;
+
+    var fromTable = pairs[0].fromTable;
+    var toTable = pairs[0].toTable;
+    pairs = pairs.filter(function (p) { return p.fromTable === fromTable && p.toTable === toTable; });
+
+    // Keys already connected (either direction) are not offered again.
+    pairs = pairs.filter(function (p) {
+      return !self.connections.some(function (conn) {
+        return (conn.fromTable === p.fromTable && conn.fromCol === p.fromCol &&
+                conn.toTable === p.toTable && conn.toCol === p.toCol) ||
+               (conn.fromTable === p.toTable && conn.fromCol === p.toCol &&
+                conn.toTable === p.fromTable && conn.toCol === p.fromCol);
+      });
+    });
+    if (!pairs.length) return;
+
+    // An existing join in the opposite direction decides: the new keys follow it.
+    var opposite = self.connections.some(function (conn) {
+      return conn.fromTable === toTable && conn.toTable === fromTable;
+    }) || (self.pipeline.steps || []).some(function (s) {
+      return s.kind === 'join' && s.table === toTable && s.right === fromTable;
+    });
+    if (opposite) {
+      var t = fromTable; fromTable = toTable; toTable = t;
+      pairs = pairs.map(function (p) {
+        return { fromTable: p.toTable, fromCol: p.toCol, toTable: p.fromTable, toCol: p.fromCol };
+      });
+    }
+
+    var resolved = [];
+    for (var i = 0; i < pairs.length; i++) {
+      var p1 = self.findPortElement(pairs[i].fromTable, pairs[i].fromCol);
+      var p2 = self.findPortElement(pairs[i].toTable, pairs[i].toCol);
+      if (!p1 || !p2) {
+        if (typeof console !== 'undefined' && console.warn) {
+          console.warn('[Sideview] suggested group "' + groupId + '" dropped: no port for ' +
+            (!p1 ? pairs[i].fromTable + '.' + pairs[i].fromCol : pairs[i].toTable + '.' + pairs[i].toCol));
+        }
+        return;
+      }
+      resolved.push({ pair: pairs[i], p1: p1, p2: p2 });
+    }
+
+    var kind = rows[0].kind || null;
+    var cols = pairs.map(function (p) {
+      return p.fromCol === p.toCol ? p.fromCol : p.fromCol + '=' + p.toCol;
+    }).join(', ');
+    var titleText = 'Suggested CDISC join: ' + fromTable + ' to ' + toTable + ' by ' + cols +
+      (kind && CDISC_KIND_LABELS[kind] ? ' (' + CDISC_KIND_LABELS[kind] + ')' : '') +
+      '. Click to accept';
+
+    var members = [];
+    var accepted = false;
+
+    function accept(e) {
+      if (e) { e.stopPropagation(); e.preventDefault(); }
+      if (accepted) return;
+      accepted = true;
+      members.forEach(function (m) {
+        if (m.parentNode) m.parentNode.removeChild(m);
+      });
+      self.suggestedConnections = self.suggestedConnections.filter(function (s) {
+        return members.indexOf(s.path) < 0;
+      });
+      pruneHitPaths(self);
+      self.addConnections(resolved.map(function (r) {
+        var c1 = r.p1.closest('.sideview-card');
+        var c2 = r.p2.closest('.sideview-card');
+        return {
+          fromCard: c1 ? c1.dataset.cardId : r.pair.fromTable,
+          fromTable: r.pair.fromTable,
+          fromCol: r.pair.fromCol,
+          fromElement: r.p1,
+          toCard: c2 ? c2.dataset.cardId : r.pair.toTable,
+          toTable: r.pair.toTable,
+          toCol: r.pair.toCol,
+          toElement: r.p2,
+          type: 'left_join'
+        };
+      }));
+      self.showToast('Accepted CDISC join: ' + fromTable + ' to ' + toTable + ' by ' + cols, 'success');
+    }
+
+    resolved.forEach(function (r) {
+      var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('class',
+        'sideview-connector-path sideview-spline-suggested sideview-spline-suggested-cdisc dashMove');
+      path.dataset.suggested = 'true';
+      path.dataset.group = groupId;
+      if (kind) path.dataset.kind = kind;
+      path.dataset.fromTable = r.pair.fromTable;
+      path.dataset.fromCol = r.pair.fromCol;
+      path.dataset.toTable = r.pair.toTable;
+      path.dataset.toCol = r.pair.toCol;
+      path.dataset.confidence = '1';
+      var titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      titleEl.textContent = titleText;
+      path.appendChild(titleEl);
+      path.addEventListener('click', accept);
+      self.svg.appendChild(path);
+      attachHitPath(self, path);
+      members.push(path);
+      self.suggestedConnections.push({
+        path: path,
+        group: groupId,
+        fromTable: r.pair.fromTable,
+        fromCol: r.pair.fromCol,
+        fromElement: r.p1,
+        toTable: r.pair.toTable,
+        toCol: r.pair.toCol,
+        toElement: r.p2,
+        confidence: 1,
+        reason: 'CDISC rule'
+      });
+    });
+  };
+
+  /** Several connections that belong together (a CDISC key set): one undo step, one
+   *  `column_mapped` per key. Each item is shaped like addConnection's connData. */
+  SideviewEngine.prototype.addConnections = function (list) {
+    var self = this;
+    if (!list || !list.length) return;
+    list.forEach(function (connData) {
+      self._connSeq = (self._connSeq || 0) + 1;
+      var connId = 'conn_' + Date.now() + '_' + self._connSeq;
+      var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('class', 'sideview-connector-path');
+      path.dataset.connId = connId;
+      var titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      titleEl.textContent = 'Click to disconnect ' + connData.fromCol + ' ↔ ' + connData.toCol;
+      path.appendChild(titleEl);
+      self.svg.appendChild(path);
+      attachHitPath(self, path);
+      self.connections.push(Object.assign({ id: connId, path: path }, connData));
+    });
+    this.updateConnectors();
+
+    this.joinCheckStepId = null;
+    var first = list[0];
+    var type = first.type || 'left_join';
+    this.pipeline.addJoinKeys(first.fromTable, first.toTable, list.map(function (c) {
+      return { left: c.fromCol, right: c.toCol };
+    }), type);
+
+    list.forEach(function (c) {
+      self.send('column_mapped', {
+        from_table: c.fromTable,
+        from_col: c.fromCol,
+        to_table: c.toTable,
+        to_col: c.toCol,
+        join_type: c.type || type
+      });
+    });
   };
 
   SideviewEngine.prototype.addConnection = function (connData) {
@@ -4584,6 +4782,9 @@ function sendToShiny(name, value) {
       ]),
       list(d.type_issues, 'sideview-joincheck-errors'),
       list(d.warnings, 'sideview-joincheck-warnings'),
+      // R-only field: key-check notes from the CDISC catalogue (the widget's diagnostics never carry it)
+      (Array.isArray(d.cdisc_notes) && d.cdisc_notes.length)
+        ? '<p class="sideview-joincheck-cdisc-title">CDISC</p>' + list(d.cdisc_notes, 'sideview-joincheck-cdisc') : '',
       '<dl class="sideview-joincheck-stats">',
       '<dt>Relationship</dt><dd>' + esc(d.relationship) + '</dd>',
       '<dt>' + esc(s.table) + ' rows matched</dt><dd>' + fmt(d.matched_x) + ' of ' + fmt(d.n_x) + ' (' + pct(d.match_rate_x) + ')</dd>',

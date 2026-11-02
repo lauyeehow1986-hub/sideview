@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.5.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.6.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -183,6 +183,107 @@ uses the network.</p>
 <code>lazy = FALSE</code>.</p>
 </div>
 <div class="section level2">
+<h2 id="join-keys">Join keys<a class="anchor" aria-label="anchor" href="#join-keys"></a>
+</h2>
+<p>Tagged tables join on known keys. With the tables above on the
+canvas, <strong>Auto Map</strong> (gadget or Shiny module) suggests them
+as dashed splines, drawn as one group per join:</p>
+<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="../reference/sideview.html">sideview</a></span><span class="op">(</span>dm <span class="op">=</span> <span class="va">dm</span>, ae <span class="op">=</span> <span class="va">ae</span>, adsl <span class="op">=</span> <span class="va">adsl</span><span class="op">)</span></span></code></pre></div>
+<table class="table">
+<colgroup>
+<col width="33%">
+<col width="33%">
+<col width="33%">
+</colgroup>
+<thead><tr class="header">
+<th>Pair</th>
+<th>Keys</th>
+<th>Kind</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td>
+<code>adae</code> to <code>ae</code>
+</td>
+<td>
+<code>STUDYID</code>, <code>USUBJID</code>, <code>AESEQ</code>
+</td>
+<td>ADaM to SDTM trace</td>
+</tr>
+<tr class="even">
+<td>
+<code>ae</code> to <code>dm</code>, <code>adlb</code> to
+<code>adsl</code>
+</td>
+<td>
+<code>STUDYID</code>, <code>USUBJID</code>
+</td>
+<td>subject level (the hub is the lookup)</td>
+</tr>
+<tr class="odd">
+<td>
+<code>lb</code> to <code>sv</code>
+</td>
+<td>
+<code>STUDYID</code>, <code>USUBJID</code>,
+<code>VISITNUM</code>
+</td>
+<td>visit level</td>
+</tr>
+</tbody>
+</table>
+<p>An SDTM or SEND table links to <code>DM</code>; an ADaM table links
+to <code>ADSL</code> (the other hub is used when the preferred one is
+not on the canvas). Hover one spline and the whole group lights up. A
+click accepts all of it as one <code>left_join</code>, and one undo
+takes it back. A partial key set is never offered. Without a
+<code>STUDYID</code> column the subject key is <code>USUBJID</code>
+alone, and the suggestion’s reason says so.</p>
+<p>The rules are also available as a function, and
+<code><a href="../reference/sv_suggest_mappings.html">sv_suggest_mappings()</a></code> returns them first, with
+<code>group</code> and <code>kind</code> columns:</p>
+<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="../reference/sv_suggest_mappings.html">sv_suggest_mappings</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>dm <span class="op">=</span> <span class="va">dm</span>, ae <span class="op">=</span> <span class="va">ae</span>, adsl <span class="op">=</span> <span class="va">adsl</span><span class="op">)</span><span class="op">)</span><span class="op">[</span>, <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"from_table"</span>, <span class="st">"to_table"</span>, <span class="st">"from_col"</span>, <span class="st">"to_col"</span>, <span class="st">"kind"</span><span class="op">)</span><span class="op">]</span></span>
+<span><span class="co">#&gt;   from_table to_table from_col  to_col    kind</span></span>
+<span><span class="co">#&gt; 1         ae       dm  STUDYID STUDYID subject</span></span>
+<span><span class="co">#&gt; 2         ae       dm  USUBJID USUBJID subject</span></span>
+<span><span class="co">#&gt; 3       adsl       dm  STUDYID STUDYID subject</span></span>
+<span><span class="co">#&gt; 4       adsl       dm  USUBJID USUBJID subject</span></span></code></pre></div>
+<div class="section level3">
+<h3 id="key-checks">Key checks<a class="anchor" aria-label="anchor" href="#key-checks"></a>
+</h3>
+<p>Open the join check on a join between two tagged tables and a
+<strong>CDISC</strong> list appears below the usual warnings. It names a
+key the join lacks
+(<code>Add AESEQ: the CDISC key for adae and ae is STUDYID, USUBJID, AESEQ.</code>),
+explains a many-to-many join with no rule (two Findings tables such as
+<code>LB</code> and <code>VS</code> should be filtered to one test, or
+summarised, first) and warns when a natural key repeats. The notes use
+the catalogue and the counts already in the check, so they cost no extra
+pass over the data, and they work for arrow and duckdb cards too. They
+do not change what Strict writes.</p>
+</div>
+<div class="section level3">
+<h3 id="what-join-keys-do-not-do">What join keys do not do<a class="anchor" aria-label="anchor" href="#what-join-keys-do-not-do"></a>
+</h3>
+<ul>
+<li>
+<code>SUPP--</code> and <code>RELREC</code> tables, and tables
+without <code>USUBJID</code> (<code>TS</code>, <code>TA</code>,
+<code>TE</code>), are not suggested.</li>
+<li>Sponsor sequence names other than <code>&lt;D&gt;SEQ</code> are not
+traced; those pairs get the subject rule.</li>
+<li>Findings with findings (<code>LB</code> with <code>VS</code>) get a
+note, not a suggestion.</li>
+<li>The widget has no Auto Map rules and no notes; they are worked out
+in R, in the gadget and in modules.</li>
+<li>
+<code>cdisc = FALSE</code> turns both off.</li>
+</ul>
+</div>
+</div>
+<div class="section level2">
 <h2 id="what-it-does-not-do">What it does not do<a class="anchor" aria-label="anchor" href="#what-it-does-not-do"></a>
 </h2>
 <ul>
@@ -208,8 +309,10 @@ each verb.</li>
 never row data.</li>
 <li>The label row is placed from one measurement of the header height,
 so it could sit off if a header grows taller later.</li>
-<li>The interface was checked in headless Chrome, not in RStudio’s
-dialog or Viewer pane.</li>
+<li>The interface was checked in headless Chrome and by hand in
+RStudio’s dialog and Viewer pane. In an external browser the canvas was
+seen to load, but its interaction was covered only by the headless
+Chrome tests (see the log for the release).</li>
 </ul>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>

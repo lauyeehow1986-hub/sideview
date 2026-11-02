@@ -1,5 +1,53 @@
 # Changelog
 
+## sideview 0.6.0
+
+### CDISC join keys
+
+- **Auto Map knows CDISC keys.** For tables tagged SDTM, SEND or ADaM it
+  suggests the keys a study programmer would use, instead of guessing
+  from column names:
+  - *ADaM to SDTM trace:* `STUDYID`, `USUBJID` and `<D>SEQ` (`adae` to
+    `ae` by `AESEQ`).
+  - *Subject level:* `STUDYID` + `USUBJID`, with `DM` (SDTM, SEND) or
+    `ADSL` (ADaM) as the lookup table.
+  - *Visit level:* a table with `VISITNUM` to `SV`, by the subject key
+    and `VISITNUM`. Where a table has no `STUDYID`, the subject key is
+    `USUBJID` alone, and the reason says so.
+- **One click, one join, one undo.** A key set is drawn as a group of
+  dashed splines (class `sideview-spline-suggested-cdisc`). Hovering one
+  lights up the group, and a click accepts all of it as one `left_join`
+  (one undo step). A partial key set is never offered, because it would
+  give a many-to-many join.
+- **Key checks in the join check.** The join check panel gets a “CDISC”
+  note list: a missing key for a pair with a rule (`Add AESEQ: ...`), a
+  many-to-many join with no rule (for example two Findings tables), and
+  a natural key that repeats
+  (`STUDYID, USUBJID, AESEQ should identify one AE record, but 3 keys repeat`).
+  The notes are worked out in R, so they appear in the gadget and in
+  Shiny modules; the widget has none.
+- **`sv_cdisc_join_keys(cards)`** (new, exported) returns the suggested
+  key sets for a list of cards.
+- **[`sv_suggest_mappings()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_suggest_mappings.md)**
+  gains the columns `group` and `kind` (both `NA` for heuristic rows)
+  and a `cdisc` argument (`"auto"`, `FALSE` or a named vector, as in
+  [`sv_codebook()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_codebook.md)).
+  Rule rows come first with confidence 1 and are never dropped by
+  `min_confidence`. Between two tagged tables the old `DOMAIN` and
+  lone-`STUDYID` guesses are gone.
+
+#### Limits to know about
+
+- `SUPP--` and `RELREC` tables are not suggested as joins (folding them
+  into their parent is future work). Neither are tables without a
+  `USUBJID` column (for example `TS`, `TA`, `TE`).
+- A sponsor sequence variable that is not called `<D>SEQ` is not traced;
+  the pair still gets the subject rule.
+- Two Findings tables (`LB` with `VS`) get no suggestion, only a note:
+  that join is many-to-many by nature.
+- The widget has no Auto Map rules and no key-check notes; they need R.
+- `cdisc = FALSE` turns the rules and the notes off.
+
 ## sideview 0.5.0
 
 ### CDISC awareness

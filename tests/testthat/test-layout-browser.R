@@ -2111,3 +2111,250 @@ test_that("a module snapshot carries view.labels_row and follows the L toggle", 
   expect_identical(r$off, FALSE)
   expect_identical(r$on, TRUE)
 })
+
+
+# ---- CDISC join suggestions and key-check notes (gadget on dm, ae, adae, lb) ----
+# The canvas cards are named dm, ae, adae and lb: CDISC detection is name-driven, so the ADaM
+# card must be called `adae` (not `adae_pfx`) to get the adae~ae trace group. ae and lb repeat
+# their USUBJID (two records for each of two subjects), so a join on USUBJID alone is many-to-many.
+.sv_cdisc_keys <- new.env()
+
+sv_cdisc_keys_page <- function(cdisc = "auto") {
+  skip_if_no_browser()
+  root <- sv_pkg_root()
+  if (!nzchar(root)) skip("CDISC browser tests need the source tree (helper-cdisc.R)")
+  slot <- if (identical(cdisc, FALSE)) "off" else "on"
+  if (is.null(.sv_cdisc_keys[[slot]])) {
+    helper <- normalizePath(file.path(root, "tests", "testthat", "helper-cdisc.R"), winslash = "/")
+    app <- sv_start_app(app_expr = sprintf(
+      paste0("{ source('%s'); f <- sv_cdisc_fixtures(); ae <- f$ae; lb <- f$lb; ",
+             "ae$USUBJID <- rep(f$dm$USUBJID[1:2], 2); lb$USUBJID <- rep(f$dm$USUBJID[1:2], 2); ",
+             "sideview(dm = f$dm, ae = ae, adae = f$adae_pfx, lb = lb, cdisc = %s, run = FALSE) }"),
+      helper, if (identical(cdisc, FALSE)) "FALSE" else "'auto'"))
+    page <- sv_open_page(app$url)
+    .sv_cdisc_keys[[slot]] <- list(app = app, page = page)
+    withr::defer({
+      try(page$close(), silent = TRUE)
+      try(app$proc$kill(), silent = TRUE)
+      .sv_cdisc_keys[[slot]] <- NULL
+    }, envir = testthat::teardown_env())
+  }
+  b <- .sv_cdisc_keys[[slot]]$page
+  # cards are 640px wide: a wide viewport leaves gaps where the paths are clickable (the hit layer is under the cards)
+  sv_set_viewport(b, 2300, 900)
+  # known layout: adae | ae on one row, dm under ae, lb right of dm; nothing selected or suggested
+  sv_js(b, "(() => {
+    const e = window._sideviewInstance;
+    e.clearSuggestedSplines(); e.clearOperations();
+    document.querySelectorAll('.sideview-toast').forEach(t => t.remove());
+    const c = n => document.querySelector('.sideview-card[data-card-name=\"' + n + '\"]');
+    [['adae', 20, 90], ['ae', 820, 90], ['dm', 820, 400], ['lb', 1620, 400]].forEach(p => {
+      c(p[0]).style.left = p[1] + 'px'; c(p[0]).style.top = p[2] + 'px'; });
+    window._svWarns = [];
+    if (!window._svWarnHooked) {
+      window._svWarnHooked = true;
+      const w = console.warn.bind(console);
+      console.warn = function () { window._svWarns.push([].slice.call(arguments).join(' ')); w.apply(console, arguments); };
+    }
+    e.updateConnectors(); return true; })()")
+  Sys.sleep(0.3)
+  b
+}
+
+sv_cdisc_centre <- function(b, expr) {
+  sv_js(b, sprintf("(() => { const r = (%s).getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()", expr))
+}
+
+# A screen point that really lands on a hit path of the group (skips spots under a card).
+sv_cdisc_path_point <- function(b, group, from_col) {
+  sv_js(b, sprintf("(() => {
+    const p = [...document.querySelectorAll('.sideview-spline-suggested-cdisc')]
+      .find(x => x.dataset.group === '%s' && x.dataset.fromCol === '%s');
+    if (!p || !p._svHit) return null;
+    const h = p._svHit, len = h.getTotalLength(), m = h.getScreenCTM();
+    const ts = []; for (let i = 3; i <= 97; i++) ts.push(i / 100);
+    ts.sort((a, b) => Math.abs(a - 0.5) - Math.abs(b - 0.5));
+    for (const t of ts) {
+      const q = h.getPointAtLength(len * t), s = new DOMPoint(q.x, q.y).matrixTransform(m);
+      const el = document.elementFromPoint(s.x, s.y);
+      // paths of one pair share their span in the gap: any hit path of this group will do
+      if (el && el._svVisible && el._svVisible.dataset.group === '%s') return { x: s.x, y: s.y };
+    }
+    return null; })()", group, from_col, group))
+}
+
+sv_cdisc_auto_map <- function(b) {
+  m <- sv_mouse(b)
+  m$click(sv_cdisc_centre(b, "document.querySelector('[data-action=\"suggest-mappings\"]')"))
+}
+
+test_that("Auto Map draws each CDISC key set as grouped paths", {
+  b <- sv_cdisc_keys_page()
+  expect_true(attr(b, "sv_ready"))
+  sv_cdisc_auto_map(b)
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-spline-suggested-cdisc').length >= 5"))
+  r <- sv_js(b, "(() => {
+    const by = {};
+    document.querySelectorAll('.sideview-spline-suggested-cdisc').forEach(p => {
+      (by[p.dataset.group] = by[p.dataset.group] || []).push({ from: p.dataset.fromTable, to: p.dataset.toTable,
+        col: p.dataset.fromCol, kind: p.dataset.kind, cls: p.getAttribute('class'),
+        title: (p._svHit.querySelector('title') || p.querySelector('title') || {}).textContent });
+    });
+    return by; })()")
+  # every tagged pair with a rule is offered (adae~dm and lb~dm too); the two asked for are checked in full
+  expect_true(all(c("cdisc:adae~ae", "cdisc:ae~dm") %in% names(r)))
+  trace <- r[["cdisc:adae~ae"]]
+  expect_length(trace, 3)
+  expect_setequal(vapply(trace, `[[`, "", "col"), c("STUDYID", "USUBJID", "AESEQ"))
+  expect_true(all(vapply(trace, function(p) p$kind, "") == "trace"))
+  expect_match(trace[[1]]$title, "Suggested CDISC join: adae to ae by STUDYID, USUBJID, AESEQ (ADaM to SDTM trace). Click to accept", fixed = TRUE)
+  subj <- r[["cdisc:ae~dm"]]
+  expect_length(subj, 2)
+  expect_setequal(vapply(subj, `[[`, "", "col"), c("STUDYID", "USUBJID"))
+  expect_true(all(vapply(subj, function(p) p$kind, "") == "subject"))
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("hovering one CDISC path highlights its whole group", {
+  b <- sv_cdisc_keys_page()
+  sv_cdisc_auto_map(b)
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-spline-suggested-cdisc').length >= 5"))
+  hovered <- function(g) sv_js(b, sprintf("[...document.querySelectorAll('.sideview-spline-suggested-cdisc')]
+    .filter(p => p.dataset.group === '%s' && p.classList.contains('is-hover')).length", g))
+  expect_equal(hovered("cdisc:adae~ae"), 0)
+  pt <- sv_cdisc_path_point(b, "cdisc:adae~ae", "USUBJID")
+  expect_false(is.null(pt))
+  b$Input$dispatchMouseEvent(type = "mouseMoved", x = pt$x - 20, y = pt$y - 20)
+  b$Input$dispatchMouseEvent(type = "mouseMoved", x = pt$x, y = pt$y)
+  expect_true(sv_wait_js(b, "[...document.querySelectorAll('.sideview-spline-suggested-cdisc')].some(p => p.classList.contains('is-hover'))"))
+  expect_equal(hovered("cdisc:adae~ae"), 3)
+  expect_equal(hovered("cdisc:ae~dm"), 0)
+  b$Input$dispatchMouseEvent(type = "mouseMoved", x = 1100, y = 880)
+  expect_true(sv_wait_js(b, "!document.querySelector('.sideview-spline-suggested-cdisc.is-hover')"))
+})
+
+test_that("one click accepts a CDISC key set as one join and one undo removes it", {
+  b <- sv_cdisc_keys_page()
+  m <- sv_mouse(b)
+  sv_js(b, "(() => { window._svMapped = [];
+    const e = window._sideviewInstance, send = e.send;
+    e._origSend = send;
+    e.send = function (t, d) { if (/column_mapped$/.test(t)) window._svMapped.push(d); return send.apply(e, arguments); };
+    return true; })()")
+  on.exit(sv_js(b, "(() => { const e = window._sideviewInstance; if (e._origSend) e.send = e._origSend; return true; })()"), add = TRUE)
+  sv_cdisc_auto_map(b)
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-spline-suggested-cdisc').length >= 5"))
+  pt <- sv_cdisc_path_point(b, "cdisc:adae~ae", "STUDYID")
+  expect_false(is.null(pt))
+  m$click(pt)
+  expect_true(sv_wait_js(b, "window._sideviewInstance.pipeline.steps.some(s => s.kind === 'join')"))
+  r <- sv_js(b, "(() => {
+    const e = window._sideviewInstance;
+    const joins = e.pipeline.steps.filter(s => s.kind === 'join');
+    return { n: joins.length, table: joins[0].table, right: joins[0].right, type: joins[0].type,
+      by: joins[0].by.map(p => p.left + '=' + p.right),
+      group: document.querySelectorAll('.sideview-spline-suggested-cdisc[data-group=\"cdisc:adae~ae\"]').length,
+      hits: [...document.querySelectorAll('.sideview-connector-hit')].filter(h => h._svVisible && h._svVisible.dataset.group === 'cdisc:adae~ae').length,
+      other: document.querySelectorAll('.sideview-spline-suggested-cdisc[data-group=\"cdisc:ae~dm\"]').length,
+      conns: e.connections.length,
+      toasts: [...document.querySelectorAll('.sideview-toast')].map(t => t.textContent).filter(t => /Accepted CDISC join/.test(t)),
+      mapped: window._svMapped.length,
+      steps: e.pipeline.steps.length }; })()")
+  expect_equal(r$n, 1)
+  expect_identical(r$table, "adae"); expect_identical(r$right, "ae")
+  expect_identical(r$type, "left_join")
+  expect_equal(unlist(r$by), c("STUDYID=STUDYID", "USUBJID=USUBJID", "AESEQ=AESEQ"))
+  expect_equal(r$group, 0); expect_equal(r$hits, 0)
+  expect_equal(r$other, 2)
+  expect_equal(r$conns, 3)
+  expect_equal(r$mapped, 3)
+  expect_equal(r$steps, 1)
+  expect_equal(length(r$toasts), 1)
+  expect_identical(unlist(r$toasts), "Accepted CDISC join: adae to ae by STUDYID, USUBJID, AESEQ")
+  # a single Ctrl+Z removes the whole key set
+  sv_key(b, "z", "KeyZ", 90, modifiers = 2)
+  expect_true(sv_wait_js(b, "window._sideviewInstance.pipeline.steps.length === 0"))
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("a CDISC group with a missing port is not drawn", {
+  b <- sv_cdisc_keys_page()
+  # Narrowest honest setup: one of the group's column ports (ae.AESEQ) is no longer found.
+  # A removed card cannot be used: the other group (ae~dm) must still be offered.
+  sv_js(b, "(() => {
+    const p = document.querySelector('.sideview-card[data-card-name=\"ae\"] .sideview-col-port[data-col-name=\"AESEQ\"]');
+    p.setAttribute('data-col-name', 'AESEQ_GONE'); return true; })()")
+  on.exit(sv_js(b, "(() => {
+    const p = document.querySelector('.sideview-card[data-card-name=\"ae\"] .sideview-col-port[data-col-name=\"AESEQ_GONE\"]');
+    if (p) p.setAttribute('data-col-name', 'AESEQ'); return true; })()"), add = TRUE)
+  sv_cdisc_auto_map(b)
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-spline-suggested-cdisc[data-group=\"cdisc:ae~dm\"]').length === 2"))
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-spline-suggested-cdisc[data-group=\"cdisc:adae~ae\"]').length"), 0)
+  warns <- unlist(sv_js(b, "window._svWarns"))
+  expect_true(any(grepl("suggested group \"cdisc:adae~ae\" dropped: no port for ae.AESEQ", warns, fixed = TRUE)),
+              info = paste(warns, collapse = " | "))
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("the join check shows CDISC key notes for a many-to-many on a pair without a rule", {
+  b <- sv_cdisc_keys_page()
+  m <- sv_mouse(b)
+  centre <- function(card, col) sv_cdisc_centre(b, sprintf(
+    "%s.querySelector('.sideview-col-port[data-col-name=\"%s\"]')", sv_card_js(card), col))
+  p1 <- centre("ae", "USUBJID"); p2 <- centre("lb", "USUBJID")
+  m$click(p1)
+  for (t in seq(0.2, 1, by = 0.2)) b$Input$dispatchMouseEvent(type = "mouseMoved", x = p1$x + (p2$x - p1$x) * t, y = p1$y + (p2$y - p1$y) * t)
+  m$click(p2)
+  expect_true(sv_wait_js(b, "window._sideviewInstance.pipeline.steps.some(s => s.kind === 'join')"))
+  r <- sv_js(b, "(() => { const s = window._sideviewInstance.pipeline.steps.find(s => s.kind === 'join');
+    return { table: s.table, right: s.right, by: s.by.map(p => p.left + '=' + p.right) }; })()")
+  expect_identical(r$table, "ae"); expect_identical(r$right, "lb")
+  expect_equal(unlist(r$by), "USUBJID=USUBJID")
+  m$click(sv_cdisc_centre(b, "document.querySelector('.sideview-drawer-tab[data-tab=\"discrepancy\"]')"))
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-joincheck-cdisc-title')", 30))
+  g <- sv_js(b, "(() => {
+    const t = document.querySelector('.sideview-joincheck-cdisc-title');
+    const l = document.querySelector('.sideview-joincheck-cdisc');
+    const box = document.querySelector('.sideview-joincheck').getBoundingClientRect();
+    const lr = l.getBoundingClientRect(), tr = t.getBoundingClientRect();
+    return { heading: t.textContent, notes: [...l.querySelectorAll('li')].map(x => x.textContent),
+      before: !!(t.compareDocumentPosition(document.querySelector('.sideview-joincheck-stats')) & Node.DOCUMENT_POSITION_FOLLOWING),
+      relationship: document.querySelector('.sideview-joincheck-stats dd').textContent,
+      inside: lr.left >= box.left - 0.5 && lr.right <= box.right + 0.5 && tr.left >= box.left - 0.5,
+      overflow: l.scrollWidth - l.clientWidth, titleFont: getComputedStyle(t).fontWeight + ' ' + getComputedStyle(t).fontSize,
+      noteFont: getComputedStyle(l.querySelector('li')).fontSize }; })()")
+  expect_identical(g$heading, "CDISC")
+  expect_identical(g$relationship, "many-to-many")
+  # spec section 6: ae (Events) and lb (Findings) have no rule and share no VISITNUM or --SEQ column
+  expect_identical(unlist(g$notes), "Summarise one side first.")
+  expect_true(g$before)
+  expect_true(g$inside)
+  expect_lte(g$overflow, 1)
+  sv_js(b, "window._sideviewInstance.clearOperations()")
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("cdisc = FALSE draws no CDISC-class suggestion paths and no notes", {
+  b <- sv_cdisc_keys_page(cdisc = FALSE)
+  expect_true(attr(b, "sv_ready"))
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-badge-cdisc').length"), 0)
+  sv_cdisc_auto_map(b)
+  # heuristic suggestions (no group) still appear
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-spline-suggested').length > 0"))
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-spline-suggested-cdisc, [data-group]').length"), 0)
+  m <- sv_mouse(b)
+  centre <- function(card, col) sv_cdisc_centre(b, sprintf(
+    "%s.querySelector('.sideview-col-port[data-col-name=\"%s\"]')", sv_card_js(card), col))
+  sv_js(b, "window._sideviewInstance.clearSuggestedSplines()")
+  p1 <- centre("ae", "USUBJID"); p2 <- centre("lb", "USUBJID")
+  m$click(p1)
+  for (t in seq(0.2, 1, by = 0.2)) b$Input$dispatchMouseEvent(type = "mouseMoved", x = p1$x + (p2$x - p1$x) * t, y = p1$y + (p2$y - p1$y) * t)
+  m$click(p2)
+  expect_true(sv_wait_js(b, "window._sideviewInstance.pipeline.steps.some(s => s.kind === 'join')"))
+  m$click(sv_cdisc_centre(b, "document.querySelector('.sideview-drawer-tab[data-tab=\"discrepancy\"]')"))
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-joincheck-stats')", 30))
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-joincheck-cdisc-title, .sideview-joincheck-cdisc').length"), 0)
+  sv_js(b, "window._sideviewInstance.clearOperations()")
+  expect_equal(attr(b, "sv_errors")(), character())
+})

@@ -545,7 +545,36 @@
     });
   };
 
-  Pipeline.prototype.removeJoinKey = function (left, right, leftCol, rightCol) {
+  /**
+   * Add a set of key pairs ({left, right}) to the join between two tables as one undo step.
+   * Merges into an existing join for (left, right), or into the reverse join (right, left)
+   * with the pairs swapped; only missing pairs are added. A no-op leaves history alone.
+   */
+  Pipeline.prototype.addJoinKeys = function (left, right, pairs, type) {
+    var self = this;
+    var key = joinKey(left, right);
+    var rkey = joinKey(right, left);
+    this.change('join', function () {
+      var fwd = self.steps[self.indexOf(function (x) { return x.key === key; })];
+      var rev = fwd ? null : self.steps[self.indexOf(function (x) { return x.key === rkey; })];
+      var s = fwd || rev;
+      (pairs || []).forEach(function (p) {
+        var l = rev ? p.right : p.left;
+        var r = rev ? p.left : p.right;
+        if (!s) {
+          s = self.normalize({
+            kind: 'join', key: key, table: left, right: right,
+            type: type || 'left_join', by: []
+          });
+          self.steps.push(s);
+        }
+        var has = s.by.some(function (q) { return q.left === l && q.right === r; });
+        if (!has) s.by.push({ left: l, right: r });
+      });
+    });
+  };
+
+  Pipeline.prototype.removeJoinKey =function (left, right, leftCol, rightCol) {
     var self = this;
     var key = joinKey(left, right);
     return this.change('unjoin', function () {

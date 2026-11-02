@@ -62,11 +62,31 @@ sv_cdisc_fixtures <- function() {
   bw <- data.frame(STUDYID = sid, DOMAIN = "BW", USUBJID = usub, BWSEQ = 1:n,
                    BWTESTCD = "BW", BWORRES = c("250", "260", "255", "270"),
                    stringsAsFactors = FALSE)
-  list(dm = dm, ae = ae, suppae = suppae, labs = labs, ts = ts, xy = xy, adsl = adsl,
+  lb <- data.frame(STUDYID = sid, DOMAIN = "LB", USUBJID = usub, LBSEQ = 1:n,
+                   LBTESTCD = "ALT", VISITNUM = c(1, 1, 2, 2), stringsAsFactors = FALSE)
+  vs <- data.frame(STUDYID = sid, DOMAIN = "VS", USUBJID = usub, VSSEQ = 1:n,
+                   VSTESTCD = "SYSBP", VISITNUM = c(1, 1, 2, 2), stringsAsFactors = FALSE)
+  sv <- data.frame(STUDYID = sid, DOMAIN = "SV", USUBJID = usub, VISITNUM = c(1, 1, 2, 2),
+                   VISIT = c("Baseline", "Baseline", "Week 4", "Week 4"), stringsAsFactors = FALSE)
+  relrec <- data.frame(STUDYID = sid, RDOMAIN = "AE", USUBJID = usub, IDVAR = "AESEQ",
+                       IDVARVAL = as.character(1:n), RELID = "1", stringsAsFactors = FALSE)
+  adsl_nostudy <- adsl[, setdiff(names(adsl), "STUDYID")]
+  dm_upper_lower <- dm
+  names(dm_upper_lower) <- tolower(names(dm_upper_lower))
+  ae_lower <- ae
+  names(ae_lower) <- tolower(names(ae_lower))
+  list(lb = lb, vs = vs, sv = sv, relrec = relrec, adsl_nostudy = adsl_nostudy,
+       dm_upper_lower = dm_upper_lower, ae_lower = ae_lower,
+       dm = dm, ae = ae, suppae = suppae, labs = labs, ts = ts, xy = xy, adsl = adsl,
        adlb = adlb, adtte = adtte, adae = adae, adlb_pfx = adlb_pfx,
        adae_pfx = adae_pfx, advs_pfx = advs_pfx, send_dm = send_dm, bw = bw,
        mtcars = mtcars, iris = iris,
        ae_nostudy = ae[, setdiff(names(ae), "STUDYID")],
        studyid_only = data.frame(STUDYID = sid, x = 1:n),
        keys_only = data.frame(STUDYID = sid, USUBJID = usub, VAL = 1:n, stringsAsFactors = FALSE))
+}
+
+# Normalise a named list of tables into cards with final CDISC tags (as the gadget does).
+sv_cdisc_cards <- function(tables, cdisc = "auto") {
+  sv_cdisc_finalize(sv_normalize_cards(tables), cdisc)
 }

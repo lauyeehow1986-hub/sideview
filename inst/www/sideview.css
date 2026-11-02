@@ -1628,6 +1628,17 @@ html.sv-standalone body {
   color: var(--sv-warning-text);
 }
 
+.sideview-container .sideview-joincheck-cdisc-title {
+  margin: 6px 0 2px;
+  color: var(--sv-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sideview-container .sideview-joincheck-cdisc li {
+  color: var(--sv-text-muted);
+}
+
 .sideview-container .sideview-joincheck-errors li {
   color: var(--sv-danger-text);
 }
@@ -2128,6 +2139,15 @@ html.sv-standalone body {
   stroke-width: 3.5px;
   stroke: var(--sv-suggested-hover);
   filter: drop-shadow(0 0 5px var(--sv-suggested-glow));
+}
+
+/* A CDISC key set: slightly heavier than a heuristic suggestion; hover is inherited */
+.sideview-container .sideview-spline-suggested-cdisc {
+  stroke-width: 3px;
+}
+
+.sideview-container .sideview-spline-suggested-cdisc.is-hover {
+  stroke-width: 3.5px;
 }
 
 /* Tooltip for suggested splines */

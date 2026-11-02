@@ -180,7 +180,17 @@ Each sub-project gets its own spec, plan and build, in this order:
 
 ## Backlog (future rounds, not yet scheduled)
 - **CDISC / pharmaverse follow-ups** (0.5.0 shipped recognition, badges, labels, codebook domain, `sv_read_cdisc()`):
-  - B: USUBJID / STUDYID join keys (suggest and pre-fill joins between domains);
+  - Join keys (0.6.0) minors, deferred: `format(dup)` prints `1e+05` at R/cdisc_keys.R:232 (use `scientific = FALSE, trim = TRUE`);
+    an ADSL without STUDYID joined by USUBJID alone gets no note 3 (`sv_keys_natural`); `spell` uses the left card's spelling for
+    every key, the spec says each table's own; the `join_diagnostics_request` test asserts only that `cdisc_notes` is present, not the
+    note 3 text; browser test 3 should assert `connections.length == 0` after undo; browser test 2 needs a comment on the final
+    `mouseMoved` point.
+  - Join keys (0.6.0) final-review minors, deferred: the visit rule also fires for ADaM cards with VISITNUM (advs~sv; add
+    `!sv_keys_is_adam(cx)` or document it); ae x suppae by USUBJID gets "Summarise one side first." where IDVAR/IDVARVAL is the
+    real answer (do with C); the Auto Map preview toast counts lazy cards that only appear in CDISC rule rows (build its names from
+    `group == null` rows); the "equals 0.5.0" Auto Map test compares new code with new code (pin a snapshot); in the gadget an
+    unmatched `cdisc` name warns again on every Auto Map click (`suppressWarnings()` at app_server.R ~531); the note reads
+    "1 keys repeat" (plural).
   - C: SUPPQUAL merge (fold SUPP-- rows into the parent as columns);
   - D: admiral-style code generation for ADaM derivations;
   - E: ARD / TLG cards (analysis results datasets and tables as cards);
@@ -208,6 +218,31 @@ Each sub-project gets its own spec, plan and build, in this order:
 ---
 
 ## Log
+
+### 2026-11-02 - CDISC join keys: sideview 0.6.0 (Tasks 1-8)
+- **What shipped:** `sv_cdisc_join_keys(cards)` (R/cdisc_keys.R, exported): ADaM-to-SDTM trace (`STUDYID`, `USUBJID`, `<D>SEQ`), subject level
+  (`STUDYID` + `USUBJID`, DM/ADSL as the lookup), visit level (`VISITNUM` to SV); SUPP--/RELREC/no-USUBJID tables excluded. `sv_suggest_mappings()`
+  gained `group`/`kind` columns and `cdisc =`; rule rows first, confidence 1. Browser: grouped dashed splines (`sideview-spline-suggested-cdisc`),
+  hover lights the group, one click = one multi-key `left_join` = one undo (`Pipeline.addJoinKeys`). Join check: R-side `cdisc_notes`
+  (`sv_cdisc_key_notes()`), shown under a "CDISC" heading in the gadget and modules; the widget has no rules or notes. NEWS 0.6.0, article "Join keys" section, DESCRIPTION 0.6.0.
+- **Verified (Task 8):** full suite `NOT_CRAN=true devtools::test()`: FAIL 0 | WARN 0 | SKIP 0 | PASS 23067 (the lazy 1M-row timing test passed).
+  `devtools::check(--no-manual)`: 0 errors, 0 warnings, 1 NOTE (the known Windows `''NULL''` check-directory note). `pkgdown::check_pkgdown()`: no problems.
+  Site rebuilt; docs/CLAUDE.* and docs/MEMORY.* and their sitemap.xml / search.json entries removed.
+- **Real browser (Task 7, chromote with real mouse input):** six new tests in test-layout-browser.R, all pass (grouped splines on dm/ae/adsl/adae, group hover, one-click join and one undo, toast, `ae` x `lb` notes in the join check). Tasks 5-6 were checked against the mock DOM (gui-test-runner.js).
+- **RStudio pass (2025.05.1, R 4.5.1; fixtures `dm, ae, adsl, adae, lb`):**
+  - Dialog: badges, Auto Map draws dashed grouped CDISC splines, one click accepts the group ("Accepted CDISC join: lb to dm by STUDYID, USUBJID", Drawer badge 1), Ctrl+Z gives one undo (splines stay, as for manual joins). A manual `ae` x `lb` link by `USUBJID` shows "1:1 - 100% of ae matched" in the join check with no CDISC block, correct because the fixture `lb` has one row per subject.
+  - Viewer pane: canvas renders, chrome wraps, Auto Map draws the dashed grouped splines.
+  - External browser (Edge, `viewer = "browser"`): launches and renders the canvas with badges. Computer use cannot click in a browser, so interaction there was not driven; the chromote tests cover it.
+  - The CDISC join-check note itself (`Summarise one side first.`) was seen only in the Task 7 chromote test, not in RStudio (the RStudio fixtures have no duplicate `lb` keys).
+- **Final whole-branch review (Opus):** With fixes, 0 Critical / 1 Important / 9 Minor. Fixed in dacb2f1:
+  - `sv_suggest_mappings()` now passes `cdisc =` to raw data frames through `sv_cdisc_finalize()`.
+  - ADSL links to the first DM only.
+  - The key notes run inside a `tryCatch`.
+  - The new CSS rules are scoped under `.sideview-container`.
+  - The dead-fixture note test now uses its fixture.
+  - Parse and row-count tests cover the subject and visit groups.
+  - A scoped re-review came back clean, and `cdisc = FALSE` output is identical to before.
+- **Deferred minors:** in the Backlog (join keys minors and final-review minors).
 
 ### 2026-11-02 - CDISC follow-up 1 closed: browser-test stability and RStudio pass
 - **Change:** deferred minors (case-insensitive column names, ADaM/SUPP user-tag classes, SEND-canvas SUPP flip,

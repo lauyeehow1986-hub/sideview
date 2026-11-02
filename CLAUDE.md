@@ -39,7 +39,7 @@ rstudio bridge: R/rstudio.R
   `sideview_done`, `sideview_cancel`,
   `cancel` (miniUI dialog close).
 - Custom messages (R → client): `sideview_code_update`, `sideview_discrepancies`,
-  `sideview_suggested_mappings`, `sideview_copilot_reply`, `sideview_inject_result`,
+  `sideview_suggested_mappings` (candidates carry `group`, e.g. `"cdisc:adae~ae"`, and `kind`, `"trace"|"subject"|"visit"`, both null for heuristic rows; a group is drawn as dashed paths with class `sideview-spline-suggested-cdisc` and accepted as one join by `addConnections()`: one undo step, one `column_mapped` per key), `sideview_copilot_reply`, `sideview_inject_result`,
   `sideview_console_result`, `sideview_eval_result`, `sideview_rows`, `sideview_ai_status`,
   `sideview_join_diagnostics`, `sideview_column_profile`, `sideview_codebook_saved` (module: carries `csv`, the file text, plus `filename`; the browser downloads it),
   `sideview_state_saved`, `sideview_state_loaded`,
@@ -79,7 +79,10 @@ rstudio bridge: R/rstudio.R
 - **Codebook:** `sv_codebook()` has a `rows_profiled` column after `n` (`n` = true row count, `rows_profiled` =
   rows profiled; equal except for a preview-only card). `SideviewPipeline.codebookRow()`/`codebookCsv()` write the
   same column, so the byte-equal CSV test still holds.
-- **Join diagnostics:** `sv_join_diagnostics()` (R/diagnostics.R) and `SideviewPipeline.joinDiagnostics()`
+- **Join diagnostics:** `cdisc_notes` (list of strings, maybe empty) is an R-only field of the
+  `sideview_join_diagnostics` reply, added by the `join_diagnostics_request` handler and shown under a "CDISC"
+  heading after the warnings; the widget's browser-computed diagnostics never carry it, and the twins below
+  do not produce it. `sv_join_diagnostics()` (R/diagnostics.R) and `SideviewPipeline.joinDiagnostics()`
   (sv-pipeline.js) are twins with the same snake_case fields; `test-diagnostics.R` checks parity and that row
   counts equal dplyr (NA matches NA, as `na_matches = "na"`). The gadget asks R (`join_diagnostics_request`,
   full data); the widget computes in the browser. Change both together. The date-rule check is a third twin:

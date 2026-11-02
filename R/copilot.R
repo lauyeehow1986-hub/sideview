@@ -9,6 +9,12 @@
 #' @param ... Additional cards or tables passed as positional arguments.
 #' @param min_confidence Minimum confidence threshold (numeric between 0 and 1) for
 #'   returned suggestions (default `0.6`).
+#' @param cdisc `"auto"` (default) or anything but `FALSE` to suggest the CDISC
+#'   join keys (see [sv_cdisc_join_keys()]) for pairs of tagged tables; `FALSE`
+#'   keeps the heuristic suggestions only. Rule rows have confidence 1, come
+#'   first and are never filtered by `min_confidence`. A pair of CDISC tables
+#'   that can take part (tagged, with `USUBJID`) but has no rule gets no
+#'   heuristic rows either.
 #'
 #' @return A `data.frame` with columns:
 #'   \describe{
@@ -18,13 +24,16 @@
 #'     \item{`to_col`}{Destination column name.}
 #'     \item{`confidence`}{Composite confidence score in `[0, 1]`.}
 #'     \item{`reason`}{Human-readable justification describing similarity components.}
+#'     \item{`group`}{`NA` for heuristic rows; `"cdisc:<from>~<to>"` for the rows of
+#'       one CDISC key (the columns of one join).}
+#'     \item{`kind`}{`NA` for heuristic rows; `"trace"`, `"subject"` or `"visit"`.}
 #'   }
 #' @export
 #' @examples
 #' df1 <- data.frame(patient_id = 1:5, age = c(20, 30, 40, 50, 60))
 #' df2 <- data.frame(patient_id = 3:7, score = c(10, 20, 30, 40, 50))
 #' sv_suggest_mappings(list(patients = df1, visits = df2))
-sv_suggest_mappings <- function(cards, ..., min_confidence = 0.6) {
+sv_suggest_mappings <- function(cards, ..., min_confidence = 0.6, cdisc = "auto") {
   if (is.null(cards)) {
     return(.empty_mappings_result())
   }
@@ -84,6 +93,12 @@ sv_suggest_mappings <- function(cards, ..., min_confidence = 0.6) {
     return(.empty_mappings_result())
   }
 
+  # Tag the cards as sideview() does, so a user `cdisc =` vector and the
+  # SEND/standard resolution across the canvas reach tables given as data.
+  if (!isFALSE(cdisc)) {
+    valid_cards <- sv_cdisc_finalize(valid_cards, cdisc)
+  }
+
   min_conf <- if (is.null(min_confidence) || is.na(min_confidence) || min_confidence < 0) {
     0.0
   } else {
@@ -92,6 +107,32 @@ sv_suggest_mappings <- function(cards, ..., min_confidence = 0.6) {
 
   candidates <- list()
   n_cards <- length(valid_cards)
+
+  # CDISC rule rows: one row per key pair, confidence 1, listed first.
+  rule_rows <- NULL
+  skip_pair <- matrix(FALSE, n_cards, n_cards)
+  if (!identical(cdisc, FALSE)) {
+    keys <- sv_cdisc_join_keys(valid_cards)
+    card_names <- vapply(valid_cards, function(cd) cd$name, character(1))
+    eligible <- vapply(valid_cards, sv_keys_eligible, logical(1))
+    for (i in seq_len(n_cards - 1L)) {
+      for (j in seq.int(i + 1L, n_cards)) {
+        if (eligible[i] && eligible[j]) skip_pair[i, j] <- TRUE
+      }
+    }
+    rule_rows <- lapply(seq_len(nrow(keys)), function(r) {
+      fc <- keys$from_cols[[r]]
+      tc <- keys$to_cols[[r]]
+      data.frame(
+        from_table = keys$from_table[r], from_col = fc,
+        to_table = keys$to_table[r], to_col = tc,
+        confidence = 1, reason = keys$reason[r],
+        group = paste0("cdisc:", keys$from_table[r], "~", keys$to_table[r]),
+        kind = keys$kind[r], stringsAsFactors = FALSE
+      )
+    })
+    rule_rows <- if (length(rule_rows)) do.call(rbind, rule_rows) else NULL
+  }
 
   # Precompute unique sets and column metadata once per table
   # Sampling up to 10,000 rows if nrow > 10,000
@@ -128,6 +169,7 @@ sv_suggest_mappings <- function(cards, ..., min_confidence = 0.6) {
   # Pairwise iteration across loaded cards (c1, c2)
   for (i in seq_len(n_cards - 1L)) {
     for (j in seq.int(i + 1L, n_cards)) {
+      if (skip_pair[i, j]) next
       c1 <- valid_cards[[i]]
       c2 <- valid_cards[[j]]
 
@@ -168,7 +210,10 @@ sv_suggest_mappings <- function(cards, ..., min_confidence = 0.6) {
   }
 
   if (length(candidates) == 0L) {
-    return(.empty_mappings_result())
+    return(if (is.null(rule_rows)) .empty_mappings_result() else {
+      rownames(rule_rows) <- NULL
+      rule_rows
+    })
   }
 
   res <- data.frame(
@@ -184,6 +229,9 @@ sv_suggest_mappings <- function(cards, ..., min_confidence = 0.6) {
   # Sort by confidence descending, then by table and column names
   ord <- order(-res$confidence, res$from_table, res$to_table, res$from_col, res$to_col)
   res <- res[ord, , drop = FALSE]
+  res$group <- NA_character_
+  res$kind <- NA_character_
+  if (!is.null(rule_rows)) res <- rbind(rule_rows, res)
   rownames(res) <- NULL
   res
 }
@@ -198,6 +246,8 @@ sv_suggest_mappings <- function(cards, ..., min_confidence = 0.6) {
     to_col = character(0),
     confidence = numeric(0),
     reason = character(0),
+    group = character(0),
+    kind = character(0),
     stringsAsFactors = FALSE
   )
 }
