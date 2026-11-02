@@ -185,6 +185,12 @@ Each sub-project gets its own spec, plan and build, in this order:
     every key, the spec says each table's own; the `join_diagnostics_request` test asserts only that `cdisc_notes` is present, not the
     note 3 text; browser test 3 should assert `connections.length == 0` after undo; browser test 2 needs a comment on the final
     `mouseMoved` point.
+  - Join keys (0.6.0) final-review minors, deferred: the visit rule also fires for ADaM cards with VISITNUM (advs~sv; add
+    `!sv_keys_is_adam(cx)` or document it); ae x suppae by USUBJID gets "Summarise one side first." where IDVAR/IDVARVAL is the
+    real answer (do with C); the Auto Map preview toast counts lazy cards that only appear in CDISC rule rows (build its names from
+    `group == null` rows); the "equals 0.5.0" Auto Map test compares new code with new code (pin a snapshot); in the gadget an
+    unmatched `cdisc` name warns again on every Auto Map click (`suppressWarnings()` at app_server.R ~531); the note reads
+    "1 keys repeat" (plural).
   - C: SUPPQUAL merge (fold SUPP-- rows into the parent as columns);
   - D: admiral-style code generation for ADaM derivations;
   - E: ARD / TLG cards (analysis results datasets and tables as cards);
@@ -228,7 +234,15 @@ Each sub-project gets its own spec, plan and build, in this order:
   - Viewer pane: canvas renders, chrome wraps, Auto Map draws the dashed grouped splines.
   - External browser (Edge, `viewer = "browser"`): launches and renders the canvas with badges. Computer use cannot click in a browser, so interaction there was not driven; the chromote tests cover it.
   - The CDISC join-check note itself (`Summarise one side first.`) was seen only in the Task 7 chromote test, not in RStudio (the RStudio fixtures have no duplicate `lb` keys).
-- **Deferred minors:** in the Backlog (join keys minors).
+- **Final whole-branch review (Opus):** With fixes, 0 Critical / 1 Important / 9 Minor. Fixed in dacb2f1:
+  - `sv_suggest_mappings()` now passes `cdisc =` to raw data frames through `sv_cdisc_finalize()`.
+  - ADSL links to the first DM only.
+  - The key notes run inside a `tryCatch`.
+  - The new CSS rules are scoped under `.sideview-container`.
+  - The dead-fixture note test now uses its fixture.
+  - Parse and row-count tests cover the subject and visit groups.
+  - A scoped re-review came back clean, and `cdisc = FALSE` output is identical to before.
+- **Deferred minors:** in the Backlog (join keys minors and final-review minors).
 
 ### 2026-11-02 - CDISC follow-up 1 closed: browser-test stability and RStudio pass
 - **Change:** deferred minors (case-insensitive column names, ADaM/SUPP user-tag classes, SEND-canvas SUPP flip,
