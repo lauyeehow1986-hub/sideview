@@ -209,6 +209,28 @@ Each sub-project gets its own spec, plan and build, in this order:
 
 ## Log
 
+### 2026-11-02 - CDISC follow-up 1 closed: browser-test stability and RStudio pass
+- **Change:** deferred minors (case-insensitive column names, ADaM/SUPP user-tag classes, SEND-canvas SUPP flip,
+  codebook agrees with the canvas incl. cleared tags, test gaps, LLM label cap) are done in f5056ba..1e54a84 and
+  reviewed; 73cc162 folds case in the canvas SPECIES check; 5622d77 makes the real-browser tests robust under load
+  (shared timeout, navigate retry, polling) and relaxes the 1M-row duckdb join timing bound 5 s -> 15 s (it measured
+  7 s on this machine under load, not a regression).
+- **Verified (full suite, `NOT_CRAN=true`):** 532 tests, 22802 expectations, 0 failed / 0 errors / 0 warnings, 1 skipped.
+  `devtools::check()` clean apart from the known Windows "NULL" NOTE.
+- **Dataset-JSON:** real `datasetjson` 0.4.1 installed; column and dataset labels survive the reader.
+- **RStudio 2026-11-02 (R 4.5.1, one RStudio instance, five synthetic tables dm/ae/suppae/adsl/adlb):**
+  - `viewer = "dialog"`: badges DM/AE/SUPPAE/ADSL/ADLB; badge tooltip; `th` tooltip "Unique Subject Identifier";
+    `L` labels row; Ctrl+K "adverse" finds `ae`; `T` dark theme legible; inspector shows the label and the
+    "DM - Demographics" line; Export codebook writes a CSV with the `domain` and `label` columns (checked the file);
+    Cancel returns `NULL`.
+  - `viewer = "pane"` (also with the Viewer pane maximised): the chrome wraps in the narrow pane, no overlap with badges;
+    `L`, Ctrl+K, `T` all work. Native `title` tooltips do not show in screen captures here; the title text itself is
+    asserted by the real-browser tests and was read from the DOM.
+  - `viewer = "browser"` (Edge, then the built-in browser on the same server): badges and tooltips read from the DOM,
+    `th` title, `L` on/off (2 label rows, then 0), `T` toggles `sv-theme-dark`.
+- **Gotcha:** starting RStudio with `Start-Process` and then `open_application` creates a second instance with its own
+  rsession; the console then looks hung. Use one instance, and press Return again if a pasted command does not run.
+
 ### 2026-11-01 - Release 0.4.0 checks
 - **Change:** DESCRIPTION 0.3.0 -> 0.4.0; NEWS head "(development)" dropped.
 - **Verified on `main` (1e4e2e1, PR #3 merged):** `devtools::test()` with `NOT_CRAN=true` -> 442 tests, 0 failed / 0 errors / 0 skipped
