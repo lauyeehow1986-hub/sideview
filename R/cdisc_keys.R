@@ -24,8 +24,8 @@
 #' ae <- data.frame(STUDYID = "S1", DOMAIN = "AE", USUBJID = c("S1-1", "S1-2"),
 #'                  AESEQ = 1:2, AETERM = c("Headache", "Rash"),
 #'                  AEDECOD = c("HEADACHE", "RASH"))
-#' cards <- sv_normalize_cards(list(dm = dm, ae = ae))
-#' cards <- sv_cdisc_finalize(cards)
+#' cards <- sideview:::sv_normalize_cards(list(dm = dm, ae = ae))
+#' cards <- sideview:::sv_cdisc_finalize(cards)
 #' sv_cdisc_join_keys(cards)
 #' @export
 sv_cdisc_join_keys <- function(cards) {
