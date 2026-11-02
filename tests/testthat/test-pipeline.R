@@ -129,6 +129,71 @@ test_that("composed code gives the same answer as hand-written dplyr", {
   expect_equal(as.data.frame(got), as.data.frame(want))
 })
 
+# ---- addJoinKeys: a key set as one undo step ---------------------------------------------------
+
+test_that("addJoinKeys adds a key set as one step and one undo", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.addJoinKeys('adae', 'ae', [{left:'STUDYID',right:'STUDYID'},{left:'USUBJID',right:'USUBJID'},
+                                 {left:'AESEQ',right:'AESEQ'}], 'left_join');
+    const n = p.steps.length, by = p.steps[0].by.length, depth = p.undoStack.length;
+    p.undo();
+    out = { n: n, by: by, depth: depth, afterUndo: p.steps.length };
+  ")
+  expect_equal(out$n, 1)
+  expect_equal(out$by, 3)
+  expect_equal(out$depth, 1)
+  expect_equal(out$afterUndo, 0)
+})
+
+test_that("addJoinKeys adds only missing pairs and leaves a no-op out of history", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.addJoinKeys('adae', 'ae', [{left:'STUDYID',right:'STUDYID'},{left:'USUBJID',right:'USUBJID'}]);
+    p.addJoinKeys('adae', 'ae', [{left:'USUBJID',right:'USUBJID'},{left:'AESEQ',right:'AESEQ'}]);
+    const n = p.steps.length, by = p.steps[0].by.length, depth = p.undoStack.length;
+    p.addJoinKeys('adae', 'ae', [{left:'AESEQ',right:'AESEQ'}]);
+    out = { n: n, by: by, depth: depth, depthAfterNoop: p.undoStack.length };
+  ")
+  expect_equal(out$n, 1)
+  expect_equal(out$by, 3)
+  expect_equal(out$depth, 2)
+  expect_equal(out$depthAfterNoop, 2)
+})
+
+test_that("addJoinKeys merges into the reverse join, swapped, keeping its direction", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.addJoinKey('ae', 'adae', 'USUBJID', 'USUBJID');
+    p.addJoinKeys('adae', 'ae', [{left:'USUBJID',right:'USUBJID'},{left:'AESEQ',right:'AESEQ'}]);
+    out = { n: p.steps.length, table: p.steps[0].table, by: p.steps[0].by };
+  ")
+  expect_equal(out$n, 1)
+  expect_equal(out$table, "ae")
+  expect_equal(length(out$by), 2)
+  expect_equal(out$by[[2]]$left, "AESEQ")
+  expect_equal(out$by[[2]]$right, "AESEQ")
+})
+
+test_that("addJoinKeys composes parseable code with dplyr's row count", {
+  skip_if_not_installed("dplyr")
+  fx <- sv_cdisc_fixtures()
+  code <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.addJoinKeys('adae_pfx', 'ae', [{left:'STUDYID',right:'STUDYID'},{left:'USUBJID',right:'USUBJID'},
+                                     {left:'AESEQ',right:'AESEQ'}]);
+    out = p.compose();
+  ")
+  expect_parses(code)
+  env <- new.env()
+  env$ae <- fx$ae
+  env$adae_pfx <- fx$adae_pfx
+  env$`%>%` <- dplyr::`%>%`
+  got <- eval(parse(text = code), envir = env)
+  want <- dplyr::left_join(fx$adae_pfx, fx$ae, by = c("STUDYID", "USUBJID", "AESEQ"))
+  expect_equal(nrow(got), nrow(want))
+})
+
 # ---- lazy (arrow / duckdb) tables -------------------------------------------------------------
 # Code for a lazy card keeps the work in arrow or the database and ends in one collect().
 # Known limit (Task 10 documents it for users): a factor column holding NA segfaults duckdb 1.4.x
