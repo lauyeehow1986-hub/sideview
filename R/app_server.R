@@ -324,6 +324,11 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
                                         rule = rule)
       ))
     }, error = function(e) list(error = conditionMessage(e)))
+    if (is.null(result$error) && !isFALSE(cdisc) && !is.null(cx) && !is.null(cy)) {
+      # as.list so a single note stays a JSON array
+      result$cdisc_notes <- as.list(sv_cdisc_key_notes(cx, cy, left_cols[seq_along(by)],
+                                                      right_cols[seq_along(by)], result))
+    }
     result$id <- req$id
     result$left <- req$left
     result$right <- req$right

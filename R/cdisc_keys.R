@@ -152,3 +152,82 @@ sv_keys_pair_rule <- function(cx, cy, cards = list(cx, cy)) {
   }
   NULL
 }
+
+# ---- key checks in the join check -------------------------------------------
+
+# Notes for the join check of two tagged cards: the CDISC key is missing, a
+# many-to-many has no rule, or a natural key repeats. Reads tags, column names
+# and the counts in `diag` only. Returns character(0) when there is nothing to say.
+sv_cdisc_key_notes <- function(cx, cy, by_x, by_y, diag) {
+  none <- character(0)
+  if (!is.list(diag) || !is.null(diag$error)) return(none)
+  if (is.null(cx$cdisc$domain) || is.null(cy$cdisc$domain)) return(none)
+  notes <- character(0)
+  m2m <- identical(diag$relationship, "many-to-many")
+  if (m2m) {
+    rule <- sv_keys_pair_rule(cx, cy)
+    if (is.null(rule)) rule <- sv_keys_pair_rule(cy, cx)
+    if (!is.null(rule)) {
+      keys <- toupper(rule$from_cols)
+      miss <- keys[!keys %in% toupper(c(by_x, by_y))]
+      if (length(miss)) {
+        spell <- function(k) { s <- sv_keys_col(cx, k); if (is.na(s)) k else s }
+        notes <- c(notes, sprintf("Add %s: the CDISC key for %s and %s is %s.",
+                                  paste(vapply(miss, spell, character(1)), collapse = ", "),
+                                  rule$left, rule$right,
+                                  paste(vapply(keys, spell, character(1)), collapse = ", ")))
+      }
+    } else {
+      notes <- c(notes, sv_keys_m2m_note(cx, cy, by_x))
+    }
+  }
+  for (side in list(list(cx, by_x, diag$dup_keys_x), list(cy, by_y, diag$dup_keys_y))) {
+    n <- sv_keys_repeat_note(side[[1L]], side[[2L]], side[[3L]])
+    if (length(n)) notes <- c(notes, n)
+  }
+  notes
+}
+
+sv_keys_m2m_note <- function(cx, cy, by_x) {
+  dx <- cx$cdisc$domain
+  dy <- cy$cdisc$domain
+  if (identical(cx$cdisc$class, "Findings") && identical(cy$cdisc$class, "Findings")) {
+    tc <- vapply(list(cx, cy), function(cd) {
+      s <- sv_keys_col(cd, paste0(cd$cdisc$domain, "TESTCD")); if (is.na(s)) NA_character_ else s
+    }, character(1))
+    tc <- tc[!is.na(tc)]
+    paren <- if (length(tc)) sprintf(" (%s)", paste(tc, collapse = ", ")) else ""
+    return(sprintf("%s and %s both have many records per subject and visit: filter each to one test%s or summarise before joining.",
+                   dx, dy, paren))
+  }
+  cand <- unique(c("VISITNUM", paste0(dx, "SEQ"), paste0(dy, "SEQ")))
+  cand <- cand[!cand %in% toupper(by_x)]
+  cand <- cand[vapply(cand, function(k) sv_keys_has(cx, k) && sv_keys_has(cy, k), logical(1))]
+  if (!length(cand)) return("Summarise one side first.")
+  cand <- vapply(cand, function(k) sv_keys_col(cx, k), character(1))
+  lead <- if (length(cand) == 1L) cand else
+    paste(paste(cand[-length(cand)], collapse = ", "), "or", cand[length(cand)])
+  sprintf("Add %s, or summarise one side first.", lead)
+}
+
+# Natural key of a table: SDTM/SEND from the catalogue, DM/ADSL the subject key;
+# never ADaM non-ADSL. NULL when none applies.
+sv_keys_natural <- function(card) {
+  t <- card$cdisc
+  if (identical(t$standard, "ADaM")) {
+    return(if (identical(t$class, "ADSL")) c("STUDYID", "USUBJID") else NULL)
+  }
+  row <- sv_cdisc_row_std(t$domain, t$standard)
+  keys <- if (is.null(row)) "" else row$keys
+  keys <- strsplit(keys, ";", fixed = TRUE)[[1L]]
+  if (length(keys)) keys else NULL
+}
+
+sv_keys_repeat_note <- function(card, by, dup) {
+  if (is.null(dup) || length(dup) != 1L || is.na(dup) || dup <= 0) return(character(0))
+  nat <- sv_keys_natural(card)
+  if (is.null(nat) || !setequal(toupper(by), nat)) return(character(0))
+  spelled <- vapply(nat, function(k) { s <- sv_keys_col(card, k); if (is.na(s)) k else s }, character(1))
+  sprintf("%s should identify one %s record, but %s keys repeat: check for duplicate records.",
+          paste(spelled, collapse = ", "), card$cdisc$domain, format(dup))
+}

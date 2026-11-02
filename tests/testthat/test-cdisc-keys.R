@@ -220,3 +220,100 @@ test_that("request_suggested_mappings carries group and kind; cdisc = FALSE drop
     expect_true(all(is.na(grp)))
   })
 })
+
+# ---- key-check notes (Task 5) -----------------------------------------------
+nm_cards <- function(tables, cdisc = "auto") {
+  cs <- sv_cdisc_cards(tables, cdisc)
+  stats::setNames(cs, vapply(cs, function(c) c$name, character(1)))
+}
+diag_of <- function(rel = "many-to-many", dx = 0, dy = 0) list(relationship = rel, dup_keys_x = dx, dup_keys_y = dy)
+
+test_that("note 1: many-to-many on a ruled pair names the missing keys", {
+  fx <- sv_cdisc_fixtures()
+  cards <- nm_cards(list(ae = fx$ae, adae = fx$adae_pfx))
+  n <- sv_cdisc_key_notes(cards$ae, cards$adae, "USUBJID", "USUBJID", diag_of())
+  expect_identical(n, "Add STUDYID, AESEQ: the CDISC key for adae and ae is STUDYID, USUBJID, AESEQ.")
+})
+
+test_that("note 2: Findings pair and others", {
+  fx <- sv_cdisc_fixtures()
+  cards <- nm_cards(list(lb = fx$lb, vs = fx$vs))
+  n <- sv_cdisc_key_notes(cards$lb, cards$vs, "USUBJID", "USUBJID", diag_of())
+  expect_identical(n, "LB and VS both have many records per subject and visit: filter each to one test (LBTESTCD, VSTESTCD) or summarise before joining.")
+  # not both Findings: ae x lb share VISITNUM? give ae one
+  ae2 <- cbind(fx$ae, VISITNUM = 1)
+  cards <- nm_cards(list(ae = ae2, lb = fx$lb))
+  n <- sv_cdisc_key_notes(cards$ae, cards$lb, "USUBJID", "USUBJID", diag_of())
+  expect_identical(n, "Add VISITNUM, or summarise one side first.")
+  cards <- nm_cards(list(ae = fx$ae, lb = fx$lb))
+  n <- sv_cdisc_key_notes(cards$ae, cards$lb, "USUBJID", "USUBJID", diag_of())
+  expect_identical(n, "Summarise one side first.")
+})
+
+test_that("note 3: natural key repeats", {
+  fx <- sv_cdisc_fixtures()
+  cards <- nm_cards(list(dm = fx$dm, ae = fx$ae))
+  by <- c("STUDYID", "USUBJID", "AESEQ")
+  n <- sv_cdisc_key_notes(cards$ae, cards$dm, by, by, diag_of("one-to-many", dx = 3))
+  expect_identical(n, "STUDYID, USUBJID, AESEQ should identify one AE record, but 3 keys repeat: check for duplicate records.")
+  n <- sv_cdisc_key_notes(cards$dm, cards$ae, c("STUDYID", "USUBJID"), c("STUDYID", "USUBJID"), diag_of("one-to-many", dx = 2))
+  expect_identical(n, "STUDYID, USUBJID should identify one DM record, but 2 keys repeat: check for duplicate records.")
+  # unequal key set
+  expect_length(sv_cdisc_key_notes(cards$ae, cards$dm, "USUBJID", "USUBJID", diag_of("one-to-many", dx = 3)), 0)
+  # ADSL by subject key
+  cards <- nm_cards(list(adsl = fx$adsl, dm = fx$dm))
+  n <- sv_cdisc_key_notes(cards$adsl, cards$dm, c("STUDYID", "USUBJID"), c("STUDYID", "USUBJID"), diag_of("one-to-many", dx = 1))
+  expect_match(n, "should identify one ADSL record", fixed = TRUE)
+  # ADaM non-ADSL: none
+  cards <- nm_cards(list(adlb = fx$adlb, adsl = fx$adsl))
+  expect_length(sv_cdisc_key_notes(cards$adlb, cards$adsl, c("STUDYID", "USUBJID"), c("STUDYID", "USUBJID"),
+                                   diag_of("one-to-many", dx = 4)), 0)
+})
+
+test_that("no notes: clean join, untagged, cleared, error, FALSE", {
+  fx <- sv_cdisc_fixtures()
+  cards <- nm_cards(list(ae = fx$ae, adae = fx$adae_pfx))
+  expect_identical(sv_cdisc_key_notes(cards$ae, cards$adae, "USUBJID", "USUBJID", diag_of("one-to-one")), character(0))
+  expect_identical(sv_cdisc_key_notes(cards$ae, cards$adae, "USUBJID", "USUBJID", list(error = "x")), character(0))
+  cleared <- cards$ae; cleared$cdisc <- NULL
+  expect_identical(sv_cdisc_key_notes(cleared, cards$adae, "USUBJID", "USUBJID", diag_of()), character(0))
+  plain <- nm_cards(list(a = fx$mtcars, b = fx$iris), cdisc = FALSE)
+  expect_identical(sv_cdisc_key_notes(plain$a, plain$b, "x", "x", diag_of()), character(0))
+})
+
+test_that("join_diagnostics_request carries cdisc_notes as an array", {
+  fx <- sv_cdisc_fixtures()
+  tabs <- list(sv_normalize(fx$dm, name = "dm"), sv_normalize(fx$ae, name = "ae"))
+  req <- list(id = "j", left = "dm", right = "ae", by = list(list(left = "USUBJID", right = "USUBJID")))
+  last <- function(session) {
+    m <- Filter(function(m) m$type == "sideview_join_diagnostics", session$userData$custom_messages)
+    m[[length(m)]]$message
+  }
+  shiny::testServer(sideview_server(tabs), {
+    session$setInputs(join_diagnostics_request = req)
+    msg <- last(session)
+    expect_true("cdisc_notes" %in% names(msg))
+    expect_match(as.character(jsonlite::toJSON(msg$cdisc_notes, auto_unbox = TRUE)), "^[[]")
+  })
+  # one-to-many with dups: a note, serialised as an array too
+  ae_dup <- fx$ae; ae_dup$AESEQ <- 1L
+  tabs2 <- list(sv_normalize(fx$dm, name = "dm"), sv_normalize(ae_dup, name = "ae"))
+  req2 <- list(id = "j", left = "ae", right = "dm",
+               by = list(list(left = "STUDYID", right = "STUDYID"), list(left = "USUBJID", right = "USUBJID"),
+                         list(left = "AESEQ", right = "SUBJID")))
+  shiny::testServer(sideview_server(tabs), {
+    session$setInputs(join_diagnostics_request = req2)
+    expect_true("cdisc_notes" %in% names(last(session)))
+  })
+  shiny::testServer(sideview_server(tabs, cdisc = FALSE), {
+    session$setInputs(join_diagnostics_request = req)
+    expect_false("cdisc_notes" %in% names(last(session)))
+  })
+  bad <- req; bad$by <- list(list(left = "NOPE", right = "USUBJID"))
+  shiny::testServer(sideview_server(tabs), {
+    session$setInputs(join_diagnostics_request = bad)
+    msg <- last(session)
+    expect_true(!is.null(msg$error))
+    expect_false("cdisc_notes" %in% names(msg))
+  })
+})
