@@ -84,6 +84,16 @@ test_that("excluded: SUPP, RELREC and trial design never appear; cleared tags ta
   expect_equal(nrow(sv_cdisc_join_keys(two_dm)), 0L)
 })
 
+test_that("ADSL links to the first DM only", {
+  fx <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_cards(list(dm = fx$dm, dm2 = fx$dm, adsl = fx$adsl))
+  k <- sv_cdisc_join_keys(cards)
+  hub <- k[k$from_table == "adsl" | k$to_table == "adsl", ]
+  expect_equal(nrow(hub), 1L)
+  expect_identical(hub$from_table, "adsl")
+  expect_identical(hub$to_table, "dm")
+})
+
 test_that("no STUDYID: USUBJID alone", {
   fx <- sv_cdisc_fixtures()
   # auto-detection needs STUDYID, so the table without it is tagged by the user
@@ -181,6 +191,19 @@ test_that("Auto Map: cdisc = FALSE or no tag equals the 0.5.0 result", {
   # and a rule-covered pair is hidden from the heuristic only when rules are on
   on <- sv_suggest_mappings(tabs)
   expect_gt(sum(!is.na(on$group)), 0L)
+})
+
+test_that("Auto Map: a user cdisc vector tags raw data frames", {
+  fx <- sv_cdisc_fixtures()
+  tabs <- list(my_ae = fx$ae_nostudy, dm = fx$dm)
+  m <- sv_suggest_mappings(tabs, cdisc = c(my_ae = "AE"))
+  expect_true("cdisc:my_ae~dm" %in% m$group)
+  expect_true(all(m$kind[!is.na(m$group)] == "subject"))
+  # without the vector the detector misses my_ae: heuristic rows only
+  expect_true(all(is.na(sv_suggest_mappings(tabs)$group)))
+  # cdisc = FALSE is unchanged
+  off <- sv_suggest_mappings(tabs, cdisc = FALSE)
+  expect_true(all(is.na(off$group)))
 })
 
 test_that("Auto Map: untagged pair among tagged cards uses the heuristic only", {
@@ -295,15 +318,17 @@ test_that("join_diagnostics_request carries cdisc_notes as an array", {
     expect_true("cdisc_notes" %in% names(msg))
     expect_match(as.character(jsonlite::toJSON(msg$cdisc_notes, auto_unbox = TRUE)), "^[[]")
   })
-  # one-to-many with dups: a note, serialised as an array too
-  ae_dup <- fx$ae; ae_dup$AESEQ <- 1L
-  tabs2 <- list(sv_normalize(fx$dm, name = "dm"), sv_normalize(ae_dup, name = "ae"))
-  req2 <- list(id = "j", left = "ae", right = "dm",
-               by = list(list(left = "STUDYID", right = "STUDYID"), list(left = "USUBJID", right = "USUBJID"),
-                         list(left = "AESEQ", right = "SUBJID")))
-  shiny::testServer(sideview_server(tabs), {
+  # one-to-many with a repeated natural key: the note, serialised as an array too
+  dm_dup <- fx$dm; dm_dup$USUBJID <- dm_dup$USUBJID[1L]
+  tabs2 <- list(sv_normalize(dm_dup, name = "dm"), sv_normalize(fx$ae, name = "ae"))
+  req2 <- list(id = "j", left = "dm", right = "ae",
+               by = list(list(left = "STUDYID", right = "STUDYID"), list(left = "USUBJID", right = "USUBJID")))
+  shiny::testServer(sideview_server(tabs2), {
     session$setInputs(join_diagnostics_request = req2)
-    expect_true("cdisc_notes" %in% names(last(session)))
+    notes <- last(session)$cdisc_notes
+    expect_match(as.character(jsonlite::toJSON(notes, auto_unbox = TRUE)), "^[[]")
+    expect_identical(unlist(notes),
+      "STUDYID, USUBJID should identify one DM record, but 1 keys repeat: check for duplicate records.")
   })
   shiny::testServer(sideview_server(tabs, cdisc = FALSE), {
     session$setInputs(join_diagnostics_request = req)

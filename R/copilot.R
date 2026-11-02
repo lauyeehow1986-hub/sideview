@@ -93,6 +93,12 @@ sv_suggest_mappings <- function(cards, ..., min_confidence = 0.6, cdisc = "auto"
     return(.empty_mappings_result())
   }
 
+  # Tag the cards as sideview() does, so a user `cdisc =` vector and the
+  # SEND/standard resolution across the canvas reach tables given as data.
+  if (!isFALSE(cdisc)) {
+    valid_cards <- sv_cdisc_finalize(valid_cards, cdisc)
+  }
+
   min_conf <- if (is.null(min_confidence) || is.na(min_confidence) || min_confidence < 0) {
     0.0
   } else {

@@ -178,20 +178,27 @@ test_that("addJoinKeys merges into the reverse join, swapped, keeping its direct
 test_that("addJoinKeys composes parseable code with dplyr's row count", {
   skip_if_not_installed("dplyr")
   fx <- sv_cdisc_fixtures()
-  code <- run_pipeline_js("
-    const p = new P.Pipeline();
-    p.addJoinKeys('adae_pfx', 'ae', [{left:'STUDYID',right:'STUDYID'},{left:'USUBJID',right:'USUBJID'},
-                                     {left:'AESEQ',right:'AESEQ'}]);
-    out = p.compose();
-  ")
-  expect_parses(code)
-  env <- new.env()
-  env$ae <- fx$ae
-  env$adae_pfx <- fx$adae_pfx
-  env$`%>%` <- dplyr::`%>%`
-  got <- eval(parse(text = code), envir = env)
-  want <- dplyr::left_join(fx$adae_pfx, fx$ae, by = c("STUDYID", "USUBJID", "AESEQ"))
-  expect_equal(nrow(got), nrow(want))
+  groups <- list(
+    trace   = list(l = "adae_pfx", r = "ae", keys = c("STUDYID", "USUBJID", "AESEQ")),
+    subject = list(l = "ae", r = "dm", keys = c("STUDYID", "USUBJID")),
+    visit   = list(l = "lb", r = "sv", keys = c("STUDYID", "USUBJID", "VISITNUM"))
+  )
+  for (kind in names(groups)) {
+    g <- groups[[kind]]
+    pairs <- paste(sprintf("{left:'%s',right:'%s'}", g$keys, g$keys), collapse = ",")
+    code <- run_pipeline_js(sprintf("
+      const p = new P.Pipeline();
+      p.addJoinKeys('%s', '%s', [%s]);
+      out = p.compose();", g$l, g$r, pairs))
+    expect_parses(code)
+    env <- new.env()
+    env[[g$l]] <- fx[[g$l]]
+    env[[g$r]] <- fx[[g$r]]
+    env$`%>%` <- dplyr::`%>%`
+    got <- eval(parse(text = code), envir = env)
+    want <- dplyr::left_join(fx[[g$l]], fx[[g$r]], by = g$keys)
+    expect_equal(nrow(got), nrow(want), info = kind)
+  }
 })
 
 # ---- lazy (arrow / duckdb) tables -------------------------------------------------------------

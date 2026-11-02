@@ -133,7 +133,9 @@ sv_keys_pair_rule <- function(cx, cy, cards = list(cx, cy)) {
   # 2. subject level: to the hub
   if (sv_keys_is_hub(cy)) {
     ok <- if (sv_keys_is_hub(cx)) {
-      sv_keys_is_adsl(cx) && sv_keys_is_dm(cy)
+      # one hub line: ADSL goes to the first DM only
+      first_dm <- Find(function(cd) sv_keys_eligible(cd) && sv_keys_is_dm(cd), cards)
+      sv_keys_is_adsl(cx) && sv_keys_is_dm(cy) && !is.null(first_dm) && identical(first_dm$id, cy$id)
     } else {
       identical(sv_keys_hub_id(cx, cards), cy$id)
     }
