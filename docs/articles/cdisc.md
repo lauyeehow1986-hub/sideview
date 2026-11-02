@@ -148,5 +148,7 @@ Strict writes.
   row data.
 - The label row is placed from one measurement of the header height, so
   it could sit off if a header grows taller later.
-- The interface was checked in headless Chrome, not yet in RStudio’s
-  dialog or Viewer pane (see the log for the release).
+- The interface was checked in headless Chrome and by hand in RStudio’s
+  dialog and Viewer pane. In an external browser the canvas was seen to
+  load, but its interaction was covered only by the headless Chrome
+  tests (see the log for the release).

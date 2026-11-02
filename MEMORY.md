@@ -223,7 +223,11 @@ Each sub-project gets its own spec, plan and build, in this order:
   `devtools::check(--no-manual)`: 0 errors, 0 warnings, 1 NOTE (the known Windows `''NULL''` check-directory note). `pkgdown::check_pkgdown()`: no problems.
   Site rebuilt; docs/CLAUDE.* and docs/MEMORY.* and their sitemap.xml / search.json entries removed.
 - **Real browser (Task 7, chromote with real mouse input):** six new tests in test-layout-browser.R, all pass (grouped splines on dm/ae/adsl/adae, group hover, one-click join and one undo, toast, `ae` x `lb` notes in the join check). Tasks 5-6 were checked against the mock DOM (gui-test-runner.js).
-- **RStudio pass: pending (controller)** (dialog, pane, external browser with `dm, ae, adsl, adae_pfx, lb`; Auto Map, accept, one undo, join check notes on `ae` x `lb` by `USUBJID`; remember the one-RStudio-instance gotcha above). The article's "checked in headless Chrome" limit line should be updated with the result.
+- **RStudio pass (2025.05.1, R 4.5.1; fixtures `dm, ae, adsl, adae, lb`):**
+  - Dialog: badges, Auto Map draws dashed grouped CDISC splines, one click accepts the group ("Accepted CDISC join: lb to dm by STUDYID, USUBJID", Drawer badge 1), Ctrl+Z gives one undo (splines stay, as for manual joins). A manual `ae` x `lb` link by `USUBJID` shows "1:1 - 100% of ae matched" in the join check with no CDISC block, correct because the fixture `lb` has one row per subject.
+  - Viewer pane: canvas renders, chrome wraps, Auto Map draws the dashed grouped splines.
+  - External browser (Edge, `viewer = "browser"`): launches and renders the canvas with badges. Computer use cannot click in a browser, so interaction there was not driven; the chromote tests cover it.
+  - The CDISC join-check note itself (`Summarise one side first.`) was seen only in the Task 7 chromote test, not in RStudio (the RStudio fixtures have no duplicate `lb` keys).
 - **Deferred minors:** in the Backlog (join keys minors).
 
 ### 2026-11-02 - CDISC follow-up 1 closed: browser-test stability and RStudio pass
