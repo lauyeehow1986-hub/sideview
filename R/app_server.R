@@ -521,7 +521,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     }
 
     tryCatch({
-      suggestions <- sv_suggest_mappings(current_cards(), min_confidence = min_conf)
+      suggestions <- sv_suggest_mappings(current_cards(), min_confidence = min_conf, cdisc = cdisc)
       candidates <- if (is.data.frame(suggestions) && nrow(suggestions) > 0) {
         lapply(seq_len(nrow(suggestions)), function(i) {
           as.list(suggestions[i, , drop = FALSE])

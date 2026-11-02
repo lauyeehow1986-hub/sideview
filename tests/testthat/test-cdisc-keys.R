@@ -142,3 +142,81 @@ test_that("sv_keys_eligible", {
   expect_identical(vapply(cards, sv_keys_eligible, logical(1), USE.NAMES = FALSE),
                    c(TRUE, FALSE, FALSE, FALSE, FALSE, TRUE))
 })
+
+
+# ---- Auto Map uses the rules (sv_suggest_mappings) ----
+
+test_that("Auto Map: rule rows for tagged pairs, first, one row per key pair", {
+  fx <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_cards(list(dm = fx$dm, ae = fx$ae, adsl = fx$adsl, adae = fx$adae_pfx))
+  m <- sv_suggest_mappings(cards)
+  rule <- m[!is.na(m$group), ]
+  expect_gt(nrow(rule), 0L)
+  expect_false(any(rule$from_col == "DOMAIN"))
+  expect_true(all(rule$confidence == 1))
+  expect_equal(sum(rule$group == "cdisc:adae~ae"), 3L)
+  expect_equal(sum(rule$group == "cdisc:ae~dm"), 2L)
+  expect_true(all(rule$kind %in% c("trace", "subject", "visit")))
+  # rule rows precede heuristic rows
+  expect_identical(which(!is.na(m$group)), seq_len(nrow(rule)))
+  # no lone STUDYID heuristic row between two pairs the rules cover
+  pairs <- unique(sub("^cdisc:", "", rule$group))
+  heur <- m[is.na(m$group), ]
+  covered <- paste0(heur$from_table, "~", heur$to_table) %in% pairs |
+    paste0(heur$to_table, "~", heur$from_table) %in% pairs
+  expect_false(any(covered))
+})
+
+test_that("Auto Map: cdisc = FALSE or no tag equals the 0.5.0 result", {
+  fx <- sv_cdisc_fixtures()
+  tabs <- list(dm = fx$dm, ae = fx$ae)
+  plain <- sv_suggest_mappings(tabs, cdisc = FALSE)
+  expect_true(all(is.na(plain$group)))
+  untagged <- sv_cdisc_cards(tabs)
+  untagged <- lapply(untagged, function(cd) { cd$cdisc <- NULL; cd })
+  m <- sv_suggest_mappings(untagged)
+  cols <- c("from_table", "from_col", "to_table", "to_col", "confidence", "reason")
+  expect_equal(m[, cols], plain[, cols])
+  expect_true(all(is.na(m$group)))
+  # and a rule-covered pair is hidden from the heuristic only when rules are on
+  on <- sv_suggest_mappings(tabs)
+  expect_gt(sum(!is.na(on$group)), 0L)
+})
+
+test_that("Auto Map: untagged pair among tagged cards uses the heuristic only", {
+  fx <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_cards(list(lb = fx$lb, vs = fx$vs, ts = fx$ts))
+  m <- sv_suggest_mappings(cards)
+  ts_rows <- m[m$from_table == "ts" | m$to_table == "ts", ]
+  expect_true(all(is.na(ts_rows$group)))
+  expect_gt(nrow(ts_rows), 0L)
+})
+
+test_that(".empty_mappings_result has group and kind", {
+  e <- .empty_mappings_result()
+  expect_true(all(c("group", "kind") %in% names(e)))
+  expect_type(e$group, "character")
+})
+
+test_that("request_suggested_mappings carries group and kind; cdisc = FALSE drops rules", {
+  fx <- sv_cdisc_fixtures()
+  tabs <- list(sv_normalize(fx$dm, name = "dm"), sv_normalize(fx$ae, name = "ae"))
+  last_cands <- function(session) {
+    msgs <- Filter(function(m) m$type == "sideview_suggested_mappings", session$userData$custom_messages)
+    msgs[[length(msgs)]]$message$candidates
+  }
+  shiny::testServer(sideview_server(tabs), {
+    session$setInputs(request_suggested_mappings = list(min_confidence = 0.6))
+    cands <- last_cands(session)
+    grp <- vapply(cands, function(x) as.character(x$group), character(1))
+    expect_true(any(!is.na(grp)))
+    expect_true(all(c("group", "kind") %in% names(cands[[1]])))
+    expect_true(any(vapply(cands, function(x) identical(x$kind, "subject"), logical(1))))
+  })
+  shiny::testServer(sideview_server(tabs, cdisc = FALSE), {
+    session$setInputs(request_suggested_mappings = list(min_confidence = 0.6))
+    cands <- last_cands(session)
+    grp <- vapply(cands, function(x) as.character(x$group), character(1))
+    expect_true(all(is.na(grp)))
+  })
+})

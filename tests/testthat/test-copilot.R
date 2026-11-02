@@ -24,7 +24,7 @@ test_that("sv_suggest_mappings accepts list of sideview_cards and returns expect
   expect_s3_class(mappings, "data.frame")
   expect_equal(
     colnames(mappings),
-    c("from_table", "from_col", "to_table", "to_col", "confidence", "reason")
+    c("from_table", "from_col", "to_table", "to_col", "confidence", "reason", "group", "kind")
   )
   expect_type(mappings$from_table, "character")
   expect_type(mappings$from_col, "character")
@@ -134,18 +134,18 @@ test_that("gracefully handles cards without tabular data, single card, or empty 
   res_empty <- sv_suggest_mappings(list())
   expect_s3_class(res_empty, "data.frame")
   expect_equal(nrow(res_empty), 0)
-  expect_equal(colnames(res_empty), c("from_table", "from_col", "to_table", "to_col", "confidence", "reason"))
+  expect_equal(colnames(res_empty), c("from_table", "from_col", "to_table", "to_col", "confidence", "reason", "group", "kind"))
   
   # NULL input
   res_null <- sv_suggest_mappings(NULL)
   expect_equal(nrow(res_null), 0)
-  expect_equal(colnames(res_null), c("from_table", "from_col", "to_table", "to_col", "confidence", "reason"))
+  expect_equal(colnames(res_null), c("from_table", "from_col", "to_table", "to_col", "confidence", "reason", "group", "kind"))
   
   # Single card
   df <- data.frame(x = 1:5, y = 6:10)
   res_single <- sv_suggest_mappings(list(df))
   expect_equal(nrow(res_single), 0)
-  expect_equal(colnames(res_single), c("from_table", "from_col", "to_table", "to_col", "confidence", "reason"))
+  expect_equal(colnames(res_single), c("from_table", "from_col", "to_table", "to_col", "confidence", "reason", "group", "kind"))
   
   # Card with widget / non-grid type
   card_widget <- structure(
@@ -155,14 +155,14 @@ test_that("gracefully handles cards without tabular data, single card, or empty 
   card_valid <- sv_normalize(df, name = "DataCard")
   res_widget <- sv_suggest_mappings(list(card_valid, card_widget))
   expect_equal(nrow(res_widget), 0)
-  expect_equal(colnames(res_widget), c("from_table", "from_col", "to_table", "to_col", "confidence", "reason"))
+  expect_equal(colnames(res_widget), c("from_table", "from_col", "to_table", "to_col", "confidence", "reason", "group", "kind"))
   
   # Card with 0-row empty data frame
   df_empty <- data.frame(x = integer(0), y = character(0))
   card_empty <- sv_normalize(df_empty, name = "EmptyCard")
   res_empty_card <- sv_suggest_mappings(list(card_valid, card_empty))
   expect_equal(nrow(res_empty_card), 0)
-  expect_equal(colnames(res_empty_card), c("from_table", "from_col", "to_table", "to_col", "confidence", "reason"))
+  expect_equal(colnames(res_empty_card), c("from_table", "from_col", "to_table", "to_col", "confidence", "reason", "group", "kind"))
 })
 
 test_that("results are sorted by confidence descending", {

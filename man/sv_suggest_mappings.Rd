@@ -4,7 +4,7 @@
 \alias{sv_suggest_mappings}
 \title{Suggest Foreign Key Mappings Across Canvas Cards}
 \usage{
-sv_suggest_mappings(cards, ..., min_confidence = 0.6)
+sv_suggest_mappings(cards, ..., min_confidence = 0.6, cdisc = "auto")
 }
 \arguments{
 \item{cards}{A list of \code{sideview_card} objects or tabular data frames. Alternatively,
@@ -14,6 +14,13 @@ individual cards or tables can be passed via \code{...}.}
 
 \item{min_confidence}{Minimum confidence threshold (numeric between 0 and 1) for
 returned suggestions (default \code{0.6}).}
+
+\item{cdisc}{\code{"auto"} (default) or anything but \code{FALSE} to suggest the CDISC
+join keys (see \code{\link[=sv_cdisc_join_keys]{sv_cdisc_join_keys()}}) for pairs of tagged tables; \code{FALSE}
+keeps the heuristic suggestions only. Rule rows have confidence 1, come
+first and are never filtered by \code{min_confidence}. A pair of CDISC tables
+that can take part (tagged, with \code{USUBJID}) but has no rule gets no
+heuristic rows either.}
 }
 \value{
 A \code{data.frame} with columns:
@@ -24,6 +31,9 @@ A \code{data.frame} with columns:
 \item{\code{to_col}}{Destination column name.}
 \item{\code{confidence}}{Composite confidence score in \verb{[0, 1]}.}
 \item{\code{reason}}{Human-readable justification describing similarity components.}
+\item{\code{group}}{\code{NA} for heuristic rows; \code{"cdisc:<from>~<to>"} for the rows of
+one CDISC key (the columns of one join).}
+\item{\code{kind}}{\code{NA} for heuristic rows; \code{"trace"}, \code{"subject"} or \code{"visit"}.}
 }
 }
 \description{
