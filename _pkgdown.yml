@@ -102,4 +102,5 @@ reference:
     desc: "Recognise SDTM, SEND and ADaM datasets."
     contents:
       - sv_cdisc_catalogue
+      - sv_cdisc_join_keys
       - sv_read_cdisc
