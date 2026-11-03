@@ -75,11 +75,43 @@ sv_cdisc_fixtures <- function() {
   names(dm_upper_lower) <- tolower(names(dm_upper_lower))
   ae_lower <- ae
   names(ae_lower) <- tolower(names(ae_lower))
+  # ---- SUPPQUAL merge fixtures (synthetic) ----
+  supp_cols <- function(rd, usubjid, idvar, idvarval, qnam, qval = "Y", studyid = sid[1]) {
+    data.frame(STUDYID = studyid, RDOMAIN = rd, USUBJID = usubjid, IDVAR = idvar,
+               IDVARVAL = idvarval, QNAM = qnam, QLABEL = paste("Label", qnam), QVAL = qval,
+               stringsAsFactors = FALSE)
+  }
+  suppae2 <- rbind(
+    supp_cols("AE", usub[1:2], "AESEQ", c("1", "2"), "AETRTEM"),
+    supp_cols("AE", usub[1:2], "", "", "AESOC2", qval = c("Skin", "Nervous")))
+  ae_grp <- cbind(ae, AEGRPID = c("G1", "G1", "G2", "G3"), stringsAsFactors = FALSE)
+  suppae_grp <- supp_cols("AE", usub[1:3], "AEGRPID", c("G1", "G2", "G3"), "AEGRPQ")
+  cm <- data.frame(STUDYID = sid, DOMAIN = "CM", USUBJID = usub, CMSEQ = 1:n,
+                   CMTRT = c("ASPIRIN", "IBUPROFEN", "PARACETAMOL", "ASPIRIN"),
+                   stringsAsFactors = FALSE)
+  suppqual <- rbind(
+    supp_cols("AE", usub[1:2], "AESEQ", c("1", "2"), "AETRTEM"),
+    supp_cols("CM", usub[1:2], "CMSEQ", c("1", "2"), "CMPRESP"))
+  supp_repeat <- supp_cols("AE", usub[1], "AESEQ", c("01", "1"), "AETRTEM")
+  supp_orphan <- supp_cols("AE", c(usub[1], "SV-001-999"), "AESEQ", c("1", "99"), "AETRTEM")
+  supp_clash <- supp_cols("AE", usub[1:2], "AESEQ", c("1", "2"), "AESEV")
+  supp_two_level <- rbind(
+    supp_cols("AE", usub[1], "AESEQ", "1", "AETRTEM"),
+    supp_cols("AE", usub[1], "", "", "AETRTEM"))
+  supp_bad <- supp_cols("AE", usub[1:2], "AESEQ", c("x", "1.5"), "AETRTEM")
+  supp_noqnam <- suppae[, setdiff(names(suppae), "QNAM")]
+  suppae_nostudy <- suppae[, setdiff(names(suppae), "STUDYID")]
+  supp_na_idvar <- supp_cols("AE", usub[1], NA_character_, "", "AESOC2", qval = "Skin")
+  suppbw <- supp_cols("BW", usub[1:2], "BWSEQ", c("1", "2"), "BWFLAG")
   list(lb = lb, vs = vs, sv = sv, relrec = relrec, adsl_nostudy = adsl_nostudy,
        dm_upper_lower = dm_upper_lower, ae_lower = ae_lower,
        dm = dm, ae = ae, suppae = suppae, labs = labs, ts = ts, xy = xy, adsl = adsl,
        adlb = adlb, adtte = adtte, adae = adae, adlb_pfx = adlb_pfx,
        adae_pfx = adae_pfx, advs_pfx = advs_pfx, send_dm = send_dm, bw = bw,
+       suppae2 = suppae2, ae_grp = ae_grp, suppae_grp = suppae_grp, cm = cm, suppqual = suppqual,
+       supp_repeat = supp_repeat, supp_orphan = supp_orphan, supp_clash = supp_clash,
+       supp_two_level = supp_two_level, supp_bad = supp_bad, supp_noqnam = supp_noqnam,
+       suppae_nostudy = suppae_nostudy, supp_na_idvar = supp_na_idvar, suppbw = suppbw,
        mtcars = mtcars, iris = iris,
        ae_nostudy = ae[, setdiff(names(ae), "STUDYID")],
        studyid_only = data.frame(STUDYID = sid, x = 1:n),

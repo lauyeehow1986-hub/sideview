@@ -86,13 +86,15 @@ sv_card_store <- function(cards = list()) {
 
 #' A CDISC tag as the browser receives it (internal)
 #'
-#' Drops NULL elements, and keeps `evidence` a list so one line is still a JSON array.
+#' Drops NULL elements, and keeps `evidence`, `rdomains` and `merge_targets` lists so one line is still a JSON array.
 #' A `NULL` tag stays `NULL`.
 #' @noRd
 sv_cdisc_wire_tag <- function(tag) {
   if (is.null(tag)) return(NULL)
   tag <- Filter(Negate(is.null), tag)
   tag$evidence <- as.list(tag$evidence)
+  tag$rdomains <- as.list(as.character(tag$rdomains))
+  tag$merge_targets <- unname(lapply(tag$merge_targets, as.list))
   tag
 }
 
