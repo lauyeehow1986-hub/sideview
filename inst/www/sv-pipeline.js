@@ -1785,6 +1785,261 @@
     return true;
   };
 
+  // ---- SUPP-- merge check: twin of sv_supp_check() (R/supp.R) ----------------
+
+  function suppKeyType(colType) {
+    var t = String(colType === null || colType === undefined ? '' : colType);
+    if (/^(integer|int8|int16|int32)$/.test(t)) return 'integer';
+    if (/^(numeric|double|float|int64|integer64)$/.test(t)) return 'double';
+    if (/^(character|factor|string|utf8|large_utf8)$/.test(t) || /^dictionary</.test(t)) return 'character';
+    return null;
+  }
+
+  var SUPP_INT_RE = /^\s*[+-]?[0-9]+\s*$/;
+  var SUPP_DBL_RE = /^\s*[+-]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][+-]?[0-9]+)?\s*$/;
+
+  // A missing value is the string "NA" once keys are pasted together, as in R.
+  function suppChr(v) {
+    return v === null || v === undefined ? 'NA' : String(v);
+  }
+
+  // IDVARVAL text converted to the key type; null means it did not convert.
+  function suppConvert(v, type) {
+    if (v === null || v === undefined) return null;
+    var s = String(v);
+    if (type === 'character') return s;
+    if (type === 'integer') {
+      if (!SUPP_INT_RE.test(s)) return null;
+      var n = parseInt(s.trim(), 10);
+      if (!isFinite(n) || Math.abs(n) > 2147483647) return null;
+      return String(n);
+    }
+    if (!SUPP_DBL_RE.test(s)) return null;
+    var d = Number(s.trim());
+    return isNaN(d) ? null : String(d);
+  }
+
+  function suppUnique(a) {
+    var seen = {}, out = [];
+    a.forEach(function (x) {
+      var k = String(x);
+      if (!Object.prototype.hasOwnProperty.call(seen, k)) { seen[k] = true; out.push(x); }
+    });
+    return out;
+  }
+
+  function suppSetdiff(a, b) {
+    return suppUnique(a).filter(function (x) { return b.indexOf(x) < 0; });
+  }
+
+  function suppColNames(rows, given) {
+    if (given) return given.slice();
+    var seen = {}, out = [];
+    rows.forEach(function (r) {
+      Object.keys(r).forEach(function (k) { if (!seen[k]) { seen[k] = true; out.push(k); } });
+    });
+    return out;
+  }
+
+  function suppGuessType(rows, col) {
+    var all = true, any = false, frac = false;
+    rows.forEach(function (r) {
+      var v = r[col];
+      if (v === null || v === undefined) return;
+      any = true;
+      if (typeof v !== 'number') { all = false; return; }
+      if (v % 1 !== 0) frac = true;
+    });
+    if (!any || !all) return 'character';
+    return frac ? 'numeric' : 'integer';
+  }
+
+  // parentRows / suppRows: arrays of row objects. opts: {parentName, suppName, rdomain,
+  // parentTypes: {col: colType}, parentCols, suppCols, plan, sampleN}.
+  function suppCheck(parentRows, suppRows, opts) {
+    opts = opts || {};
+    parentRows = parentRows || [];
+    suppRows = suppRows || [];
+    var parentName = opts.parentName || 'parent', suppName = opts.suppName || 'supp';
+    var sampleN = opts.sampleN === undefined || opts.sampleN === null ? 5 : opts.sampleN;
+    var fromName = String(suppName).toUpperCase().replace(/^SUPP/, '');
+    var rdomain = opts.rdomain === undefined || opts.rdomain === null || opts.rdomain === '' ? fromName : opts.rdomain;
+    var warnOther = fromName === rdomain;
+    var pNames = suppColNames(parentRows, opts.parentCols), sNames = suppColNames(suppRows, opts.suppCols);
+    var i, k;
+
+    var need = ['USUBJID', 'IDVAR', 'IDVARVAL', 'QNAM', 'QVAL'];
+    for (i = 0; i < need.length; i++) {
+      if (sNames.indexOf(need[i]) < 0) return { error: 'Not in ' + suppName + ': ' + need[i] };
+    }
+    if (pNames.indexOf('USUBJID') < 0) return { error: 'Not in ' + parentName + ': USUBJID' };
+
+    var hasRd = sNames.indexOf('RDOMAIN') >= 0;
+    var nOther = 0;
+    if (hasRd) {
+      var kept = suppRows.filter(function (r) {
+        return r.RDOMAIN !== null && r.RDOMAIN !== undefined && String(r.RDOMAIN) === rdomain;
+      });
+      nOther = suppRows.length - kept.length;
+      suppRows = kept;
+    }
+    var nSupp = suppRows.length;
+    if (!nSupp) return { error: suppName + ' has no rows for ' + rdomain };
+
+    var idvar = suppRows.map(function (r) {
+      var v = r.IDVAR;
+      return v === null || v === undefined || String(v).trim() === '' ? '' : String(v);
+    });
+    var qnam = suppRows.map(function (r) { return suppChr(r.QNAM); });
+    var levels = suppUnique(idvar);
+    levels = levels.filter(function (x) { return x !== ''; }).concat(levels.indexOf('') >= 0 ? [''] : []);
+
+    var types = {};
+    for (i = 0; i < levels.length; i++) {
+      var iv = levels[i];
+      if (iv === '') continue;
+      if (pNames.indexOf(iv) < 0) return { error: 'Not in ' + parentName + ': ' + iv };
+      var raw = (opts.parentTypes || {})[iv];
+      if (raw === undefined || raw === null) raw = suppGuessType(parentRows, iv);
+      var ty = suppKeyType(raw);
+      if (ty === null) return { error: 'Cannot merge on ' + iv + ': its type is ' + raw };
+      types[iv] = ty;
+    }
+
+    var keys = ['STUDYID', 'USUBJID'].filter(function (c) { return pNames.indexOf(c) >= 0 && sNames.indexOf(c) >= 0; });
+    var keyOf = function (row) { return keys.map(function (c) { return suppChr(row[c]); }).join('\r'); };
+    var pkey = parentRows.map(keyOf), skey = suppRows.map(keyOf);
+
+    var val = [], bad = [], matched = [];
+    for (i = 0; i < nSupp; i++) { val.push(''); bad.push(false); matched.push(false); }
+    var pset = {};
+    pkey.forEach(function (x) { pset[x] = true; });
+    levels.forEach(function (iv) {
+      var pairs = null;
+      if (iv !== '') {
+        pairs = {};
+        parentRows.forEach(function (r, j) { pairs[pkey[j] + '\r' + suppChr(r[iv])] = true; });
+      }
+      for (var j = 0; j < nSupp; j++) {
+        if (idvar[j] !== iv) continue;
+        if (iv === '') { matched[j] = !!pset[skey[j]]; continue; }
+        var cv = suppConvert(suppRows[j].IDVARVAL, types[iv]);
+        val[j] = cv;
+        bad[j] = cv === null;
+        matched[j] = cv !== null && !!pairs[skey[j] + '\r' + cv];
+      }
+    });
+    var orphan = matched.map(function (m, j) { return !m && !bad[j]; });
+
+    var qn = suppUnique(qnam);
+    var hasLabel = sNames.indexOf('QLABEL') >= 0;
+    var qnams = qn.map(function (q) {
+      var first = -1, lab = '';
+      for (var j = 0; j < nSupp; j++) {
+        if (qnam[j] !== q) continue;
+        if (first < 0) first = j;
+        var l = suppRows[j].QLABEL;
+        if (hasLabel && l !== null && l !== undefined) { lab = String(l); break; }
+      }
+      return { qnam: q, label: lab, idvar: idvar[first] };
+    });
+    var idvars = levels.map(function (iv) { return { idvar: iv, type: iv !== '' ? types[iv] : null }; });
+    var newPlan = { keys: keys, idvars: idvars, qnams: qnams, rdomain_col: hasRd };
+
+    var dup = [], seen = {};
+    for (i = 0; i < nSupp; i++) {
+      var d = false;
+      if (!bad[i]) {
+        k = [skey[i], idvar[i], val[i], qnam[i]].join('\r');
+        d = !!seen[k];
+        seen[k] = true;
+      }
+      dup.push(d);
+    }
+    var twoLevel = qn.filter(function (q) {
+      return suppUnique(idvar.filter(function (_, j) { return qnam[j] === q; })).length > 1;
+    });
+    var clashes = qn.filter(function (q) { return pNames.indexOf(q) >= 0; });
+    var count = function (a) { return a.filter(Boolean).length; };
+
+    var status = count(dup) || clashes.length || twoLevel.length ? 'error'
+      : (count(orphan) || count(bad) || (warnOther && nOther > 0) ? 'warning' : 'ok');
+
+    var drift = { stale: false, reasons: [] };
+    var plan = opts.plan;
+    if (plan) {
+      var pick = function (l, f) {
+        return (l || []).map(function (e) { return e && e[f] !== null && e[f] !== undefined ? String(e[f]) : null; });
+      };
+      var pQ = pick(plan.qnams, 'qnam'), pI = pick(plan.idvars, 'idvar'), pT = pick(plan.idvars, 'type');
+      var reasons = [];
+      suppSetdiff(qn, pQ).forEach(function (q) { reasons.push('New QNAM: ' + q); });
+      suppSetdiff(levels, pI).forEach(function (iv) { reasons.push('New IDVAR: ' + (iv !== '' ? iv : '(subject level)')); });
+      suppSetdiff(pQ, qn).forEach(function (q) { reasons.push('QNAM gone: ' + q); });
+      levels.filter(function (iv) { return iv !== '' && pI.indexOf(iv) >= 0; }).forEach(function (iv) {
+        var old = pT[pI.indexOf(iv)];
+        if (old !== null && old !== undefined && old !== types[iv]) {
+          reasons.push(iv + ' type changed from ' + old + ' to ' + types[iv]);
+        }
+      });
+      drift = { stale: reasons.length > 0, reasons: reasons };
+    }
+
+    var samples = function (flags) {
+      var out = [];
+      for (var j = 0; j < nSupp && out.length < sampleN; j++) {
+        if (!flags[j]) continue;
+        var r = suppRows[j];
+        out.push({
+          USUBJID: r.USUBJID === undefined || r.USUBJID === null ? null : String(r.USUBJID),
+          IDVAR: idvar[j],
+          IDVARVAL: r.IDVARVAL === undefined || r.IDVARVAL === null ? null : String(r.IDVARVAL),
+          QNAM: qnam[j]
+        });
+      }
+      return out;
+    };
+
+    var pv = parentRows.slice(0, sampleN).map(function (r) {
+      var o = {};
+      Object.keys(r).forEach(function (c) { o[c] = r[c] === undefined ? null : r[c]; });
+      return o;
+    });
+    var pvKey = pv.map(keyOf);
+    suppSetdiff(qn, clashes.concat(twoLevel)).forEach(function (q) {
+      var iv = idvar[qnam.indexOf(q)];
+      var look = {};
+      for (var j = nSupp - 1; j >= 0; j--) {   // backwards so the first row wins
+        if (qnam[j] !== q || bad[j]) continue;
+        var sk = iv !== '' ? skey[j] + '\r' + val[j] : skey[j];
+        var qv = suppRows[j].QVAL;
+        look[sk] = qv === null || qv === undefined ? null : String(qv);
+      }
+      pv.forEach(function (o, j) {
+        var pk = iv !== '' ? pvKey[j] + '\r' + suppChr(o[iv]) : pvKey[j];
+        o[q] = Object.prototype.hasOwnProperty.call(look, pk) ? look[pk] : null;
+      });
+    });
+
+    return {
+      status: status,
+      plan: newPlan,
+      n_parent: parentRows.length,
+      n_supp: nSupp,
+      n_matched: count(matched),
+      n_orphan: count(orphan),
+      orphan_samples: samples(orphan),
+      n_other_rdomain: nOther,
+      repeats: { n: count(dup), samples: samples(dup) },
+      clashes: clashes,
+      two_level: twoLevel,
+      bad_idvarval: { n: count(bad), samples: samples(bad) },
+      columns: qnams.map(function (q) { return { name: q.qnam, label: q.label }; }),
+      preview: pv,
+      drift: drift
+    };
+  }
+
   var api = {
     Pipeline: Pipeline,
     splitReply: splitReply,
@@ -1794,6 +2049,8 @@
     describeDiagnostics: describeDiagnostics,
     fmtN: fmtN,
     columnProfile: columnProfile,
+    suppKeyType: suppKeyType,
+    suppCheck: suppCheck,
     codebookRow: codebookRow,
     codebookCsv: codebookCsv,
     CODEBOOK_FIELDS: CODEBOOK_FIELDS,

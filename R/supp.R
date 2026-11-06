@@ -87,7 +87,10 @@ sv_supp_convert <- function(v, type) {
     out[!is.na(num)] <- as.character(num[!is.na(num)])
     return(out)
   }
-  num <- suppressWarnings(as.numeric(v))
+  # Plain decimal or exponent forms only: as.numeric() would also take "0x10", "Inf", "1d3"
+  # and JavaScript's Number() disagrees on those, so both sides use this one pattern.
+  ok <- grepl("^\\s*[+-]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][+-]?[0-9]+)?\\s*$", v)
+  num <- suppressWarnings(as.numeric(ifelse(ok, v, NA_character_)))
   out <- rep(NA_character_, length(v))
   out[!is.na(num)] <- as.character(num[!is.na(num)])
   out
