@@ -107,8 +107,9 @@ sv_supp_samples <- function(s, idvar, val, rows, n) {
              stringsAsFactors = FALSE)
 }
 
-# The pure logic, on plain data frames (the lazy twin reuses it on a collected
-# SUPP and parent summaries). `warn_other`: other-RDOMAIN rows make a warning.
+# The pure logic, on plain data frames. The lazy twin reuses only the supp-side
+# logic and computes the parent-side counts with its own semi-join.
+# `warn_other`: other-RDOMAIN rows make a warning.
 sv_supp_check_df <- function(parent, supp, parent_name, supp_name, rdomain, plan, sample_n,
                              warn_other) {
   for (col in c("USUBJID", "IDVAR", "IDVARVAL", "QNAM", "QVAL")) {
@@ -170,7 +171,8 @@ sv_supp_check_df <- function(parent, supp, parent_name, supp_name, rdomain, plan
   qnams <- lapply(qn, function(q) {
     r <- which(qnam == q)
     lab <- as.character(supp$QLABEL[r])
-    lab <- if ("QLABEL" %in% names(supp)) lab[!is.na(lab)][1] else NA_character_
+    lab <- if ("QLABEL" %in% names(supp)) lab[!is.na(lab)][1] else ""
+    if (is.na(lab)) lab <- ""
     list(qnam = q, label = lab, idvar = idvar[r[1]])
   })
   idvars <- lapply(levels_, function(iv) list(idvar = iv, type = if (nzchar(iv)) types[[iv]] else NA_character_))

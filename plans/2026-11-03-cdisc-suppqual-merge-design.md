@@ -233,8 +233,9 @@ Rules:
   `QNAM gone: AETRTEM`, `AESEQ type changed from double to character`.
 - `{error}` alone when the check cannot run: `Not in suppae: QNAM`, `Not in ae: AESEQ`, `Cannot merge on ...`.
 
-A matched SUPP row is one whose converted key finds a parent record; an orphan is one that does not (bad
-`IDVARVAL` rows are orphans too). Subject-level rows match on the subject key. `n_other_rdomain` counts rows
+A matched SUPP row is one whose converted key finds a parent record; an orphan is one that does not. A bad
+`IDVARVAL` row (one that fails conversion) is counted separately in `bad_idvarval`, not in `n_orphan`, so
+`n_matched + n_orphan + bad_idvarval.n == n_supp`; the status is still `warning`. Subject-level rows match on the subject key. `n_other_rdomain` counts rows
 of other RDOMAINs; it makes the status a warning only for a `SUPPxx` card, since other domains are normal in a
 generic SUPPQUAL.
 

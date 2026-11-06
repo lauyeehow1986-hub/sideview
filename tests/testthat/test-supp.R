@@ -181,7 +181,7 @@ test_that("drift", {
   p$idvars <- p$idvars[-1]
   expect_identical(chk(fx$suppae2, plan = p)$drift$reasons, "New IDVAR: AESEQ")
   p <- base
-  p$qnams <- c(p$qnams, list(list(qnam = "ZZ", label = NA_character_, idvar = "")))
+  p$qnams <- c(p$qnams, list(list(qnam = "ZZ", label = "", idvar = "")))
   expect_identical(chk(fx$suppae2, plan = p)$drift$reasons, "QNAM gone: ZZ")
   p <- base
   p$idvars[[1]]$type <- "double"
@@ -213,4 +213,12 @@ test_that("json keeps arrays", {
                    "{\"error\":\"Not in suppae: QNAM\"}")
   jc <- jsonlite::fromJSON(sv_supp_check_json(chk(fx$supp_clash)), simplifyVector = FALSE)
   expect_identical(jc$clashes, list("AESEV"))
+})
+
+test_that("a QNAM with no QLABEL gets an empty label", {
+  s <- fx$suppae[, setdiff(names(fx$suppae), "QLABEL")]
+  r <- chk(s)
+  expect_identical(r$plan$qnams[[1]]$label, "")
+  expect_identical(r$columns[[1]]$label, "")
+  expect_match(sv_supp_check_json(r), "\"label\":\"\"", fixed = TRUE)
 })
