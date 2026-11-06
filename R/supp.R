@@ -110,16 +110,20 @@ sv_supp_samples <- function(s, idvar, val, rows, n) {
              stringsAsFactors = FALSE)
 }
 
-# The pure logic, on plain data frames. The lazy twin reuses only the supp-side
-# logic and computes the parent-side counts with its own semi-join.
-# `warn_other`: other-RDOMAIN rows make a warning.
-sv_supp_check_df <- function(parent, supp, parent_name, supp_name, rdomain, plan, sample_n,
-                             warn_other) {
-  for (col in c("USUBJID", "IDVAR", "IDVARVAL", "QNAM", "QVAL")) {
-    if (!col %in% names(supp)) return(list(error = paste0("Not in ", supp_name, ": ", col)))
-  }
-  if (!"USUBJID" %in% names(parent)) return(list(error = paste0("Not in ", parent_name, ": USUBJID")))
+# The check is split in steps so the lazy twin (sv_lazy_supp_check(), R/lazy.R) shares every
+# SUPP-side step and the final assembly. Only the parent-side facts differ: in memory they come
+# from the parent data frame, in the lazy twin from 0-row types, a count, a semi-join and a head.
 
+# A list(error =) when `supp` lacks a column the check needs, else NULL.
+sv_supp_cols_error <- function(supp_cols, supp_name) {
+  for (col in c("USUBJID", "IDVAR", "IDVARVAL", "QNAM", "QVAL")) {
+    if (!col %in% supp_cols) return(list(error = paste0("Not in ", supp_name, ": ", col)))
+  }
+  NULL
+}
+
+# The SUPP rows of one parent domain and what is derived from them alone; or list(error =).
+sv_supp_side <- function(supp, supp_name, rdomain) {
   has_rd <- "RDOMAIN" %in% names(supp)
   n_other <- 0L
   if (has_rd) {
@@ -132,41 +136,72 @@ sv_supp_check_df <- function(parent, supp, parent_name, supp_name, rdomain, plan
 
   idvar <- as.character(supp$IDVAR)
   idvar[is.na(idvar) | !nzchar(trimws(idvar))] <- ""
-  qnam <- as.character(supp$QNAM)
   levels_ <- unique(idvar)
   levels_ <- c(levels_[nzchar(levels_)], if ("" %in% levels_) "")
+  list(supp = supp, has_rd = has_rd, n_other = n_other, n_supp = n_supp, idvar = idvar,
+       qnam = as.character(supp$QNAM), levels = levels_)
+}
 
-  # parent columns and types
+# Key type of each IDVAR level's parent column. `parent0` is the parent or any 0-row slice of
+# it holding at least those columns. A named character vector, or list(error =).
+sv_supp_types <- function(levels_, parent0, parent_name) {
   types <- character(0)
   for (iv in levels_[nzchar(levels_)]) {
-    if (!iv %in% names(parent)) return(list(error = paste0("Not in ", parent_name, ": ", iv)))
-    ty <- sv_supp_key_type(parent[[iv]])
+    if (!iv %in% names(parent0)) return(list(error = paste0("Not in ", parent_name, ": ", iv)))
+    ty <- sv_supp_key_type(parent0[[iv]])
     if (is.na(ty)) {
-      return(list(error = paste0("Cannot merge on ", iv, ": its type is ", class(parent[[iv]])[1])))
+      return(list(error = paste0("Cannot merge on ", iv, ": its type is ", class(parent0[[iv]])[1])))
     }
     types[iv] <- ty
   }
+  types
+}
 
-  keys <- intersect(c("STUDYID", "USUBJID"), intersect(names(parent), names(supp)))
-  pkey <- do.call(sv_supp_paste, lapply(parent[keys], sv_supp_key_chr))
+# The SUPP key text per row, and IDVARVAL converted to the parent key type ("" at subject
+# level; `bad` = did not convert).
+sv_supp_convert_side <- function(side, types, keys) {
+  supp <- side$supp
   skey <- do.call(sv_supp_paste, lapply(supp[keys], sv_supp_key_chr))
+  val <- rep("", side$n_supp)
+  bad <- rep(FALSE, side$n_supp)
+  for (iv in side$levels[nzchar(side$levels)]) {
+    r <- side$idvar == iv
+    cv <- sv_supp_convert(supp$IDVARVAL[r], types[[iv]])
+    val[r] <- ifelse(is.na(cv), NA_character_, cv)
+    bad[r] <- is.na(cv)
+  }
+  list(skey = skey, val = val, bad = bad)
+}
 
-  # converted IDVARVAL ("" at subject level), bad = did not convert
-  val <- rep("", n_supp)
-  bad <- rep(FALSE, n_supp)
-  matched <- rep(FALSE, n_supp)
-  for (iv in levels_) {
-    r <- idvar == iv
-    if (!nzchar(iv)) {
-      matched[r] <- skey[r] %in% pkey
+# Which SUPP rows find a parent record, on a parent data frame.
+sv_supp_match_df <- function(side, conv, parent, keys) {
+  pkey <- do.call(sv_supp_paste, lapply(parent[keys], sv_supp_key_chr))
+  matched <- rep(FALSE, side$n_supp)
+  for (iv in side$levels) {
+    r <- side$idvar == iv
+    matched[r] <- if (!nzchar(iv)) {
+      conv$skey[r] %in% pkey
     } else {
-      cv <- sv_supp_convert(supp$IDVARVAL[r], types[[iv]])
-      val[r] <- ifelse(is.na(cv), NA_character_, cv)
-      bad[r] <- is.na(cv)
-      matched[r] <- !is.na(cv) & sv_supp_paste(skey[r], cv) %in%
+      !conv$bad[r] & sv_supp_paste(conv$skey[r], conv$val[r]) %in%
         sv_supp_paste(pkey, sv_supp_key_chr(parent[[iv]]))
     }
   }
+  matched
+}
+
+# Everything after the parent-side facts are known: `matched`, the parent column names, its
+# row count and `pv` (its first `sample_n` rows).
+sv_supp_finish <- function(side, conv, matched, types, keys, parent_names, n_parent, pv, plan,
+                           sample_n, warn_other) {
+  supp <- side$supp
+  idvar <- side$idvar
+  qnam <- side$qnam
+  levels_ <- side$levels
+  n_supp <- side$n_supp
+  n_other <- side$n_other
+  skey <- conv$skey
+  val <- conv$val
+  bad <- conv$bad
   orphan <- !matched & !bad
 
   # QNAMs: first appearance, level, label
@@ -179,14 +214,14 @@ sv_supp_check_df <- function(parent, supp, parent_name, supp_name, rdomain, plan
     list(qnam = q, label = lab, idvar = idvar[r[1]])
   })
   idvars <- lapply(levels_, function(iv) list(idvar = iv, type = if (nzchar(iv)) types[[iv]] else NA_character_))
-  new_plan <- list(keys = keys, idvars = idvars, qnams = qnams, rdomain_col = has_rd)
+  new_plan <- list(keys = keys, idvars = idvars, qnams = qnams, rdomain_col = side$has_rd)
 
   # repeats: after conversion
   dkey <- sv_supp_paste(skey, idvar, val, qnam)
   dup <- rep(FALSE, n_supp)
   dup[!bad] <- duplicated(dkey[!bad])
   two_level <- Filter(function(q) length(unique(idvar[qnam == q])) > 1L, qn)
-  clashes <- intersect(qn, names(parent))
+  clashes <- intersect(qn, parent_names)
   two_level <- as.character(unlist(two_level))
 
   status <- if (sum(dup) || length(clashes) || length(two_level)) "error" else
@@ -216,7 +251,6 @@ sv_supp_check_df <- function(parent, supp, parent_name, supp_name, rdomain, plan
   }
 
   # preview: the first parent rows with one column per QNAM (single-level, no clash)
-  pv <- utils::head(parent, sample_n)
   pvkey <- do.call(sv_supp_paste, lapply(pv[keys], sv_supp_key_chr))
   for (q in setdiff(qn, c(clashes, two_level))) {
     iv <- idvar[match(q, qnam)]
@@ -230,7 +264,7 @@ sv_supp_check_df <- function(parent, supp, parent_name, supp_name, rdomain, plan
   list(
     status = status,
     plan = new_plan,
-    n_parent = nrow(parent),
+    n_parent = n_parent,
     n_supp = n_supp,
     n_matched = sum(matched),
     n_orphan = sum(orphan),
@@ -244,6 +278,24 @@ sv_supp_check_df <- function(parent, supp, parent_name, supp_name, rdomain, plan
     preview = pv,
     drift = drift
   )
+}
+
+# The pure logic, on plain data frames.
+# `warn_other`: other-RDOMAIN rows make a warning.
+sv_supp_check_df <- function(parent, supp, parent_name, supp_name, rdomain, plan, sample_n,
+                             warn_other) {
+  err <- sv_supp_cols_error(names(supp), supp_name)
+  if (!is.null(err)) return(err)
+  if (!"USUBJID" %in% names(parent)) return(list(error = paste0("Not in ", parent_name, ": USUBJID")))
+  side <- sv_supp_side(supp, supp_name, rdomain)
+  if (!is.null(side$error)) return(side)
+  types <- sv_supp_types(side$levels, parent, parent_name)
+  if (is.list(types)) return(types)
+  keys <- intersect(c("STUDYID", "USUBJID"), intersect(names(parent), names(supp)))
+  conv <- sv_supp_convert_side(side, types, keys)
+  matched <- sv_supp_match_df(side, conv, parent, keys)
+  sv_supp_finish(side, conv, matched, types, keys, names(parent), nrow(parent),
+                 utils::head(parent, sample_n), plan, sample_n, warn_other)
 }
 
 #' @rdname sv_supp_check
