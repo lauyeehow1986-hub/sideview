@@ -668,6 +668,14 @@ function sendToShiny(name, value) {
     // Join diagnostics by join signature (tables + keys); see joinDiagFor().
     this.joinDiag = {};
     this.joinDiagPending = {};
+    // SUPP-- merge checks by step key, the latest request id per key, and what each id asked for
+    this.suppChecks = {};
+    this.suppReq = {};
+    this.suppPending = {};
+    this._suppSeq = 0;
+    // the report at the top of the Discrepancy tab: {kind: 'join' | 'supp', id} (the latest shown)
+    this.reportFocus = null;
+    this._seenJoins = {};
     this.colProfiles = {};
     this.colProfilePending = {};
     this.joinCheckStepId = null;
@@ -765,6 +773,7 @@ function sendToShiny(name, value) {
     search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
     map: '<path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z"/><path d="M15 5.764v15"/><path d="M9 3.236v15"/>',
     calendar: '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>',
+    merge: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/>',
     keyboard: '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/>'
   };
 
@@ -2131,6 +2140,13 @@ function sendToShiny(name, value) {
       } else if (action === 'toggle-drawer') {
         var drawer = self.container.querySelector('.sideview-drawer');
         if (drawer) drawer.classList.toggle('collapsed');
+      } else if (action === 'supp-merge') {
+        self.onSuppButton(btn);
+      } else if (action === 'supp-merge-target') {
+        self.closeActivePopover();
+        if (btn.dataset.suppCard && btn.dataset.suppParent) {
+          self.mergeSupp(btn.dataset.suppCard, btn.dataset.suppParent, btn.dataset.rdomain || null);
+        }
       } else if (action === 'export-codebook') {
         self.exportCodebook();
       } else if (action === 'open-search') {
@@ -2990,6 +3006,8 @@ function sendToShiny(name, value) {
       };
     });
     this.pipeline.setTables(meta);
+    // a card came or went: the Merge into buttons name their targets on the canvas
+    this.refreshSuppButtons();
   };
 
   /** 'arrow' | 'duckdb' when the table is lazy, else null. */
@@ -3469,10 +3487,12 @@ function sendToShiny(name, value) {
     var fromTable = pairs[0].fromTable;
     var toTable = pairs[0].toTable;
     pairs = pairs.filter(function (p) { return p.fromTable === fromTable && p.toTable === toTable; });
+    // a SUPP-- group (from the SUPP card to its parent) is a merge, not a join
+    var isSupp = rows[0].kind === 'supp';
 
     // Keys already connected (either direction) are not offered again.
     pairs = pairs.filter(function (p) {
-      return !self.connections.some(function (conn) {
+      return isSupp || !self.connections.some(function (conn) {
         return (conn.fromTable === p.fromTable && conn.fromCol === p.fromCol &&
                 conn.toTable === p.toTable && conn.toCol === p.toCol) ||
                (conn.fromTable === p.toTable && conn.fromCol === p.toCol &&
@@ -3482,7 +3502,7 @@ function sendToShiny(name, value) {
     if (!pairs.length) return;
 
     // An existing join in the opposite direction decides: the new keys follow it.
-    var opposite = self.connections.some(function (conn) {
+    var opposite = !isSupp && self.connections.some(function (conn) {
       return conn.fromTable === toTable && conn.toTable === fromTable;
     }) || (self.pipeline.steps || []).some(function (s) {
       return s.kind === 'join' && s.table === toTable && s.right === fromTable;
@@ -3512,9 +3532,11 @@ function sendToShiny(name, value) {
     var cols = pairs.map(function (p) {
       return p.fromCol === p.toCol ? p.fromCol : p.fromCol + '=' + p.toCol;
     }).join(', ');
-    var titleText = 'Suggested CDISC join: ' + fromTable + ' to ' + toTable + ' by ' + cols +
-      (kind && CDISC_KIND_LABELS[kind] ? ' (' + CDISC_KIND_LABELS[kind] + ')' : '') +
-      '. Click to accept';
+    var titleText = isSupp
+      ? 'Suggested CDISC merge: ' + fromTable + ' into ' + toTable + ' (one column per QNAM). Click to merge'
+      : 'Suggested CDISC join: ' + fromTable + ' to ' + toTable + ' by ' + cols +
+        (kind && CDISC_KIND_LABELS[kind] ? ' (' + CDISC_KIND_LABELS[kind] + ')' : '') +
+        '. Click to accept';
 
     var members = [];
     var accepted = false;
@@ -3530,6 +3552,11 @@ function sendToShiny(name, value) {
         return members.indexOf(s.path) < 0;
       });
       pruneHitPaths(self);
+      if (isSupp) {
+        // the merge check decides; its reply adds the supp step (never a join)
+        self.mergeSupp(fromTable, toTable, null);
+        return;
+      }
       self.addConnections(resolved.map(function (r) {
         var c1 = r.p1.closest('.sideview-card');
         var c2 = r.p2.closest('.sideview-card');
@@ -3743,6 +3770,8 @@ function sendToShiny(name, value) {
     var name = cardData && cardData.name;
     var meta = this.cardMetaByName(name);
     if (!meta) { warnNoCard(name); return null; }
+    // a merge check on this card is out of date: it is asked again (with the plan) when the pipeline renders
+    this.forgetSuppChecks(name);
     var el = meta.element;
     if (el.classList.contains('is-maximized')) {
       this.toggleMaximizeCard(el, el.querySelector('[data-action="maximize-card"]'));
@@ -3832,6 +3861,7 @@ function sendToShiny(name, value) {
   SideviewEngine.prototype.removeCard = function (name) {
     var meta = this.cardMetaByName(name);
     if (!meta) { warnNoCard(name); return null; }
+    this.forgetSuppChecks(name);
     var self = this;
     this.connections.slice().forEach(function (c) {
       if (c.fromTable === name || c.toTable === name) self.dropConnectionVisually(c);
@@ -4516,6 +4546,7 @@ function sendToShiny(name, value) {
     // an open rule row belongs to a step that still exists
     if (this.ruleDraft && !p.find(this.ruleDraft.stepId)) this.ruleDraft = null;
     var n = p.steps.length;
+    this.noteNewJoins();
     var list = this.container.querySelector('.sideview-step-list');
     if (list) {
       if (!n) {
@@ -4533,6 +4564,9 @@ function sendToShiny(name, value) {
             join = self.joinOptionsHtml(s);
             ruleRow = self.ruleRowHtml(s);
             diag = self.joinDiagLine(s);
+          } else if (s.kind === 'supp') {
+            diag = self.suppDiagLine(s);
+            if (diag) title = self.suppLineText(s);
           }
           return '<li class="sideview-step' + (on ? '' : ' is-disabled') + (diag ? ' has-diag' : '') +
             (s.kind === 'join' ? ' is-join' : '') + (ruleRow ? ' has-rule-row' : '') +
@@ -4718,6 +4752,7 @@ function sendToShiny(name, value) {
 
   SideviewEngine.prototype.showJoinCheck = function (stepId) {
     this.joinCheckStepId = stepId;
+    this.reportFocus = { kind: 'join', id: stepId };
     this.activateDrawerTab('discrepancy');
     this.renderJoinCheck();
     var s = this.pipeline.find(stepId);
@@ -4733,7 +4768,13 @@ function sendToShiny(name, value) {
     var box = this.container.querySelector('.sideview-joincheck');
     if (!box) return;
     var self = this;
+    // the merge check when it was shown last (or when there is no join to show)
+    var supps = this.pipeline.steps.filter(function (x) { return x.kind === 'supp'; });
+    var focus = this.reportFocus;
+    var supp = focus && focus.kind === 'supp' ? supps.filter(function (x) { return x.key === focus.id; })[0] : null;
     var joins = this.pipeline.steps.filter(function (s) { return s.kind === 'join'; });
+    if (!supp && !joins.length && supps.length) supp = supps[supps.length - 1];
+    if (supp) { this.renderSuppCheck(box, supp); return; }
     var s = joins.filter(function (j) { return j.id === self.joinCheckStepId; })[0] || joins[joins.length - 1];
     box.className = 'sideview-joincheck';
     if (!s) { box.innerHTML = ''; return; }
@@ -4828,6 +4869,543 @@ function sendToShiny(name, value) {
       s.type === 'right_join' ? 'unmatched right out: ' + nx + ' would be dropped' :
       (lostX > 0 && lostY > 0 ? nx + ' and ' + ny : lostX > 0 ? nx : ny) + ' would be dropped';
     return text + '; ' + why;
+  };
+
+  // ---- SUPP-- merge (design 2026-11-03) ---------------------------------------
+  // A tagged SUPP card gets a Merge into button. The gadget and modules ask R for the merge check
+  // (input `supp_check_request` -> message `sideview_supp_check`); the widget checks its own rows
+  // with SideviewPipeline.suppCheck(). A reply adds (or replaces) the supp step on the parent's chain.
+
+  var SUPP_NEEDS = ['USUBJID', 'IDVAR', 'IDVARVAL', 'QNAM', 'QVAL'];
+
+  function suppKeyOf(table, supp) { return JSON.stringify(['supp', table, supp]); }
+
+  function suppIsTag(tag) {
+    if (!tag || !tag.domain) return false;
+    var d = String(tag.domain).toUpperCase();
+    return /^SUPP[A-Z]{2}$/.test(d) || d === 'SUPPQUAL';
+  }
+
+  function suppCount(n, one, many) {
+    var v = Number(n) || 0;
+    return global.SideviewPipeline.fmtN(v) + ' ' + (v === 1 ? one : many);
+  }
+
+  // The plan part of a step or a check's plan: what supp_check_request carries as JSON text.
+  function suppPlanOf(x) {
+    x = x || {};
+    return { keys: asArray(x.keys), idvars: asArray(x.idvars), qnams: asArray(x.qnams), rdomain_col: !!x.rdomain_col };
+  }
+
+  // A reply from R (or the JS twin) with list fields as arrays, whatever jsonlite made of them.
+  function suppNormalize(d) {
+    d = Object.assign({}, d);
+    ['clashes', 'two_level', 'orphan_samples', 'columns', 'preview'].forEach(function (k) { d[k] = asArray(d[k]); });
+    d.clashes = d.clashes.map(String);
+    d.two_level = d.two_level.map(String);
+    d.repeats = Object.assign({ n: 0 }, d.repeats || {});
+    d.repeats.samples = asArray(d.repeats.samples);
+    d.bad_idvarval = Object.assign({ n: 0 }, d.bad_idvarval || {});
+    d.bad_idvarval.samples = asArray(d.bad_idvarval.samples);
+    d.drift = d.drift && typeof d.drift === 'object' ? { stale: d.drift.stale === true, reasons: asArray(d.drift.reasons) }
+      : { stale: false, reasons: [] };
+    d.plan = suppPlanOf(d.plan);
+    return d;
+  }
+
+  /** The column names a card holds (its virtual table, else its header ports). */
+  SideviewEngine.prototype.cardColNames = function (name) {
+    var el = this.cardElByName(name);
+    if (!el) return null;
+    var vt = el._virtualTable;
+    if (vt && vt.colNames) return vt.colNames.slice();
+    var out = [];
+    el.querySelectorAll('.sideview-col-port').forEach(function (port) {
+      if (port.dataset && port.dataset.colName !== undefined && out.indexOf(port.dataset.colName) < 0) {
+        out.push(port.dataset.colName);
+      }
+    });
+    return out;
+  };
+
+  /**
+   * What the Merge into button of a SUPP card offers: {targets: [{rdomain, card, name, reason}], rdomain}.
+   * A target's `reason` (why it cannot merge) is null when it can.
+   */
+  SideviewEngine.prototype.suppTargets = function (meta) {
+    var self = this;
+    var tag = meta && meta.cdisc;
+    var domain = String(tag.domain).toUpperCase();
+    var own = /^SUPP[A-Z]{2}$/.test(domain) ? domain.slice(4) : (asArray(tag.rdomains)[0] || 'the parent');
+    var suppCols = this.cardColNames(meta.name) || [];
+    var missing = SUPP_NEEDS.filter(function (c) { return suppCols.indexOf(c) < 0; })[0];
+    var targets = [];
+    asArray(tag.merge_targets).forEach(function (tg) {
+      if (!tg || !tg.card) return;
+      var pm = self.cards.get(String(tg.card));
+      if (!pm || pm.id === meta.id) return;
+      var pCols = self.cardColNames(pm.name) || [];
+      var reason = missing ? meta.name + ' has no ' + missing + ' column'
+        : pCols.indexOf('USUBJID') < 0 ? pm.name + ' has no USUBJID column' : null;
+      targets.push({ rdomain: String(tg.rdomain || ''), card: pm.id, name: pm.name, reason: reason });
+    });
+    return { targets: targets, rdomain: own, missing: missing || null };
+  };
+
+  /** Add, update or remove the Merge into button of a card (only a tagged SUPP card has one). */
+  SideviewEngine.prototype.renderSuppButton = function (meta) {
+    var el = meta && meta.element;
+    if (!el) return;
+    var old = el.querySelector('[data-action="supp-merge"]');
+    if (!suppIsTag(meta.cdisc)) {
+      if (old) old.remove();
+      return;
+    }
+    var actions = el.querySelector('.sideview-card-header .sideview-card-actions') || el.querySelector('.sideview-card-actions');
+    if (!actions) return;
+    var info = this.suppTargets(meta);
+    var ts = info.targets;
+    var label = ts.length > 1 ? 'Merge into...' : 'Merge into ' + (ts.length ? ts[0].rdomain : info.rdomain);
+    var reason = null;
+    if (!ts.length) reason = info.missing ? meta.name + ' has no ' + info.missing + ' column' : 'No ' + info.rdomain + ' card on the canvas';
+    else if (ts.every(function (t) { return t.reason; })) reason = ts[0].reason;
+    var btn = old;
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.setAttribute('type', 'button');
+      btn.className = 'sideview-icon-btn sideview-supp-btn';
+      btn.setAttribute('data-action', 'supp-merge');
+      btn.setAttribute('data-sv-icon', 'merge');
+      btn.innerHTML = icon('merge');
+      var span = document.createElement('span');
+      span.className = 'sideview-supp-label';
+      btn.appendChild(span);
+      actions.insertBefore(btn, actions.firstElementChild || actions.children && actions.children[0] || null);
+    }
+    var lab = btn.querySelector('.sideview-supp-label');
+    if (lab) lab.textContent = label;
+    btn.setAttribute('aria-label', label);
+    if (ts.length > 1) btn.setAttribute('aria-haspopup', 'menu');
+    else btn.removeAttribute('aria-haspopup');
+    btn.disabled = !!reason;
+    if (reason) btn.setAttribute('disabled', '');
+    else btn.removeAttribute('disabled');
+    btn.title = reason || (ts.length > 1 ? 'Merge ' + meta.name + ' into a parent card (one column per QNAM)'
+      : 'Merge ' + meta.name + ' into ' + ts[0].name + ' (one column per QNAM)');
+  };
+
+  SideviewEngine.prototype.refreshSuppButtons = function () {
+    var self = this;
+    if (!this.cards) return;
+    this.cards.forEach(function (m) { self.renderSuppButton(m); });
+  };
+
+  /** A Merge into click: one target merges, several open the menu. */
+  SideviewEngine.prototype.onSuppButton = function (btn) {
+    if (!btn || btn.disabled) return;
+    var cardEl = btn.closest('.sideview-card');
+    var meta = cardEl ? this.cards.get(cardEl.dataset.cardId) : null;
+    if (!meta || !suppIsTag(meta.cdisc)) return;
+    var ts = this.suppTargets(meta).targets.filter(function (t) { return !t.reason; });
+    if (!ts.length) return;
+    if (ts.length === 1 && this.suppTargets(meta).targets.length === 1) {
+      this.mergeSupp(meta.name, ts[0].name, ts[0].rdomain);
+      return;
+    }
+    this.openSuppMenu(btn, meta);
+  };
+
+  /** The target menu of a SUPPQUAL card with several parents on the canvas. */
+  SideviewEngine.prototype.openSuppMenu = function (btn, meta) {
+    var self = this;
+    var existing = this._activePopover;
+    if (existing) {
+      var same = existing._sourceBtn === btn;
+      if (existing._closePopover) existing._closePopover();
+      if (same) return;
+    }
+    var menu = document.createElement('div');
+    menu.className = 'sideview-supp-menu';
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-label', 'Merge ' + meta.name + ' into');
+    menu._sourceBtn = btn;
+    menu._sideviewOwner = this;
+    this.suppTargets(meta).targets.forEach(function (t) {
+      var item = document.createElement('button');
+      item.setAttribute('type', 'button');
+      item.className = 'sideview-supp-menu-item';
+      item.setAttribute('role', 'menuitem');
+      item.setAttribute('data-action', 'supp-merge-target');
+      item.setAttribute('data-supp-card', meta.name);
+      item.setAttribute('data-supp-parent', t.name);
+      item.setAttribute('data-supp-target', t.card);
+      item.setAttribute('data-rdomain', t.rdomain);
+      item.textContent = t.rdomain;
+      item.title = t.reason || 'Merge ' + meta.name + ' into ' + t.name;
+      if (t.reason) { item.disabled = true; item.setAttribute('disabled', ''); }
+      menu.appendChild(item);
+    });
+    var onDoc = function (evt) {
+      var t = evt.target;
+      if (!(menu.contains && menu.contains(t)) && t !== btn && !(btn.contains && btn.contains(t))) close();
+    };
+    var timer = setTimeout(function () { document.addEventListener('mousedown', onDoc, true); }, 10);
+    function close() {
+      clearTimeout(timer);
+      document.removeEventListener('mousedown', onDoc, true);
+      if (menu.parentNode) menu.remove();
+      if (self._activePopover === menu) self._activePopover = null;
+    }
+    menu._closePopover = close;
+    var host = this.overlay || this.container;
+    host.appendChild(menu);
+    this._activePopover = menu;
+    function reposition() {
+      if (!menu.parentNode) return;
+      var b = btn.getBoundingClientRect(), h = host.getBoundingClientRect();
+      var w = menu.offsetWidth || 120;
+      var hostW = host.clientWidth || h.width || 800;
+      menu.style.left = Math.max(8, Math.min(hostW - w - 8, b.right - h.left - w)) + 'px';
+      menu.style.top = (b.bottom - h.top + 4) + 'px';
+    }
+    menu._reposition = reposition;
+    reposition();
+  };
+
+  /** The RDOMAIN a parent card stands for in a SUPP card's merge targets. */
+  SideviewEngine.prototype.suppRdomain = function (suppName, parentName) {
+    var sm = this.cardMetaByName(suppName), pm = this.cardMetaByName(parentName);
+    var tag = sm && sm.cdisc;
+    var hit = pm && tag ? asArray(tag.merge_targets).filter(function (t) { return t && t.card === pm.id; })[0] : null;
+    if (hit && hit.rdomain) return String(hit.rdomain);
+    var d = tag && tag.domain ? String(tag.domain).toUpperCase() : String(suppName).toUpperCase();
+    return /^SUPP[A-Z]{2}$/.test(d) ? d.slice(4) : null;
+  };
+
+  /** The button, menu and Auto Map flow: check the merge, then add the step from the reply. */
+  SideviewEngine.prototype.mergeSupp = function (suppName, parentName, rdomain) {
+    return this.requestSuppCheck(parentName, suppName, null,
+      { mode: 'add', rdomain: rdomain || this.suppRdomain(suppName, parentName) });
+  };
+
+  /**
+   * Ask for a merge check of `suppName` into `parentName`. With `plan` (a supp step or a check's plan)
+   * it is a re-check: drift is measured against it. R answers in the gadget and modules; the widget
+   * computes it here. The latest request id per step key is kept in this.suppReq; older replies are dropped.
+   */
+  SideviewEngine.prototype.requestSuppCheck = function (parentName, suppName, plan, opts) {
+    opts = opts || {};
+    var key = suppKeyOf(parentName, suppName);
+    var mode = opts.mode || (plan ? 'check' : 'add');
+    var rdomain = opts.rdomain || this.suppRdomain(suppName, parentName);
+    var id = 'supp' + (++this._suppSeq);
+    this.suppReq[key] = id;
+    this.suppPending[id] = { key: key, parent: parentName, supp: suppName, rdomain: rdomain, mode: mode, quiet: !!opts.quiet };
+    if (this.hasR()) {
+      var req = { id: id, parent: parentName, supp: suppName };
+      // a named object as JSON text: R reads it with jsonlite (an unnamed plan would be dropped)
+      if (plan) req.plan = JSON.stringify(suppPlanOf(plan));
+      this.sendSuppRequest(req, 0);
+      return id;
+    }
+    var d = this.localSuppCheck(parentName, suppName, rdomain, plan);
+    d.id = id;
+    this.onSuppCheck(d);
+    return id;
+  };
+
+  // Shiny.setInputValue appears only once the session connects; retry until then.
+  SideviewEngine.prototype.sendSuppRequest = function (req, attempt) {
+    var self = this;
+    if (this.send('supp_check_request', req)) return;
+    if (attempt >= 40 || !this.container.isConnected) {
+      this.onSuppCheck({ id: req.id, error: 'The R session is not connected.' });
+      return;
+    }
+    setTimeout(function () { self.sendSuppRequest(req, attempt + 1); }, 250);
+  };
+
+  /** Rows of a card as objects, with its column names and R classes (the widget holds every row). */
+  SideviewEngine.prototype.cardRows = function (name) {
+    var cols = this.cardColNames(name);
+    if (!cols) return { error: 'Table ' + name + ' is not on the canvas.' };
+    var x = this.cardColumns(name, cols);
+    if (x.error) return x;
+    var n = cols.length ? x.cols[cols[0]].length : 0;
+    var rows = new Array(n);
+    for (var i = 0; i < n; i++) {
+      var o = {};
+      for (var k = 0; k < cols.length; k++) o[cols[k]] = x.cols[cols[k]][i];
+      rows[i] = o;
+    }
+    return { rows: rows, cols: cols, types: x.types || {} };
+  };
+
+  SideviewEngine.prototype.localSuppCheck = function (parentName, suppName, rdomain, plan) {
+    var p = this.cardRows(parentName), s = this.cardRows(suppName);
+    if (p.error || s.error) return { error: p.error || s.error };
+    return global.SideviewPipeline.suppCheck(p.rows, s.rows, {
+      parentName: parentName, suppName: suppName, rdomain: rdomain,
+      parentTypes: p.types, parentCols: p.cols, suppCols: s.cols, plan: plan ? suppPlanOf(plan) : null
+    });
+  };
+
+  /**
+   * The browser's part of the clash rule (design §8): a QNAM that the parent's chain already has at
+   * the step (an earlier mutate, rename or merge) or that an earlier enabled merge into the same parent
+   * adds is a clash too, and the check's status becomes error. `last`: the step is (re)added last.
+   */
+  SideviewEngine.prototype.widenSuppClashes = function (d, table, key, last) {
+    var qn = d.plan.qnams.map(function (q) { return q && q.qnam !== undefined && q.qnam !== null ? String(q.qnam) : ''; });
+    var steps = this.pipeline.steps;
+    var at = -1;
+    for (var i = 0; i < steps.length; i++) if (steps[i].key === key) at = i;
+    var known = this.pipeline.columnsBefore(table, this.cardColNames(table) || [], key, last) || [];
+    steps.forEach(function (s, j) {
+      if (s.kind !== 'supp' || s.table !== table || s.key === key || s.enabled === false) return;
+      if (!last && at >= 0 && j > at) return;
+      (s.qnams || []).forEach(function (q) { if (known.indexOf(q.qnam) < 0) known.push(q.qnam); });
+    });
+    var added = false;
+    qn.forEach(function (q) {
+      if (q && known.indexOf(q) >= 0 && d.clashes.indexOf(q) < 0) { d.clashes.push(q); added = true; }
+    });
+    if (added) d.status = 'error';
+    return d;
+  };
+
+  /** A sideview_supp_check reply (from R, or the widget's own check). */
+  SideviewEngine.prototype.onSuppCheck = function (data) {
+    if (!data || data.id === undefined || data.id === null) return;
+    var id = String(data.id);
+    var ctx = this.suppPending[id];
+    if (!ctx) return;
+    delete this.suppPending[id];
+    // only the latest request for a step counts
+    if (this.suppReq[ctx.key] !== id) return;
+    delete this.suppReq[ctx.key];
+    var P = global.SideviewPipeline;
+    if (data.error) {
+      var msg = String(data.error);
+      if (ctx.mode === 'add') {
+        this.showToast('Merge ' + ctx.supp + ' into ' + ctx.parent + ': ' + msg, 'danger');
+        return;
+      }
+      this.suppChecks[ctx.key] = { error: msg };
+    } else {
+      var d = suppNormalize(data);
+      delete d.id;
+      delete d.ns;
+      if (ctx.mode === 'add') {
+        this.widenSuppClashes(d, ctx.parent, ctx.key, true);
+        // stored first: adding the step renders the pipeline, which reads it
+        this.suppChecks[ctx.key] = d;
+        this.reportFocus = { kind: 'supp', id: ctx.key };
+        this.pipeline.add(P.suppStep(ctx.parent, ctx.supp, ctx.rdomain, d.plan), 'supp');
+        if (d.status === 'error') this.showToast('Merge ' + ctx.supp + ' into ' + ctx.parent + ': ' + this.suppStops(d, ctx.parent), 'warning');
+        this.renderJoinCheck();
+        return;
+      }
+      var step = this.pipeline.steps.filter(function (s) { return s.key === ctx.key; })[0];
+      if (!step) return;
+      this.widenSuppClashes(d, ctx.parent, ctx.key, false);
+      this.suppChecks[ctx.key] = d;
+    }
+    if (ctx.quiet) return;
+    this.renderPipeline();
+    this.renderJoinCheck();
+  };
+
+  /** The stored check of a supp step; asks for one (with the step's plan) when there is none. */
+  SideviewEngine.prototype.suppCheckFor = function (s) {
+    var key = s.key || suppKeyOf(s.table, s.supp);
+    if (this.suppChecks[key]) return this.suppChecks[key];
+    if (this.suppReq[key] || s.enabled === false) return null;
+    if (!this.cardElByName(s.table) || !this.cardElByName(s.supp)) return null;
+    this.requestSuppCheck(s.table, s.supp, s, { mode: 'check', rdomain: s.rdomain, quiet: true });
+    return this.suppChecks[key] || null;
+  };
+
+  /** Why a merge would stop: repeats, clashes, two-level QNAMs. */
+  SideviewEngine.prototype.suppStops = function (d, table) {
+    var parts = [];
+    if (d.repeats && d.repeats.n > 0) {
+      var qs = [];
+      d.repeats.samples.forEach(function (r) { if (r && r.QNAM && qs.indexOf(String(r.QNAM)) < 0) qs.push(String(r.QNAM)); });
+      parts.push((qs.length ? qs.join(', ') : 'a QNAM') + (qs.length > 1 ? ' repeat' : ' repeats') + ' for ' +
+        suppCount(d.repeats.n, 'record', 'records'));
+    }
+    if (d.clashes.length) parts.push(d.clashes.join(', ') + ' already in ' + table);
+    if (d.two_level.length) parts.push(d.two_level.join(', ') + ' on two IDVAR levels');
+    return parts.length ? parts.join('; ') : 'the merge check failed';
+  };
+
+  // {text, status, drift, title} for the step line.
+  SideviewEngine.prototype.suppDiagState = function (s) {
+    var d = this.suppCheckFor(s);
+    if (!d) return { text: 'Checking the merge…', status: 'pending' };
+    if (d.error) return { text: 'Merge check unavailable', status: 'pending', title: d.error };
+    if (d.drift && d.drift.stale) return { text: 'Merge needs refreshing', status: 'warn', drift: true };
+    if (d.status === 'error') return { text: 'stops: ' + this.suppStops(d, s.table), status: 'error' };
+    var fmt = global.SideviewPipeline.fmtN;
+    var t = fmt(d.n_matched) + ' of ' + fmt(d.n_supp) + ' SUPP rows matched';
+    if (d.n_orphan > 0) t += ' · ' + suppCount(d.n_orphan, 'orphan SUPP row', 'orphan SUPP rows');
+    if (d.bad_idvarval.n > 0) t += ' · ' + suppCount(d.bad_idvarval.n, 'bad IDVARVAL', 'bad IDVARVALs');
+    if (d.status === 'warning' && !(d.n_orphan > 0) && !(d.bad_idvarval.n > 0) && d.n_other_rdomain > 0) {
+      t += ' · ' + suppCount(d.n_other_rdomain, 'other-RDOMAIN row', 'other-RDOMAIN rows');
+    }
+    return { text: t, status: d.status === 'warning' ? 'warn' : 'ok' };
+  };
+
+  /** The §4.5 step line: `merge SUPPAE (3 QNAMs on AESEQ) · 14 of 14 SUPP rows matched`. */
+  SideviewEngine.prototype.suppLineText = function (s) {
+    return this.pipeline.describe(s) + ' · ' + this.suppDiagState(s).text;
+  };
+
+  SideviewEngine.prototype.suppDiagLine = function (s) {
+    if (s.enabled === false && !this.suppChecks[s.key]) return '';
+    var st = this.suppDiagState(s);
+    if (st.status === 'pending') {
+      return '<span class="sideview-step-diag is-pending"' + (st.title ? ' title="' + escapeHtml(st.title) + '"' : '') +
+        '>' + escapeHtml(st.text) + '</span>';
+    }
+    var html = '<button type="button" class="sideview-step-diag is-' + st.status + '" data-step-action="supp-diag"' +
+      ' title="Show the merge check">' + icon(st.status === 'ok' ? 'check' : 'alert') +
+      '<span>' + escapeHtml(st.text) + '</span></button>';
+    if (st.drift) {
+      html += '<button type="button" class="sideview-step-refresh" data-step-action="supp-refresh"' +
+        ' title="Plan the merge again from the data">Refresh</button>';
+    }
+    return html;
+  };
+
+  /** Open the merge check at the top of the Discrepancy tab, and check again (with the plan). */
+  SideviewEngine.prototype.showSuppCheck = function (stepId) {
+    var s = this.pipeline.find(stepId);
+    if (!s || s.kind !== 'supp') return;
+    this.reportFocus = { kind: 'supp', id: s.key };
+    this.activateDrawerTab('discrepancy');
+    // the old result stays on screen until the new one comes
+    if (!this.suppReq[s.key] && s.enabled !== false) {
+      this.requestSuppCheck(s.table, s.supp, s, { mode: 'check', rdomain: s.rdomain });
+    }
+    this.renderJoinCheck();
+  };
+
+  /** Refresh: replace the step's plan with the one the last check found (one undo step). */
+  SideviewEngine.prototype.refreshSuppStep = function (stepId) {
+    var s = this.pipeline.find(stepId);
+    if (!s || s.kind !== 'supp') return false;
+    var d = this.suppChecks[s.key];
+    if (!d || d.error || !d.plan) return false;
+    var next = global.SideviewPipeline.suppStep(s.table, s.supp, s.rdomain, d.plan);
+    d.drift = { stale: false, reasons: [] };
+    this.reportFocus = { kind: 'supp', id: s.key };
+    this.pipeline.update(s.id, { keys: next.keys, idvars: next.idvars, qnams: next.qnams, rdomain_col: next.rdomain_col });
+    this.renderJoinCheck();
+    return true;
+  };
+
+  /** Drop the merge checks (and pending replies) of steps that read this card. */
+  SideviewEngine.prototype.forgetSuppChecks = function (name) {
+    var self = this;
+    var touches = function (key) {
+      try { var k = JSON.parse(key); return k[1] === name || k[2] === name; } catch (e) { return false; }
+    };
+    Object.keys(this.suppChecks).forEach(function (k) { if (touches(k)) delete self.suppChecks[k]; });
+    Object.keys(this.suppReq).forEach(function (k) { if (touches(k)) delete self.suppReq[k]; });
+  };
+
+  // A join step the engine has not seen before takes the top of the Discrepancy tab.
+  SideviewEngine.prototype.noteNewJoins = function () {
+    var self = this;
+    this.pipeline.steps.forEach(function (s) {
+      if (s.kind !== 'join' || self._seenJoins[s.id]) return;
+      self._seenJoins[s.id] = true;
+      self.reportFocus = { kind: 'join', id: s.id };
+    });
+  };
+
+  /** The merge check report (design §4.5) in the Discrepancy tab's top box. */
+  SideviewEngine.prototype.renderSuppCheck = function (box, s) {
+    var esc = escapeHtml;
+    var fmt = global.SideviewPipeline.fmtN;
+    var d = this.suppCheckFor(s);
+    var title = 'Merge check: ' + String(s.supp).toUpperCase() + ' into ' + s.table;
+    box.className = 'sideview-joincheck sideview-suppcheck';
+    box.setAttribute('data-report', 'supp');
+    if (!d) {
+      box.innerHTML = '<p class="sideview-joincheck-title sideview-suppcheck-title">' + esc('Checking the merge of ' + s.supp + ' into ' + s.table + '…') + '</p>';
+      return;
+    }
+    if (d.error) {
+      box.innerHTML = '<p class="sideview-joincheck-title sideview-suppcheck-title">Merge check unavailable</p><p class="sideview-suppcheck-error">' + esc(d.error) + '</p>';
+      return;
+    }
+    box.classList.add('is-' + (d.status === 'warning' ? 'warn' : d.status));
+    var preview = rowsBasis(this.cardElByName(s.table)) === 'preview' || rowsBasis(this.cardElByName(s.supp)) === 'preview';
+    var sample = function (r) {
+      var v = function (x) { return x === null || x === undefined ? 'NA' : String(x); };
+      return [v(r.USUBJID), r.IDVAR === '' ? '(subject)' : v(r.IDVAR), v(r.IDVARVAL), v(r.QNAM)].join(' ');
+    };
+    var samples = function (head, list) {
+      return list.length ? '<p class="sideview-suppcheck-subtitle">' + esc(head) + '</p><ul class="sideview-suppcheck-samples">' +
+        list.map(function (r) { return '<li><code>' + esc(sample(r || {})) + '</code></li>'; }).join('') + '</ul>' : '';
+    };
+    var problems = [];
+    if (d.repeats.n > 0) {
+      var qs = [];
+      d.repeats.samples.forEach(function (r) { if (r && r.QNAM && qs.indexOf(String(r.QNAM)) < 0) qs.push(String(r.QNAM)); });
+      problems.push((qs.length ? qs.join(', ') : 'A QNAM') + (qs.length > 1 ? ' repeat' : ' repeats') + ' for ' +
+        suppCount(d.repeats.n, 'record', 'records') + ': the code would stop');
+    }
+    if (d.clashes.length) problems.push(d.clashes.join(', ') + ' already in ' + s.table + ': the code would stop');
+    if (d.two_level.length) problems.push(d.two_level.join(', ') + ' on two IDVAR levels: the code would stop');
+    if (d.bad_idvarval.n > 0) {
+      problems.push(suppCount(d.bad_idvarval.n, 'IDVARVAL value does not', 'IDVARVAL values do not') +
+        ' convert to the key type: dropped');
+    }
+    var keyCols = [];
+    d.plan.keys.concat(d.plan.idvars.map(function (v) { return v && v.idvar; })).forEach(function (c) {
+      if (c && keyCols.indexOf(String(c)) < 0) keyCols.push(String(c));
+    });
+    var newCols = d.columns.map(function (c) { return String(c && c.name); });
+    var shown = keyCols.concat(newCols.filter(function (c) { return keyCols.indexOf(c) < 0; }));
+    var cell = function (v) {
+      return v === null || v === undefined ? '<td class="is-na">NA</td>' : '<td>' + esc(v) + '</td>';
+    };
+    var html = [
+      '<p class="sideview-joincheck-title sideview-suppcheck-title">' + esc(title) + '</p>',
+      preview ? '<p class="sideview-basis-note sideview-suppcheck-basis">Preview rows</p>' : '',
+      d.drift.stale ? '<div class="sideview-suppcheck-drift"><span>Merge needs refreshing</span>' +
+        '<ul>' + d.drift.reasons.map(function (r) { return '<li>' + esc(r) + '</li>'; }).join('') + '</ul>' +
+        '<button type="button" class="sideview-suppcheck-refresh" data-supp-refresh="' + esc(s.id) + '">Refresh</button></div>' : '',
+      problems.length ? '<ul class="sideview-joincheck-list sideview-suppcheck-problems">' +
+        problems.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>' : '',
+      '<dl class="sideview-joincheck-stats sideview-suppcheck-stats">',
+      '<dt>' + esc(s.table + ' rows') + '</dt><dd>' + esc(fmt(d.n_parent)) + '</dd>',
+      '<dt>SUPP rows</dt><dd>' + esc(fmt(d.n_supp)) + '</dd>',
+      '<dt>Matched</dt><dd>' + esc(fmt(d.n_matched)) + '</dd>',
+      '<dt>Orphaned</dt><dd>' + esc(fmt(d.n_orphan)) + '</dd>',
+      '<dt>Other RDOMAIN rows</dt><dd>' + esc(fmt(d.n_other_rdomain)) + '</dd>',
+      '</dl>',
+      samples('Orphaned SUPP rows', d.orphan_samples),
+      samples('Repeated SUPP rows', d.repeats.samples),
+      samples('IDVARVAL values that do not convert', d.bad_idvarval.samples),
+      d.columns.length ? '<p class="sideview-suppcheck-subtitle">New columns</p><ul class="sideview-suppcheck-columns">' +
+        d.columns.map(function (c) {
+          var lab = c && c.label !== null && c.label !== undefined ? String(c.label) : '';
+          return '<li><code>' + esc(c && c.name) + '</code>' + (lab ? '<span>' + esc(lab) + '</span>' : '') + '</li>';
+        }).join('') + '</ul>' : '',
+      d.preview.length ? '<p class="sideview-suppcheck-subtitle">' + esc('Preview of ' + s.table + ' after the merge') + '</p>' +
+        '<table class="sideview-suppcheck-preview"><thead><tr>' +
+        shown.map(function (c) { return '<th scope="col">' + esc(c) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+        d.preview.map(function (r) {
+          r = r || {};
+          return '<tr>' + shown.map(function (c) { return cell(r[c]); }).join('') + '</tr>';
+        }).join('') + '</tbody></table>' : ''
+    ];
+    box.innerHTML = html.join('');
   };
 
   SideviewEngine.prototype.tableSchemas = function () {
@@ -5122,6 +5700,7 @@ function sendToShiny(name, value) {
     if (!el) return;
     var tag = cardMeta.cdisc && cardMeta.cdisc.domain ? cardMeta.cdisc : null;
     var old = el.querySelector('.sideview-badge-cdisc');
+    this.renderSuppButton(cardMeta);
     if (!tag) {
       if (old) old.remove();
       delete el.dataset.cdiscDomain;
@@ -5153,7 +5732,11 @@ function sendToShiny(name, value) {
       self.renderCdiscBadge(meta);
       touched = true;
     });
-    if (touched) this.renderInspector();
+    if (touched) {
+      // a parent's tag decides the other cards' Merge into buttons too
+      this.refreshSuppButtons();
+      this.renderInspector();
+    }
   };
 
   /** The CDISC domain tagged on the card with this name, or null. */
@@ -5354,6 +5937,13 @@ function sendToShiny(name, value) {
     });
 
     var p = state.pipeline || {};
+    if (state.pipeline) {
+      // merge checks are asked again, with each step's plan, when the loaded pipeline renders
+      this.suppChecks = {};
+      this.suppReq = {};
+      this.suppPending = {};
+      this.reportFocus = null;
+    }
     if (Array.isArray(p.steps)) {
       this.pipeline.load({ steps: p.steps, pipe: p.pipe });
     } else if (!isNoCode(p.code)) {
@@ -5670,6 +6260,8 @@ function sendToShiny(name, value) {
     this.container.addEventListener('click', function (e) {
       if (e.target.closest('.sideview-rule-apply')) { self.applyRule(); return; }
       if (e.target.closest('.sideview-rule-cancel')) { self.closeRuleRow(); return; }
+      var suppRefresh = e.target.closest('[data-supp-refresh]');
+      if (suppRefresh) { self.refreshSuppStep(suppRefresh.dataset.suppRefresh); return; }
       var stepBtn = e.target.closest('[data-step-action]');
       if (stepBtn) {
         var li = stepBtn.closest('[data-step-id]');
@@ -5679,6 +6271,8 @@ function sendToShiny(name, value) {
         else if (id && act === 'down') self.pipeline.move(id, 1);
         else if (id && act === 'delete') self.pipeline.remove(id);
         else if (id && act === 'diag') self.showJoinCheck(id);
+        else if (id && act === 'supp-diag') self.showSuppCheck(id);
+        else if (id && act === 'supp-refresh') self.refreshSuppStep(id);
         else if (id && act === 'rule') self.toggleRuleRow(id);
         return;
       }
@@ -6430,6 +7024,10 @@ function sendToShiny(name, value) {
     });
 
     // Join diagnostics computed in R on the full data (reply to join_diagnostics_request)
+    self.onMessage('sideview_supp_check', function (data) {
+      self.onSuppCheck(data);
+    });
+
     self.onMessage('sideview_join_diagnostics', function (data) {
       self.onJoinDiagnostics(data);
     });

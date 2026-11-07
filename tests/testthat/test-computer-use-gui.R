@@ -439,3 +439,16 @@ test_that("Computer Use GUI: Scenario 13 - label row toggle and saved view", {
     expect_true(isTRUE(s13[[nm]]), info = nm)
   }
 })
+
+# ==============================================================================
+# Scenario 14: SUPP-- merge button, merge check, report, Refresh and Auto Map
+# ==============================================================================
+test_that("Computer Use GUI: Scenario 14 - Merge into button, merge check report and Refresh", {
+  res <- run_gui_test_scenarios()
+  s14 <- res$scenario14
+
+  expect_gt(length(s14), 0)
+  for (nm in names(s14)) {
+    expect_true(isTRUE(s14[[nm]]), info = nm)
+  }
+})

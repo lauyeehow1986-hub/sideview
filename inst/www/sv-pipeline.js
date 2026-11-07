@@ -649,6 +649,41 @@
     return names;
   }
 
+  // The columns a step leaves on its table's chain: rename replaces a name, mutate adds one,
+  // a supp merge adds its QNAMs. `cols` is changed in place.
+  function stepColumns(s, cols) {
+    if (s.kind === 'rename') {
+      var i = cols.indexOf(s.from);
+      if (i >= 0) cols[i] = s.to;
+    } else if (s.kind === 'mutate') {
+      if (cols.indexOf(s.name) < 0) cols.push(s.name);
+    } else if (s.kind === 'supp') {
+      (s.qnams || []).forEach(function (q) { if (cols.indexOf(q.qnam) < 0) cols.push(q.qnam); });
+    }
+  }
+  // After these steps the chain's columns are not known in the browser.
+  function unknownAfter(s) {
+    return s.kind === 'join' || s.kind === 'summarise' || s.kind === 'reshape' || s.kind === 'custom';
+  }
+
+  /**
+   * The columns `table` has on its chain before the step with key `key` (all enabled steps when
+   * no step has that key), from the card's `columns`, by the same pass disableMissing() uses.
+   * With `last` the step is taken as moved last (as Pipeline.add() does): every other enabled step counts.
+   * Returns null when an earlier join, summarise, reshape or custom step makes them unknown.
+   */
+  Pipeline.prototype.columnsBefore = function (table, columns, key, last) {
+    var cols = (columns || []).slice();
+    for (var i = 0; i < this.steps.length; i++) {
+      var s = this.steps[i];
+      if (key && s.key === key) { if (last) continue; break; }
+      if (s.table !== table || s.enabled === false) continue;
+      stepColumns(s, cols);
+      if (unknownAfter(s)) return null;
+    }
+    return cols;
+  };
+
   /**
    * Disable the enabled steps of `table` that need a column its refreshed data no longer has
    * (`columns`: the new column names), or every step on it and every join with it (`columns` null:
@@ -743,16 +778,9 @@
         if (!unknown) {
           var miss = lack(cols, leftNeeds(s, cols));
           if (miss.length) { note(s, miss); s.enabled = false; return; }
-          if (s.kind === 'rename') {
-            var i = cols.indexOf(s.from);
-            if (i >= 0) cols[i] = s.to;
-          } else if (s.kind === 'mutate') {
-            if (cols.indexOf(s.name) < 0) cols.push(s.name);
-          } else if (s.kind === 'supp') {
-            (s.qnams || []).forEach(function (q) { if (cols.indexOf(q.qnam) < 0) cols.push(q.qnam); });
-          }
+          stepColumns(s, cols);
         }
-        if (s.kind === 'join' || s.kind === 'summarise' || s.kind === 'reshape' || s.kind === 'custom') unknown = true;
+        if (unknownAfter(s)) unknown = true;
       });
       var endCols = unknown ? null : cols;
       self.steps.forEach(function (s) {

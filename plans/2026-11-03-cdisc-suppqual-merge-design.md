@@ -157,7 +157,7 @@ local({
   other <- setdiff(unique(suppae_q$IDVAR), c("AESEQ", ""))
   if (length(other)) stop("suppae has IDVAR values this merge does not handle: ",
     paste(other, collapse = ", "), ". Refresh the merge step.", call. = FALSE)
-  clash <- intersect(unique(suppae_q$QNAM), names(ae))
+  clash <- intersect(unique(suppae_q$QNAM), colnames(ae))
   if (length(clash)) stop("suppae QNAMs clash with ae columns: ", paste(clash, collapse = ", "), call. = FALSE)
   both <- intersect(suppae_q$QNAM[suppae_q$IDVAR == "AESEQ"], suppae_q$QNAM[suppae_q$IDVAR == ""])
   if (length(both)) stop("suppae QNAMs are at two levels: ", paste(both, collapse = ", "), call. = FALSE)
@@ -205,7 +205,9 @@ Rules:
 - **Lazy parent (arrow):** the joins take `arrow::arrow_table(suppae_aeseq)`.
 - **Labels:** on a lazy chain the label `mutate` goes after the chain's final `dplyr::collect()`. A lazy chain that
   is a `_prep` for another chain gets no labels.
-- The guards run in memory: `names(ae)` works for duckdb and arrow tables.
+- The guards run on `suppae_q`, which is in memory. The clash guard reads the parent's columns with `colnames(ae)`,
+  which works for data frames, duckdb and arrow tables; `names()` does not (on a lazy `tbl` it lists the object's
+  parts, not its columns).
 
 ## 7. The merge check
 
@@ -260,9 +262,13 @@ the refresh state; it never edits the step by itself.
 - **A QNAM used at two IDVAR levels:** error, and the code guard stops.
 - **No STUDYID** in either table: keys are `USUBJID` alone, and the code and guards use that.
 - **No RDOMAIN column:** no filter; `n_other_rdomain` is `0`.
-- **Two merges into one parent** (SUPPAE and a SUPPQUAL): the browser check counts the first merge's columns as
-  parent columns, so a shared QNAM is a clash. The code guard checks the source table only and is noted as
-  weaker in that case (dplyr would add `.x`/`.y`).
+- **Two merges into one parent** (SUPPAE and a SUPPQUAL), **or a QNAM the chain already made**: the browser check
+  counts every column the parent's chain has at that step as a parent column: the source columns, columns an
+  earlier `mutate` adds, `rename` targets, and the QNAMs of earlier enabled merges into the same parent. A QNAM
+  among them is a clash, and the check's status is error. After an earlier join, summarise, pivot or custom step the
+  chain's columns are not known in the browser, so only the earlier merges' QNAMs count
+  (`Pipeline.columnsBefore()` returns `null`). The code guard checks the source table only and is noted as weaker in
+  that case (dplyr would add `.x`/`.y`).
 - **SEND canvas:** same rules (SUPP tags already follow the canvas standard).
 - **`cdisc = FALSE`:** no button, no Auto Map supp rows, no notes. A merge step loaded from a workspace still
   composes, because the step carries its plan.

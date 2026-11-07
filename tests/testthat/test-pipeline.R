@@ -1058,6 +1058,36 @@ test_that("supp guards stop", {
                    "suppae has IDVAR values this merge does not handle: (subject level). Refresh the merge step.")
 })
 
+test_that("supp code on a double key converts IDVARVAL like the check", {
+  ae <- data.frame(STUDYID = "S1", USUBJID = c("P1", "P1", "P2"), AESEQ = c(1, 2, 1),
+                   AETERM = c("HEAD", "NAUS", "RASH"), stringsAsFactors = FALSE)
+  sr <- function(u, v, q, val) {
+    data.frame(STUDYID = "S1", RDOMAIN = "AE", USUBJID = u, IDVAR = "AESEQ", IDVARVAL = v, QNAM = q,
+               QLABEL = if (q == "AETRTEM") "Treatment Emergent" else "Other Site", QVAL = val,
+               stringsAsFactors = FALSE)
+  }
+  # "1.0" and " 1 " both convert to 1; "x" does not and is dropped (bad_idvarval)
+  suppae <- rbind(sr("P1", "1.0", "AETRTEM", "Y"), sr("P1", " 1 ", "AESOSP", "LEFT ARM"),
+                  sr("P2", " 1 ", "AETRTEM", "N"), sr("P1", "x", "AETRTEM", "Q"))
+  chk <- sv_supp_check(ae, suppae, "ae", "suppae", rdomain = "AE")
+  expect_identical(chk$plan$idvars[[1]]$type, "double")
+  expect_identical(chk$bad_idvarval$n, 1L)
+  expect_identical(chk$n_matched, 3L)
+  code <- supp_compose(sv_supp_check_json(chk))
+  expect_parses(code)
+  expect_match(code, "as.numeric(dplyr::if_else(grepl(", fixed = TRUE)
+  got <- supp_run(code, ae = ae, suppae = suppae)
+  expect_identical(got$AESEQ, c(1, 2, 1))
+  expect_identical(as.vector(got$AETRTEM), c("Y", NA, "N"))
+  expect_identical(as.vector(got$AESOSP), c("LEFT ARM", NA, NA))
+  expect_identical(attr(got$AETRTEM, "label"), "Treatment Emergent")
+  expect_identical(attr(got$AESOSP, "label"), "Other Site")
+  expect_identical(nrow(got), 3L)
+  want <- supp_hand_merge(ae, suppae, convert = function(x) suppressWarnings(as.numeric(x)),
+                          labels = c(AETRTEM = "Treatment Emergent", AESOSP = "Other Site"))
+  expect_equal(got, want)
+})
+
 test_that("supp merge without STUDYID, without RDOMAIN, on a character key", {
   fx <- sv_cdisc_fixtures()
   # no STUDYID: USUBJID alone
