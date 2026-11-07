@@ -33,7 +33,7 @@ A \code{data.frame} with columns:
 \item{\code{reason}}{Human-readable justification describing similarity components.}
 \item{\code{group}}{\code{NA} for heuristic rows; \code{"cdisc:<from>~<to>"} for the rows of
 one CDISC key (the columns of one join).}
-\item{\code{kind}}{\code{NA} for heuristic rows; \code{"trace"}, \code{"subject"} or \code{"visit"}.}
+\item{\code{kind}}{\code{NA} for heuristic rows; \code{"trace"}, \code{"subject"} or \code{"visit"}; \code{"supp"} for a SUPP-- merge.}
 }
 }
 \description{

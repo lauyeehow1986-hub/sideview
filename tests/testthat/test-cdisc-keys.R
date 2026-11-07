@@ -342,3 +342,11 @@ test_that("join_diagnostics_request carries cdisc_notes as an array", {
     expect_false("cdisc_notes" %in% names(msg))
   })
 })
+
+test_that("supp note: the SUPP hint replaces the summarise note, both orders", {
+  fx <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_cards(list(ae = fx$ae, suppae = fx$suppae))
+  want <- "SUPPAE has one row per qualifier: use Merge into AE on the SUPPAE card (one column per QNAM) instead of a join."
+  expect_identical(sv_keys_m2m_note(cards[[1]], cards[[2]], "USUBJID"), want)
+  expect_identical(sv_keys_m2m_note(cards[[2]], cards[[1]], "USUBJID"), want)
+})

@@ -381,3 +381,66 @@ test_that("odd numeric IDVARVAL strings are treated alike in R and JS", {
   si$QNAM <- paste0("Q", seq_along(oddi))
   supp_parity("odd_integer", int, si)
 })
+
+# ---- server, Auto Map rows, join note (Task 6) ----
+
+test_that("server answers supp_check_request", {
+  cards <- sv_normalize_cards(list(ae = fx$ae, suppae = fx$suppae))
+  shiny::testServer(sideview_server(cards), {
+    session$setInputs(supp_check_request = list(id = "r1", parent = "ae", supp = "suppae"))
+    msgs <- session$userData$custom_messages
+    last <- msgs[[length(msgs)]]
+    expect_identical(last$type, "sideview_supp_check")
+    expect_identical(last$message$id, "r1")
+    expect_identical(last$message$status, "ok")
+    expect_true(length(last$message$plan) > 0)
+    # the plan from the reply, as JSON text, gives a drift of "not stale"
+    plan_json <- as.character(jsonlite::toJSON(sv_supp_check(fx$ae, fx$suppae, "ae", "suppae")$plan,
+                                               auto_unbox = TRUE))
+    session$setInputs(supp_check_request = list(id = "r2", parent = "ae", supp = "suppae", plan = plan_json))
+    msgs <- session$userData$custom_messages
+    last <- msgs[[length(msgs)]]
+    expect_identical(last$message$id, "r2")
+    expect_false(last$message$drift$stale)
+  })
+})
+
+test_that("server supp error for an unknown card", {
+  cards <- sv_normalize_cards(list(ae = fx$ae, suppae = fx$suppae))
+  shiny::testServer(sideview_server(cards), {
+    session$setInputs(supp_check_request = list(id = "r9", parent = "ae", supp = "nope"))
+    msgs <- session$userData$custom_messages
+    last <- msgs[[length(msgs)]]
+    expect_identical(last$type, "sideview_supp_check")
+    expect_identical(last$message$id, "r9")
+    expect_identical(last$message$error, "Not in the canvas: nope")
+  })
+})
+
+test_that("supp rows in suggest_mappings", {
+  cards <- sv_cdisc_cards(list(ae = fx$ae, suppae = fx$suppae))
+  m <- sv_suggest_mappings(cards)
+  s <- m[which(m$kind == "supp"), ]
+  expect_equal(nrow(s), 1L)
+  expect_identical(s$from_table, "suppae")
+  expect_identical(s$from_col, "USUBJID")
+  expect_identical(s$to_table, "ae")
+  expect_identical(s$to_col, "USUBJID")
+  expect_identical(s$confidence, 1)
+  expect_identical(s$group, "cdisc:suppae~ae")
+  expect_identical(s$reason, "CDISC SUPP merge: suppae holds qualifiers for AE")
+  # no heuristic row for the pair, and the supp row comes after the rule rows
+  pair <- m[(m$from_table == "suppae" & m$to_table == "ae") | (m$from_table == "ae" & m$to_table == "suppae"), ]
+  expect_equal(nrow(pair), 1L)
+  off <- sv_suggest_mappings(sv_normalize_cards(list(ae = fx$ae, suppae = fx$suppae)), cdisc = FALSE)
+  expect_false("supp" %in% off$kind)
+})
+
+test_that("supp note replaces summarise", {
+  cards <- sv_cdisc_cards(list(ae = fx$ae, suppae = fx$suppae))
+  want <- "SUPPAE has one row per qualifier: use Merge into AE on the SUPPAE card (one column per QNAM) instead of a join."
+  expect_identical(sv_keys_m2m_note(cards[[1]], cards[[2]], "USUBJID"), want)
+  expect_identical(sv_keys_m2m_note(cards[[2]], cards[[1]], "USUBJID"), want)
+  diag <- list(relationship = "many-to-many")
+  expect_identical(sv_cdisc_key_notes(cards[[2]], cards[[1]], "USUBJID", "USUBJID", diag)[1], want)
+})
