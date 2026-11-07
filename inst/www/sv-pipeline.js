@@ -1886,7 +1886,7 @@
     }
     if (!SUPP_DBL_RE.test(s)) return null;
     var d = Number(s.trim());
-    return isNaN(d) ? null : String(d);
+    return isFinite(d) ? String(d) : null;   // 1e999 overflows to Infinity: bad, as in R
   }
 
   function suppUnique(a) {
@@ -2207,7 +2207,8 @@
       dupCols.push('QNAM');
       var l = [q, 'dplyr::filter(IDVAR == ' + str(iv) + ')', 'dplyr::transmute(' + cols.join(', ') + ')'];
       // rows whose IDVARVAL does not convert join nothing (the check counts them as bad, not orphans)
-      if (iv !== '') l.push('dplyr::filter(!is.na(' + ident(iv) + '))');
+      // (a double key that overflows, "1e999", is Inf: not finite, so bad as well)
+      if (iv !== '') l.push(v.type === 'double' ? 'dplyr::filter(is.finite(' + ident(iv) + '))' : 'dplyr::filter(!is.na(' + ident(iv) + '))');
       out.push(nm + ' <- ' + l.join(nl));
       // the repeat guard runs after conversion, so "01" and "1" are one record
       out.push('local({\n  dup <- ' + nm + '[duplicated(' + nm + '[c(' + dupCols.map(str).join(', ') + ')]), ]\n' +
@@ -2224,6 +2225,9 @@
           '  ty <- arrow::as_arrow_table(utils::head(' + parentRef + ', 0))$schema[[' + k + ']]$type\n' +
           '  x <- ' + nm + '\n' +
           '  if (is.double(x[[' + k + ']]) && grepl("int", ty$ToString())) x <- x[x[[' + k + ']] == trunc(x[[' + k + ']]), ]\n' +
+          // a float32 parent holds 0.1 as 0.100000001...: the check compares the parent's values as
+          // doubles, so a key that does not survive the cast unchanged matches nothing (no rounding)
+          '  if (ty$ToString() %in% c("float", "halffloat")) x <- x[as.vector(arrow::arrow_table(x)[[' + k + ']]$cast(ty)) == x[[' + k + ']], ]\n' +
           '  x <- arrow::arrow_table(x)\n' +
           '  x[[' + k + ']] <- x[[' + k + ']]$cast(ty)\n' +
           '  x\n})');
@@ -2248,7 +2252,7 @@
       // a cast level is an Arrow table already (suppPrep)
       var wrap = kind === 'arrow' && !suppArrowCast(v);
       return 'dplyr::left_join(' + (wrap ? 'arrow::arrow_table(' + nm + ')' : nm) +
-        ', by = ' + joinBy(by) + (kind === 'duckdb' ? ', copy = TRUE' : '') + ')';
+        ', by = ' + joinBy(by) + (kind === 'duckdb' ? ', copy = TRUE, na_matches = "na"' : '') + ')';
     });
   }
 

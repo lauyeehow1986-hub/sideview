@@ -382,6 +382,40 @@ test_that("odd numeric IDVARVAL strings are treated alike in R and JS", {
   supp_parity("odd_integer", int, si)
 })
 
+test_that("non-finite double IDVARVAL (1e999, -1e999, Inf, NaN) is bad, never an orphan, in R and JS", {
+  dbl <- fx$ae
+  dbl$AESEQ <- c(1, 2, 3, 4)
+  nonfin <- c("1e999", "-1e999", "1E400", "Inf", "-Inf", "NaN", "NA")
+  s <- fx$suppae[rep(1, length(nonfin)), ]
+  s$IDVARVAL <- nonfin
+  s$QNAM <- paste0("Q", seq_along(nonfin))
+  w <- supp_parity("nonfinite_double", dbl, s)
+  expect_identical(w$bad_idvarval$n, length(nonfin))
+  expect_identical(w$n_orphan, 0L)
+  expect_identical(sv_supp_convert(c("1e999", "-1e999", "2.5"), "double"), c(NA, NA, "2.5"))
+  # an integer parent: out of range / non-finite text is bad as well
+  int <- fx$ae
+  s$IDVARVAL <- nonfin
+  w2 <- supp_parity("nonfinite_integer", int, s)
+  expect_identical(w2$bad_idvarval$n, length(nonfin))
+})
+
+test_that("an NA QNAM counts as the text NA in R and JS (as pivot_wider names it)", {
+  s <- fx$suppae2
+  s$QNAM[2] <- NA
+  r <- sv_supp_check(fx$ae, s, "ae", "suppae", rdomain = "AE")
+  expect_identical(vapply(r$columns, function(cl) cl$name, ""), c("AETRTEM", "NA", "AESOC2"))
+  w <- supp_parity("na_qnam", fx$ae, s)
+  # two NA QNAMs for one record repeat
+  s2 <- fx$suppae2
+  s2$QNAM[1:2] <- NA
+  s2$IDVARVAL[2] <- "1"
+  s2$USUBJID[2] <- s2$USUBJID[1]
+  w2 <- supp_parity("na_qnam_repeat", fx$ae, s2)
+  expect_identical(w2$repeats$n, 1L)
+  expect_identical(w2$repeats$samples[[1]]$QNAM, "NA")
+})
+
 # ---- server, Auto Map rows, join note (Task 6) ----
 
 test_that("server answers supp_check_request", {

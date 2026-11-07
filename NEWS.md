@@ -23,6 +23,17 @@
 * New Shiny wire items: the input `supp_check_request` (`{id, parent, supp, plan?, rdomain?}`) and the
   message `sideview_supp_check`.
 
+### Edge cases fixed in the merge
+
+* An `IDVARVAL` such as `1e999` (too large for a number) is now counted as "does not convert", not as an
+  orphan, and no longer stops the generated code on an Arrow int64 parent.
+* A missing `QNAM` is read as the text `NA` in the gadget and the widget alike (the merged column is named
+  `NA`).
+* On a duckdb parent, records whose `USUBJID` or `STUDYID` is `NA` now receive their qualifiers, as the check
+  says they do.
+* A float32 parent key is compared as the double it holds (0.1 stored as float32 is not `"0.1"`): such rows
+  are orphans in the check, and the generated Arrow code no longer rounds them onto the parent.
+
 ### Limits to know about
 
 * The merge needs the exact upper-case column names `USUBJID`, `IDVAR`, `IDVARVAL`, `QNAM` and `QVAL`.

@@ -91,6 +91,8 @@ sv_supp_convert <- function(v, type) {
   # and JavaScript's Number() disagrees on those, so both sides use this one pattern.
   ok <- grepl("^\\s*[+-]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][+-]?[0-9]+)?\\s*$", v)
   num <- suppressWarnings(as.numeric(ifelse(ok, v, NA_character_)))
+  # "1e999" overflows to Inf: not a key value, so it is bad, never an orphan
+  num[!is.finite(num)] <- NA_real_
   out <- rep(NA_character_, length(v))
   out[!is.na(num)] <- as.character(num[!is.na(num)])
   out
@@ -101,12 +103,19 @@ sv_supp_key_chr <- function(x) {
   as.character(x)
 }
 
+# A missing QNAM is the text "NA", as for keys and as tidyr::pivot_wider() names its column.
+sv_supp_qnam <- function(x) {
+  x <- as.character(x)
+  x[is.na(x)] <- "NA"
+  x
+}
+
 sv_supp_paste <- function(...) paste(..., sep = "\r")
 
-sv_supp_samples <- function(s, idvar, val, rows, n) {
+sv_supp_samples <- function(s, idvar, val, rows, n, qnam) {
   rows <- utils::head(which(rows), n)
   data.frame(USUBJID = as.character(s$USUBJID[rows]), IDVAR = idvar[rows],
-             IDVARVAL = as.character(s$IDVARVAL[rows]), QNAM = as.character(s$QNAM[rows]),
+             IDVARVAL = as.character(s$IDVARVAL[rows]), QNAM = qnam[rows],
              stringsAsFactors = FALSE)
 }
 
@@ -139,7 +148,7 @@ sv_supp_side <- function(supp, supp_name, rdomain) {
   levels_ <- unique(idvar)
   levels_ <- c(levels_[nzchar(levels_)], if ("" %in% levels_) "")
   list(supp = supp, has_rd = has_rd, n_other = n_other, n_supp = n_supp, idvar = idvar,
-       qnam = as.character(supp$QNAM), levels = levels_)
+       qnam = sv_supp_qnam(supp$QNAM), levels = levels_)
 }
 
 # Key type of each IDVAR level's parent column. `parent0` is the parent or any 0-row slice of
@@ -268,12 +277,12 @@ sv_supp_finish <- function(side, conv, matched, types, keys, parent_names, n_par
     n_supp = n_supp,
     n_matched = sum(matched),
     n_orphan = sum(orphan),
-    orphan_samples = sv_supp_samples(supp, idvar, val, orphan, sample_n),
+    orphan_samples = sv_supp_samples(supp, idvar, val, orphan, sample_n, qnam),
     n_other_rdomain = n_other,
-    repeats = list(n = sum(dup), samples = sv_supp_samples(supp, idvar, val, dup, sample_n)),
+    repeats = list(n = sum(dup), samples = sv_supp_samples(supp, idvar, val, dup, sample_n, qnam)),
     clashes = clashes,
     two_level = two_level,
-    bad_idvarval = list(n = sum(bad), samples = sv_supp_samples(supp, idvar, val, bad, sample_n)),
+    bad_idvarval = list(n = sum(bad), samples = sv_supp_samples(supp, idvar, val, bad, sample_n, qnam)),
     columns = lapply(qnams, function(q) list(name = q$qnam, label = q$label)),
     preview = pv,
     drift = drift

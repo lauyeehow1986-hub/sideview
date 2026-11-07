@@ -1232,6 +1232,104 @@ test_that("supp merge on an arrow parent with an int64 key joins on the parent's
   expect_false(grepl("as_arrow_table", plain, fixed = TRUE))
 })
 
+test_that("non-finite double IDVARVAL (1e999, -1e999) in the generated code is dropped like the check, on arrow int64, duckdb and memory", {
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("tidyr")
+  fx <- sv_cdisc_fixtures()
+  ae_dbl <- fx$ae
+  ae_dbl$AESEQ <- as.numeric(ae_dbl$AESEQ)
+  supp_x <- rbind(fx$suppae2,
+                  transform(fx$suppae2[1, ], IDVARVAL = "1e999", QNAM = "AEINF"),
+                  transform(fx$suppae2[1, ], IDVARVAL = "-1e999", QNAM = "AENEG"),
+                  transform(fx$suppae2[1, ], IDVARVAL = "NaN", QNAM = "AENAN"))
+  chk <- sv_supp_check(ae_dbl, supp_x, "ae", "suppae", rdomain = "AE")
+  expect_identical(chk$bad_idvarval$n, 3L)
+  expect_identical(chk$n_orphan, 0L)
+  sch <- arrow::schema(lapply(ae_dbl, function(x) if (is.character(x)) arrow::utf8() else arrow::int64()))
+  ae64 <- arrow::Table$create(ae_dbl, schema = sch)
+  conv <- function(x) suppressWarnings(as.numeric(x))
+  want <- supp_hand_merge(fx$ae, supp_x[!supp_x$QNAM %in% c("AEINF", "AENEG", "AENAN"), ], convert = conv)
+  want$AESEQ <- as.integer(want$AESEQ)
+  clean <- function(d) { d <- as.data.frame(d); d[] <- lapply(d, function(x) { attr(x, "label") <- NULL; x }); d }
+  # arrow int64 parent: used to stop in the cast ("1e999" -> Inf -> int64)
+  code <- supp_compose(sv_supp_check_json(chk), meta = '{"ae": {"lazy": "arrow", "codeRef": "ae"}}')
+  expect_parses(code)
+  got <- supp_run(code, ae = ae64, suppae = supp_x)
+  got <- clean(got)
+  expect_false(any(c("AEINF", "AENEG", "AENAN") %in% names(got)))
+  expect_equal(got[names(want)], clean(want)[names(want)], ignore_attr = TRUE)
+  # in-memory parent
+  code <- supp_compose(sv_supp_check_json(chk))
+  got <- clean(supp_run(code, ae = ae_dbl, suppae = supp_x))
+  expect_false(any(c("AEINF", "AENEG", "AENAN") %in% names(got)))
+})
+
+test_that("an NA QNAM is merged as a column named NA, and the code parses", {
+  skip_if_not_installed("tidyr")
+  fx <- sv_cdisc_fixtures()
+  s <- fx$suppae2
+  s$QNAM[2] <- NA
+  chk <- sv_supp_check(fx$ae, s, "ae", "suppae", rdomain = "AE")
+  code <- supp_compose(sv_supp_check_json(chk))
+  expect_parses(code)
+  got <- supp_run(code, ae = fx$ae, suppae = s)
+  expect_true("NA" %in% names(got))
+  expect_identical(got[["NA"]][2], "Y")
+})
+
+test_that("supp merge with NA keys: duckdb and arrow match NA to NA, as the check and memory do", {
+  skip_unless_lazy_stack()
+  fx <- sv_cdisc_fixtures()
+  ae <- fx$ae
+  ae$USUBJID[2] <- NA
+  s <- fx$suppae2
+  s$USUBJID[c(2, 4)] <- NA
+  chk <- supp_chk_json(ae, s)
+  expect_identical(sv_supp_check(ae, s, "ae", "suppae", rdomain = "AE")$n_orphan, 0L)
+  code <- supp_compose(chk)
+  want <- supp_run(code, ae = ae, suppae = s)
+  expect_false(all(is.na(want$AETRTEM[2])))   # the NA record did match in memory
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbWriteTable(con, "ae", ae)
+  cases <- list(
+    duckdb = list(meta = '{"ae": {"lazy": "duckdb", "codeRef": "dplyr::tbl(con, \\"ae\\")"}}', ae = NULL),
+    arrow = list(meta = '{"ae": {"lazy": "arrow", "codeRef": "ae"}}', ae = arrow::arrow_table(ae)))
+  for (nm in names(cases)) {
+    cs <- cases[[nm]]
+    code <- supp_compose(chk, meta = cs$meta)
+    expect_parses(code, nm)
+    args <- list(code = code, con = con, suppae = s)
+    if (!is.null(cs$ae)) args$ae <- cs$ae
+    got <- tryCatch(do.call(supp_run, args), error = function(e) {
+      fail(paste0(nm, ": ", conditionMessage(e))); NULL
+    })
+    if (is.null(got)) next
+    expect_same_rows(got, want, info = nm)
+  }
+})
+
+test_that("supp merge on an arrow float32 key matches what the check counts (no rounding to the parent's type)", {
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("tidyr")
+  fx <- sv_cdisc_fixtures()
+  ae <- data.frame(STUDYID = "SV-001", USUBJID = paste0("U", 1:4), AESEQ = c(0.1, 0.5, 16777217, 2.25),
+                   stringsAsFactors = FALSE)
+  s <- fx$suppae[rep(1, 4), ]
+  s$USUBJID <- ae$USUBJID
+  s$IDVARVAL <- c("0.1", "0.5", "16777217", "2.25")
+  s$QNAM <- "Q"
+  f32 <- arrow::Table$create(ae, schema = arrow::schema(STUDYID = arrow::utf8(), USUBJID = arrow::utf8(),
+                                                       AESEQ = arrow::float32()))
+  # the check sees the float32 values as doubles: 0.1 and 16777217 are not in the parent
+  chk <- sv_lazy_supp_check(f32, s, "ae", "suppae", rdomain = "AE")
+  expect_identical(c(chk$n_matched, chk$n_orphan), c(2L, 2L))
+  code <- supp_compose(sv_supp_check_json(chk), meta = '{"ae": {"lazy": "arrow", "codeRef": "ae"}}')
+  expect_parses(code)
+  got <- as.data.frame(supp_run(code, ae = f32, suppae = s))
+  expect_identical(got$Q[order(got$USUBJID)], c(NA, "Y", NA, "Y")[c(1, 2, 3, 4)])
+})
+
 test_that("supp clash guard reads an arrow query's columns", {
   skip_if_not_installed("arrow")
   skip_if_not_installed("tidyr")
