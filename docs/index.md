@@ -48,7 +48,9 @@ Or install the development version from GitHub:
   reads `.xpt`, `.sas7bdat`, Dataset-JSON and parquet files. See the
   [CDISC
   article](https://lauyeehow1986-hub.github.io/sideview/articles/cdisc.html).
-  It is for awareness, not conformance checking.
+  Auto Map suggests CDISC join keys, and a **Merge into AE** button
+  folds a `SUPPAE` (or `SUPPQUAL`) table into its parent with a merge
+  check. It is for awareness, not conformance checking.
 - **Date-Window Joins**: Click the calendar on a join step to join on a
   date rule (a window of days, between, nearest before or after,
   overlaps). The join check shows the rows the rule dropped, and

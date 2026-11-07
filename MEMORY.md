@@ -5,6 +5,33 @@ Each entry: **date — change — why — verification**. Keep the "Open issues"
 
 ---
 
+### 2026-11-03 - CDISC SUPPQUAL merge: sideview 0.7.0 (Tasks 1-9)
+- **What shipped:** tag fields `rdomains` / `merge_targets` (SUPPxx, generic SUPPQUAL with several RDOMAINs); `sv_supp_check()` (+ `sv_supp_check_json()`, `sv_supp_key_type()`; R/supp.R), its JS twin `SideviewPipeline.suppCheck()` and lazy twin `sv_lazy_supp_check()` (duckdb / arrow parent stays lazy, only SUPP collected); the `supp` pipeline step (plan captured when added; tidyr + dplyr code with guards for repeats, clashes, other IDVAR levels, two-level QNAMs, double keys); input `supp_check_request` and message `sideview_supp_check`; Auto Map `kind = "supp"` rows (dashed group, accepting adds the step, not a join); join-check note; **Merge into <parent>** button, step line, Discrepancy report, quiet re-check and **Refresh**. Docs: article section "Merging SUPP-- tables", NEWS 0.7.0, README, CLAUDE.md twin rule, DESCRIPTION 0.7.0.
+- **Rulings:**
+  - A QNAM with no QLABEL has label `""` (not `NA`), in R, JS and lazy.
+  - `IDVARVAL` rows that do not convert are `bad_idvarval`, counted apart from orphans (`n_matched + n_orphan + bad == n_supp`).
+  - Double keys convert only if one decimal regex matches, on both sides (`"0x10"`, `"Inf"`, `"1d3"`, `"NaN"`, `""` are bad).
+  - The clash guard in generated code uses `colnames(<parent>)` (`names()` is wrong for dbplyr). Clashes with columns made by earlier chain steps (mutate, rename, earlier merges) are caught in the browser only (`columnsBefore()`), not by the code guard.
+  - R `as.character(double)` gives 15 significant digits; JS gives the shortest round-trip. A double key past 15 digits can differ between gadget and widget.
+  - The step carries `rdomain_col`; RDOMAIN is filtered only if the column exists.
+- **Verified:** mock-DOM runner (gui-test-runner.js); R test files run singly (test-supp.R, test-pipeline.R, test-cdisc.R, test-lazy.R, test-module.R, ...; the whole suite hangs, never run it in one go); real browser (Task 8, headless Chrome via chromote, real input): gadget merge + report, Auto Map click, header buttons at 1400/1024/560 px, module with a duckdb parent, saved widget. `devtools::check()` and the pkgdown rebuild: see task-9-report.md.
+- **NOT verified: the RStudio pass.** Not done by the implementer. To verify in RStudio (dialog, Viewer pane, external browser):
+  - [ ] Merge into AE on a `suppae` card: step line, Discrepancy report, columns and labels
+  - [ ] Press the button a second time (step replaced, not duplicated)
+  - [ ] Undo and redo of the merge
+  - [ ] Edit `suppae` (add a row for a new IDVARVAL / repeat a QNAM), then check "Merge needs refreshing" and Refresh
+  - [ ] Header at 560 px (icon-only button, no overlap with title and badges)
+  - [ ] Auto Map supp spline group; inserting the generated code into RStudio
+- **Deferred minors (backlog):**
+  - T1: `R/cdisc.R:65` unused `rdomains = rd` in the suppqual rule; the SUPP regex at `R/cdisc.R:310` duplicates other checks (extract `sv_cdisc_is_supp`); tests lack a by-columns-unhelpful-name case and `cdisc_update` payload coverage.
+  - T2: `supp.R:149` comment overclaims lazy reuse; `sv_supp_paste` NA key gives "NA" (parity); `as.numeric` edge strings vs JS `Number()`.
+  - T3: no zero-row / integer64 parity case (callers must pass `opts.parentCols` / `suppCols`); JS `trim` vs R `trimws` on NBSP; dead `isNaN` branch.
+  - T4: numeric IDVAR doubles past 15 digits match numerically in duckdb vs as text in memory; double/Date STUDYID/USUBJID keys print differently in duckdb; the collect spy is not airtight and `f` is unused at test-lazy.R:530; no factor RDOMAIN lazy case.
+  - T5: an IDVAR named `SUBJ` collides with the `<supp>_subj` level table; factor QNAM low risk; no test of one SUPPQUAL merged into two parents; the `duckRef` scan skips `s.supp`.
+  - T6: a bad or unnamed plan is silently dropped; no tests for lazy card, module ns, forged input, NA to null, multi-target Auto Map; the note appears only on the m2m path.
+  - T7: undo/redo of any step forgets all merge checks (one extra request per merge step); the "not connected" `setTimeout(0)` callback is not guarded by `_destroyed`; disabled-reason order; stored checks are not re-widened when a merge moves; `columnsBefore` has no direct unit test; a re-check after reorder uses the current order; the widget check is slow on huge tables.
+  - T8: fixed `Sys.sleep` waits; the `mapped == 0` check wraps `e$send`; the width test measures only `<button>`s; the card menu and Refresh are not browser-tested; the gadget never sends `sideview_snapshot`.
+
 ### 2026-11-02 - Real-browser tests no longer time out under load (test infrastructure only)
 - **Root cause:** `sv_open_page()` (tests/testthat/helper-browser.R) waited for `Page$loadEventFired()` with chromote's default 10 s event timeout (`default_timeout`), and every later `Runtime$evaluate` had the same 10 s. With the suite or `devtools::check()` running (Chrome, duckdb, callr app starts all competing for CPU) the first paint of the callr app took longer, giving "timed out waiting for Page.loadEventFired". Only helper-browser.R starts Chrome (test-layout-browser.R, test-lazy-browser.R); shinytest2 `AppDriver` is used once, behind `SIDEVIEW_HEADED_QA`, so it is off by default.
 - **Change:** one shared timeout, `sv_browser_timeout()` (90 s, env `SIDEVIEW_BROWSER_TIMEOUT`), set as the session's `default_timeout`; `sv_navigate()` (navigate + load event, one retry); `sv_wait_js()` (poll a JS condition to a deadline, replaces the fixed 15 s ready loops); `ChromoteSession$new` retried once; app start wait raised from 30 s to 2 min. The module page re-navigation uses `sv_navigate()`. Pages were already shared per file. No assertion or geometry threshold changed.

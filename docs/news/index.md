@@ -1,5 +1,54 @@
 # Changelog
 
+## sideview 0.7.0
+
+### Merging SUPP– tables
+
+- **Merge into AE.** A tagged `SUPPAE`, `SUPPDM` or `SUPPQUAL` card gets
+  a **Merge into** button. It adds a merge step that folds the qualifier
+  rows into the parent as one column per `QNAM`, with its `QLABEL` as
+  the column label (`""` when there is none). The step writes tidyr +
+  dplyr code with guards that stop when the data no longer fits.
+  Pressing the button again replaces the step, and one undo takes it
+  back. A `SUPPQUAL` with several `RDOMAIN`s gets one merge per parent
+  on the canvas.
+- **Merge check.** The Discrepancy tab shows parent, SUPP, matched and
+  orphan counts, rows of other `RDOMAIN`s, a `QNAM` that repeats for one
+  record, a clash with a parent column, a `QNAM` at two `IDVAR` levels,
+  `IDVARVAL` values that do not convert (counted apart from orphans),
+  the new columns and a 5-row preview. The step line in the Pipeline tab
+  carries a one-line summary.
+- **Refresh.** When the data no longer fits the plan (for example after
+  editing `suppae`), the step reads “Merge needs refreshing” and
+  **Refresh** re-plans it as one undo step.
+- **Auto Map** offers a SUPP card’s merge as a dashed spline group to
+  its parent; accepting it adds the merge step instead of a join. The
+  join check mentions the merge when you join a SUPP table by hand.
+- **Lazy cards.** An arrow or duckdb parent stays lazy; only the SUPP
+  table is collected.
+- **[`sv_supp_check()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_check.md)**
+  (new, exported) runs the merge check on two data frames or cards.
+  [`sv_supp_check_json()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_check.md)
+  and
+  [`sv_supp_key_type()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_check.md)
+  are exported with it.
+  [`sv_suggest_mappings()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_suggest_mappings.md)
+  gains rows with `kind = "supp"`.
+- New Shiny wire items: the input `supp_check_request` and the message
+  `sideview_supp_check`.
+
+#### Limits to know about
+
+- The merge needs the exact upper-case column names `USUBJID`, `IDVAR`,
+  `IDVARVAL`, `QNAM` and `QVAL`.
+- A second merge into one parent is checked for clashes in the browser;
+  the guard in the generated code checks the source parent table only.
+- The check runs when you press the button or Refresh; only the guards
+  in the code stop a rerun on new data.
+- A double key with more than 15 significant digits can match
+  differently in R and in the widget.
+- `RELREC` tables are still not merged or suggested.
+
 ## sideview 0.6.0
 
 ### CDISC join keys

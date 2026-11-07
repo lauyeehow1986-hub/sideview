@@ -166,3 +166,7 @@ Recognise SDTM, SEND and ADaM datasets.
   : CDISC join keys
 - [`sv_read_cdisc()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_read_cdisc.md)
   : Read CDISC datasets from files
+- [`sv_supp_check()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_check.md)
+  [`sv_supp_key_type()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_check.md)
+  [`sv_supp_check_json()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_check.md)
+  : Check a SUPP– merge

@@ -73,7 +73,8 @@ A `data.frame` with columns:
 
 - `kind`:
 
-  `NA` for heuristic rows; `"trace"`, `"subject"` or `"visit"`.
+  `NA` for heuristic rows; `"trace"`, `"subject"` or `"visit"`; `"supp"`
+  for a SUPP– merge.
 
 ## Examples
 

@@ -94,6 +94,14 @@ rstudio bridge: R/rstudio.R
   and `strict_args`, which the engine hands to `pipeline.setJoinCheck(id, strict_args)` for Strict.
 - **Strict applicability:** the join check runs on the two original cards, so `relationship =` / `unmatched =` are written only where that check still holds. `Pipeline.strictApplies(step)` (sv-pipeline.js) returns `{ok, reason}`: not ok when a card is lazy, when an earlier enabled filter, join, summarise, pivot or custom step is on the left table's chain, or when the right table has steps of its own. `compose()`, the Strict checkbox (`joinOptionsHtml`: disabled, title = reason) and `strictLine()` all ask it; the step keeps its `strict` flag. Do not duplicate the test.
 - **Join check cache:** a path that replaces a card's data (none exists today) must call `clearJoinChecks()` and reset `joinDiag`, or stale checks (and rule drops) stay on screen.
+- **SUPP merge (0.7.0):** same twin rule. `sv_supp_check()` (R/supp.R), `SideviewPipeline.suppCheck()` (sv-pipeline.js)
+  and `sv_lazy_supp_check()` (R/lazy.R) return the same fields; test-supp.R / test-lazy.R hold them to each other.
+  The merge is a pipeline step `{kind: 'supp', key, table, supp, rdomain, keys, idvars, qnams, rdomain_col}`
+  whose plan is captured when it is added; `compose()` writes the plan and guards into the R code (clash guard
+  uses `colnames()`, never `names()`, so dbplyr works). A QNAM without QLABEL has label `""`. `IDVARVAL` rows that
+  do not convert are `bad_idvarval`, never orphans (`n_matched + n_orphan + bad == n_supp`). Double keys are
+  converted only if one decimal regex matches, in R and JS alike. Clashes with columns made by earlier chain
+  steps are caught in the browser (`columnsBefore()`), not by the code guard. Change a twin together with the others.
 - **Column inspector / codebook:** same twin rule. `sv_column_profile()` / `sv_codebook()` (R/codebook.R) and
   `SideviewPipeline.columnProfile()` / `codebookRow()` / `codebookCsv()` (sv-pipeline.js); `test-codebook.R`
   checks the fields, the issue texts and that the JS CSV is byte-equal to `write.csv(sv_codebook(...))`.

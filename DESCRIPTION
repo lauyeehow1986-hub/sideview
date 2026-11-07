@@ -1,6 +1,6 @@
 Package: sideview
 Title: Explore and Join Many Tables on a Zoomable Canvas
-Version: 0.6.0
+Version: 0.7.0
 Authors@R: c(
     person("Yee How", "Lau", email = "lauyeehow1986@gmail.com", role = c("aut", "cre", "cph"))
   )
@@ -50,5 +50,6 @@ Suggests:
     chromote,
     httpuv,
     pkgload,
-    lubridate
+    lubridate,
+    tidyr
 Config/testthat/edition: 3

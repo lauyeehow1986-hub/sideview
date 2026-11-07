@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.6.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.7.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -33,6 +33,34 @@
       <small>Source: <a href="https://github.com/lauyeehow1986-hub/sideview/blob/HEAD/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.7.0" id="sideview-070">sideview 0.7.0<a class="anchor" aria-label="anchor" href="#sideview-070"></a></h2>
+<div class="section level3">
+<h3 id="merging-supp-tables-0-7-0">Merging SUPP– tables<a class="anchor" aria-label="anchor" href="#merging-supp-tables-0-7-0"></a></h3>
+<ul><li>
+<strong>Merge into AE.</strong> A tagged <code>SUPPAE</code>, <code>SUPPDM</code> or <code>SUPPQUAL</code> card gets a <strong>Merge into <parent></parent></strong> button. It adds a merge step that folds the qualifier rows into the parent as one column per <code>QNAM</code>, with its <code>QLABEL</code> as the column label (<code>""</code> when there is none). The step writes tidyr + dplyr code with guards that stop when the data no longer fits. Pressing the button again replaces the step, and one undo takes it back. A <code>SUPPQUAL</code> with several <code>RDOMAIN</code>s gets one merge per parent on the canvas.</li>
+<li>
+<strong>Merge check.</strong> The Discrepancy tab shows parent, SUPP, matched and orphan counts, rows of other <code>RDOMAIN</code>s, a <code>QNAM</code> that repeats for one record, a clash with a parent column, a <code>QNAM</code> at two <code>IDVAR</code> levels, <code>IDVARVAL</code> values that do not convert (counted apart from orphans), the new columns and a 5-row preview. The step line in the Pipeline tab carries a one-line summary.</li>
+<li>
+<strong>Refresh.</strong> When the data no longer fits the plan (for example after editing <code>suppae</code>), the step reads “Merge needs refreshing” and <strong>Refresh</strong> re-plans it as one undo step.</li>
+<li>
+<strong>Auto Map</strong> offers a SUPP card’s merge as a dashed spline group to its parent; accepting it adds the merge step instead of a join. The join check mentions the merge when you join a SUPP table by hand.</li>
+<li>
+<strong>Lazy cards.</strong> An arrow or duckdb parent stays lazy; only the SUPP table is collected.</li>
+<li>
+<strong><code><a href="../reference/sv_supp_check.html">sv_supp_check()</a></code></strong> (new, exported) runs the merge check on two data frames or cards. <code><a href="../reference/sv_supp_check.html">sv_supp_check_json()</a></code> and <code><a href="../reference/sv_supp_check.html">sv_supp_key_type()</a></code> are exported with it. <code><a href="../reference/sv_suggest_mappings.html">sv_suggest_mappings()</a></code> gains rows with <code>kind = "supp"</code>.</li>
+<li>New Shiny wire items: the input <code>supp_check_request</code> and the message <code>sideview_supp_check</code>.</li>
+</ul><div class="section level4">
+<h4 id="limits-to-know-about-0-7-0">Limits to know about<a class="anchor" aria-label="anchor" href="#limits-to-know-about-0-7-0"></a></h4>
+<ul><li>The merge needs the exact upper-case column names <code>USUBJID</code>, <code>IDVAR</code>, <code>IDVARVAL</code>, <code>QNAM</code> and <code>QVAL</code>.</li>
+<li>A second merge into one parent is checked for clashes in the browser; the guard in the generated code checks the source parent table only.</li>
+<li>The check runs when you press the button or Refresh; only the guards in the code stop a rerun on new data.</li>
+<li>A double key with more than 15 significant digits can match differently in R and in the widget.</li>
+<li>
+<code>RELREC</code> tables are still not merged or suggested.</li>
+</ul></div>
+</div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.6.0" id="sideview-060">sideview 0.6.0<a class="anchor" aria-label="anchor" href="#sideview-060"></a></h2>
 <div class="section level3">
