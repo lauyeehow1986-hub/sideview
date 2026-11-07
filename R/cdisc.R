@@ -59,7 +59,9 @@ sv_cdisc_check_arg <- function(cdisc) {
 sv_cdisc_peek <- function(data) {
   clean <- function(x) {
     x <- toupper(trimws(as.character(x)))
-    sort(unique(x[!is.na(x) & nzchar(x)]))
+    # radix: byte order in every locale, as the lazy query's arrange() is, so the first
+    # RDOMAIN (the default merge target) is the same on both paths
+    sort(unique(x[!is.na(x) & nzchar(x)]), method = "radix")
   }
   # Column names match whatever their case (STUDYID, studyid, StudyID): `cols`
   # is upper-cased for the rules, `actual(x)` gives the real name to query.

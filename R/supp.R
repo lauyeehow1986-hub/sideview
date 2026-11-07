@@ -76,23 +76,40 @@ sv_supp_key_type <- function(x) {
   NA_character_
 }
 
-# Convert IDVARVAL text to the key type; NA means it did not convert.
-sv_supp_convert <- function(v, type) {
+# The whitespace allowed around a numeric IDVARVAL: ASCII only (space, tab, LF, CR, FF, VT),
+# which is what as.integer()/as.numeric() skip. JavaScript's trim() and \s also take NBSP,
+# U+2028, U+3000 and the BOM, so both sides spell the class out. Inside a bracket TRE reads
+# "\t" as a backslash and a "t", so the R side (and the generated code) use perl = TRUE.
+sv_supp_ws <- "[ \\t\\n\\r\\f\\x0b]"
+sv_supp_int_re <- paste0("^", sv_supp_ws, "*[+-]?[0-9]+", sv_supp_ws, "*$")
+sv_supp_dbl_re <- paste0("^", sv_supp_ws, "*[+-]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][+-]?[0-9]+)?",
+                         sv_supp_ws, "*$")
+# Past this a double key is bad: R parses "1.7976931348623158e308" (the largest double) to Inf
+# where JavaScript keeps it, so the top of the range is cut off on both sides alike.
+sv_supp_dbl_max <- 1e308
+
+# IDVARVAL converted to the key type as a number (NA = did not convert); NULL for character.
+sv_supp_convert_num <- function(v, type) {
   v <- as.character(v)
-  if (identical(type, "character")) return(v)
+  if (identical(type, "character")) return(NULL)
   if (identical(type, "integer")) {
-    ok <- grepl("^\\s*[+-]?[0-9]+\\s*$", v)
-    out <- rep(NA_character_, length(v))
-    num <- suppressWarnings(as.integer(ifelse(ok, v, NA_character_)))
-    out[!is.na(num)] <- as.character(num[!is.na(num)])
-    return(out)
+    ok <- grepl(sv_supp_int_re, v, perl = TRUE)
+    return(suppressWarnings(as.integer(ifelse(ok, v, NA_character_))))
   }
   # Plain decimal or exponent forms only: as.numeric() would also take "0x10", "Inf", "1d3"
   # and JavaScript's Number() disagrees on those, so both sides use this one pattern.
-  ok <- grepl("^\\s*[+-]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][+-]?[0-9]+)?\\s*$", v)
+  ok <- grepl(sv_supp_dbl_re, v, perl = TRUE)
   num <- suppressWarnings(as.numeric(ifelse(ok, v, NA_character_)))
   # "1e999" overflows to Inf: not a key value, so it is bad, never an orphan
-  num[!is.finite(num)] <- NA_real_
+  num[is.na(num) | abs(num) > sv_supp_dbl_max] <- NA_real_
+  num
+}
+
+# Convert IDVARVAL text to the key type; NA means it did not convert.
+sv_supp_convert <- function(v, type) {
+  v <- as.character(v)
+  num <- sv_supp_convert_num(v, type)
+  if (is.null(num)) return(v)
   out <- rep(NA_character_, length(v))
   out[!is.na(num)] <- as.character(num[!is.na(num)])
   out
@@ -100,6 +117,9 @@ sv_supp_convert <- function(v, type) {
 
 sv_supp_key_chr <- function(x) {
   if (is.factor(x)) x <- as.character(x)
+  # an integer64 key is a double key (sv_supp_key_type()): its text must be the double's text,
+  # "3e+09", as IDVARVAL "3000000000" converts to, not "3000000000"
+  if (inherits(x, "integer64")) x <- suppressWarnings(as.numeric(x))
   as.character(x)
 }
 
@@ -167,19 +187,24 @@ sv_supp_types <- function(levels_, parent0, parent_name) {
 }
 
 # The SUPP key text per row, and IDVARVAL converted to the parent key type ("" at subject
-# level; `bad` = did not convert).
+# level; `bad` = did not convert). `num` is the converted value as a full-precision double for
+# numeric levels (NA elsewhere): the lazy match compares numbers, and the text in `val` keeps
+# only the 15 digits as.character() writes.
 sv_supp_convert_side <- function(side, types, keys) {
   supp <- side$supp
   skey <- do.call(sv_supp_paste, lapply(supp[keys], sv_supp_key_chr))
   val <- rep("", side$n_supp)
   bad <- rep(FALSE, side$n_supp)
+  num <- rep(NA_real_, side$n_supp)
   for (iv in side$levels[nzchar(side$levels)]) {
     r <- side$idvar == iv
+    cn <- sv_supp_convert_num(supp$IDVARVAL[r], types[[iv]])
     cv <- sv_supp_convert(supp$IDVARVAL[r], types[[iv]])
     val[r] <- ifelse(is.na(cv), NA_character_, cv)
     bad[r] <- is.na(cv)
+    if (!is.null(cn)) num[r] <- as.numeric(cn)
   }
-  list(skey = skey, val = val, bad = bad)
+  list(skey = skey, val = val, bad = bad, num = num)
 }
 
 # Which SUPP rows find a parent record, on a parent data frame.

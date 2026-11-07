@@ -1257,11 +1257,53 @@ test_that("non-finite double IDVARVAL (1e999, -1e999) in the generated code is d
   got <- supp_run(code, ae = ae64, suppae = supp_x)
   got <- clean(got)
   expect_false(any(c("AEINF", "AENEG", "AENAN") %in% names(got)))
-  expect_equal(got[names(want)], clean(want)[names(want)], ignore_attr = TRUE)
+  # Arrow's hash join does not keep row order
+  expect_same_rows(got[names(want)], clean(want)[names(want)])
   # in-memory parent
   code <- supp_compose(sv_supp_check_json(chk))
   got <- clean(supp_run(code, ae = ae_dbl, suppae = supp_x))
   expect_false(any(c("AEINF", "AENEG", "AENAN") %in% names(got)))
+  want_dbl <- want
+  want_dbl$AESEQ <- as.numeric(want_dbl$AESEQ)
+  expect_same_rows(got[names(want)], clean(want_dbl)[names(want)])
+  # duckdb parent
+  skip_unless_lazy_stack()
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbWriteTable(con, "ae", ae_dbl)
+  code <- supp_compose(sv_supp_check_json(chk), meta = '{"ae": {"lazy": "duckdb", "codeRef": "dplyr::tbl(con, \\"ae\\")"}}')
+  expect_parses(code)
+  got <- clean(dplyr::collect(supp_run(code, con = con, suppae = supp_x)))
+  expect_false(any(c("AEINF", "AENEG", "AENAN") %in% names(got)))
+  expect_same_rows(got[names(want)], clean(want_dbl)[names(want)])
+})
+
+test_that("the generated code converts IDVARVAL as the check does: ASCII whitespace only, nothing past 1e308", {
+  skip_if_not_installed("tidyr")
+  fx <- sv_cdisc_fixtures()
+  base <- fx$suppae2[1, ]
+  vals <- c(W_TAB = "\t1", W_VT = "\v1", W_FFCR = "\f1\r", W_SP = " 1 ",
+            B_NBSP = " 1", B_NBSP2 = "1 ", B_LS = " 1", B_BOM = "﻿1", B_IDSP = "　1")
+  big <- c(B_MAX = "1.7976931348623158e308", B_15 = "1.5e308")
+  mk <- function(v) {
+    s <- base[rep(1, length(v)), ]
+    s$IDVARVAL <- unname(v)
+    s$QNAM <- names(v)
+    s
+  }
+  ae_dbl <- fx$ae
+  ae_dbl$AESEQ <- as.numeric(ae_dbl$AESEQ)
+  for (case in list(list(parent = fx$ae, s = mk(vals)), list(parent = ae_dbl, s = mk(c(vals, big))))) {
+    chk <- sv_supp_check(case$parent, case$s, "ae", "suppae", rdomain = "AE")
+    good <- grep("^W_", case$s$QNAM, value = TRUE)
+    expect_identical(chk$bad_idvarval$n, sum(!grepl("^W_", case$s$QNAM)))
+    expect_identical(chk$n_matched, length(good))
+    code <- supp_compose(sv_supp_check_json(chk))
+    expect_parses(code)
+    got <- supp_run(code, ae = case$parent, suppae = case$s)
+    expect_setequal(intersect(names(got), case$s$QNAM), good)
+    expect_true(all(got[got$USUBJID == base$USUBJID & got$AESEQ == 1, good] == base$QVAL))
+  }
 })
 
 test_that("an NA QNAM is merged as a column named NA, and the code parses", {
@@ -1275,6 +1317,26 @@ test_that("an NA QNAM is merged as a column named NA, and the code parses", {
   got <- supp_run(code, ae = fx$ae, suppae = s)
   expect_true("NA" %in% names(got))
   expect_identical(got[["NA"]][2], "Y")
+})
+
+test_that("an NA QNAM and a QNAM \"NA\" are one name to the code guards, as to the check", {
+  skip_if_not_installed("tidyr")
+  fx <- sv_cdisc_fixtures()
+  s <- fx$suppae2
+  s$QNAM[2] <- NA
+  code <- supp_compose(sv_supp_check_json(sv_supp_check(fx$ae, s, "ae", "suppae", rdomain = "AE")))
+  # the same record gets QNAM "NA" too: one repeated QNAM
+  s_rep <- rbind(s, transform(s[2, ], QNAM = "NA"))
+  expect_identical(sv_supp_check(fx$ae, s_rep, "ae", "suppae", rdomain = "AE")$status, "error")
+  expect_match(supp_stop(code, ae = fx$ae, suppae = s_rep), "suppae repeats a QNAM for 1 record(s)", fixed = TRUE)
+  # "NA" at the subject level as well: one QNAM at two levels
+  s_lv <- rbind(s, transform(s[4, ], QNAM = "NA"))
+  expect_identical(sv_supp_check(fx$ae, s_lv, "ae", "suppae", rdomain = "AE")$status, "error")
+  expect_identical(supp_stop(code, ae = fx$ae, suppae = s_lv), "suppae QNAMs are at two levels: NA")
+  # a parent column named NA clashes with the NA QNAM
+  ae_na <- fx$ae
+  ae_na[["NA"]] <- 1
+  expect_identical(supp_stop(code, ae = ae_na, suppae = s), "suppae QNAMs clash with ae columns: NA")
 })
 
 test_that("supp merge with NA keys: duckdb and arrow match NA to NA, as the check and memory do", {
@@ -1328,6 +1390,44 @@ test_that("supp merge on an arrow float32 key matches what the check counts (no 
   expect_parses(code)
   got <- as.data.frame(supp_run(code, ae = f32, suppae = s))
   expect_identical(got$Q[order(got$USUBJID)], c(NA, "Y", NA, "Y")[c(1, 2, 3, 4)])
+})
+
+test_that("supp merge on a narrow arrow key type drops keys the type cannot hold, as the check does", {
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("tidyr")
+  fx <- sv_cdisc_fixtures()
+  # each key either matches exactly or is one the parent type cannot hold: the check calls it an
+  # orphan (or bad), so the code must merge nothing onto it and must not stop in the cast
+  cases <- list(
+    int8 = list(ty = arrow::int8(), seq = c(1, 2, 3), vals = c("1", "300", "3"), q = c("Y", NA, "Y")),
+    uint8 = list(ty = arrow::uint8(), seq = c(1, 2), vals = c("1", "-1"), q = c("Y", NA)),
+    int16 = list(ty = arrow::int16(), seq = c(1, 2), vals = c("1", "70000"), q = c("Y", NA)),
+    int64 = list(ty = arrow::int64(), seq = c(1, 2, 3, 4), vals = c("1", "1e19", "-1e19", "9.3e18"),
+                 q = c("Y", NA, NA, NA)),
+    # a decimal cast rounds: 0.125 -> 0.12 and 1.004 -> 1.00 would land on the parent records
+    decimal = list(ty = arrow::decimal128(10, 2), seq = c(0.12, 1, 2.5, 3), vals = c("0.125", "1.004", "2.5", "1e19"),
+                   q = c(NA, NA, "Y", NA)))
+  for (nm in names(cases)) {
+    cs <- cases[[nm]]
+    n <- length(cs$seq)
+    ae <- data.frame(STUDYID = "SV-001", USUBJID = paste0("U", seq_len(n)), AESEQ = cs$seq,
+                     stringsAsFactors = FALSE)
+    s <- fx$suppae[rep(1, n), ]
+    s$USUBJID <- ae$USUBJID
+    s$IDVARVAL <- cs$vals
+    s$QNAM <- "Q"
+    tbl <- arrow::Table$create(ae, schema = arrow::schema(STUDYID = arrow::utf8(), USUBJID = arrow::utf8(),
+                                                         AESEQ = cs$ty))
+    chk <- sv_lazy_supp_check(tbl, s, "ae", "suppae", rdomain = "AE")
+    expect_identical(chk$n_matched, sum(!is.na(cs$q)), info = nm)
+    code <- supp_compose(sv_supp_check_json(chk), meta = '{"ae": {"lazy": "arrow", "codeRef": "ae"}}')
+    expect_parses(code, nm)
+    got <- tryCatch(as.data.frame(supp_run(code, ae = tbl, suppae = s)), error = function(e) {
+      fail(paste0(nm, ": ", conditionMessage(e))); NULL
+    })
+    if (is.null(got)) next
+    expect_identical(got$Q[order(got$USUBJID)], cs$q, info = nm)
+  }
 })
 
 test_that("supp clash guard reads an arrow query's columns", {

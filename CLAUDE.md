@@ -101,7 +101,9 @@ rstudio bridge: R/rstudio.R
   reads `names(dplyr::collect(utils::head(<parent>, 0)))`: plain `names()` fails on dbplyr, `colnames()` on an arrow
   query; on an arrow chain a numeric IDVAR key is cast to the parent's Arrow type, so int64 parquet keys join). A QNAM without QLABEL has label `""`. `IDVARVAL` rows that
   do not convert are `bad_idvarval`, never orphans (`n_matched + n_orphan + bad == n_supp`). Double keys are
-  converted only if one decimal regex matches, in R and JS alike. Clashes with columns made by earlier chain
+  converted only if one decimal regex matches, in R and JS alike; the whitespace around a key is the ASCII class
+  `sv_supp_ws` / `SUPP_WS` (never `\s`/`trim()`), and generated `grepl()` uses `perl = TRUE`; `abs(x) > 1e308` is bad.
+  An Arrow int64/uint64 key is always a double key (as duckdb BIGINT). Clashes with columns made by earlier chain
   steps are caught in the browser (`columnsBefore()`), not by the code guard. Change a twin together with the others.
 - **Column inspector / codebook:** same twin rule. `sv_column_profile()` / `sv_codebook()` (R/codebook.R) and
   `SideviewPipeline.columnProfile()` / `codebookRow()` / `codebookCsv()` (sv-pipeline.js); `test-codebook.R`

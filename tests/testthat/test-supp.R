@@ -382,6 +382,33 @@ test_that("odd numeric IDVARVAL strings are treated alike in R and JS", {
   supp_parity("odd_integer", int, si)
 })
 
+test_that("only ASCII whitespace around IDVARVAL is trimmed, in R and JS (NBSP, BOM, U+2028, U+3000 are bad)", {
+  dbl <- fx$ae
+  dbl$AESEQ <- c(1, 2, 3, 4)
+  ws <- c(" 1", "1 ", " 1", "﻿2", "　3", "\t1", "2\n", "\r3\f", "\v4", " 1 ")
+  s <- fx$suppae[rep(1, length(ws)), ]
+  s$IDVARVAL <- ws
+  s$QNAM <- paste0("Q", seq_along(ws))
+  w <- supp_parity("ws_double", dbl, s)
+  expect_identical(w$bad_idvarval$n, 5L)
+  expect_identical(sv_supp_convert(ws, "double"), c(rep(NA, 5), "1", "2", "3", "4", "1"))
+  w2 <- supp_parity("ws_integer", fx$ae, s)
+  expect_identical(w2$bad_idvarval$n, 5L)
+  expect_identical(sv_supp_convert(ws, "integer"), c(rep(NA, 5), "1", "2", "3", "4", "1"))
+})
+
+test_that("a double IDVARVAL past 1e308 is bad in R and JS alike (R's parser rounds the largest double up to Inf)", {
+  dbl <- fx$ae
+  dbl$AESEQ <- c(1, 2, 3, 4)
+  edge <- c("1.7976931348623158e308", "-1.7976931348623157e308", "1.5e308", "1e308", "2")
+  s <- fx$suppae[rep(1, length(edge)), ]
+  s$IDVARVAL <- edge
+  s$QNAM <- paste0("Q", seq_along(edge))
+  w <- supp_parity("edge_double", dbl, s)
+  expect_identical(w$bad_idvarval$n, 3L)
+  expect_identical(sv_supp_convert(edge, "double"), c(NA, NA, NA, "1e+308", "2"))
+})
+
 test_that("non-finite double IDVARVAL (1e999, -1e999, Inf, NaN) is bad, never an orphan, in R and JS", {
   dbl <- fx$ae
   dbl$AESEQ <- c(1, 2, 3, 4)
