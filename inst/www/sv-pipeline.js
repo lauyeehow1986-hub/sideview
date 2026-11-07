@@ -1865,8 +1865,19 @@
     return null;
   }
 
-  var SUPP_INT_RE = /^\s*[+-]?[0-9]+\s*$/;
-  var SUPP_DBL_RE = /^\s*[+-]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][+-]?[0-9]+)?\s*$/;
+  // The whitespace allowed around a numeric IDVARVAL: ASCII only (space, tab, LF, CR, FF, VT),
+  // which is what R's as.integer()/as.numeric() skip. \s and trim() would also take NBSP,
+  // U+2028, U+3000 and the BOM, so the class is spelled out, here and in sv_supp_ws (R/supp.R).
+  // The generated code runs these patterns with perl = TRUE: TRE reads "\t" in a bracket as a
+  // backslash and a "t". \x0b is VT (in PCRE \v is a class of its own).
+  var SUPP_WS = '[ \\t\\n\\r\\f\\x0b]';
+  var SUPP_INT_RE = new RegExp('^' + SUPP_WS + '*[+-]?[0-9]+' + SUPP_WS + '*$');
+  var SUPP_DBL_RE = new RegExp('^' + SUPP_WS + '*[+-]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][+-]?[0-9]+)?' +
+    SUPP_WS + '*$');
+  var SUPP_WS_EDGES = new RegExp('^' + SUPP_WS + '+|' + SUPP_WS + '+$', 'g');
+  // Past this a double key is bad: R parses "1.7976931348623158e308" (the largest double) to
+  // Inf where Number() keeps it, so the top of the range is cut off on both sides alike.
+  var SUPP_DBL_MAX = 1e308;
 
   // A missing value is the string "NA" once keys are pasted together, as in R.
   function suppChr(v) {
@@ -1880,13 +1891,14 @@
     if (type === 'character') return s;
     if (type === 'integer') {
       if (!SUPP_INT_RE.test(s)) return null;
-      var n = parseInt(s.trim(), 10);
+      var n = parseInt(s.replace(SUPP_WS_EDGES, ''), 10);
       if (!isFinite(n) || Math.abs(n) > 2147483647) return null;
       return String(n);
     }
     if (!SUPP_DBL_RE.test(s)) return null;
-    var d = Number(s.trim());
-    return isNaN(d) ? null : String(d);
+    var d = Number(s.replace(SUPP_WS_EDGES, ''));
+    // 1e999 overflows to Infinity: bad, as in R; so is anything past SUPP_DBL_MAX
+    return isFinite(d) && Math.abs(d) <= SUPP_DBL_MAX ? String(d) : null;
   }
 
   function suppUnique(a) {
@@ -2148,7 +2160,7 @@
     if (type !== 'integer' && type !== 'double') return 'IDVARVAL';
     var re = type === 'integer' ? SUPP_INT_RE.source : SUPP_DBL_RE.source;
     return 'suppressWarnings(' + (type === 'integer' ? 'as.integer' : 'as.numeric') +
-      '(dplyr::if_else(grepl(' + str(re) + ', IDVARVAL), as.character(IDVARVAL), NA_character_)))';
+      '(dplyr::if_else(grepl(' + str(re) + ', IDVARVAL, perl = TRUE), as.character(IDVARVAL), NA_character_)))';
   }
 
   // A level whose key an Arrow join casts to the parent's type: a numeric IDVAR.
@@ -2177,7 +2189,10 @@
     var ql = [src];
     if (s.rdomain_col) ql.push('dplyr::filter(RDOMAIN == ' + str(s.rdomain) + ')');
     if (srcLazy) ql.push('dplyr::collect()');
-    ql.push('dplyr::mutate(IDVAR = dplyr::if_else(is.na(IDVAR) | trimws(IDVAR) == "", "", as.character(IDVAR)))');
+    // a missing QNAM is the name "NA", as in the check and as pivot_wider() names its column, so
+    // the guards below see an NA QNAM and a QNAM "NA" as one name
+    ql.push('dplyr::mutate(IDVAR = dplyr::if_else(is.na(IDVAR) | trimws(IDVAR) == "", "", as.character(IDVAR)),\n' +
+      '                QNAM = dplyr::coalesce(as.character(QNAM), "NA"))');
     out.push(q + ' <- ' + ql.join(nl));
 
     var g = ['local({'];
@@ -2207,7 +2222,8 @@
       dupCols.push('QNAM');
       var l = [q, 'dplyr::filter(IDVAR == ' + str(iv) + ')', 'dplyr::transmute(' + cols.join(', ') + ')'];
       // rows whose IDVARVAL does not convert join nothing (the check counts them as bad, not orphans)
-      if (iv !== '') l.push('dplyr::filter(!is.na(' + ident(iv) + '))');
+      // (a double key that overflows, "1e999", is Inf, and one past 1e308 is bad in the check too)
+      if (iv !== '') l.push(v.type === 'double' ? 'dplyr::filter(abs(' + ident(iv) + ') <= 1e308)' : 'dplyr::filter(!is.na(' + ident(iv) + '))');
       out.push(nm + ' <- ' + l.join(nl));
       // the repeat guard runs after conversion, so "01" and "1" are one record
       out.push('local({\n  dup <- ' + nm + '[duplicated(' + nm + '[c(' + dupCols.map(str).join(', ') + ')]), ]\n' +
@@ -2218,13 +2234,23 @@
       if (arrowJoin && suppArrowCast(v)) {
         // Arrow's hash join needs one key type on both sides: as.integer() gives int32 and
         // as.numeric() double, while a parquet parent often has int64. Cast to the parent's type
-        // (read at run time); a fractional key cannot match an integer one, so it is dropped.
+        // (read at run time). The check compares the parent's values as doubles, so a key that
+        // does not survive the cast unchanged matches nothing: a fraction on an integer type, a
+        // value out of the type's range (300 on int8, 1e19 on int64), a float32 or decimal
+        // rounding (0.1, 0.125 on decimal(10, 2)). Such rows are dropped, never rounded onto a
+        // record. The test cast is unsafe, so it wraps instead of stopping; a decimal cast stops
+        // on overflow even then, so the keys are then tested one at a time.
         var k = str(iv);
         out.push(nm + ' <- local({\n' +
           '  ty <- arrow::as_arrow_table(utils::head(' + parentRef + ', 0))$schema[[' + k + ']]$type\n' +
           '  x <- ' + nm + '\n' +
-          '  if (is.double(x[[' + k + ']]) && grepl("int", ty$ToString())) x <- x[x[[' + k + ']] == trunc(x[[' + k + ']]), ]\n' +
-          '  x <- arrow::arrow_table(x)\n' +
+          '  same <- function(v) {\n' +
+          '    cv <- suppressWarnings(as.numeric(as.vector(arrow::Array$create(v)$cast(ty, safe = FALSE))))\n' +
+          '    !is.na(cv) & cv == v\n' +
+          '  }\n' +
+          '  ok <- tryCatch(same(x[[' + k + ']]), error = function(e)\n' +
+          '    vapply(x[[' + k + ']], function(v) isTRUE(tryCatch(same(v), error = function(e) FALSE)), logical(1)))\n' +
+          '  x <- arrow::arrow_table(x[ok, ])\n' +
           '  x[[' + k + ']] <- x[[' + k + ']]$cast(ty)\n' +
           '  x\n})');
       }
@@ -2247,8 +2273,12 @@
       var by = s.keys.concat(v.idvar !== '' ? [v.idvar] : []).map(function (k) { return { left: k, right: k }; });
       // a cast level is an Arrow table already (suppPrep)
       var wrap = kind === 'arrow' && !suppArrowCast(v);
+      // NA keys match NA, as in the check and in memory. Arrow's default is already "na";
+      // writing it out keeps the code from depending on that default.
+      var extra = kind === 'duckdb' ? ', copy = TRUE, na_matches = "na"' :
+        kind === 'arrow' ? ', na_matches = "na"' : '';
       return 'dplyr::left_join(' + (wrap ? 'arrow::arrow_table(' + nm + ')' : nm) +
-        ', by = ' + joinBy(by) + (kind === 'duckdb' ? ', copy = TRUE' : '') + ')';
+        ', by = ' + joinBy(by) + extra + ')';
     });
   }
 

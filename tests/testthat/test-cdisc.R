@@ -717,6 +717,29 @@ test_that("suppqual targets follow rdomains", {
                         list(rdomain = "CM", card = two[[2]]$id)))
 })
 
+test_that("a lazy SUPPQUAL with three RDOMAINs has every one, as in memory", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("withr")
+  f <- sv_cdisc_fixtures()
+  lb <- transform(f$cm, DOMAIN = "LB")
+  names(lb) <- sub("^CM", "LB", names(lb))
+  sq <- rbind(f$suppqual, transform(f$suppqual[1, ], RDOMAIN = "LB", IDVAR = "LBSEQ"))
+  mem <- sv_cdisc_finalize(sv_cdisc_cards(ae = f$ae, cm = f$cm, lb = lb, suppqual = sq), "auto")
+  expect_identical(mem[[4]]$cdisc$rdomains, c("AE", "CM", "LB"))
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbWriteTable(con, "suppqual", sq)
+  for (lz in list(dplyr::tbl(con, "suppqual"), arrow::arrow_table(sq))) {
+    cards <- sv_cdisc_finalize(sv_cdisc_cards(ae = f$ae, cm = f$cm, lb = lb, suppqual = lz), "auto")
+    tag <- cards[[4]]$cdisc
+    expect_identical(tag$rdomains, mem[[4]]$cdisc$rdomains)
+    expect_identical(lapply(tag$merge_targets, `[[`, "rdomain"), list("AE", "CM", "LB"))
+    expect_identical(sv_supp_rdomain_hint(cards[[4]], "LB"), "LB")
+  }
+})
+
 test_that("wire tag keeps arrays", {
   f <- sv_cdisc_fixtures()
   cards <- sv_cdisc_finalize(sv_cdisc_cards(ae = f$ae, suppae = f$suppae), "auto")

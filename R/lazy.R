@@ -1390,7 +1390,8 @@ sv_lazy_supp_match <- function(parent, side, conv, keys, types, con_env) {
   y <- data.frame(ykeys, stringsAsFactors = FALSE)
   y$.sv_lvl <- lvl
   y$.sv_rid <- rows
-  y$.sv_vn <- ifelse(numeric_lvl[lvl], suppressWarnings(as.numeric(conv$val[rows])), NA_real_)
+  # full precision: conv$val is 15-digit text, which can miss a float32 key widened to double
+  y$.sv_vn <- ifelse(numeric_lvl[lvl], conv$num[rows], NA_real_)
   y$.sv_vc <- ifelse(!numeric_lvl[lvl], conv$val[rows], NA_character_)
   ivs <- side$levels[nzchar(side$levels)]
   placed <- sv_lazy_place(parent, y, con_env, cols_x = c(keys, ivs))
@@ -1416,6 +1417,25 @@ sv_lazy_supp_match <- function(parent, side, conv, keys, types, con_env) {
     matched[hit$.sv_rid] <- TRUE
   }
   matched
+}
+
+#' An Arrow int64 / uint64 IDVAR key is a double key
+#'
+#' Arrow collects int64 to an R integer when every value fits and to integer64 when one does
+#' not, so 0 rows always say "integer" and the key type would depend on the data. It is a
+#' double key, as an integer64 in memory (`sv_supp_key_type()`) and duckdb's BIGINT (which
+#' collects to double) are, so `IDVARVAL` past the integer range converts.
+#' @noRd
+sv_lazy_supp_wide_int <- function(x, types) {
+  ivs <- names(types)[types == "integer"]
+  if (!length(ivs) || !inherits(x, c("ArrowTabular", "Dataset", "arrow_dplyr_query"))) return(types)
+  sch <- tryCatch(arrow::as_arrow_table(utils::head(dplyr::select(x, dplyr::all_of(ivs)), 0L))$schema,
+                  error = function(e) NULL)
+  if (is.null(sch)) return(types)
+  for (iv in ivs) {
+    if (sch[[iv]]$type$ToString() %in% c("int64", "uint64")) types[iv] <- "double"
+  }
+  types
 }
 
 #' SUPP merge check over a lazy parent and/or SUPP table
@@ -1456,6 +1476,7 @@ sv_lazy_supp_check <- function(parent, supp, parent_name = "parent", supp_name =
   keys <- intersect(c("STUDYID", "USUBJID"), intersect(parent_names, supp_cols))
   types <- sv_supp_types(side$levels, sv_lazy_zero(parent, c(levels_, keys)), parent_name)
   if (is.list(types)) return(types)
+  types <- sv_lazy_supp_wide_int(parent, types)
   conv <- sv_supp_convert_side(side, types, keys)
 
   matched <- if (is.data.frame(parent)) {
@@ -1833,8 +1854,8 @@ utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number
 
 #' The one place CDISC detection queries a lazy table
 #'
-#' Small queries only, never a full collect. `"domain"` / `"rdomain"` give up to
-#' two distinct non-empty values of `DOMAIN` / `RDOMAIN` (character); `"adsl"`
+#' Small queries only, never a full collect. `"domain"` gives up to two distinct
+#' non-empty values of `DOMAIN`, `"rdomain"` up to 1000 of `RDOMAIN` (character); `"adsl"`
 #' gives whether `USUBJID` is unique (one aggregate row; NA counts once, as
 #' `anyDuplicated()` does). Tests mock this function to count the calls.
 #' @param tbl A duckdb tbl or Arrow object.
@@ -1855,11 +1876,15 @@ sv_cdisc_lazy_query <- function(tbl, kind, col = NULL) {
     } else {
       rlang::expr(toupper(gsub("^[ \t\r\n]+|[ \t\r\n]+$", "", !!txt)))
     }
+    # DOMAIN rules only ask whether there is one value, so two are enough; a SUPPQUAL's tag
+    # lists every RDOMAIN (they are the merge targets), as the in-memory peek does. The cap
+    # only bounds a column that is not really RDOMAIN.
     res <- tbl |>
       dplyr::mutate(.sv_v = !!norm) |>
       dplyr::filter(!is.na(.sv_v), .sv_v != "") |>
       dplyr::distinct(.sv_v) |>
-      utils::head(2) |>
+      dplyr::arrange(.sv_v) |>
+      utils::head(if (kind == "domain") 2L else 1000L) |>
       dplyr::collect()
     return(as.character(res[[".sv_v"]]))
   }

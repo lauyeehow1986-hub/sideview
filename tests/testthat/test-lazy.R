@@ -1639,6 +1639,32 @@ supp_lazy_cases <- function() {
   odd_p$AESEQ <- c(1, 16, 1000, 0.5)
   p_plan <- sv_supp_check(f$ae, f$suppae2)$plan
   p_plan$qnams <- p_plan$qnams[-1]
+  # 1e999 overflows to Inf, "Inf" / "NaN" are not decimals: all bad, never orphans
+  nonfin <- c("1e999", "-1e999", "1E400", "Inf", "-Inf", "NaN", "NA", "2")
+  nonfin_s <- f$suppae[rep(1, length(nonfin)), ]
+  nonfin_s$IDVARVAL <- nonfin
+  nonfin_s$QNAM <- paste0("Q", seq_along(nonfin))
+  nonfin_p <- f$ae
+  nonfin_p$AESEQ <- c(1, 2, 3, 4)
+  # an NA QNAM counts as the text "NA"
+  na_q <- f$suppae2
+  na_q$QNAM[2] <- NA
+  # NA in numeric / character parent keys and in the SUPP values (duckdb NULL vs R NA)
+  na_num <- f$ae
+  na_num$AESEQ[2] <- NA
+  na_dbl <- na_num
+  na_dbl$AESEQ <- as.numeric(na_dbl$AESEQ)
+  na_dbl$AESEQ[3] <- NaN
+  na_num_s <- f$suppae
+  na_num_s <- na_num_s[rep(seq_len(nrow(na_num_s)), length.out = 4), ]
+  na_num_s$IDVARVAL <- c("1", "NA", NA, "2")
+  na_num_s$QNAM <- paste0("Q", 1:4)
+  na_study <- f$ae
+  na_study$STUDYID[1] <- NA
+  na_study_s <- f$suppae
+  na_study_s$STUDYID[1] <- NA
+  na_chr_s <- f$suppae_grp
+  na_chr_s$IDVARVAL[2] <- NA
   list(
     ok = list(f$ae, f$suppae),
     two_levels = list(f$ae, f$suppae2),
@@ -1657,6 +1683,13 @@ supp_lazy_cases <- function() {
     no_studyid_parent = list(f$ae_nostudy, f$suppae),
     na_idvar = list(f$ae, f$supp_na_idvar),
     na_keys = list(na_ae, na_s),
+    nonfinite_double = list(nonfin_p, nonfin_s),
+    nonfinite_integer = list(f$ae, nonfin_s),
+    na_qnam = list(f$ae, na_q),
+    na_numeric_key_int = list(na_num, na_num_s),
+    na_numeric_key_dbl = list(na_dbl, na_num_s),
+    na_studyid = list(na_study, na_study_s),
+    na_idvarval_character = list(f$ae_grp, na_chr_s),
     na_character_key = list(na_grp, na_grp_s),
     mixed_rdomain_warns = list(f$ae, rbind(f$suppae, f$suppbw), "suppae"),
     suppqual = list(f$ae, f$suppqual, "suppqual", "AE"),
@@ -1698,6 +1731,90 @@ test_that("lazy supp check equals in-memory", {
       expect_equal(got, want, tolerance = 1e-12, label = paste(nm, cb[1], "x", cb[2]))
     }
   }
+})
+
+test_that("lazy supp check reads a float32 key as the double it collects to, like memory", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  f <- sv_cdisc_fixtures()
+  ae <- data.frame(STUDYID = "SV-001", USUBJID = paste0("U", 1:4), AESEQ = c(0.1, 0.5, 16777217, 2.25),
+                   stringsAsFactors = FALSE)
+  s <- f$suppae[rep(1, 4), ]
+  s$USUBJID <- ae$USUBJID
+  s$IDVARVAL <- c("0.1", "0.5", "16777217", "2.25")
+  s$QNAM <- paste0("Q", 1:4)
+  f32 <- arrow::Table$create(ae, schema = arrow::schema(STUDYID = arrow::utf8(), USUBJID = arrow::utf8(),
+                                                       AESEQ = arrow::float32()))
+  want <- sv_supp_check(as.data.frame(f32), s, "ae", "suppae", rdomain = "AE")
+  # float32 values are not the doubles they were written as: 0.1 and 16777217 do not match
+  expect_identical(c(want$n_matched, want$n_orphan), c(2L, 2L))
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbExecute(con, paste("CREATE TABLE ae32 AS SELECT STUDYID, USUBJID, AESEQ::FLOAT AS AESEQ FROM",
+                            "(SELECT 'SV-001' AS STUDYID, 'U1' AS USUBJID, 0.1 AS AESEQ UNION ALL",
+                            "SELECT 'SV-001', 'U2', 0.5 UNION ALL SELECT 'SV-001', 'U3', 16777217 UNION ALL",
+                            "SELECT 'SV-001', 'U4', 2.25)"))
+  for (p in list(f32, dplyr::tbl(con, "ae32"))) {
+    got <- sv_lazy_supp_check(p, s, "ae", "suppae", rdomain = "AE", con_env = sv_lazy_env())
+    expect_equal(got$n_matched, want$n_matched)
+    expect_equal(got$n_orphan, want$n_orphan)
+    expect_equal(got$orphan_samples, want$orphan_samples)
+  }
+})
+
+test_that("lazy supp check compares a full-precision IDVARVAL to a float32 key at full precision", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  f <- sv_cdisc_fixtures()
+  ae <- data.frame(STUDYID = "SV-001", USUBJID = c("U1", "U2"), AESEQ = c(0.1, 0.5),
+                   stringsAsFactors = FALSE)
+  s <- f$suppae[rep(1, 2), ]
+  s$USUBJID <- ae$USUBJID
+  # the double float32 0.1 widens to, written out in full (more than the 15 digits R prints)
+  s$IDVARVAL <- c("0.10000000149011612", "0.5")
+  s$QNAM <- c("Q1", "Q2")
+  f32 <- arrow::Table$create(ae, schema = arrow::schema(STUDYID = arrow::utf8(), USUBJID = arrow::utf8(),
+                                                       AESEQ = arrow::float32()))
+  want <- sv_supp_check(as.data.frame(f32), s, "ae", "suppae", rdomain = "AE")
+  expect_identical(want$n_matched, 2L)
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbExecute(con, paste("CREATE TABLE ae32 AS SELECT 'SV-001' AS STUDYID, USUBJID, AESEQ::FLOAT AS AESEQ",
+                            "FROM (SELECT 'U1' AS USUBJID, 0.1 AS AESEQ UNION ALL SELECT 'U2', 0.5)"))
+  for (p in list(f32, dplyr::tbl(con, "ae32"))) {
+    got <- sv_lazy_supp_check(p, s, "ae", "suppae", rdomain = "AE", con_env = sv_lazy_env())
+    expect_identical(got$n_matched, 2L)
+    expect_identical(got$n_orphan, 0L)
+  }
+})
+
+test_that("an int64 key past the integer range is a double key in memory and on arrow", {
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("bit64")
+  f <- sv_cdisc_fixtures()
+  ae <- data.frame(STUDYID = "SV-001", USUBJID = c("U1", "U2"), AESEQ = c(3e9, 7),
+                   stringsAsFactors = FALSE)
+  s <- f$suppae[rep(1, 2), ]
+  s$USUBJID <- ae$USUBJID
+  s$IDVARVAL <- c("3000000000", "7")
+  s$QNAM <- c("Q1", "Q2")
+  i64 <- arrow::Table$create(ae, schema = arrow::schema(STUDYID = arrow::utf8(), USUBJID = arrow::utf8(),
+                                                       AESEQ = arrow::int64()))
+  mem <- as.data.frame(i64)
+  expect_true(inherits(mem$AESEQ, "integer64"))
+  want <- sv_supp_check(mem, s, "ae", "suppae", rdomain = "AE")
+  expect_identical(c(want$n_matched, want$n_orphan, want$bad_idvarval$n), c(2L, 0L, 0L))
+  got <- sv_lazy_supp_check(i64, s, "ae", "suppae", rdomain = "AE", con_env = sv_lazy_env())
+  expect_identical(c(got$n_matched, got$n_orphan, got$bad_idvarval$n), c(2L, 0L, 0L))
+  ty <- function(chk) vapply(chk$plan$idvars, function(e) e$type, "")
+  expect_identical(ty(want), "double")
+  expect_identical(ty(got), "double")
+  # an int64 column whose values all fit collects to integer, but stays a double key on arrow
+  small <- arrow::Table$create(ae[2, ], schema = i64$schema)
+  got2 <- sv_lazy_supp_check(small, s[2, ], "ae", "suppae", rdomain = "AE", con_env = sv_lazy_env())
+  expect_identical(ty(got2), "double")
 })
 
 test_that("lazy supp check follows sample_n and a larger parent", {

@@ -23,6 +23,34 @@
 * New Shiny wire items: the input `supp_check_request` (`{id, parent, supp, plan?, rdomain?}`) and the
   message `sideview_supp_check`.
 
+### Edge cases fixed in the merge
+
+* An `IDVARVAL` such as `1e999` (too large for a number) is now counted as "does not convert", not as an
+  orphan, and no longer stops the generated code on an Arrow int64 parent.
+* A missing `QNAM` is read as the text `NA` in the gadget and the widget alike (the merged column is named
+  `NA`).
+* On a duckdb parent, records whose `USUBJID` or `STUDYID` is `NA` now receive their qualifiers, as the check
+  says they do.
+* A float32 parent key is compared as the double it holds (0.1 stored as float32 is not `"0.1"`): such rows
+  are orphans in the check, and the generated Arrow code no longer rounds them onto the parent.
+* On an Arrow parent with a narrow or decimal key (int8, int16, decimal), the generated code drops supp keys
+  that the parent's type cannot hold exactly. Before, 300 on int8 wrapped onto another record, and 0.125 on
+  decimal(10, 2) was rounded onto one. The check already called such rows orphans.
+* A lazy `SUPPQUAL` with three or more `RDOMAIN`s now offers a merge for every one, as in memory (only the
+  first two were seen before). The default `RDOMAIN` is the first in byte order (`AE` before `CM`), the same in
+  any locale and on every backend.
+* Only ASCII whitespace around a numeric `IDVARVAL` is ignored, as R does. A no-break space, BOM or
+  ideographic space makes the value "does not convert", in the gadget and the widget alike (the widget
+  ignored them before).
+* A double `IDVARVAL` past 1e308 "does not convert" in the gadget and the widget alike. Before, R and the
+  widget disagreed at the very top of the range.
+* With both a missing `QNAM` and a `QNAM` of `"NA"`, the generated code now treats them as one name, as the
+  check does.
+* A full-precision `IDVARVAL` of a float32 key (`0.10000000149011612`) matches in the lazy check as it does in
+  memory.
+* An Arrow int64 key is a double key whatever its values (as a duckdb `BIGINT` already was), so a key past
+  2^31 no longer reads as "does not convert" on Arrow.
+
 ### Limits to know about
 
 * The merge needs the exact upper-case column names `USUBJID`, `IDVAR`, `IDVARVAL`, `QNAM` and `QVAL`.
@@ -40,6 +68,10 @@
 * A re-check sends the step's `RDOMAIN`, so a step loaded with `cdisc = FALSE`, or after a tag changed,
   keeps its domain.
 * `RELREC` tables are still not merged or suggested.
+* A float16 parent key is not supported (Arrow cannot create float16 columns).
+* A double key beyond 1e308 is always "does not convert", on purpose: R and JavaScript read the largest
+  doubles differently.
+* At most 1000 `RDOMAIN`s are read from a lazy `SUPPQUAL`.
 
 # sideview 0.6.0
 
