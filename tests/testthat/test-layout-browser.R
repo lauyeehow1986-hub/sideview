@@ -2358,3 +2358,331 @@ test_that("cdisc = FALSE draws no CDISC-class suggestion paths and no notes", {
   sv_js(b, "window._sideviewInstance.clearOperations()")
   expect_equal(attr(b, "sv_errors")(), character())
 })
+
+
+# ---- CDISC SUPP-- merge: Merge into button, step line, merge report, Auto Map ----
+# The SUPP card is helper-cdisc.R's suppae2 named `suppae` (the tag is name-driven): AETRTEM on AESEQ
+# for two AE records and AESOC2 at subject level for two subjects. Every click under test is real input.
+
+# The merge written by hand, independently of the code generator.
+sv_supp_want <- function(f) {
+  s <- f$suppae2
+  aeseq <- s[s$IDVAR == "AESEQ", ] |>
+    dplyr::transmute(STUDYID, USUBJID, AESEQ = as.integer(IDVARVAL), QNAM, QVAL) |>
+    tidyr::pivot_wider(names_from = QNAM, values_from = QVAL)
+  subj <- tidyr::pivot_wider(s[s$IDVAR == "", c("STUDYID", "USUBJID", "QNAM", "QVAL")],
+                             names_from = QNAM, values_from = QVAL)
+  out <- f$ae |>
+    dplyr::left_join(aeseq, by = c("STUDYID", "USUBJID", "AESEQ")) |>
+    dplyr::left_join(subj, by = c("STUDYID", "USUBJID"))
+  attr(out$AETRTEM, "label") <- "Label AETRTEM"
+  attr(out$AESOC2, "label") <- "Label AESOC2"
+  as.data.frame(out)
+}
+
+# Run composed code with the tables bound by name; a lazy result is collected.
+sv_supp_run <- function(code, ...) {
+  env <- list2env(list(...), parent = globalenv())
+  env$`%>%` <- dplyr::`%>%`
+  out <- eval(parse(text = code), envir = env)
+  if (inherits(out, "tbl_lazy")) out <- dplyr::collect(out)
+  out <- as.data.frame(out)
+  o <- order(out$AESEQ)  # a database returns rows in any order; keep the column labels
+  out[] <- lapply(out, function(x) { a <- attributes(x); x <- x[o]; attributes(x) <- a; x })
+  out
+}
+
+sv_supp_line <- "merge SUPPAE (2 QNAMs on AESEQ and subject) · 4 of 4 SUPP rows matched"
+sv_json <- function(x) jsonlite::toJSON(x, auto_unbox = TRUE)
+
+# Centre of an element, and whether a click there really lands on it.
+sv_supp_point <- function(b, sel) sv_js(b, sprintf("(() => {
+  const e = document.querySelector(%s); if (!e) return null;
+  const r = e.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+  const h = document.elementFromPoint(x, y);
+  return { x: x, y: y, hit: !!h && (h === e || e.contains(h)) }; })()", sv_json(sel)))
+
+sv_supp_click <- function(b, sel) {
+  p <- sv_supp_point(b, sel)
+  expect_true(isTRUE(p$hit), label = paste("click lands on", sel))
+  sv_mouse(b)$click(p)
+}
+
+sv_supp_drawer <- function(b, root, open) {
+  sel <- sv_json(paste(root, ".sideview-drawer"))
+  is_open <- function() !isTRUE(sv_js(b, sprintf("document.querySelector(%s).classList.contains('collapsed')", sel)))
+  if (is_open() != open) sv_supp_click(b, paste(root, '[data-action="toggle-drawer"]'))
+  Sys.sleep(0.4)
+  expect_identical(is_open(), open)
+}
+
+# A known layout and an empty pipeline: ae | (gap) | suppae on one row, dm below the gap.
+sv_supp_reset <- function(b, eng) {
+  sv_js(b, sprintf("(() => { const e = %s, root = e.container;
+    e.clearOperations(true); e.suppChecks = {}; e.suppReq = {}; e.suppPending = {}; e.reportFocus = null;
+    root.querySelectorAll('.sideview-toast').forEach(t => t.remove());
+    const c = n => root.querySelector('.sideview-card[data-card-name=\"' + n + '\"]');
+    [['ae', 20, 90], ['dm', 820, 480], ['suppae', 1620, 90]].forEach(p => {
+      c(p[0]).style.left = p[1] + 'px'; c(p[0]).style.top = p[2] + 'px'; });
+    e.updateConnectors(); return true; })()", eng))
+  Sys.sleep(0.3)
+}
+
+# Click Merge into AE, then read the step line and open the merge report from it.
+sv_supp_merge_flow <- function(b, root, eng, chk) {
+  sv_supp_drawer(b, root, open = FALSE)
+  btn <- paste(root, '.sideview-card[data-card-name="suppae"] [data-action="supp-merge"]')
+  expect_identical(sv_js(b, sprintf("document.querySelector(%s).getAttribute('aria-label')", sv_json(btn))), "Merge into AE")
+  sv_supp_click(b, btn)
+  expect_true(sv_wait_js(b, sprintf("%s.pipeline.steps.some(s => s.kind === 'supp')", eng), 30))
+  sv_supp_drawer(b, root, open = TRUE)
+  sv_supp_click(b, paste(root, '.sideview-drawer-tab[data-tab="pipeline"]'))
+  diag <- sv_json(paste(root, '.sideview-step-list [data-step-action="supp-diag"]'))
+  expect_true(sv_wait_js(b, sprintf("(() => { const d = document.querySelector(%s); return !!d && !d.classList.contains('is-pending'); })()", diag), 30))
+  line <- sv_js(b, sprintf("(() => { const e = %s, s = e.pipeline.steps.filter(x => x.kind === 'supp');
+    const d = document.querySelector(%s), li = d.closest('li');
+    return { n: e.pipeline.steps.length, supp: s.length, table: s[0].table, of: s[0].supp,
+      full: e.suppLineText(s[0]), li: li.textContent, diag: d.textContent, cls: d.className }; })()", eng, diag))
+  expect_equal(line$n, 1)
+  expect_equal(line$supp, 1)
+  expect_identical(c(line$table, line$of), c("ae", "suppae"))
+  expect_identical(line$full, sv_supp_line)
+  expect_match(line$li, "merge SUPPAE (2 QNAMs on AESEQ and subject)", fixed = TRUE)
+  expect_identical(trimws(line$diag), "4 of 4 SUPP rows matched")
+  expect_match(line$cls, "is-ok")
+
+  sv_supp_click(b, paste(root, '.sideview-step-list [data-step-action="supp-diag"]'))
+  report <- sv_json(paste(root, '.sideview-joincheck[data-report="supp"]'))
+  expect_true(sv_wait_js(b, sprintf("!!document.querySelector(%s + ' .sideview-suppcheck-columns')", report), 30))
+  r <- sv_js(b, sprintf("(() => { const box = document.querySelector(%s), q = s => [...box.querySelectorAll(s)];
+    const bb = box.getBoundingClientRect(), dr = box.closest('.sideview-drawer').getBoundingClientRect();
+    return { tab: (document.querySelector(%s + ' .sideview-drawer-tab[aria-selected=\"true\"]') || {}).dataset.tab,
+      title: box.querySelector('.sideview-suppcheck-title').textContent, cls: box.className,
+      basis: !!box.querySelector('.sideview-suppcheck-basis'),
+      dt: q('.sideview-suppcheck-stats dt').map(x => x.textContent), dd: q('.sideview-suppcheck-stats dd').map(x => x.textContent),
+      cols: q('.sideview-suppcheck-columns li code').map(x => x.textContent),
+      labels: q('.sideview-suppcheck-columns li span').map(x => x.textContent),
+      head: q('table.sideview-suppcheck-preview th').map(x => x.textContent),
+      rows: q('table.sideview-suppcheck-preview tbody tr').length, na: q('table.sideview-suppcheck-preview td.is-na').length,
+      visible: bb.height > 40 && box.offsetParent !== null,
+      fits: bb.left >= dr.left - 1 && bb.right <= dr.right + 1, overflow: box.scrollWidth - box.clientWidth }; })()",
+    report, sv_json(root)))
+  expect_identical(r$tab, "discrepancy")
+  expect_identical(r$title, "Merge check: SUPPAE into ae")
+  expect_match(r$cls, "is-ok")
+  expect_false(r$basis)  # full data: no "Preview rows" note
+  expect_identical(unlist(r$dt), c("ae rows", "SUPP rows", "Matched", "Orphaned", "Other RDOMAIN rows"))
+  expect_identical(unlist(r$dd), as.character(c(chk$n_parent, chk$n_supp, chk$n_matched, chk$n_orphan, chk$n_other_rdomain)))
+  expect_identical(unlist(r$cols), c("AETRTEM", "AESOC2"))
+  expect_identical(unlist(r$labels), c("Label AETRTEM", "Label AESOC2"))
+  expect_identical(unlist(r$head), c("STUDYID", "USUBJID", "AESEQ", "AETRTEM", "AESOC2"))
+  prev <- as.data.frame(chk$preview)
+  expect_equal(r$rows, nrow(prev))
+  expect_equal(r$na, sum(is.na(prev[c("AETRTEM", "AESOC2")])))
+  expect_true(r$visible)
+  expect_true(r$fits)
+  expect_lte(r$overflow, 1)
+}
+
+.sv_supp <- new.env()
+
+sv_supp_page <- function() {
+  skip_if_no_browser()
+  root <- sv_pkg_root()
+  if (!nzchar(root)) skip("SUPP browser tests need the source tree (helper-cdisc.R)")
+  if (is.null(.sv_supp$page)) {
+    helper <- normalizePath(file.path(root, "tests", "testthat", "helper-cdisc.R"), winslash = "/")
+    .sv_supp$app <- sv_start_app(app_expr = sprintf(
+      "{ source('%s'); f <- sv_cdisc_fixtures(); sideview(dm = f$dm, ae = f$ae, suppae = f$suppae2, run = FALSE) }",
+      helper))
+    .sv_supp$page <- sv_open_page(.sv_supp$app$url)
+    withr::defer({
+      try(.sv_supp$page$close(), silent = TRUE)
+      try(.sv_supp$app$proc$kill(), silent = TRUE)
+      .sv_supp$page <- NULL
+    }, envir = testthat::teardown_env())
+  }
+  b <- .sv_supp$page
+  # cards are 640px wide: a wide viewport leaves a gap where the ae~suppae path is clickable
+  sv_set_viewport(b, 2300, 900)
+  sv_supp_reset(b, "window._sideviewInstance")
+  b
+}
+
+test_that("gadget: Merge into AE adds the step, its code runs, and the report shows the columns", {
+  b <- sv_supp_page()
+  expect_true(attr(b, "sv_ready"))
+  f <- sv_cdisc_fixtures()
+  chk <- sv_supp_check(f$ae, f$suppae2, "ae", "suppae")
+  sv_supp_merge_flow(b, ".sideview-container", "window._sideviewInstance", chk)
+  # the gadget sends no sideview_snapshot (module only): its code is the composed pipeline
+  code <- sv_js(b, "window._sideviewInstance.pipeline.compose()")
+  expect_no_error(parse(text = code))
+  got <- sv_supp_run(code, ae = f$ae, suppae = f$suppae2)
+  expect_equal(got, sv_supp_want(f), info = code)
+  expect_identical(attr(got$AETRTEM, "label"), "Label AETRTEM")
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("Auto Map: clicking the SUPP suggestion adds the merge step and no join", {
+  b <- sv_supp_page()
+  sv_supp_drawer(b, ".sideview-container", open = FALSE)
+  sv_js(b, "(() => { window._svMapped = [];
+    const e = window._sideviewInstance, send = e.send; e._origSend = send;
+    e.send = function (t, d) { if (/column_mapped$/.test(t)) window._svMapped.push(d); return send.apply(e, arguments); };
+    return true; })()")
+  on.exit(sv_js(b, "(() => { const e = window._sideviewInstance; if (e._origSend) e.send = e._origSend; return true; })()"), add = TRUE)
+  sv_supp_click(b, '[data-action="suggest-mappings"]')
+  grp <- "cdisc:suppae~ae"
+  expect_true(sv_wait_js(b, sprintf("!!document.querySelector('path.sideview-spline-suggested-cdisc[data-kind=\"supp\"][data-group=\"%s\"]')", grp)))
+  title <- sv_js(b, sprintf("(() => { const p = document.querySelector('path.sideview-spline-suggested-cdisc[data-group=\"%s\"]');
+    return (p._svHit.querySelector('title') || p.querySelector('title') || {}).textContent; })()", grp))
+  expect_identical(title, "Suggested CDISC merge: suppae into ae (one column per QNAM). Click to merge")
+  pt <- sv_cdisc_path_point(b, grp, "USUBJID")
+  expect_false(is.null(pt))
+  sv_mouse(b)$click(pt)
+  expect_true(sv_wait_js(b, "window._sideviewInstance.pipeline.steps.some(s => s.kind === 'supp')", 30))
+  r <- sv_js(b, sprintf("(() => { const e = window._sideviewInstance, s = e.pipeline.steps;
+    return { kinds: s.map(x => x.kind), table: s[0].table, supp: s[0].supp, conns: e.connections.length,
+      mapped: window._svMapped.length, paths: document.querySelectorAll('path.sideview-spline-suggested-cdisc[data-group=\"%s\"]').length,
+      line: e.suppLineText(s[0]) }; })()", grp))
+  expect_identical(unlist(r$kinds), "supp")
+  expect_identical(c(r$table, r$supp), c("ae", "suppae"))
+  expect_equal(r$conns, 0)
+  expect_equal(r$mapped, 0)
+  expect_equal(r$paths, 0)
+  expect_identical(r$line, sv_supp_line)
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("card header buttons clear the title, the badges and each other at 1400, 1024 and 560 px", {
+  b <- sv_supp_page()
+  for (sz in list(c(1400, 900), c(1024, 700), c(560, 520))) {
+    sv_set_viewport(b, sz[1], sz[2])
+    r <- sv_js(b, "(() => {
+      const out = { bad: [], cards: 0 };
+      const hit = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+      const sized = els => els.map(e => ({ id: e.getAttribute('data-action') || e.className, r: e.getBoundingClientRect() }))
+        .filter(x => x.r.width && x.r.height);
+      document.querySelectorAll('.sideview-card').forEach(card => {
+        out.cards++;
+        const name = card.getAttribute('data-card-name'), head = card.querySelector('.sideview-card-header');
+        const hb = head.getBoundingClientRect();
+        const fixed = sized([...head.querySelectorAll('.sideview-card-title, .sideview-badge')]);
+        const btns = sized([...head.querySelectorAll('button')]);
+        btns.forEach((x, i) => {
+          fixed.forEach(t => { if (hit(x.r, t.r)) out.bad.push(name + ': ' + x.id + ' overlaps ' + t.id); });
+          btns.slice(i + 1).forEach(y => { if (hit(x.r, y.r)) out.bad.push(name + ': ' + x.id + ' overlaps ' + y.id); });
+          if (x.r.left < hb.left - 0.5 || x.r.right > hb.right + 0.5 || x.r.top < hb.top - 0.5 || x.r.bottom > hb.bottom + 0.5)
+            out.bad.push(name + ': ' + x.id + ' outside the header');
+        });
+      });
+      const sb = document.querySelector('.sideview-card[data-card-name=\"suppae\"] [data-action=\"supp-merge\"]');
+      const lab = sb && sb.querySelector('.sideview-supp-label');
+      out.btn = !!sb && sb.getBoundingClientRect().width > 0;
+      out.label = !!lab && getComputedStyle(lab).display !== 'none' && lab.getBoundingClientRect().width > 0;
+      out.narrow = document.querySelector('.sideview-container').classList.contains('sv-narrow');
+      return out; })()")
+    label <- paste(sz, collapse = "x")
+    expect_equal(r$cards, 3, label = label)
+    expect_equal(length(r$bad), 0, info = paste(label, paste(unlist(r$bad), collapse = "; ")))
+    expect_true(r$btn, label = paste("merge button", label))
+    expect_identical(r$narrow, sz[1] < 720, label = paste("sv-narrow", label))
+    expect_identical(r$label, !r$narrow, label = paste("merge label", label))
+  }
+  sv_set_viewport(b, 1400, 900)
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+# ---- the same flow in a Shiny module, with ae as a duckdb table ----
+.sv_supp_mod <- new.env()
+
+sv_supp_module_page <- function() {
+  skip_if_no_browser()
+  for (pkg in c("duckdb", "DBI", "dbplyr")) skip_if_not_installed(pkg)
+  root <- sv_pkg_root()
+  if (!nzchar(root)) skip("SUPP browser tests need the source tree (helper-cdisc.R)")
+  ready <- "(() => { const c = document.querySelector('[data-sv-ns=\"m-\"]');
+    return !!c && c.querySelectorAll('.sideview-card').length === 3 && !!c._sideviewInstance; })()"
+  if (is.null(.sv_supp_mod$page)) {
+    dir <- tempfile("sv-supp-module-")
+    dir.create(dir)
+    helper <- normalizePath(file.path(root, "tests", "testthat", "helper-cdisc.R"), winslash = "/")
+    writeLines(sprintf('library(shiny)
+source("%s")
+f <- sv_cdisc_fixtures()
+con <- DBI::dbConnect(duckdb::duckdb())
+DBI::dbWriteTable(con, "ae", f$ae)
+onStop(function() DBI::dbDisconnect(con, shutdown = TRUE))
+ui <- fluidPage(sideviewUI("m", height = "820px"))
+server <- function(input, output, session) {
+  sideviewServer("m", cards = list(dm = f$dm, ae = dplyr::tbl(con, "ae"), suppae = f$suppae2))
+}
+shinyApp(ui, server)', helper), file.path(dir, "app.R"))
+    .sv_supp_mod$app <- sv_start_app(app_file = file.path(dir, "app.R"))
+    .sv_supp_mod$page <- sv_open_page(.sv_supp_mod$app$url, width = 2300, height = 1000, wait_for = ready)
+    withr::defer({
+      try(.sv_supp_mod$page$close(), silent = TRUE)
+      try(.sv_supp_mod$app$proc$kill(), silent = TRUE)
+      .sv_supp_mod$page <- NULL
+    }, envir = testthat::teardown_env())
+  }
+  b <- .sv_supp_mod$page
+  sv_set_viewport(b, 2300, 1000)
+  sv_js(b, "(() => { const c = document.querySelector('[data-sv-ns=\"m-\"]');
+    window.scrollTo(0, c.getBoundingClientRect().top + window.scrollY); return true; })()")
+  sv_supp_reset(b, "document.querySelector('[data-sv-ns=\"m-\"]')._sideviewInstance")
+  b
+}
+
+test_that("module with a duckdb parent: Merge into AE, step line, snapshot code and report", {
+  b <- sv_supp_module_page()
+  expect_true(attr(b, "sv_ready"))
+  f <- sv_cdisc_fixtures()
+  chk <- sv_supp_check(f$ae, f$suppae2, "ae", "suppae")
+  root <- '[data-sv-ns="m-"]'
+  eng <- "document.querySelector('[data-sv-ns=\"m-\"]')._sideviewInstance"
+  basis <- sv_js(b, "document.querySelector('[data-sv-ns=\"m-\"] .sideview-card[data-card-name=\"ae\"]').dataset.rowsBasis")
+  expect_identical(basis, "full")  # R serves the whole lazy table
+  sv_supp_merge_flow(b, root, eng, chk)
+  snap <- "Shiny.shinyapp.$inputValues['m-sideview_snapshot']"
+  expect_true(sv_wait_js(b, sprintf("!!%s && %s.code.indexOf('suppae_q') >= 0", snap, snap), 30))
+  code <- sv_js(b, sprintf("%s.code", snap))
+  expect_no_error(parse(text = code))
+  expect_match(code, "copy = TRUE", fixed = TRUE)
+  con <- DBI::dbConnect(duckdb::duckdb())
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+  DBI::dbWriteTable(con, "ae", f$ae)
+  got <- sv_supp_run(code, con = con, ae = dplyr::tbl(con, "ae"), suppae = f$suppae2)
+  expect_equal(got, sv_supp_want(f), info = code)
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+# ---- the saved widget: the merge check runs in the browser ----
+test_that("the saved widget merges a SUPP card in the browser without R", {
+  skip_if_no_browser()
+  f <- sv_cdisc_fixtures()
+  env <- list2env(list(dm = f$dm, ae = f$ae, suppae = f$suppae2))
+  dir <- withr::local_tempdir()
+  file <- file.path(dir, "supp.html")
+  w <- local(sideview_widget(dm, ae, suppae), envir = env)
+  suppressMessages(save_sideview(w, file, selfcontained = FALSE))
+  url <- paste0("file:///", gsub("\\\\", "/", normalizePath(file)))
+  b <- sv_open_page(url, width = 2300, height = 900,
+                    wait_for = "!!document.querySelector('.sideview-card[data-card-name=\"suppae\"] [data-action=\"supp-merge\"]')")
+  withr::defer(try(b$close(), silent = TRUE))
+  expect_true(attr(b, "sv_ready"))
+  eng <- "document.querySelector('.sideview-container')._sideviewInstance"
+  expect_false(sv_js(b, sprintf("%s.hasR()", eng)))
+  sv_supp_reset(b, eng)
+  chk <- sv_supp_check(f$ae, f$suppae2, "ae", "suppae")
+  sv_supp_merge_flow(b, ".sideview-container", eng, chk)
+  d <- sv_js(b, sprintf("(() => { const e = %s; return e.suppChecks[Object.keys(e.suppChecks)[0]]; })()", eng))
+  for (k in c("status", "n_parent", "n_supp", "n_matched", "n_orphan", "n_other_rdomain")) {
+    expect_equal(d[[k]], chk[[k]], info = k)
+  }
+  code <- sv_js(b, sprintf("%s.pipeline.compose()", eng))
+  expect_no_error(parse(text = code))
+  expect_equal(sv_supp_run(code, ae = f$ae, suppae = f$suppae2), sv_supp_want(f), info = code)
+  expect_length(attr(b, "sv_errors")(), 0)
+})
