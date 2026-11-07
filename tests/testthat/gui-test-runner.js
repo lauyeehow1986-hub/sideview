@@ -1556,7 +1556,7 @@ function runAllScenarios() {
   const s14_req1 = s14_last('q-supp_check_request');
   s14_r.click_sends_request = s11_ws('q-supp_check_request').length === s14_req0 + 1 && !!s14_req1 &&
     s14_req1.parent === 'ae' && s14_req1.supp === 'suppae' && typeof s14_req1.id === 'string' &&
-    s14_req1.plan === undefined && s14_ae.pipeline.steps.length === 0;
+    s14_req1.plan === undefined && s14_req1.rdomain === 'AE' && s14_ae.pipeline.steps.length === 0;
   // an error reply: a toast, no step
   s14_reply('q-', s14_req1.id, { error: 'Not in ae: AESEQ' });
   s14_r.error_reply_toast_no_step = s11_toastTexts(s14_a).some(function (t) { return t.indexOf('Not in ae: AESEQ') >= 0; }) &&
@@ -1615,6 +1615,8 @@ function runAllScenarios() {
   s14_r.open_report_rechecks_with_plan = s11_ws('q-supp_check_request').length === s14_n0 + 1 &&
     !!s14_plan && !Array.isArray(s14_plan) && Array.isArray(s14_plan.keys) && s14_plan.qnams.length === 2 &&
     s14_plan.idvars[0].idvar === 'AESEQ' && s14_plan.rdomain_col === true;
+  // the re-check names the step's own RDOMAIN, a hint R takes when the SUPP card's tags allow it
+  s14_r.recheck_sends_step_rdomain = s14_recheck.rdomain === s14_s.rdomain && s14_s.rdomain === 'AE';
   s14_reply('q-', s14_recheck.id, s14_check(s14_okRows, s14_plan));
   s14_r.report_focus_supp = !!s14_ae.reportFocus && s14_ae.reportFocus.kind === 'supp' &&
     !!s14_box.querySelector('.sideview-suppcheck-title') &&

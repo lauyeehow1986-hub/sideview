@@ -354,9 +354,11 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
         stop("The merge check needs both tables as data frames.", call. = FALSE)
       }
       plan <- sv_supp_plan_from_client(req$plan)
-      rdomain <- NULL
-      for (tg in cs$cdisc$merge_targets) {
-        if (identical(tg$card, cp$id)) { rdomain <- tg$rdomain; break }
+      rdomain <- sv_supp_rdomain_hint(cs, req$rdomain)
+      if (is.null(rdomain)) {
+        for (tg in cs$cdisc$merge_targets) {
+          if (identical(tg$card, cp$id)) { rdomain <- tg$rdomain; break }
+        }
       }
       chk <- lazy_or_preview(
         list(cp, cs),
@@ -942,6 +944,19 @@ sv_supp_plan_from_client <- function(plan) {
   }
   if (!is.list(plan) || is.null(names(plan))) return(NULL)
   plan
+}
+
+# The RDOMAIN a supp_check_request names (the step's own), or NULL. It is a hint only: taken when it
+# is one of the SUPP card's tag `rdomains`, or when the card has no tags at all (cdisc = FALSE), so a
+# re-check of a loaded step does not fall back to the card name. Anything else is ignored and the
+# caller derives the RDOMAIN from the tags.
+sv_supp_rdomain_hint <- function(card, hint) {
+  if (is.null(hint) || !is.character(hint) || length(hint) != 1L || is.na(hint)) return(NULL)
+  hint <- toupper(trimws(hint))
+  if (!grepl("^[A-Z][A-Z0-9]{0,7}$", hint)) return(NULL)
+  tag <- card$cdisc
+  if (is.null(tag)) return(hint)
+  if (hint %in% toupper(as.character(unlist(tag$rdomains)))) hint else NULL
 }
 
 # A check as a list for the wire: through the JSON form (arrays stay arrays), with JSON nulls

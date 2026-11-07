@@ -2366,6 +2366,7 @@ test_that("cdisc = FALSE draws no CDISC-class suggestion paths and no notes", {
 
 # The merge written by hand, independently of the code generator.
 sv_supp_want <- function(f) {
+  skip_if_not_installed("tidyr")
   s <- f$suppae2
   aeseq <- s[s$IDVAR == "AESEQ", ] |>
     dplyr::transmute(STUDYID, USUBJID, AESEQ = as.integer(IDVARVAL), QNAM, QVAL) |>

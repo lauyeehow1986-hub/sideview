@@ -939,7 +939,7 @@
         if (s.kind === 'supp') {
           if (!s.idvars || !s.idvars.length) return;
           var si = rightInfo(s.supp);
-          supps.push({ step: s, src: si.ref, lazy: !!si.kind });
+          supps.push({ step: s, src: si.ref, lazy: !!si.kind, arrow: kind === 'arrow' });
           lines = lines.concat(suppJoins(s, kind));
           return;
         }
@@ -1030,7 +1030,7 @@
       var withLabels = !(kind && later);
       var preps = supps.map(function (p) {
         if (withLabels && suppLabels(p.step).length) lines.push(suppLabelLine(p.step));
-        return suppPrep(p.step, p.src, p.lazy, self.refFor(t), pipe, withLabels);
+        return suppPrep(p.step, p.src, p.lazy, self.refFor(t), pipe, withLabels, p.arrow);
       });
       var chain = head + lines.join(' ' + pipe + '\n  ');
       return preps.length ? preps.join('\n\n') + '\n\n' + chain : chain;
@@ -2151,6 +2151,11 @@
       '(dplyr::if_else(grepl(' + str(re) + ', IDVARVAL), as.character(IDVARVAL), NA_character_)))';
   }
 
+  // A level whose key an Arrow join casts to the parent's type: a numeric IDVAR.
+  function suppArrowCast(v) {
+    return v.idvar !== '' && (v.type === 'integer' || v.type === 'double');
+  }
+
   function suppLabels(s) {
     return (s.qnams || []).filter(function (q) { return q.label !== ''; });
   }
@@ -2159,9 +2164,11 @@
    * The statements written before the parent's chain (§6.2): <supp>_q, the guards, one pivoted
    * table per IDVAR level, and <supp>_labels when `withLabels`. `src` is the SUPP side's code (the
    * card, or its _prep chain); `srcLazy` collects it after the RDOMAIN filter; `parentRef` is the
-   * parent table the clash guard reads (colnames() works on data frames, arrow and dbplyr tables).
+   * parent table the clash guard reads (the names of collect(head(x, 0)): data frames, arrow tables,
+   * datasets and queries, dbplyr tables). `arrowJoin`: the chain is Arrow where the levels join,
+   * so a numeric level's key is cast to the parent's Arrow type.
    */
-  function suppPrep(s, src, srcLazy, parentRef, pipe, withLabels) {
+  function suppPrep(s, src, srcLazy, parentRef, pipe, withLabels, arrowJoin) {
     var S = String(s.supp), P = String(s.table);
     var q = ident(S + '_q');
     var nl = ' ' + pipe + '\n  ';
@@ -2178,7 +2185,7 @@
     if (levels.indexOf('') < 0) g.push('  other[other == ""] <- "(subject level)"');
     g.push('  if (length(other)) stop(' + str(S + ' has IDVAR values this merge does not handle: ') + ',');
     g.push('    paste(other, collapse = ", "), ". Refresh the merge step.", call. = FALSE)');
-    g.push('  clash <- intersect(unique(' + q + '$QNAM), colnames(' + parentRef + '))');
+    g.push('  clash <- intersect(unique(' + q + '$QNAM), names(dplyr::collect(utils::head(' + parentRef + ', 0))))');
     g.push('  if (length(clash)) stop(' + str(S + ' QNAMs clash with ' + P + ' columns: ') +
       ', paste(clash, collapse = ", "), call. = FALSE)');
     if (levels.length > 1) {
@@ -2208,6 +2215,19 @@
         '    dup$USUBJID[1], ' + (iv !== '' ? str(' ' + iv + ' ') + ', dup[[' + str(iv) + ']][1], ' : '') +
         '" ", dup$QNAM[1], call. = FALSE)\n})');
       out.push(nm + ' <- tidyr::pivot_wider(' + nm + ', names_from = QNAM, values_from = QVAL)');
+      if (arrowJoin && suppArrowCast(v)) {
+        // Arrow's hash join needs one key type on both sides: as.integer() gives int32 and
+        // as.numeric() double, while a parquet parent often has int64. Cast to the parent's type
+        // (read at run time); a fractional key cannot match an integer one, so it is dropped.
+        var k = str(iv);
+        out.push(nm + ' <- local({\n' +
+          '  ty <- arrow::as_arrow_table(utils::head(' + parentRef + ', 0))$schema[[' + k + ']]$type\n' +
+          '  x <- ' + nm + '\n' +
+          '  if (is.double(x[[' + k + ']]) && grepl("int", ty$ToString())) x <- x[x[[' + k + ']] == trunc(x[[' + k + ']]), ]\n' +
+          '  x <- arrow::arrow_table(x)\n' +
+          '  x[[' + k + ']] <- x[[' + k + ']]$cast(ty)\n' +
+          '  x\n})');
+      }
     });
 
     var labs = suppLabels(s);
@@ -2225,7 +2245,9 @@
     return s.idvars.map(function (v) {
       var nm = suppLevelName(s.supp, v.idvar);
       var by = s.keys.concat(v.idvar !== '' ? [v.idvar] : []).map(function (k) { return { left: k, right: k }; });
-      return 'dplyr::left_join(' + (kind === 'arrow' ? 'arrow::arrow_table(' + nm + ')' : nm) +
+      // a cast level is an Arrow table already (suppPrep)
+      var wrap = kind === 'arrow' && !suppArrowCast(v);
+      return 'dplyr::left_join(' + (wrap ? 'arrow::arrow_table(' + nm + ')' : nm) +
         ', by = ' + joinBy(by) + (kind === 'duckdb' ? ', copy = TRUE' : '') + ')';
     });
   }

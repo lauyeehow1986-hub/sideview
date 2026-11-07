@@ -96,7 +96,8 @@ Pressing the button again replaces the step (same `key`, as `Pipeline.add` alrea
   - problems: repeats, clashes, bad `IDVARVAL` values (with samples);
   - the new columns with their labels;
   - a 5-row preview of the merged parent (key columns and the new columns).
-  - When the check ran on a preview (widget, or a lazy card that fell back), the panel says `Preview rows`.
+  - When the check ran on a preview (a widget card whose rows were cut by `max_rows` or that is lazy, or a lazy
+    card that fell back), the panel says `Preview rows`.
 - **Drift:** when a re-check (§7.4) finds that the data no longer fits the plan, the step line reads
   `Merge needs refreshing` with a **Refresh** button. Refresh re-plans and replaces the step (one undo step).
 
@@ -152,19 +153,22 @@ chain is composed first and `suppae_q` starts from it.
 ```r
 suppae_q <- suppae %>%
   dplyr::filter(RDOMAIN == "AE") %>%
-  dplyr::mutate(IDVAR = dplyr::coalesce(IDVAR, ""))
+  dplyr::mutate(IDVAR = dplyr::if_else(is.na(IDVAR) | trimws(IDVAR) == "", "", as.character(IDVAR)))
 local({
   other <- setdiff(unique(suppae_q$IDVAR), c("AESEQ", ""))
   if (length(other)) stop("suppae has IDVAR values this merge does not handle: ",
     paste(other, collapse = ", "), ". Refresh the merge step.", call. = FALSE)
-  clash <- intersect(unique(suppae_q$QNAM), colnames(ae))
+  clash <- intersect(unique(suppae_q$QNAM), names(dplyr::collect(utils::head(ae, 0))))
   if (length(clash)) stop("suppae QNAMs clash with ae columns: ", paste(clash, collapse = ", "), call. = FALSE)
   both <- intersect(suppae_q$QNAM[suppae_q$IDVAR == "AESEQ"], suppae_q$QNAM[suppae_q$IDVAR == ""])
   if (length(both)) stop("suppae QNAMs are at two levels: ", paste(both, collapse = ", "), call. = FALSE)
 })
 suppae_aeseq <- suppae_q %>%
   dplyr::filter(IDVAR == "AESEQ") %>%
-  dplyr::transmute(STUDYID, USUBJID, AESEQ = suppressWarnings(as.numeric(IDVARVAL)), QNAM, QVAL)
+  dplyr::transmute(STUDYID, USUBJID, AESEQ = suppressWarnings(as.numeric(dplyr::if_else(
+    grepl("^\s*[+-]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][+-]?[0-9]+)?\s*$", IDVARVAL),
+    as.character(IDVARVAL), NA_character_))), QNAM, QVAL) %>%
+  dplyr::filter(!is.na(AESEQ))
 local({
   rep <- suppae_aeseq[duplicated(suppae_aeseq[c("STUDYID", "USUBJID", "AESEQ", "QNAM")]), ]
   if (nrow(rep)) stop("suppae repeats a QNAM for ", nrow(rep), " record(s), first: ",
@@ -188,9 +192,12 @@ ae %>%
 Rules:
 - **Filter on RDOMAIN** only when the SUPP card has an `RDOMAIN` column.
 - **Key conversion** (on the SUPP side, which is always in memory):
-  - `double`: `suppressWarnings(as.numeric(IDVARVAL))`;
-  - `integer`: `as.integer(dplyr::if_else(grepl("^\\s*[+-]?[0-9]+\\s*$", IDVARVAL), IDVARVAL, NA_character_))`,
-    so `"1.5"` becomes `NA` instead of `1`;
+  - `double`: `suppressWarnings(as.numeric(dplyr::if_else(grepl(<double pattern>, IDVARVAL),
+    as.character(IDVARVAL), NA_character_)))`, where the pattern is the check's own
+    `^\\s*[+-]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][+-]?[0-9]+)?\\s*$` (so `"1.0"` and `" 1 "` are `1`, while
+    `"Inf"`, `"0x1A"` and `"1e"` are `NA`, as in `sv_supp_convert()` / `suppConvert()`);
+  - `integer`: the same with `as.integer()` and `^\\s*[+-]?[0-9]+\\s*$`, so `"1.5"` becomes `NA` instead of `1`;
+  - rows whose key is `NA` after conversion are dropped (`dplyr::filter(!is.na(AESEQ))`): they join nothing;
   - `character`: `IDVARVAL` unchanged.
 - **The repeat guard runs after conversion**, so `"01"` and `"1"` are the same record.
 - **One block per IDVAR level** in the plan, named `<supp>_<idvar lower case>` and `<supp>_subj`; a level with
@@ -202,12 +209,17 @@ Rules:
 
 - **Lazy SUPP:** `suppae_q` ends in `dplyr::collect()`, so everything after it is in memory.
 - **Lazy parent (duckdb):** the joins get `copy = TRUE`.
-- **Lazy parent (arrow):** the joins take `arrow::arrow_table(suppae_aeseq)`.
+- **Lazy parent (arrow):** the joins take Arrow tables. A numeric level's key is cast to the parent's own Arrow
+  type, read at run time (`arrow::as_arrow_table(utils::head(ae, 0))$schema[["AESEQ"]]$type`), because Arrow's
+  hash join refuses int32 (`as.integer()`) or double against an int64 parquet column; a fractional key on an
+  integer parent is dropped first (it cannot match). The subject level and character keys use
+  `arrow::arrow_table(suppae_subj)` as they are. Duckdb and in-memory code has no cast.
 - **Labels:** on a lazy chain the label `mutate` goes after the chain's final `dplyr::collect()`. A lazy chain that
   is a `_prep` for another chain gets no labels.
-- The guards run on `suppae_q`, which is in memory. The clash guard reads the parent's columns with `colnames(ae)`,
-  which works for data frames, duckdb and arrow tables; `names()` does not (on a lazy `tbl` it lists the object's
-  parts, not its columns).
+- The guards run on `suppae_q`, which is in memory. The clash guard reads the parent's columns with
+  `names(dplyr::collect(utils::head(ae, 0)))`, which works for data frames, duckdb tables, arrow tables, datasets
+  and queries (`open_dataset() |> filter()`); `colnames()` is `NULL` on an arrow query and `names()` on a lazy
+  `tbl` lists the object's parts, not its columns.
 
 ## 7. The merge check
 
@@ -243,17 +255,21 @@ generic SUPPQUAL.
 
 ### 7.3 Wire
 
-- Input `supp_check_request {id, parent, supp, plan?}`: `id` is a request id; the engine keeps the latest per
-  step key and drops older replies. Clients only name cards in the store.
+- Input `supp_check_request {id, parent, supp, plan?, rdomain?}`: `id` is a request id; the engine keeps the
+  latest per step key and drops older replies. Clients only name cards in the store. `rdomain` is the step's
+  RDOMAIN, a hint R accepts only when it is one of the SUPP card's tag `rdomains`, or when the card has no tags
+  (`cdisc = FALSE`); otherwise R derives it from the tags as before.
 - Message `sideview_supp_check {id, ...check}`. In a module it carries `ns` and goes through `onMessage()`.
 - The gadget and module check on full data (lazy twin for lazy cards); the widget checks its embedded rows.
 - Both names are added to the CLAUDE.md inputs/messages list.
 
 ### 7.4 Re-checks
 
-The check is requested again (with `plan =`) when the step's report is opened, after a workspace is opened,
-and after a module `sv_replace_card()` of either card (which also clears the stored check). Drift only shows
-the refresh state; it never edits the step by itself.
+The check is requested again (with `plan =` and the step's `rdomain`) when the step line or report is opened,
+after a workspace is opened, after undo or redo, and after a module `sv_replace_card()` / `sv_remove_card()` of
+either card (`replaceCard()` -> `forgetSuppChecks()` in the browser, which also clears the stored check).
+Refresh runs no check: it takes the plan of the last check. Drift only shows the refresh state; it never edits
+the step by itself.
 
 ## 8. Edge cases
 
@@ -303,9 +319,9 @@ QNAM; bad `IDVARVAL` (`"x"`, `"1.5"` on an integer key); a missing column; no ST
 
 - **New:** `R/supp.R`, `tests/testthat/test-supp.R`.
 - **Modified:** `R/cdisc.R` (tag fields), `R/cdisc_keys.R` (hint note), `R/copilot.R` (supp rows),
-  `R/lazy.R` (lazy twin), `R/app_server.R` (handler), `R/module.R` (re-check on replace),
+  `R/lazy.R` (lazy twin), `R/app_server.R` (handler),
   `inst/www/sv-pipeline.js` (step verbs, describe, compose prep, `suppCheck`), `inst/www/sideview.js` (button,
-  menu, flow, panel), `inst/www/sideview.css`, `tests/testthat/helper-cdisc.R`, `_pkgdown.yml`
+  menu, flow, panel; the re-check on a module card replace or remove is `replaceCard()` -> `forgetSuppChecks()`), `inst/www/sideview.css`, `tests/testthat/helper-cdisc.R`, `_pkgdown.yml`
   (`sv_supp_check`), `man/`, `vignettes/articles/cdisc.Rmd` (a "Merging SUPP-- tables" section; update "What
   join keys do not do"), `README.md` (one bullet), `CLAUDE.md` (inputs/messages, tag fields), `NEWS.md` and
   `DESCRIPTION` (0.7.0), `MEMORY.md`, rebuilt `docs/`.

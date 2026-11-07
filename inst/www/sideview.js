@@ -5108,6 +5108,9 @@ function sendToShiny(name, value) {
       var req = { id: id, parent: parentName, supp: suppName };
       // a named object as JSON text: R reads it with jsonlite (an unnamed plan would be dropped)
       if (plan) req.plan = JSON.stringify(suppPlanOf(plan));
+      // the step's (or the button's) RDOMAIN, a hint only: R takes it when the SUPP card's tags allow
+      // it (or the card has no tags, cdisc = FALSE), so a re-check does not fall back to the name
+      if (rdomain) req.rdomain = String(rdomain);
       this.sendSuppRequest(req, 0);
       return id;
     }

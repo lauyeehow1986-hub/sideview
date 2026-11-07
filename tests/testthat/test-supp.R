@@ -405,6 +405,43 @@ test_that("server answers supp_check_request", {
   })
 })
 
+test_that("server takes the step's rdomain hint only where the tags allow it", {
+  last_reply <- function(session) {
+    msgs <- session$userData$custom_messages
+    msgs[[length(msgs)]]$message
+  }
+  ask <- function(session, id, rdomain = NULL) {
+    req <- list(id = id, parent = "ae", supp = "suppqual")
+    if (!is.null(rdomain)) req$rdomain <- rdomain
+    session$setInputs(supp_check_request = req)
+    last_reply(session)
+  }
+  n_ae <- sum(fx$suppqual$RDOMAIN == "AE")
+  # no tags (cdisc = FALSE): a re-check needs the hint, the name alone gives "QUAL"
+  plain <- sv_cdisc_cards(list(ae = fx$ae, suppqual = fx$suppqual), cdisc = FALSE)
+  expect_null(plain[[2]]$cdisc)
+  shiny::testServer(sideview_server(plain, cdisc = FALSE), {
+    expect_identical(ask(session, "h1")$error, "suppqual has no rows for QUAL")
+    r <- ask(session, "h2", "AE")
+    expect_identical(r$id, "h2")
+    expect_identical(r$status, "ok")
+    expect_identical(r$n_supp, n_ae)
+  })
+  # tagged: a hint in the card's rdomains is taken, any other is ignored (the tags decide)
+  tagged <- sv_cdisc_cards(list(ae = fx$ae, suppqual = fx$suppqual))
+  expect_true(all(c("AE", "CM") %in% unlist(tagged[[2]]$cdisc$rdomains)))
+  shiny::testServer(sideview_server(tagged), {
+    expect_identical(ask(session, "h3")$n_supp, n_ae)
+    # CM is one of the card's RDOMAINs, so it is taken (and AE has no CMSEQ)
+    expect_identical(ask(session, "h4", "CM")$error, "Not in ae: CMSEQ")
+    expect_identical(ask(session, "h5", "ZZ")$n_supp, n_ae)
+    expect_identical(ask(session, "h6", "x); stop(")$n_supp, n_ae)
+  })
+  expect_identical(sv_supp_rdomain_hint(list(cdisc = NULL), " ae "), "AE")
+  expect_null(sv_supp_rdomain_hint(list(cdisc = NULL), c("AE", "CM")))
+  expect_null(sv_supp_rdomain_hint(list(cdisc = list(rdomains = list())), "AE"))
+})
+
 test_that("server supp error for an unknown card", {
   cards <- sv_normalize_cards(list(ae = fx$ae, suppae = fx$suppae))
   shiny::testServer(sideview_server(cards), {

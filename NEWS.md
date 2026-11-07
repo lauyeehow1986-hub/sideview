@@ -11,23 +11,34 @@
   `RDOMAIN`s, a `QNAM` that repeats for one record, a clash with a parent column, a `QNAM` at two `IDVAR`
   levels, `IDVARVAL` values that do not convert (counted apart from orphans), the new columns and a
   5-row preview. The step line in the Pipeline tab carries a one-line summary.
-* **Refresh.** When the data no longer fits the plan (for example after editing `suppae`), the step reads
-  "Merge needs refreshing" and **Refresh** re-plans it as one undo step.
+* **Refresh.** When a re-check finds that the data no longer fit the plan (for example after editing
+  `suppae`), the step reads "Merge needs refreshing" and **Refresh** takes the plan that check found, as one
+  undo step (Refresh itself runs no new check).
 * **Auto Map** offers a SUPP card's merge as a dashed spline group to its parent; accepting it adds the merge
   step instead of a join. The join check mentions the merge when you join a SUPP table by hand.
 * **Lazy cards.** An arrow or duckdb parent stays lazy; only the SUPP table is collected.
 * **`sv_supp_check()`** (new, exported) runs the merge check on two data frames or cards.
   `sv_supp_check_json()` and `sv_supp_key_type()` are exported with it. `sv_suggest_mappings()` gains rows
   with `kind = "supp"`.
-* New Shiny wire items: the input `supp_check_request` and the message `sideview_supp_check`.
+* New Shiny wire items: the input `supp_check_request` (`{id, parent, supp, plan?, rdomain?}`) and the
+  message `sideview_supp_check`.
 
 ### Limits to know about
 
 * The merge needs the exact upper-case column names `USUBJID`, `IDVAR`, `IDVARVAL`, `QNAM` and `QVAL`.
 * A second merge into one parent is checked for clashes in the browser; the guard in the generated code
   checks the source parent table only.
-* The check runs when you press the button or Refresh; only the guards in the code stop a rerun on new data.
-* A double key with more than 15 significant digits can match differently in R and in the widget.
+* The check runs when you press the Merge button, open the step line or report, open a workspace, undo or
+  redo, and after a module card is replaced or removed; Refresh runs none. Only the guards in the code stop
+  a rerun on new data.
+* A double key with more than 15 significant digits can match differently: the in-memory R check compares
+  15-significant-digit text, while the generated code and the lazy duckdb check compare the doubles, so the
+  gadget's own report can disagree with its code for such keys (and the widget reads the shortest
+  round-trip text).
+* With an arrow parent the code casts a numeric key to the parent's Arrow type (an int64 parquet column
+  joins); the clash guard reads the parent's columns with `collect(head(x, 0))`, so arrow queries work.
+* A re-check sends the step's `RDOMAIN`, so a step loaded with `cdisc = FALSE`, or after a tag changed,
+  keeps its domain.
 * `RELREC` tables are still not merged or suggested.
 
 # sideview 0.6.0

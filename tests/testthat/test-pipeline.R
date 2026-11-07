@@ -953,6 +953,7 @@ supp_compose <- function(chk_json, pipe = "%>%", table = "ae", supp = "suppae", 
 
 # Run composed code with the given tables bound by name.
 supp_run <- function(code, ...) {
+  skip_if_not_installed("tidyr")  # the generated code pivots with tidyr::pivot_wider()
   env <- list2env(list(...), parent = globalenv())
   env$`%>%` <- dplyr::`%>%`
   eval(parse(text = code), envir = env)
@@ -966,6 +967,7 @@ supp_stop <- function(code, ...) {
 # The merge written by hand: one pivot per IDVAR level, joined on the converted key.
 supp_hand_merge <- function(parent, supp, keys = c("STUDYID", "USUBJID"), idvar = "AESEQ",
                             convert = as.integer, labels = NULL) {
+  skip_if_not_installed("tidyr")
   supp$IDVAR[is.na(supp$IDVAR)] <- ""
   out <- parent
   lv <- supp[supp$IDVAR == idvar, , drop = FALSE]
@@ -985,6 +987,7 @@ supp_hand_merge <- function(parent, supp, keys = c("STUDYID", "USUBJID"), idvar 
 }
 
 test_that("supp code equals hand merge", {
+  skip_if_not_installed("tidyr")
   fx <- sv_cdisc_fixtures()
   code <- supp_compose(supp_chk_json(fx$ae, fx$suppae2))
   expect_parses(code)
@@ -1161,7 +1164,7 @@ test_that("supp merge on a lazy parent equals the in-memory result", {
                   ae = NULL, supp = fx$suppae2, pattern = "copy = TRUE", n = 1L),
     arrow = list(meta = '{"ae": {"lazy": "arrow", "codeRef": "ae"}}',
                  ae = arrow::arrow_table(fx$ae), supp = fx$suppae2,
-                 pattern = "arrow::arrow_table(suppae_aeseq)", n = 1L),
+                 pattern = "dplyr::left_join(suppae_aeseq, by", n = 1L),
     lazy_supp = list(meta = '{"suppae": {"lazy": "arrow", "codeRef": "suppae"}}',
                      ae = fx$ae, supp = arrow::arrow_table(fx$suppae2),
                      pattern = "dplyr::collect() %>%\n  dplyr::mutate(IDVAR", n = 1L),
@@ -1190,6 +1193,55 @@ test_that("supp merge on a lazy parent equals the in-memory result", {
   expect_parses(code)
   expect_match(code, "ae_prep <- dplyr::tbl(con, \"ae\") %>%", fixed = TRUE)
   expect_false(grepl("suppae_labels", code, fixed = TRUE))
+})
+
+test_that("supp merge on an arrow parent with an int64 key joins on the parent's type", {
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("tidyr")
+  fx <- sv_cdisc_fixtures()
+  meta <- '{"ae": {"lazy": "arrow", "codeRef": "ae"}}'
+  labels <- c(AETRTEM = "Label AETRTEM", AESOC2 = "Label AESOC2")
+  int64_ae <- function(df) {
+    sch <- arrow::schema(lapply(df, function(x) if (is.character(x)) arrow::utf8() else arrow::int64()))
+    arrow::Table$create(df, schema = sch)
+  }
+  # an integer key (as.integer gives int32) and a parquet-style int64 parent
+  ae64 <- int64_ae(fx$ae)
+  expect_identical(ae64$schema[["AESEQ"]]$type$ToString(), "int64")
+  code <- supp_compose(supp_chk_json(fx$ae, fx$suppae2), meta = meta)
+  expect_parses(code)
+  got <- supp_run(code, ae = ae64, suppae = fx$suppae2)
+  want <- supp_hand_merge(fx$ae, fx$suppae2, labels = labels)
+  expect_same_rows(got, want)
+  # a double key (plan type "double") on an int64 parent; "1.5" joins nothing
+  ae_dbl <- fx$ae
+  ae_dbl$AESEQ <- as.numeric(ae_dbl$AESEQ)
+  supp_dbl <- rbind(fx$suppae2, transform(fx$suppae2[1, ], IDVARVAL = "1.5", QNAM = "AEXTRA"))
+  chk <- sv_supp_check(ae_dbl, supp_dbl, "ae", "suppae", rdomain = "AE")
+  expect_identical(chk$plan$idvars[[1]]$type, "double")
+  code <- supp_compose(sv_supp_check_json(chk), meta = meta)
+  expect_parses(code)
+  got <- supp_run(code, ae = ae64, suppae = supp_dbl)
+  want <- supp_hand_merge(fx$ae, supp_dbl, convert = function(x) suppressWarnings(as.numeric(x)))
+  want$AESEQ <- as.integer(want$AESEQ)
+  got[] <- lapply(got, function(x) { attr(x, "label") <- NULL; x })
+  expect_same_rows(got, want)
+  expect_true(all(is.na(got$AEXTRA)))
+  # an in-memory or duckdb parent's code is unchanged: no cast
+  plain <- supp_compose(supp_chk_json(fx$ae, fx$suppae2))
+  expect_false(grepl("as_arrow_table", plain, fixed = TRUE))
+})
+
+test_that("supp clash guard reads an arrow query's columns", {
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("tidyr")
+  fx <- sv_cdisc_fixtures()
+  code <- supp_compose(supp_chk_json(fx$ae, fx$supp_clash),
+                       meta = '{"ae": {"lazy": "arrow", "codeRef": "ae"}}')
+  expect_parses(code)
+  q <- dplyr::filter(arrow::arrow_table(fx$ae), AESEQ > 0)
+  expect_identical(supp_stop(code, ae = q, suppae = fx$supp_clash),
+                   "suppae QNAMs clash with ae columns: AESEV")
 })
 
 test_that("odd QNAM and QLABEL parse", {

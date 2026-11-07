@@ -174,11 +174,15 @@ bad `IDVARVAL`s, and `ok` otherwise. A step with an error is still added
 so that you can read the report; its step line says that it stops. When
 a re-check finds that the data no longer fits the plan (an edited
 `suppae`, say), the step line reads “Merge needs refreshing” and
-**Refresh** re-plans it as one undo step.
+**Refresh** takes the plan that re-check found, as one undo step.
+Refresh runs no check of its own.
 
 With an arrow or duckdb parent, the parent stays lazy: only the SUPP
-table is collected. In the widget the check runs in the browser on the
-embedded rows and the panel says “Preview rows”.
+table is collected. With an arrow parent the code casts a numeric key to
+the parent’s own Arrow type, so an `int64` `AESEQ` from a parquet file
+joins. In the widget the check runs in the browser on the embedded rows;
+when a card’s rows were cut (`max_rows`) or the card is lazy, the panel
+says “Preview rows”.
 
 ## What it does not do
 
@@ -201,15 +205,19 @@ embedded rows and the panel says “Preview rows”.
   only at the source parent table, so after an earlier join, summarise,
   pivot or custom step the browser cannot see the chain’s columns
   either, and dplyr would add `.x`/`.y` suffixes instead of stopping.
-- The check is run when you press the button or Refresh, not when the
-  code runs. If the data change later, only the guards in the generated
-  code stop a rerun on new data.
-- `IDVARVAL` is matched after conversion to the key type. R reads a
-  double as 15 significant digits and the browser as the shortest
-  round-trip, so a double key with more than 15 significant digits can
-  differ between the gadget and the widget. A key that does not look
-  like a plain decimal (`"0x10"`, `"Inf"`, `"1d3"`) is counted as a bad
-  `IDVARVAL`.
+- The check runs when you press the Merge button, when you open the step
+  line or the report, after opening a workspace, after undo or redo, and
+  after a module card is replaced or removed. Refresh runs no check, and
+  nothing checks when the code runs: if the data change later, only the
+  guards in the generated code stop a rerun on new data.
+- `IDVARVAL` is matched after conversion to the key type. The in-memory
+  R check compares a double key as 15 significant digits of text, while
+  the generated code and the lazy duckdb check compare the doubles
+  themselves, and the browser reads the shortest round-trip text. So for
+  a double key with more than 15 significant digits the gadget’s own
+  report can disagree with its code, and the gadget with the widget. A
+  key that does not look like a plain decimal (`"0x10"`, `"Inf"`,
+  `"1d3"`) is counted as a bad `IDVARVAL`.
 - `cdisc = FALSE` shows no tags, but lazy (arrow / duckdb) cards still
   run detection when they are built. A named `cdisc =` vector with
   several lazy cards gets slower with each verb.

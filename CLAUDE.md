@@ -33,7 +33,7 @@ rstudio bridge: R/rstudio.R
   `column_renamed`, `clear_operations`, `discrepancy_check`, `request_suggested_mappings`,
   `apply_auto_clean`, `run_ai_prompt`, `send_copilot_chat`, `inject_script`, `send_console`,
   `send_console_and_exit`, `eval_env`, `sideview_card_moved`, `sideview_highlight_changed`,
-  `sideview_rows_request`, `join_diagnostics_request`, `column_profile_request`, `supp_check_request` (`{id, parent, supp, plan?}`; module: routed by `ns`, the client only names cards in the R store), `codebook_export`,
+  `sideview_rows_request`, `join_diagnostics_request`, `column_profile_request`, `supp_check_request` (`{id, parent, supp, plan?, rdomain?}`; `rdomain` is a hint R takes only if it is in the SUPP card's tag `rdomains` or the card has no tags; module: routed by `ns`, the client only names cards in the R store), `codebook_export`,
   `state_save`, `state_open_request`, `sideview_ready` (module: the canvas is on the page, R sends its cards),
   `sideview_snapshot` (module: `{code, pipeline, state, cards}`, pipeline/state as JSON text, debounced 300 ms),
   `sideview_done`, `sideview_cancel`,
@@ -98,7 +98,8 @@ rstudio bridge: R/rstudio.R
   and `sv_lazy_supp_check()` (R/lazy.R) return the same fields; test-supp.R / test-lazy.R hold them to each other.
   The merge is a pipeline step `{kind: 'supp', key, table, supp, rdomain, keys, idvars, qnams, rdomain_col}`
   whose plan is captured when it is added; `compose()` writes the plan and guards into the R code (clash guard
-  uses `colnames()`, never `names()`, so dbplyr works). A QNAM without QLABEL has label `""`. `IDVARVAL` rows that
+  reads `names(dplyr::collect(utils::head(<parent>, 0)))`: plain `names()` fails on dbplyr, `colnames()` on an arrow
+  query; on an arrow chain a numeric IDVAR key is cast to the parent's Arrow type, so int64 parquet keys join). A QNAM without QLABEL has label `""`. `IDVARVAL` rows that
   do not convert are `bad_idvarval`, never orphans (`n_matched + n_orphan + bad == n_supp`). Double keys are
   converted only if one decimal regex matches, in R and JS alike. Clashes with columns made by earlier chain
   steps are caught in the browser (`columnsBefore()`), not by the code guard. Change a twin together with the others.

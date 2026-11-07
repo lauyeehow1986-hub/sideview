@@ -42,20 +42,22 @@
 <li>
 <strong>Merge check.</strong> The Discrepancy tab shows parent, SUPP, matched and orphan counts, rows of other <code>RDOMAIN</code>s, a <code>QNAM</code> that repeats for one record, a clash with a parent column, a <code>QNAM</code> at two <code>IDVAR</code> levels, <code>IDVARVAL</code> values that do not convert (counted apart from orphans), the new columns and a 5-row preview. The step line in the Pipeline tab carries a one-line summary.</li>
 <li>
-<strong>Refresh.</strong> When the data no longer fits the plan (for example after editing <code>suppae</code>), the step reads “Merge needs refreshing” and <strong>Refresh</strong> re-plans it as one undo step.</li>
+<strong>Refresh.</strong> When a re-check finds that the data no longer fit the plan (for example after editing <code>suppae</code>), the step reads “Merge needs refreshing” and <strong>Refresh</strong> takes the plan that check found, as one undo step (Refresh itself runs no new check).</li>
 <li>
 <strong>Auto Map</strong> offers a SUPP card’s merge as a dashed spline group to its parent; accepting it adds the merge step instead of a join. The join check mentions the merge when you join a SUPP table by hand.</li>
 <li>
 <strong>Lazy cards.</strong> An arrow or duckdb parent stays lazy; only the SUPP table is collected.</li>
 <li>
 <strong><code><a href="../reference/sv_supp_check.html">sv_supp_check()</a></code></strong> (new, exported) runs the merge check on two data frames or cards. <code><a href="../reference/sv_supp_check.html">sv_supp_check_json()</a></code> and <code><a href="../reference/sv_supp_check.html">sv_supp_key_type()</a></code> are exported with it. <code><a href="../reference/sv_suggest_mappings.html">sv_suggest_mappings()</a></code> gains rows with <code>kind = "supp"</code>.</li>
-<li>New Shiny wire items: the input <code>supp_check_request</code> and the message <code>sideview_supp_check</code>.</li>
+<li>New Shiny wire items: the input <code>supp_check_request</code> (<code>{id, parent, supp, plan?, rdomain?}</code>) and the message <code>sideview_supp_check</code>.</li>
 </ul><div class="section level4">
 <h4 id="limits-to-know-about-0-7-0">Limits to know about<a class="anchor" aria-label="anchor" href="#limits-to-know-about-0-7-0"></a></h4>
 <ul><li>The merge needs the exact upper-case column names <code>USUBJID</code>, <code>IDVAR</code>, <code>IDVARVAL</code>, <code>QNAM</code> and <code>QVAL</code>.</li>
 <li>A second merge into one parent is checked for clashes in the browser; the guard in the generated code checks the source parent table only.</li>
-<li>The check runs when you press the button or Refresh; only the guards in the code stop a rerun on new data.</li>
-<li>A double key with more than 15 significant digits can match differently in R and in the widget.</li>
+<li>The check runs when you press the Merge button, open the step line or report, open a workspace, undo or redo, and after a module card is replaced or removed; Refresh runs none. Only the guards in the code stop a rerun on new data.</li>
+<li>A double key with more than 15 significant digits can match differently: the in-memory R check compares 15-significant-digit text, while the generated code and the lazy duckdb check compare the doubles, so the gadget’s own report can disagree with its code for such keys (and the widget reads the shortest round-trip text).</li>
+<li>With an arrow parent the code casts a numeric key to the parent’s Arrow type (an int64 parquet column joins); the clash guard reads the parent’s columns with <code>collect(head(x, 0))</code>, so arrow queries work.</li>
+<li>A re-check sends the step’s <code>RDOMAIN</code>, so a step loaded with <code>cdisc = FALSE</code>, or after a tag changed, keeps its domain.</li>
 <li>
 <code>RELREC</code> tables are still not merged or suggested.</li>
 </ul></div>
