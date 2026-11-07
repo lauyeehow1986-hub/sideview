@@ -25,13 +25,17 @@ Each entry: **date — change — why — verification**. Keep the "Open issues"
   - R `as.character(double)` gives 15 significant digits; JS gives the shortest round-trip. A double key past 15 digits can differ between gadget and widget, and the in-memory R check (text) can disagree with the generated code and the lazy duckdb check (numeric).
   - The step carries `rdomain_col`; RDOMAIN is filtered only if the column exists.
 - **Verified:** mock-DOM runner (gui-test-runner.js); R test files run singly (test-supp.R, test-pipeline.R, test-cdisc.R, test-lazy.R, test-module.R, ...; the whole suite hangs, never run it in one go); real browser (Task 8, headless Chrome via chromote, real input): gadget merge + report, Auto Map click, header buttons at 1400/1024/560 px, module with a duckdb parent, saved widget. `devtools::check()` and the pkgdown rebuild: see task-9-report.md.
-- **NOT verified: the RStudio pass.** Not done by the implementer. To verify in RStudio (dialog, Viewer pane, external browser):
-  - [ ] Merge into AE on a `suppae` card: step line, Discrepancy report, columns and labels
-  - [ ] Press the button a second time (step replaced, not duplicated)
-  - [ ] Undo and redo of the merge
-  - [ ] Edit `suppae` (add a row for a new IDVARVAL / repeat a QNAM), then check "Merge needs refreshing" and Refresh
-  - [ ] Header at 560 px (icon-only button, no overlap with title and badges)
-  - [ ] Auto Map supp spline group; inserting the generated code into RStudio
+- **RStudio pass: DONE 2026-11-07** (RStudio 2025.05.1, R 4.5.1, one instance driven by computer use, synthetic fixtures dm/ae/suppae/adsl/adlb):
+  - [x] `viewer = "dialog"`: Merge into AE adds the step ("ae merge SUPPAE (1 QNAMs on AESEQ)", "4 of 4 SUPP rows matched"); generated code has the RDOMAIN filter and the IDVAR and QNAM clash guards
+  - [x] Second press of the button: still 1 step (replaced, not duplicated)
+  - [x] Undo and redo of the merge
+  - [x] Insert Script with a document open: code landed in Untitled1 with the toast "Code successfully inserted into active RStudio document." (with no document open: the toast "No active document open in RStudio.")
+  - [x] Edit `suppae` (module app, `sv_replace_card()` adds an `AENEWQ` row; external browser, driven in the built-in browser): "Merge needs refreshing" appeared, Refresh gave "merge SUPPAE (2 QNAMs on AESEQ)" and cleared the warning
+  - [x] Header at 560 px: Merge is an icon-only button (aria-label "Merge into AE"), no overlap, no clipping
+  - [x] Auto Map: supp group `cdisc:suppae~ae` drawn as dashed `sideview-spline-suggested-cdisc` paths (plus `cdisc:ae~dm`)
+  - [x] `viewer = "pane"`: ~540 px, toolbar wraps to 3 rows, no overlap; Auto Map suggestions draw; Cancel returns NULL
+  - Observation (not fixed): Fit in the narrow Viewer pane gives 18% zoom with the cards stacked, hard to read.
+  - Not done: the dialog at a true 560 px window (checked in the browser at 560 px instead); the Refresh flow in RStudio's own Viewer pane.
 - **Deferred minors (backlog):**
   - T1: `R/cdisc.R:65` unused `rdomains = rd` in the suppqual rule; the SUPP regex at `R/cdisc.R:310` duplicates other checks (extract `sv_cdisc_is_supp`); tests lack a by-columns-unhelpful-name case and `cdisc_update` payload coverage.
   - T2: `supp.R:149` comment overclaims lazy reuse; `sv_supp_paste` NA key gives "NA" (parity); `as.numeric` edge strings vs JS `Number()`.
