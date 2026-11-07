@@ -987,3 +987,8 @@ Each sub-project gets its own spec, plan and build, in this order:
   Available for real-browser tests: shinytest2 0.5.1, chromote 0.5.1, Chrome; Node v25.1.0.
 - **Note:** `C:\Users\lauye\CLAUDE.md` (home folder) describes an unrelated de-identification project and
   is loaded into every Claude session under the home folder. Suggest moving it into that project's folder.
+
+### 2026-11-07 - Flaky lazy CDISC test fixed
+- **Cause:** `sv_cdisc_lazy_query()` took `distinct(.sv_v) |> head(2)` with no order, and duckdb returns DISTINCT values in varying order (RDOMAIN `c("AE","ae","LB","AE")` gave `AE|LB` 29 of 40, `LB|AE` 11 of 40); the in-memory `clean()` kept first-appearance order, so `rdomains` differed positionally (~30% of runs).
+- **Fix:** `sort(unique(...))` in `sv_cdisc_peek()` (R/cdisc.R) and `arrange(.sv_v)` before `head(2)` in the lazy query (R/lazy.R), so both paths give the same sorted pair even with more than two values.
+- **Verified:** the test looped 40 times on duckdb and arrow, 0 failures (was ~30%); test-cdisc.R 321 passed.

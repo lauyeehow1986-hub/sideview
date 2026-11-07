@@ -1859,6 +1859,7 @@ sv_cdisc_lazy_query <- function(tbl, kind, col = NULL) {
       dplyr::mutate(.sv_v = !!norm) |>
       dplyr::filter(!is.na(.sv_v), .sv_v != "") |>
       dplyr::distinct(.sv_v) |>
+      dplyr::arrange(.sv_v) |>
       utils::head(2) |>
       dplyr::collect()
     return(as.character(res[[".sv_v"]]))
