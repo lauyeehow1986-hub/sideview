@@ -1613,3 +1613,144 @@ AE")
   # zero-row ADSL
   expect_equal(check(f$adsl[0, ], "adsl", "adsl0")$domain, "ADSL")
 })
+
+# ---- sv_lazy_supp_check: the lazy twin of sv_supp_check ----------------------
+
+supp_lazy_cases <- function() {
+  f <- sv_cdisc_fixtures()
+  dbl <- f$ae
+  dbl$AESEQ <- as.numeric(dbl$AESEQ)
+  nop <- f$ae
+  nop$USUBJID <- NULL
+  na_ae <- f$ae
+  na_ae$USUBJID[2] <- NA
+  na_s <- f$suppae
+  na_s$USUBJID[2] <- NA
+  na_s$IDVARVAL[3] <- NA
+  na_grp <- f$ae_grp
+  na_grp$AEGRPID[1] <- NA
+  na_grp_s <- f$suppae_grp
+  na_grp_s$IDVARVAL[1] <- "NA"
+  odd <- c("1e3", "0x10", "Inf", "", " 1 ", "+.5", "1.", "NaN", "1e", "1,5")
+  odd_s <- f$suppae[rep(1, length(odd)), ]
+  odd_s$IDVARVAL <- odd
+  odd_s$QNAM <- paste0("Q", seq_along(odd))
+  odd_p <- f$ae
+  odd_p$AESEQ <- c(1, 16, 1000, 0.5)
+  p_plan <- sv_supp_check(f$ae, f$suppae2)$plan
+  p_plan$qnams <- p_plan$qnams[-1]
+  list(
+    ok = list(f$ae, f$suppae),
+    two_levels = list(f$ae, f$suppae2),
+    character_key = list(f$ae_grp, f$suppae_grp),
+    repeat_after_conversion = list(f$ae, f$supp_repeat),
+    orphans = list(f$ae, f$supp_orphan),
+    clash = list(f$ae, f$supp_clash),
+    two_level = list(f$ae, f$supp_two_level),
+    bad_integer = list(f$ae, f$supp_bad),
+    bad_double = list(dbl, f$supp_bad),
+    odd_double = list(odd_p, odd_s),
+    missing_qnam = list(f$ae, f$supp_noqnam),
+    missing_parent_col = list(f$ae, f$suppae_grp),
+    missing_parent_usubjid = list(nop, f$suppae),
+    no_studyid_supp = list(f$ae, f$suppae_nostudy),
+    no_studyid_parent = list(f$ae_nostudy, f$suppae),
+    na_idvar = list(f$ae, f$supp_na_idvar),
+    na_keys = list(na_ae, na_s),
+    na_character_key = list(na_grp, na_grp_s),
+    mixed_rdomain_warns = list(f$ae, rbind(f$suppae, f$suppbw), "suppae"),
+    suppqual = list(f$ae, f$suppqual, "suppqual", "AE"),
+    suppqual_no_rows = list(f$ae, f$suppqual, "suppqual", "LB"),
+    suppbw_other_parent = list(f$bw, rbind(f$suppqual, f$suppbw), "suppqual", "BW"),
+    no_rdomain_col = list(f$ae, f$suppae[, setdiff(names(f$suppae), "RDOMAIN")]),
+    no_qlabel = list(f$ae, f$suppae[, setdiff(names(f$suppae), "QLABEL")]),
+    unsupported_type = list(transform(f$ae, AESTDTC = as.Date(AESTDTC)),
+                            data.frame(STUDYID = "SV-001", RDOMAIN = "AE", USUBJID = "SV-001-001",
+                                       IDVAR = "AESTDTC", IDVARVAL = "2024-01-02", QNAM = "X",
+                                       QLABEL = "x", QVAL = "Y", stringsAsFactors = FALSE)),
+    drift = list(f$ae, f$suppae2, "suppae", NULL, p_plan)
+  )
+}
+
+test_that("lazy supp check equals in-memory", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  fx <- lazy_fixture()
+  cases <- supp_lazy_cases()
+  # parent as arrow, parent as duckdb, lazy SUPP with a plain parent, both lazy
+  combos <- list(c("arrow", "df"), c("duckdb", "df"), c("df", "arrow"), c("df", "duckdb"),
+                 c("arrow", "arrow"), c("duckdb", "duckdb"), c("arrow", "duckdb"),
+                 c("duckdb", "arrow"))
+  for (nm in names(cases)) {
+    a <- cases[[nm]]
+    sn <- if (length(a) > 2) a[[3]] else "suppae"
+    rd <- if (length(a) > 3) a[[4]] else NULL
+    pl <- if (length(a) > 4) a[[5]] else NULL
+    want <- sv_supp_check(a[[1]], a[[2]], parent_name = "ae", supp_name = sn, rdomain = rd, plan = pl)
+    for (cb in combos) {
+      got <- sv_lazy_supp_check(join_side(a[[1]], cb[1], fx$con, "sp"),
+                                join_side(a[[2]], cb[2], fx$con, "ss"),
+                                parent_name = "ae", supp_name = sn,
+                                rdomain = if (is.null(rd)) sub("^SUPP", "", toupper(sn)) else rd,
+                                plan = pl)
+      expect_equal(got, want, tolerance = 1e-12, label = paste(nm, cb[1], "x", cb[2]))
+    }
+  }
+})
+
+test_that("lazy supp check follows sample_n and a larger parent", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  fx <- lazy_fixture()
+  f <- sv_cdisc_fixtures()
+  s <- f$supp_orphan[rep(2, 8), ]
+  s$QNAM <- paste0("Q", 1:8)
+  want <- sv_supp_check(f$ae, s, parent_name = "ae", supp_name = "suppae", sample_n = 3L)
+  for (how in c("arrow", "duckdb")) {
+    got <- sv_lazy_supp_check(join_side(f$ae, how, fx$con, "sp"), join_side(s, how, fx$con, "ss"),
+                              parent_name = "ae", supp_name = "suppae", rdomain = "AE", sample_n = 3L)
+    expect_equal(got, want, tolerance = 1e-12, label = how)
+    expect_identical(nrow(got$preview), 3L)
+  }
+})
+
+test_that("lazy supp check never collects the parent", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  n <- 5000L
+  f <- sv_cdisc_fixtures()
+  usub <- sprintf("S-%04d", seq_len(n))
+  parent <- data.frame(STUDYID = "ST", DOMAIN = "AE", USUBJID = usub, AESEQ = 1L,
+                       AETERM = "x", stringsAsFactors = FALSE)
+  supp <- data.frame(STUDYID = "ST", RDOMAIN = "AE", USUBJID = usub[c(1, 7, 4000)],
+                     IDVAR = "AESEQ", IDVARVAL = "1", QNAM = "AETRTEM", QLABEL = "T", QVAL = "Y",
+                     stringsAsFactors = FALSE)
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  con <- sv_lazy_con(e)
+  DBI::dbWriteTable(con, "spy_p", parent)
+  DBI::dbWriteTable(con, "spy_s", supp)
+  sizes <- integer(0)
+  real_collect <- dplyr::collect
+  testthat::local_mocked_bindings(
+    collect = function(x, ...) {
+      out <- real_collect(x, ...)
+      if (is.data.frame(out)) sizes <<- c(sizes, nrow(out))
+      out
+    },
+    .package = "dplyr"
+  )
+  sample_n <- 5L
+  for (p in list(dplyr::tbl(con, "spy_p"), sv_lazy_tbl(arrow::arrow_table(parent), e))) {
+    got <- sv_lazy_supp_check(p, dplyr::tbl(con, "spy_s"), parent_name = "ae", supp_name = "suppae",
+                              rdomain = "AE", sample_n = sample_n, con_env = e)
+    expect_identical(got$n_parent, n)
+    expect_identical(got$n_matched, 3L)
+  }
+  expect_gt(length(sizes), 4L)   # the spy saw the calls
+  expect_lte(max(sizes), max(nrow(supp), sample_n))
+})

@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.6.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.7.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -269,9 +269,10 @@ do not change what Strict writes.</p>
 </h3>
 <ul>
 <li>
-<code>SUPP--</code> and <code>RELREC</code> tables, and tables
-without <code>USUBJID</code> (<code>TS</code>, <code>TA</code>,
-<code>TE</code>), are not suggested.</li>
+<code>RELREC</code> tables, and tables without <code>USUBJID</code>
+(<code>TS</code>, <code>TA</code>, <code>TE</code>), are not suggested.
+<code>SUPP--</code> tables are merged, not joined (see the next
+section), so they are left out of the join suggestions above.</li>
 <li>Sponsor sequence names other than <code>&lt;D&gt;SEQ</code> are not
 traced; those pairs get the subject rule.</li>
 <li>Findings with findings (<code>LB</code> with <code>VS</code>) get a
@@ -281,6 +282,76 @@ in R, in the gadget and in modules.</li>
 <li>
 <code>cdisc = FALSE</code> turns both off.</li>
 </ul>
+</div>
+</div>
+<div class="section level2">
+<h2 id="merging-supp-tables">Merging SUPP– tables<a class="anchor" aria-label="anchor" href="#merging-supp-tables"></a>
+</h2>
+<p>A supplemental qualifier table (<code>SUPPAE</code>,
+<code>SUPPDM</code>, or the generic <code>SUPPQUAL</code>) holds one row
+per qualifier: <code>QNAM</code> names the variable, <code>QVAL</code>
+is its value, and <code>USUBJID</code>, <code>IDVAR</code> and
+<code>IDVARVAL</code> say which parent record it belongs to. A plain
+join would multiply the parent rows by the number of qualifiers, so
+sideview folds the rows into the parent instead: one new column per
+<code>QNAM</code>, with its <code>QLABEL</code> as the column label.</p>
+<p>On a tagged <code>SUPPAE</code> card, the <strong>Merge into
+AE</strong> button adds a merge step to the Pipeline tab. Auto Map
+offers the same thing as a dashed spline group from the SUPP card to its
+parent. Pressing the button again replaces the step with a fresh plan,
+and one undo takes it back.</p>
+<p>The step writes tidyr + dplyr code. When the step is added, sideview
+records a plan (the type of the key, the <code>IDVAR</code> levels and
+the <code>QNAM</code>s) and writes it into the code, together with
+guards that stop the code if the data no longer fits the plan.</p>
+<div class="section level3">
+<h3 id="the-merge-check">The merge check<a class="anchor" aria-label="anchor" href="#the-merge-check"></a>
+</h3>
+<p><code><a href="../reference/sv_supp_check.html">sv_supp_check()</a></code> is the check behind the button. It runs
+on the study above:</p>
+<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">chk</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/sv_supp_check.html">sv_supp_check</a></span><span class="op">(</span><span class="va">ae</span>, <span class="va">suppae</span>, parent_name <span class="op">=</span> <span class="st">"ae"</span>, supp_name <span class="op">=</span> <span class="st">"suppae"</span><span class="op">)</span></span>
+<span><span class="va">chk</span><span class="op">$</span><span class="va">status</span></span>
+<span><span class="co">#&gt; [1] "ok"</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>parent <span class="op">=</span> <span class="va">chk</span><span class="op">$</span><span class="va">n_parent</span>, supp <span class="op">=</span> <span class="va">chk</span><span class="op">$</span><span class="va">n_supp</span>, matched <span class="op">=</span> <span class="va">chk</span><span class="op">$</span><span class="va">n_matched</span>, orphan <span class="op">=</span> <span class="va">chk</span><span class="op">$</span><span class="va">n_orphan</span><span class="op">)</span></span>
+<span><span class="co">#&gt;  parent    supp matched  orphan </span></span>
+<span><span class="co">#&gt;       4       4       4       0</span></span>
+<span><span class="va">chk</span><span class="op">$</span><span class="va">columns</span></span>
+<span><span class="co">#&gt; [[1]]</span></span>
+<span><span class="co">#&gt; [[1]]$name</span></span>
+<span><span class="co">#&gt; [1] "AETRTEM"</span></span>
+<span><span class="co">#&gt; </span></span>
+<span><span class="co">#&gt; [[1]]$label</span></span>
+<span><span class="co">#&gt; [1] "Treatment Emergent"</span></span></code></pre></div>
+<p>The same report is shown at the top of the Discrepancy tab (and on
+the step line in the Pipeline tab):</p>
+<ul>
+<li>counts of parent rows, SUPP rows, matched rows, orphans (SUPP rows
+that match no parent record, with samples) and rows of other
+<code>RDOMAIN</code>s;</li>
+<li>problems: a <code>QNAM</code> that repeats for one record, a
+<code>QNAM</code> that clashes with a parent column or sits at two
+<code>IDVAR</code> levels, and <code>IDVARVAL</code> values that do not
+convert to the parent’s key type (counted apart from orphans);</li>
+<li>the new columns with their labels, and a preview of the merged
+parent.</li>
+</ul>
+<p>The status is <code>error</code> when the code would stop (repeats,
+clashes, two-level <code>QNAM</code>s, an unsupported key type),
+<code>warning</code> for orphans and bad <code>IDVARVAL</code>s, and
+<code>ok</code> otherwise. A step with an error is still added so that
+you can read the report; its step line says that it stops. When a
+re-check finds that the data no longer fits the plan (an edited
+<code>suppae</code>, say), the step line reads “Merge needs refreshing”
+and <strong>Refresh</strong> takes the plan that re-check found, as one
+undo step. Refresh runs no check of its own.</p>
+<p>With an arrow or duckdb parent, the parent stays lazy: only the SUPP
+table is collected. With an arrow parent the code casts a numeric key to
+the parent’s own Arrow type, so an <code>int64</code> <code>AESEQ</code>
+from a parquet file joins. In the widget the check runs in the browser
+on the embedded rows; when a card’s rows were cut
+(<code>max_rows</code>) or the card is lazy, the panel says “Preview
+rows”.</p>
 </div>
 </div>
 <div class="section level2">
@@ -297,7 +368,35 @@ disagreement. With any other name, SDTM-prefixed columns still give an
 SDTM tag.</li>
 <li>Column names are matched whatever their case (<code>STUDYID</code>,
 <code>studyid</code>), but a <code>STUDYID</code> column is still
-required.</li>
+required for tagging. The SUPP merge is stricter: it needs the exact
+upper-case names <code>USUBJID</code>, <code>IDVAR</code>,
+<code>IDVARVAL</code>, <code>QNAM</code> and <code>QVAL</code> (and
+<code>STUDYID</code>, <code>RDOMAIN</code> and <code>QLABEL</code> when
+present).</li>
+<li>There is no hard limit on merges, but the checks are uneven. A
+second merge into one parent (a <code>SUPPAE</code> and a
+<code>SUPPQUAL</code>) is checked in the browser, where a
+<code>QNAM</code> already made by an earlier merge, <code>mutate</code>
+or <code>rename</code> counts as a clash. The guard inside the generated
+code looks only at the source parent table, so after an earlier join,
+summarise, pivot or custom step the browser cannot see the chain’s
+columns either, and dplyr would add <code>.x</code>/<code>.y</code>
+suffixes instead of stopping.</li>
+<li>The check runs when you press the Merge button, when you open the
+step line or the report, after opening a workspace, after undo or redo,
+and after a module card is replaced or removed. Refresh runs no check,
+and nothing checks when the code runs: if the data change later, only
+the guards in the generated code stop a rerun on new data.</li>
+<li>
+<code>IDVARVAL</code> is matched after conversion to the key type.
+The in-memory R check compares a double key as 15 significant digits of
+text, while the generated code and the lazy duckdb check compare the
+doubles themselves, and the browser reads the shortest round-trip text.
+So for a double key with more than 15 significant digits the gadget’s
+own report can disagree with its code, and the gadget with the widget. A
+key that does not look like a plain decimal (<code>"0x10"</code>,
+<code>"Inf"</code>, <code>"1d3"</code>) is counted as a bad
+<code>IDVARVAL</code>.</li>
 <li>
 <code>cdisc = FALSE</code> shows no tags, but lazy (arrow / duckdb)
 cards still run detection when they are built. A named

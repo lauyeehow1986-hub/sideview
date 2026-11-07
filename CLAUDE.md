@@ -33,7 +33,7 @@ rstudio bridge: R/rstudio.R
   `column_renamed`, `clear_operations`, `discrepancy_check`, `request_suggested_mappings`,
   `apply_auto_clean`, `run_ai_prompt`, `send_copilot_chat`, `inject_script`, `send_console`,
   `send_console_and_exit`, `eval_env`, `sideview_card_moved`, `sideview_highlight_changed`,
-  `sideview_rows_request`, `join_diagnostics_request`, `column_profile_request`, `codebook_export`,
+  `sideview_rows_request`, `join_diagnostics_request`, `column_profile_request`, `supp_check_request` (`{id, parent, supp, plan?, rdomain?}`; `rdomain` is a hint R takes only if it is in the SUPP card's tag `rdomains` or the card has no tags; module: routed by `ns`, the client only names cards in the R store), `codebook_export`,
   `state_save`, `state_open_request`, `sideview_ready` (module: the canvas is on the page, R sends its cards),
   `sideview_snapshot` (module: `{code, pipeline, state, cards}`, pipeline/state as JSON text, debounced 300 ms),
   `sideview_done`, `sideview_cancel`,
@@ -41,7 +41,7 @@ rstudio bridge: R/rstudio.R
 - Custom messages (R → client): `sideview_code_update`, `sideview_discrepancies`,
   `sideview_suggested_mappings` (candidates carry `group`, e.g. `"cdisc:adae~ae"`, and `kind`, `"trace"|"subject"|"visit"`, both null for heuristic rows; a group is drawn as dashed paths with class `sideview-spline-suggested-cdisc` and accepted as one join by `addConnections()`: one undo step, one `column_mapped` per key), `sideview_copilot_reply`, `sideview_inject_result`,
   `sideview_console_result`, `sideview_eval_result`, `sideview_rows`, `sideview_ai_status`,
-  `sideview_join_diagnostics`, `sideview_column_profile`, `sideview_codebook_saved` (module: carries `csv`, the file text, plus `filename`; the browser downloads it),
+  `sideview_join_diagnostics`, `sideview_column_profile`, `sideview_supp_check` (`{id, ...check}` from `sv_supp_check()`, or `{id, error}`; carries `ns` in module mode), `sideview_codebook_saved` (module: carries `csv`, the file text, plus `filename`; the browser downloads it),
   `sideview_state_saved`, `sideview_state_loaded`,
   `sideview_cdisc_update` (module: `{tags: {<card_id>: tag | null}}`, the badges only; an unknown card id is ignored quietly),
   `sideview_card_add`, `sideview_card_replace`, `sideview_card_remove`, `sideview_state_set`, `sideview_highlight`,
@@ -94,6 +94,15 @@ rstudio bridge: R/rstudio.R
   and `strict_args`, which the engine hands to `pipeline.setJoinCheck(id, strict_args)` for Strict.
 - **Strict applicability:** the join check runs on the two original cards, so `relationship =` / `unmatched =` are written only where that check still holds. `Pipeline.strictApplies(step)` (sv-pipeline.js) returns `{ok, reason}`: not ok when a card is lazy, when an earlier enabled filter, join, summarise, pivot or custom step is on the left table's chain, or when the right table has steps of its own. `compose()`, the Strict checkbox (`joinOptionsHtml`: disabled, title = reason) and `strictLine()` all ask it; the step keeps its `strict` flag. Do not duplicate the test.
 - **Join check cache:** a path that replaces a card's data (none exists today) must call `clearJoinChecks()` and reset `joinDiag`, or stale checks (and rule drops) stay on screen.
+- **SUPP merge (0.7.0):** same twin rule. `sv_supp_check()` (R/supp.R), `SideviewPipeline.suppCheck()` (sv-pipeline.js)
+  and `sv_lazy_supp_check()` (R/lazy.R) return the same fields; test-supp.R / test-lazy.R hold them to each other.
+  The merge is a pipeline step `{kind: 'supp', key, table, supp, rdomain, keys, idvars, qnams, rdomain_col}`
+  whose plan is captured when it is added; `compose()` writes the plan and guards into the R code (clash guard
+  reads `names(dplyr::collect(utils::head(<parent>, 0)))`: plain `names()` fails on dbplyr, `colnames()` on an arrow
+  query; on an arrow chain a numeric IDVAR key is cast to the parent's Arrow type, so int64 parquet keys join). A QNAM without QLABEL has label `""`. `IDVARVAL` rows that
+  do not convert are `bad_idvarval`, never orphans (`n_matched + n_orphan + bad == n_supp`). Double keys are
+  converted only if one decimal regex matches, in R and JS alike. Clashes with columns made by earlier chain
+  steps are caught in the browser (`columnsBefore()`), not by the code guard. Change a twin together with the others.
 - **Column inspector / codebook:** same twin rule. `sv_column_profile()` / `sv_codebook()` (R/codebook.R) and
   `SideviewPipeline.columnProfile()` / `codebookRow()` / `codebookCsv()` (sv-pipeline.js); `test-codebook.R`
   checks the fields, the issue texts and that the JS CSV is byte-equal to `write.csv(sv_codebook(...))`.

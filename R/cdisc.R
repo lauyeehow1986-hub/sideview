@@ -196,7 +196,7 @@ sv_cdisc_rule_suppqual <- function(peek, name) {
   parent <- if (length(rd) == 1L) rd else if (by_name) substring(code, 5L) else NULL
   dom <- if (by_name) code else if (length(rd) == 1L) paste0("SUPP", rd) else "SUPPQUAL"
   list(code = dom, class = "Relationship", standard = "SDTM", parent = parent,
-       row_code = "SUPPQUAL",
+       row_code = "SUPPQUAL", rdomains = rd,
        evidence = if (by_name) paste("SUPP name", name) else "SUPPQUAL columns")
 }
 
@@ -208,7 +208,8 @@ sv_cdisc_rule_custom <- function(peek) {
 }
 
 sv_cdisc_make_tag <- function(data, code, class = NULL, standard = NULL, parent = NULL,
-                              evidence, source = "auto", row_code = code) {
+                              evidence, source = "auto", row_code = code,
+                              rdomains = character()) {
   row <- sv_cdisc_row(row_code)
   if (is.null(class)) class <- if (is.null(row)) "Custom" else row$class
   if (is.null(standard)) standard <- if (is.null(row)) "SDTM" else row$standard
@@ -217,18 +218,22 @@ sv_cdisc_make_tag <- function(data, code, class = NULL, standard = NULL, parent 
     label <- if (is.null(row)) code else row$label
   }
   list(domain = code, label = label, class = class, standard = standard,
-       parent = parent, parent_card = NULL, evidence = evidence, source = source)
+       parent = parent, parent_card = NULL, evidence = evidence, source = source,
+       rdomains = as.character(rdomains), merge_targets = list())
 }
 
 # The tag for a domain code the user set: the class and parent come from the
 # catalogue, the SUPPQUAL pattern or the ADaM structure, never a guess.
 sv_cdisc_user_tag <- function(data, code) {
   class <- NULL; standard <- NULL; parent <- NULL; row_code <- code
+  rdomains <- character()
   if (grepl("^SUPP[A-Z]{2}$", code)) {
     row_code <- "SUPPQUAL"
     parent <- substring(code, 5L)
+    rdomains <- sv_cdisc_peek(data)$rdomain_values()
   } else if (identical(code, "SUPPQUAL")) {
     rd <- sv_cdisc_peek(data)$rdomain_values()
+    rdomains <- rd
     if (length(rd) == 1L) parent <- rd
   } else if (is.null(sv_cdisc_row(code)) && grepl("^AD[A-Z0-9]+$", code)) {
     standard <- "ADaM"
@@ -236,7 +241,8 @@ sv_cdisc_user_tag <- function(data, code) {
     if (!is.null(adam)) class <- adam$class
   }
   sv_cdisc_make_tag(data, code, class = class, standard = standard, parent = parent,
-                    row_code = row_code, evidence = "set by cdisc =", source = "user")
+                    row_code = row_code, rdomains = rdomains,
+                    evidence = "set by cdisc =", source = "user")
 }
 
 #' Detect the CDISC dataset a table is (internal)
@@ -301,6 +307,7 @@ sv_cdisc_detect <- function(data, name, cdisc = "auto") {
   sv_cdisc_make_tag(data, win$code, class = win$class, standard = win$standard,
                     parent = win$parent,
                     row_code = if (is.null(win$row_code)) win$code else win$row_code,
+                    rdomains = if (grepl("^SUPP[A-Z]{2}$|^SUPPQUAL$", win$code)) peek$rdomain_values() else character(),
                     evidence = c(win$evidence, conflicts, gate))
 }
 
@@ -388,6 +395,19 @@ sv_cdisc_resolve <- function(cards) {
       j <- setdiff(j, i)
       t$parent_card <- if (length(j)) cards[[j[1L]]]$id else NULL
     }
+    # merge targets: the parent card(s) a SUPP table can be merged into
+    targets <- list()
+    if (grepl("^SUPP[A-Z]{2}$", t$domain)) {
+      if (!is.null(t$parent_card)) {
+        targets <- list(list(rdomain = substring(t$domain, 5L), card = t$parent_card))
+      }
+    } else if (identical(t$domain, "SUPPQUAL")) {
+      for (rd in as.character(t$rdomains)) {
+        j <- setdiff(which(domains == rd), i)
+        if (length(j)) targets[[length(targets) + 1L]] <- list(rdomain = rd, card = cards[[j[1L]]]$id)
+      }
+    }
+    t$merge_targets <- targets
     cards[[i]]$cdisc <- t
   }
   cards

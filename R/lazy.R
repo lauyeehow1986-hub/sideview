@@ -1341,6 +1341,139 @@ sv_lazy_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_na
   structure(out, class = "sv_join_diagnostics")
 }
 
+#' The SUPP rows of one parent domain, collected
+#'
+#' A data frame is returned as is. A lazy SUPP table is filtered on `RDOMAIN` (when it has
+#' that column) before it is collected, and only the columns the check reads come back; the
+#' number of rows the filter dropped is counted by the database.
+#' @return `list(data, n_other)`; `n_other` is `NULL` for a data frame (the shared SUPP-side
+#'   step counts it).
+#' @noRd
+sv_lazy_supp_rows <- function(supp, rdomain) {
+  if (is.data.frame(supp)) return(list(data = supp, n_other = NULL))
+  want <- c("STUDYID", "RDOMAIN", "USUBJID", "IDVAR", "IDVARVAL", "QNAM", "QLABEL", "QVAL")
+  have <- intersect(want, sv_lazy_names(supp))
+  q <- dplyr::select(supp, dplyr::all_of(have))
+  n_other <- 0L
+  if ("RDOMAIN" %in% have) {
+    total <- dplyr::collect(dplyr::summarise(q, n = dplyr::n()))$n
+    rd <- rlang::sym("RDOMAIN")
+    q <- dplyr::filter(q, !is.na(!!rd) & !!rd == !!rdomain)
+  }
+  data <- as.data.frame(dplyr::collect(q), stringsAsFactors = FALSE)
+  if ("RDOMAIN" %in% have) n_other <- sv_lazy_count(total - nrow(data))
+  list(data = data, n_other = n_other)
+}
+
+#' Which SUPP rows find a parent record, by a semi-join in duckdb
+#'
+#' The parent stays lazy. The SUPP key text (and the converted `IDVARVAL`) is handed to the
+#' parent's connection (`sv_lazy_place()`), one level at a time is semi-joined, and only the
+#' ids of the SUPP rows that matched come back. Key text and `NA` are treated as
+#' `sv_supp_match_df()` does: a missing key is the text `"NA"`; numeric keys are compared as
+#' numbers (the in-memory path compares their text, which agrees for ordinary values).
+#' @noRd
+sv_lazy_supp_match <- function(parent, side, conv, keys, types, con_env) {
+  matched <- rep(FALSE, side$n_supp)
+  kn <- sv_lazy_key_names(length(keys))
+  rows <- which(!conv$bad)
+  if (!length(rows)) return(matched)
+  ykeys <- lapply(keys, function(k) {
+    x <- sv_supp_key_chr(side$supp[[k]])[rows]
+    x[is.na(x)] <- "NA"
+    x
+  })
+  names(ykeys) <- kn
+  lvl <- match(side$idvar[rows], side$levels)
+  numeric_lvl <- vapply(side$levels, function(iv) nzchar(iv) && !identical(types[[iv]], "character"),
+                        logical(1))
+  y <- data.frame(ykeys, stringsAsFactors = FALSE)
+  y$.sv_lvl <- lvl
+  y$.sv_rid <- rows
+  y$.sv_vn <- ifelse(numeric_lvl[lvl], suppressWarnings(as.numeric(conv$val[rows])), NA_real_)
+  y$.sv_vc <- ifelse(!numeric_lvl[lvl], conv$val[rows], NA_character_)
+  ivs <- side$levels[nzchar(side$levels)]
+  placed <- sv_lazy_place(parent, y, con_env, cols_x = c(keys, ivs))
+  on.exit(placed$cleanup(), add = TRUE)
+
+  txt <- function(k) rlang::expr(coalesce(as.character(!!rlang::sym(k)), "NA"))
+  for (i in seq_along(side$levels)) {
+    iv <- side$levels[i]
+    yl <- dplyr::filter(placed$y, !!rlang::sym(".sv_lvl") == !!i)
+    exprs <- stats::setNames(lapply(keys, txt), kn)
+    by <- stats::setNames(kn, kn)
+    if (nzchar(iv)) {
+      if (numeric_lvl[i]) {
+        exprs[[".sv_v"]] <- rlang::sym(iv)
+        by <- c(by, .sv_vn = ".sv_v")
+      } else {
+        exprs[[".sv_v"]] <- txt(iv)
+        by <- c(by, .sv_vc = ".sv_v")
+      }
+    }
+    px <- dplyr::transmute(placed$x, !!!exprs)
+    hit <- dplyr::collect(dplyr::select(dplyr::semi_join(yl, px, by = by), dplyr::all_of(".sv_rid")))
+    matched[hit$.sv_rid] <- TRUE
+  }
+  matched
+}
+
+#' SUPP merge check over a lazy parent and/or SUPP table
+#'
+#' The twin of [sv_supp_check()]: the same reply for the same data. Every SUPP-side step is
+#' the one `sv_supp_check_df()` uses (`sv_supp_side()`, `sv_supp_types()`,
+#' `sv_supp_convert_side()`, `sv_supp_finish()`); only the parent-side facts are computed
+#' here without collecting the parent: the key types from 0 rows, `n_parent` from a count,
+#' the matches by a semi-join (`sv_lazy_supp_match()`) and the preview from `head()`.
+#' A lazy SUPP is filtered on `RDOMAIN` and then collected, as the check is per SUPP row.
+#' @param parent,supp Data frames, duckdb tables or Arrow objects.
+#' @param con_env An environment from `sv_lazy_env()`; when omitted a private connection is
+#'   opened for this call and closed again.
+#' @inheritParams sv_supp_check
+#' @noRd
+sv_lazy_supp_check <- function(parent, supp, parent_name = "parent", supp_name = "supp",
+                               rdomain = NULL, plan = NULL, sample_n = 5L,
+                               con_env = sv_lazy_env()) {
+  own_env <- missing(con_env)
+  force(con_env)
+  if (own_env) on.exit(sv_lazy_close(con_env), add = TRUE)
+  sample_n <- as.integer(sample_n)
+  from_name <- sub("^SUPP", "", toupper(supp_name))
+  if (is.null(rdomain)) rdomain <- from_name
+
+  supp_cols <- sv_lazy_names(supp)
+  err <- sv_supp_cols_error(supp_cols, supp_name)
+  if (!is.null(err)) return(err)
+  parent_names <- sv_lazy_names(parent)
+  if (!"USUBJID" %in% parent_names) return(list(error = paste0("Not in ", parent_name, ": USUBJID")))
+
+  rows <- sv_lazy_supp_rows(supp, rdomain)
+  side <- sv_supp_side(rows$data, supp_name, rdomain)
+  if (!is.null(side$error)) return(side)
+  if (!is.null(rows$n_other)) side$n_other <- rows$n_other
+
+  levels_ <- side$levels[nzchar(side$levels)]
+  keys <- intersect(c("STUDYID", "USUBJID"), intersect(parent_names, supp_cols))
+  types <- sv_supp_types(side$levels, sv_lazy_zero(parent, c(levels_, keys)), parent_name)
+  if (is.list(types)) return(types)
+  conv <- sv_supp_convert_side(side, types, keys)
+
+  matched <- if (is.data.frame(parent)) {
+    sv_supp_match_df(side, conv, parent, keys)
+  } else {
+    sv_lazy_supp_match(parent, side, conv, keys, types, con_env)
+  }
+  if (is.data.frame(parent)) {
+    n_parent <- nrow(parent)
+    pv <- utils::head(parent, sample_n)
+  } else {
+    n_parent <- sv_lazy_count(dplyr::collect(dplyr::summarise(parent, n = dplyr::n()))$n)
+    pv <- as.data.frame(dplyr::collect(utils::head(parent, sample_n)), stringsAsFactors = FALSE)
+  }
+  sv_supp_finish(side, conv, matched, types, keys, parent_names, n_parent, pv, plan, sample_n,
+                 from_name == rdomain)
+}
+
 #' A double as an exact SQL literal
 #'
 #' dbplyr writes a double with 15 significant digits, which would move a value
@@ -1696,7 +1829,7 @@ sv_lazy_histogram <- function(fin, lo, hi, n_fin, bins) {
 }
 
 # Names that only exist inside the SQL translation of the verbs above.
-utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc", "cast", "nx", "ny", "fx", "fy", "trim", "regexp_replace", "regexp_full_match", "quantile_cont", "isfinite", "isnan", "isinf", "n", "rtrim", "sd", "lower", "epoch_us", "make_timestamp", "strftime", ".sv_v", ".sv_t", ".sv_f", ".sv_k", ".sv_n", ".sv_bin", ".sv_rn", ".sv_rk", ".rx", ".ry", ".sv_cx", ".sv_cy", ".sv_first", ".sv_near", "n_distinct", "days", "USUBJID", "upper"))
+utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc", "cast", "nx", "ny", "fx", "fy", "trim", "regexp_replace", "regexp_full_match", "quantile_cont", "isfinite", "isnan", "isinf", "n", "rtrim", "sd", "lower", "epoch_us", "make_timestamp", "strftime", ".sv_v", ".sv_t", ".sv_f", ".sv_k", ".sv_n", ".sv_bin", ".sv_rn", ".sv_rk", ".rx", ".ry", ".sv_cx", ".sv_cy", ".sv_first", ".sv_near", "n_distinct", "days", "USUBJID", "upper", "coalesce"))
 
 #' The one place CDISC detection queries a lazy table
 #'

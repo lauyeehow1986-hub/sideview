@@ -337,6 +337,51 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     dispatch_message("sideview_join_diagnostics", result)
   }, ignoreInit = FALSE)
 
+  # SUPP-- merge check on the full data. The client only names two cards; the SUPP card's
+  # `merge_targets` says which RDOMAIN the parent stands for. `plan` is JSON text or a list,
+  # parsed and never evaluated.
+  shiny::observeEvent(input$supp_check_request, {
+    req <- input$supp_check_request
+    if (is.null(req) || is.null(req$parent) || is.null(req$supp)) return()
+    parent_name <- as.character(req$parent)[1L]
+    supp_name <- as.character(req$supp)[1L]
+    cp <- card_store$get(parent_name)
+    cs <- card_store$get(supp_name)
+    result <- tryCatch({
+      if (is.null(cp)) stop(sprintf("Not in the canvas: %s", parent_name), call. = FALSE)
+      if (is.null(cs)) stop(sprintf("Not in the canvas: %s", supp_name), call. = FALSE)
+      if (!is.data.frame(cp$data) || !is.data.frame(cs$data)) {
+        stop("The merge check needs both tables as data frames.", call. = FALSE)
+      }
+      plan <- sv_supp_plan_from_client(req$plan)
+      rdomain <- sv_supp_rdomain_hint(cs, req$rdomain)
+      if (is.null(rdomain)) {
+        for (tg in cs$cdisc$merge_targets) {
+          if (identical(tg$card, cp$id)) { rdomain <- tg$rdomain; break }
+        }
+      }
+      chk <- lazy_or_preview(
+        list(cp, cs),
+        function() {
+          side <- function(card, other) {
+            if (!card_full(card)) return(card$data)
+            if (inherits(card$source, "tbl_duckdb_connection")) return(card$source)
+            if (card_full(other) && inherits(other$source, "tbl_duckdb_connection")) return(card$source)
+            sv_lazy_tbl(card$source, con_env, card$id)
+          }
+          sv_lazy_supp_check(side(cp, cs), side(cs, cp), parent_name = parent_name,
+                             supp_name = supp_name, rdomain = rdomain, plan = plan,
+                             con_env = con_env)
+        },
+        function() sv_supp_check(cp$data, cs$data, parent_name = parent_name,
+                                 supp_name = supp_name, rdomain = rdomain, plan = plan)
+      )
+      sv_supp_reply(chk)
+    }, error = function(e) list(error = conditionMessage(e)))
+    result$id <- req$id
+    dispatch_message("sideview_supp_check", result)
+  }, ignoreInit = FALSE)
+
   # Column inspector: profile one column on the full data (the browser has a preview only).
   shiny::observeEvent(input$column_profile_request, {
     req <- input$column_profile_request
@@ -887,4 +932,42 @@ sv_cdisc_domains <- function(cards, cdisc = "auto") {
   if (!length(out)) return(FALSE)
   attr(out, "closed") <- TRUE
   out
+}
+
+# The `plan` of a supp_check_request: JSON text or a list from the browser; NULL when absent or
+# unreadable. Only parsed, never evaluated.
+sv_supp_plan_from_client <- function(plan) {
+  if (is.null(plan)) return(NULL)
+  if (is.character(plan)) {
+    if (length(plan) != 1L || is.na(plan) || !nzchar(plan)) return(NULL)
+    plan <- tryCatch(jsonlite::fromJSON(plan, simplifyVector = FALSE), error = function(e) NULL)
+  }
+  if (!is.list(plan) || is.null(names(plan))) return(NULL)
+  plan
+}
+
+# The RDOMAIN a supp_check_request names (the step's own), or NULL. It is a hint only: taken when it
+# is one of the SUPP card's tag `rdomains`, or when the card has no tags at all (cdisc = FALSE), so a
+# re-check of a loaded step does not fall back to the card name. Anything else is ignored and the
+# caller derives the RDOMAIN from the tags.
+sv_supp_rdomain_hint <- function(card, hint) {
+  if (is.null(hint) || !is.character(hint) || length(hint) != 1L || is.na(hint)) return(NULL)
+  hint <- toupper(trimws(hint))
+  if (!grepl("^[A-Z][A-Z0-9]{0,7}$", hint)) return(NULL)
+  tag <- card$cdisc
+  if (is.null(tag)) return(hint)
+  if (hint %in% toupper(as.character(unlist(tag$rdomains)))) hint else NULL
+}
+
+# A check as a list for the wire: through the JSON form (arrays stay arrays), with JSON nulls
+# turned back into NA so they are sent as null and not as {}.
+sv_supp_reply <- function(chk) {
+  out <- jsonlite::fromJSON(sv_supp_check_json(chk), simplifyVector = FALSE)
+  fill <- function(x) {
+    if (is.list(x)) {
+      for (i in seq_along(x)) if (is.null(x[[i]])) x[i] <- list(NA) else x[[i]] <- fill(x[[i]])
+    }
+    x
+  }
+  fill(out)
 }

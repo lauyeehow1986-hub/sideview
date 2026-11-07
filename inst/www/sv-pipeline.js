@@ -365,6 +365,10 @@
       case 'recode': return 'recode ' + step.col + ' (' + (step.map || []).length + ' values)';
       case 'summarise': return 'summarise' + ((step.groups || []).length ? ' by ' + step.groups.join(', ') : '');
       case 'custom': return step.label || 'custom code';
+      case 'supp': return 'merge ' + String(step.supp).toUpperCase() + ' (' + (step.qnams || []).length +
+        ' QNAMs on ' + (step.idvars || []).map(function (v) {
+          return v.idvar === '' ? 'subject' : v.idvar;
+        }).join(' and ') + ')';
     }
     return step.kind;
   }
@@ -429,7 +433,8 @@
     return this.steps.some(function (s) {
       if (s.enabled === false) return false;
       if (s.kind === 'custom') return true;
-      return !!(self.lazyKind(s.table) || (s.right && self.lazyKind(s.right)));
+      return !!(self.lazyKind(s.table) || (s.right && self.lazyKind(s.right)) ||
+        (s.supp && self.lazyKind(s.supp)));
     });
   };
 
@@ -644,6 +649,41 @@
     return names;
   }
 
+  // The columns a step leaves on its table's chain: rename replaces a name, mutate adds one,
+  // a supp merge adds its QNAMs. `cols` is changed in place.
+  function stepColumns(s, cols) {
+    if (s.kind === 'rename') {
+      var i = cols.indexOf(s.from);
+      if (i >= 0) cols[i] = s.to;
+    } else if (s.kind === 'mutate') {
+      if (cols.indexOf(s.name) < 0) cols.push(s.name);
+    } else if (s.kind === 'supp') {
+      (s.qnams || []).forEach(function (q) { if (cols.indexOf(q.qnam) < 0) cols.push(q.qnam); });
+    }
+  }
+  // After these steps the chain's columns are not known in the browser.
+  function unknownAfter(s) {
+    return s.kind === 'join' || s.kind === 'summarise' || s.kind === 'reshape' || s.kind === 'custom';
+  }
+
+  /**
+   * The columns `table` has on its chain before the step with key `key` (all enabled steps when
+   * no step has that key), from the card's `columns`, by the same pass disableMissing() uses.
+   * With `last` the step is taken as moved last (as Pipeline.add() does): every other enabled step counts.
+   * Returns null when an earlier join, summarise, reshape or custom step makes them unknown.
+   */
+  Pipeline.prototype.columnsBefore = function (table, columns, key, last) {
+    var cols = (columns || []).slice();
+    for (var i = 0; i < this.steps.length; i++) {
+      var s = this.steps[i];
+      if (key && s.key === key) { if (last) continue; break; }
+      if (s.table !== table || s.enabled === false) continue;
+      stepColumns(s, cols);
+      if (unknownAfter(s)) return null;
+    }
+    return cols;
+  };
+
   /**
    * Disable the enabled steps of `table` that need a column its refreshed data no longer has
    * (`columns`: the new column names), or every step on it and every join with it (`columns` null:
@@ -707,15 +747,24 @@
           (s.by || []).forEach(function (b) { n.push(b.left); });
           n = n.concat(ruleCols(s.rule, 'x'));
           break;
+        case 'supp':
+          n = n.concat(s.keys || []);
+          (s.idvars || []).forEach(function (v) { n.push(v.idvar); });
+          break;
       }
       return n;
+    }
+    // The columns a SUPP card must have for a merge step that reads it.
+    function suppNeeds(s) {
+      return ['USUBJID', 'IDVAR', 'IDVARVAL', 'QNAM', 'QVAL'].concat(s.keys || [], s.rdomain_col ? ['RDOMAIN'] : []);
     }
 
     this.change('refresh', function () {
       var live = function (s) { return s.enabled !== false; };
       if (columns === null || columns === undefined) {
         self.steps.forEach(function (s) {
-          if (live(s) && (s.table === table || (s.kind === 'join' && s.right === table))) {
+          if (live(s) && (s.table === table || (s.kind === 'join' && s.right === table) ||
+              (s.kind === 'supp' && s.supp === table))) {
             note(s, []);
             s.enabled = false;
           }
@@ -729,20 +778,20 @@
         if (!unknown) {
           var miss = lack(cols, leftNeeds(s, cols));
           if (miss.length) { note(s, miss); s.enabled = false; return; }
-          if (s.kind === 'rename') {
-            var i = cols.indexOf(s.from);
-            if (i >= 0) cols[i] = s.to;
-          } else if (s.kind === 'mutate') {
-            if (cols.indexOf(s.name) < 0) cols.push(s.name);
-          }
+          stepColumns(s, cols);
         }
-        if (s.kind === 'join' || s.kind === 'summarise' || s.kind === 'reshape' || s.kind === 'custom') unknown = true;
+        if (unknownAfter(s)) unknown = true;
       });
       var endCols = unknown ? null : cols;
       self.steps.forEach(function (s) {
         if (s.kind !== 'join' || s.right !== table || s.table === table || !live(s) || !endCols) return;
         var need = (s.by || []).map(function (b) { return b.right; }).concat(ruleCols(s.rule, 'y'));
         var miss = lack(endCols, need);
+        if (miss.length) { note(s, miss); s.enabled = false; }
+      });
+      self.steps.forEach(function (s) {
+        if (s.kind !== 'supp' || s.supp !== table || s.table === table || !live(s) || !endCols) return;
+        var miss = lack(endCols, suppNeeds(s));
         if (miss.length) { note(s, miss); s.enabled = false; }
       });
     });
@@ -841,6 +890,10 @@
         if (s.kind === 'join' && s.right !== t && chains[s.right]) {
           (consumers[s.right] = consumers[s.right] || {})[t] = true;
         }
+        // A SUPP card with steps of its own is prepared first; its chain feeds <supp>_q.
+        if (s.kind === 'supp' && s.supp !== t && chains[s.supp]) {
+          (consumers[s.supp] = consumers[s.supp] || {})[t] = true;
+        }
       });
     });
 
@@ -880,8 +933,16 @@
         if (lines.length === 1) { lines = [open + lines[0] + rest]; return; }
         lines = [open.replace(/ $/, '') + '\n  ' + lines.join(' ' + pipe + '\n    ') + rest.replace(/^, /, ',\n  ')];
       }
+      var supps = [];  // supp steps: their prep statements go before the chain
 
       chains[t].forEach(function (s) {
+        if (s.kind === 'supp') {
+          if (!s.idvars || !s.idvars.length) return;
+          var si = rightInfo(s.supp);
+          supps.push({ step: s, src: si.ref, lazy: !!si.kind, arrow: kind === 'arrow' });
+          lines = lines.concat(suppJoins(s, kind));
+          return;
+        }
         if (s.kind === 'join') {
           var r = rightInfo(s.right);
           var rightRef = r.ref;
@@ -964,7 +1025,15 @@
       if (lines.length === 1) return later ? head + lines[0] : '';
       // One collect() ends a lazy chain that is written out (a prepared chain stays lazy).
       if (kind && !later) lines.push('dplyr::collect()');
-      return head + lines.join(' ' + pipe + '\n  ');
+      // QNAM labels are set where the chain ends in memory: after the final collect(), and not at
+      // all on a lazy chain prepared for another chain (attributes do not survive a lazy table).
+      var withLabels = !(kind && later);
+      var preps = supps.map(function (p) {
+        if (withLabels && suppLabels(p.step).length) lines.push(suppLabelLine(p.step));
+        return suppPrep(p.step, p.src, p.lazy, self.refFor(t), pipe, withLabels, p.arrow);
+      });
+      var chain = head + lines.join(' ' + pipe + '\n  ');
+      return preps.length ? preps.join('\n\n') + '\n\n' + chain : chain;
     }
 
     function visit(t) {
@@ -972,6 +1041,7 @@
       state[t] = 1;
       chains[t].forEach(function (s) {
         if (s.kind === 'join' && s.right !== t && chains[s.right]) visit(s.right);
+        if (s.kind === 'supp' && s.supp !== t && chains[s.supp]) visit(s.supp);
       });
       var code = render(t);
       state[t] = 2;
@@ -1785,8 +1855,412 @@
     return true;
   };
 
+  // ---- SUPP-- merge check: twin of sv_supp_check() (R/supp.R) ----------------
+
+  function suppKeyType(colType) {
+    var t = String(colType === null || colType === undefined ? '' : colType);
+    if (/^(integer|int8|int16|int32)$/.test(t)) return 'integer';
+    if (/^(numeric|double|float|int64|integer64)$/.test(t)) return 'double';
+    if (/^(character|factor|string|utf8|large_utf8)$/.test(t) || /^dictionary</.test(t)) return 'character';
+    return null;
+  }
+
+  var SUPP_INT_RE = /^\s*[+-]?[0-9]+\s*$/;
+  var SUPP_DBL_RE = /^\s*[+-]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][+-]?[0-9]+)?\s*$/;
+
+  // A missing value is the string "NA" once keys are pasted together, as in R.
+  function suppChr(v) {
+    return v === null || v === undefined ? 'NA' : String(v);
+  }
+
+  // IDVARVAL text converted to the key type; null means it did not convert.
+  function suppConvert(v, type) {
+    if (v === null || v === undefined) return null;
+    var s = String(v);
+    if (type === 'character') return s;
+    if (type === 'integer') {
+      if (!SUPP_INT_RE.test(s)) return null;
+      var n = parseInt(s.trim(), 10);
+      if (!isFinite(n) || Math.abs(n) > 2147483647) return null;
+      return String(n);
+    }
+    if (!SUPP_DBL_RE.test(s)) return null;
+    var d = Number(s.trim());
+    return isNaN(d) ? null : String(d);
+  }
+
+  function suppUnique(a) {
+    var seen = {}, out = [];
+    a.forEach(function (x) {
+      var k = String(x);
+      if (!Object.prototype.hasOwnProperty.call(seen, k)) { seen[k] = true; out.push(x); }
+    });
+    return out;
+  }
+
+  function suppSetdiff(a, b) {
+    return suppUnique(a).filter(function (x) { return b.indexOf(x) < 0; });
+  }
+
+  function suppColNames(rows, given) {
+    if (given) return given.slice();
+    var seen = {}, out = [];
+    rows.forEach(function (r) {
+      Object.keys(r).forEach(function (k) { if (!seen[k]) { seen[k] = true; out.push(k); } });
+    });
+    return out;
+  }
+
+  function suppGuessType(rows, col) {
+    var all = true, any = false, frac = false;
+    rows.forEach(function (r) {
+      var v = r[col];
+      if (v === null || v === undefined) return;
+      any = true;
+      if (typeof v !== 'number') { all = false; return; }
+      if (v % 1 !== 0) frac = true;
+    });
+    if (!any || !all) return 'character';
+    return frac ? 'numeric' : 'integer';
+  }
+
+  // parentRows / suppRows: arrays of row objects. opts: {parentName, suppName, rdomain,
+  // parentTypes: {col: colType}, parentCols, suppCols, plan, sampleN}.
+  function suppCheck(parentRows, suppRows, opts) {
+    opts = opts || {};
+    parentRows = parentRows || [];
+    suppRows = suppRows || [];
+    var parentName = opts.parentName || 'parent', suppName = opts.suppName || 'supp';
+    var sampleN = opts.sampleN === undefined || opts.sampleN === null ? 5 : opts.sampleN;
+    var fromName = String(suppName).toUpperCase().replace(/^SUPP/, '');
+    var rdomain = opts.rdomain === undefined || opts.rdomain === null || opts.rdomain === '' ? fromName : opts.rdomain;
+    var warnOther = fromName === rdomain;
+    var pNames = suppColNames(parentRows, opts.parentCols), sNames = suppColNames(suppRows, opts.suppCols);
+    var i, k;
+
+    var need = ['USUBJID', 'IDVAR', 'IDVARVAL', 'QNAM', 'QVAL'];
+    for (i = 0; i < need.length; i++) {
+      if (sNames.indexOf(need[i]) < 0) return { error: 'Not in ' + suppName + ': ' + need[i] };
+    }
+    if (pNames.indexOf('USUBJID') < 0) return { error: 'Not in ' + parentName + ': USUBJID' };
+
+    var hasRd = sNames.indexOf('RDOMAIN') >= 0;
+    var nOther = 0;
+    if (hasRd) {
+      var kept = suppRows.filter(function (r) {
+        return r.RDOMAIN !== null && r.RDOMAIN !== undefined && String(r.RDOMAIN) === rdomain;
+      });
+      nOther = suppRows.length - kept.length;
+      suppRows = kept;
+    }
+    var nSupp = suppRows.length;
+    if (!nSupp) return { error: suppName + ' has no rows for ' + rdomain };
+
+    var idvar = suppRows.map(function (r) {
+      var v = r.IDVAR;
+      return v === null || v === undefined || String(v).trim() === '' ? '' : String(v);
+    });
+    var qnam = suppRows.map(function (r) { return suppChr(r.QNAM); });
+    var levels = suppUnique(idvar);
+    levels = levels.filter(function (x) { return x !== ''; }).concat(levels.indexOf('') >= 0 ? [''] : []);
+
+    var types = {};
+    for (i = 0; i < levels.length; i++) {
+      var iv = levels[i];
+      if (iv === '') continue;
+      if (pNames.indexOf(iv) < 0) return { error: 'Not in ' + parentName + ': ' + iv };
+      var raw = (opts.parentTypes || {})[iv];
+      if (raw === undefined || raw === null) raw = suppGuessType(parentRows, iv);
+      var ty = suppKeyType(raw);
+      if (ty === null) return { error: 'Cannot merge on ' + iv + ': its type is ' + raw };
+      types[iv] = ty;
+    }
+
+    var keys = ['STUDYID', 'USUBJID'].filter(function (c) { return pNames.indexOf(c) >= 0 && sNames.indexOf(c) >= 0; });
+    var keyOf = function (row) { return keys.map(function (c) { return suppChr(row[c]); }).join('\r'); };
+    var pkey = parentRows.map(keyOf), skey = suppRows.map(keyOf);
+
+    var val = [], bad = [], matched = [];
+    for (i = 0; i < nSupp; i++) { val.push(''); bad.push(false); matched.push(false); }
+    var pset = {};
+    pkey.forEach(function (x) { pset[x] = true; });
+    levels.forEach(function (iv) {
+      var pairs = null;
+      if (iv !== '') {
+        pairs = {};
+        parentRows.forEach(function (r, j) { pairs[pkey[j] + '\r' + suppChr(r[iv])] = true; });
+      }
+      for (var j = 0; j < nSupp; j++) {
+        if (idvar[j] !== iv) continue;
+        if (iv === '') { matched[j] = !!pset[skey[j]]; continue; }
+        var cv = suppConvert(suppRows[j].IDVARVAL, types[iv]);
+        val[j] = cv;
+        bad[j] = cv === null;
+        matched[j] = cv !== null && !!pairs[skey[j] + '\r' + cv];
+      }
+    });
+    var orphan = matched.map(function (m, j) { return !m && !bad[j]; });
+
+    var qn = suppUnique(qnam);
+    var hasLabel = sNames.indexOf('QLABEL') >= 0;
+    var qnams = qn.map(function (q) {
+      var first = -1, lab = '';
+      for (var j = 0; j < nSupp; j++) {
+        if (qnam[j] !== q) continue;
+        if (first < 0) first = j;
+        var l = suppRows[j].QLABEL;
+        if (hasLabel && l !== null && l !== undefined) { lab = String(l); break; }
+      }
+      return { qnam: q, label: lab, idvar: idvar[first] };
+    });
+    var idvars = levels.map(function (iv) { return { idvar: iv, type: iv !== '' ? types[iv] : null }; });
+    var newPlan = { keys: keys, idvars: idvars, qnams: qnams, rdomain_col: hasRd };
+
+    var dup = [], seen = {};
+    for (i = 0; i < nSupp; i++) {
+      var d = false;
+      if (!bad[i]) {
+        k = [skey[i], idvar[i], val[i], qnam[i]].join('\r');
+        d = !!seen[k];
+        seen[k] = true;
+      }
+      dup.push(d);
+    }
+    var twoLevel = qn.filter(function (q) {
+      return suppUnique(idvar.filter(function (_, j) { return qnam[j] === q; })).length > 1;
+    });
+    var clashes = qn.filter(function (q) { return pNames.indexOf(q) >= 0; });
+    var count = function (a) { return a.filter(Boolean).length; };
+
+    var status = count(dup) || clashes.length || twoLevel.length ? 'error'
+      : (count(orphan) || count(bad) || (warnOther && nOther > 0) ? 'warning' : 'ok');
+
+    var drift = { stale: false, reasons: [] };
+    var plan = opts.plan;
+    if (plan) {
+      var pick = function (l, f) {
+        return (l || []).map(function (e) { return e && e[f] !== null && e[f] !== undefined ? String(e[f]) : null; });
+      };
+      var pQ = pick(plan.qnams, 'qnam'), pI = pick(plan.idvars, 'idvar'), pT = pick(plan.idvars, 'type');
+      var reasons = [];
+      suppSetdiff(qn, pQ).forEach(function (q) { reasons.push('New QNAM: ' + q); });
+      suppSetdiff(levels, pI).forEach(function (iv) { reasons.push('New IDVAR: ' + (iv !== '' ? iv : '(subject level)')); });
+      suppSetdiff(pQ, qn).forEach(function (q) { reasons.push('QNAM gone: ' + q); });
+      levels.filter(function (iv) { return iv !== '' && pI.indexOf(iv) >= 0; }).forEach(function (iv) {
+        var old = pT[pI.indexOf(iv)];
+        if (old !== null && old !== undefined && old !== types[iv]) {
+          reasons.push(iv + ' type changed from ' + old + ' to ' + types[iv]);
+        }
+      });
+      drift = { stale: reasons.length > 0, reasons: reasons };
+    }
+
+    var samples = function (flags) {
+      var out = [];
+      for (var j = 0; j < nSupp && out.length < sampleN; j++) {
+        if (!flags[j]) continue;
+        var r = suppRows[j];
+        out.push({
+          USUBJID: r.USUBJID === undefined || r.USUBJID === null ? null : String(r.USUBJID),
+          IDVAR: idvar[j],
+          IDVARVAL: r.IDVARVAL === undefined || r.IDVARVAL === null ? null : String(r.IDVARVAL),
+          QNAM: qnam[j]
+        });
+      }
+      return out;
+    };
+
+    var pv = parentRows.slice(0, sampleN).map(function (r) {
+      var o = {};
+      Object.keys(r).forEach(function (c) { o[c] = r[c] === undefined ? null : r[c]; });
+      return o;
+    });
+    var pvKey = pv.map(keyOf);
+    suppSetdiff(qn, clashes.concat(twoLevel)).forEach(function (q) {
+      var iv = idvar[qnam.indexOf(q)];
+      var look = {};
+      for (var j = nSupp - 1; j >= 0; j--) {   // backwards so the first row wins
+        if (qnam[j] !== q || bad[j]) continue;
+        var sk = iv !== '' ? skey[j] + '\r' + val[j] : skey[j];
+        var qv = suppRows[j].QVAL;
+        look[sk] = qv === null || qv === undefined ? null : String(qv);
+      }
+      pv.forEach(function (o, j) {
+        var pk = iv !== '' ? pvKey[j] + '\r' + suppChr(o[iv]) : pvKey[j];
+        o[q] = Object.prototype.hasOwnProperty.call(look, pk) ? look[pk] : null;
+      });
+    });
+
+    return {
+      status: status,
+      plan: newPlan,
+      n_parent: parentRows.length,
+      n_supp: nSupp,
+      n_matched: count(matched),
+      n_orphan: count(orphan),
+      orphan_samples: samples(orphan),
+      n_other_rdomain: nOther,
+      repeats: { n: count(dup), samples: samples(dup) },
+      clashes: clashes,
+      two_level: twoLevel,
+      bad_idvarval: { n: count(bad), samples: samples(bad) },
+      columns: qnams.map(function (q) { return { name: q.qnam, label: q.label }; }),
+      preview: pv,
+      drift: drift
+    };
+  }
+
+  // ---- the supp merge step: SUPP-- rows folded into the parent (design §6) ----
+
+  function suppList(x) { return x === null || x === undefined ? [] : [].concat(x); }
+
+  /**
+   * A supp step for Pipeline.add(), from a merge check's plan ({keys, idvars, qnams, rdomain_col}).
+   * The step carries the whole plan, so it composes without the cards' CDISC tags.
+   */
+  function suppStep(table, supp, rdomain, plan) {
+    plan = plan || {};
+    var txt = function (v) { return v === null || v === undefined ? '' : String(v); };
+    return {
+      kind: 'supp', key: JSON.stringify(['supp', table, supp]), table: table, supp: supp,
+      rdomain: rdomain,
+      keys: suppList(plan.keys).map(String),
+      idvars: suppList(plan.idvars).map(function (v) {
+        v = v || {};
+        return { idvar: txt(v.idvar), type: v.type ? String(v.type) : null };
+      }),
+      qnams: suppList(plan.qnams).map(function (q) {
+        q = q || {};
+        return { qnam: txt(q.qnam), label: txt(q.label), idvar: txt(q.idvar) };
+      }),
+      rdomain_col: !!plan.rdomain_col
+    };
+  }
+
+  // <supp>_<idvar lower case>, or <supp>_subj for the subject level.
+  function suppLevelName(supp, iv) {
+    return ident(String(supp) + '_' + (iv === '' ? 'subj' : String(iv).toLowerCase()));
+  }
+
+  // IDVARVAL as the parent key's type. Text that does not convert is NA, as in the check
+  // (sv_supp_convert / suppConvert): the integer and double patterns are the check's own.
+  function suppKeyExpr(type) {
+    if (type !== 'integer' && type !== 'double') return 'IDVARVAL';
+    var re = type === 'integer' ? SUPP_INT_RE.source : SUPP_DBL_RE.source;
+    return 'suppressWarnings(' + (type === 'integer' ? 'as.integer' : 'as.numeric') +
+      '(dplyr::if_else(grepl(' + str(re) + ', IDVARVAL), as.character(IDVARVAL), NA_character_)))';
+  }
+
+  // A level whose key an Arrow join casts to the parent's type: a numeric IDVAR.
+  function suppArrowCast(v) {
+    return v.idvar !== '' && (v.type === 'integer' || v.type === 'double');
+  }
+
+  function suppLabels(s) {
+    return (s.qnams || []).filter(function (q) { return q.label !== ''; });
+  }
+
+  /**
+   * The statements written before the parent's chain (§6.2): <supp>_q, the guards, one pivoted
+   * table per IDVAR level, and <supp>_labels when `withLabels`. `src` is the SUPP side's code (the
+   * card, or its _prep chain); `srcLazy` collects it after the RDOMAIN filter; `parentRef` is the
+   * parent table the clash guard reads (the names of collect(head(x, 0)): data frames, arrow tables,
+   * datasets and queries, dbplyr tables). `arrowJoin`: the chain is Arrow where the levels join,
+   * so a numeric level's key is cast to the parent's Arrow type.
+   */
+  function suppPrep(s, src, srcLazy, parentRef, pipe, withLabels, arrowJoin) {
+    var S = String(s.supp), P = String(s.table);
+    var q = ident(S + '_q');
+    var nl = ' ' + pipe + '\n  ';
+    var levels = s.idvars.map(function (v) { return v.idvar; });
+    var out = [];
+    var ql = [src];
+    if (s.rdomain_col) ql.push('dplyr::filter(RDOMAIN == ' + str(s.rdomain) + ')');
+    if (srcLazy) ql.push('dplyr::collect()');
+    ql.push('dplyr::mutate(IDVAR = dplyr::if_else(is.na(IDVAR) | trimws(IDVAR) == "", "", as.character(IDVAR)))');
+    out.push(q + ' <- ' + ql.join(nl));
+
+    var g = ['local({'];
+    g.push('  other <- setdiff(unique(' + q + '$IDVAR), c(' + levels.map(str).join(', ') + '))');
+    if (levels.indexOf('') < 0) g.push('  other[other == ""] <- "(subject level)"');
+    g.push('  if (length(other)) stop(' + str(S + ' has IDVAR values this merge does not handle: ') + ',');
+    g.push('    paste(other, collapse = ", "), ". Refresh the merge step.", call. = FALSE)');
+    g.push('  clash <- intersect(unique(' + q + '$QNAM), names(dplyr::collect(utils::head(' + parentRef + ', 0))))');
+    g.push('  if (length(clash)) stop(' + str(S + ' QNAMs clash with ' + P + ' columns: ') +
+      ', paste(clash, collapse = ", "), call. = FALSE)');
+    if (levels.length > 1) {
+      g.push('  lv <- unique(' + q + '[c("QNAM", "IDVAR")])');
+      g.push('  both <- unique(lv$QNAM[duplicated(lv$QNAM)])');
+      g.push('  if (length(both)) stop(' + str(S + ' QNAMs are at two levels: ') +
+        ', paste(both, collapse = ", "), call. = FALSE)');
+    }
+    g.push('})');
+    out.push(g.join('\n'));
+
+    s.idvars.forEach(function (v) {
+      var iv = v.idvar;
+      var nm = suppLevelName(S, iv);
+      var cols = s.keys.map(ident);
+      var dupCols = s.keys.slice();
+      if (iv !== '') { cols.push(ident(iv) + ' = ' + suppKeyExpr(v.type)); dupCols.push(iv); }
+      cols.push('QNAM', 'QVAL');
+      dupCols.push('QNAM');
+      var l = [q, 'dplyr::filter(IDVAR == ' + str(iv) + ')', 'dplyr::transmute(' + cols.join(', ') + ')'];
+      // rows whose IDVARVAL does not convert join nothing (the check counts them as bad, not orphans)
+      if (iv !== '') l.push('dplyr::filter(!is.na(' + ident(iv) + '))');
+      out.push(nm + ' <- ' + l.join(nl));
+      // the repeat guard runs after conversion, so "01" and "1" are one record
+      out.push('local({\n  dup <- ' + nm + '[duplicated(' + nm + '[c(' + dupCols.map(str).join(', ') + ')]), ]\n' +
+        '  if (nrow(dup)) stop(' + str(S + ' repeats a QNAM for ') + ', nrow(dup), " record(s), first: ",\n' +
+        '    dup$USUBJID[1], ' + (iv !== '' ? str(' ' + iv + ' ') + ', dup[[' + str(iv) + ']][1], ' : '') +
+        '" ", dup$QNAM[1], call. = FALSE)\n})');
+      out.push(nm + ' <- tidyr::pivot_wider(' + nm + ', names_from = QNAM, values_from = QVAL)');
+      if (arrowJoin && suppArrowCast(v)) {
+        // Arrow's hash join needs one key type on both sides: as.integer() gives int32 and
+        // as.numeric() double, while a parquet parent often has int64. Cast to the parent's type
+        // (read at run time); a fractional key cannot match an integer one, so it is dropped.
+        var k = str(iv);
+        out.push(nm + ' <- local({\n' +
+          '  ty <- arrow::as_arrow_table(utils::head(' + parentRef + ', 0))$schema[[' + k + ']]$type\n' +
+          '  x <- ' + nm + '\n' +
+          '  if (is.double(x[[' + k + ']]) && grepl("int", ty$ToString())) x <- x[x[[' + k + ']] == trunc(x[[' + k + ']]), ]\n' +
+          '  x <- arrow::arrow_table(x)\n' +
+          '  x[[' + k + ']] <- x[[' + k + ']]$cast(ty)\n' +
+          '  x\n})');
+      }
+    });
+
+    var labs = suppLabels(s);
+    if (withLabels && labs.length) {
+      out.push(ident(S + '_labels') + ' <- c(' + labs.map(function (x) {
+        return ident(x.qnam) + ' = ' + str(x.label);
+      }).join(', ') + ')');
+    }
+    return out.join('\n');
+  }
+
+  // The chain's joins, one per level. `kind` is the chain's backend at this point: a duckdb chain
+  // copies the data frame in, an arrow chain takes it as an Arrow table.
+  function suppJoins(s, kind) {
+    return s.idvars.map(function (v) {
+      var nm = suppLevelName(s.supp, v.idvar);
+      var by = s.keys.concat(v.idvar !== '' ? [v.idvar] : []).map(function (k) { return { left: k, right: k }; });
+      // a cast level is an Arrow table already (suppPrep)
+      var wrap = kind === 'arrow' && !suppArrowCast(v);
+      return 'dplyr::left_join(' + (wrap ? 'arrow::arrow_table(' + nm + ')' : nm) +
+        ', by = ' + joinBy(by) + (kind === 'duckdb' ? ', copy = TRUE' : '') + ')';
+    });
+  }
+
+  function suppLabelLine(s) {
+    var L = ident(String(s.supp) + '_labels');
+    return 'dplyr::mutate(dplyr::across(dplyr::any_of(names(' + L + ')),\n    ~ structure(.x, label = ' +
+      L + '[[dplyr::cur_column()]])))';
+  }
+
   var api = {
     Pipeline: Pipeline,
+    suppStep: suppStep,
     splitReply: splitReply,
     joinDiagnostics: joinDiagnostics,
     strictArgs: strictArgs,
@@ -1794,6 +2268,8 @@
     describeDiagnostics: describeDiagnostics,
     fmtN: fmtN,
     columnProfile: columnProfile,
+    suppKeyType: suppKeyType,
+    suppCheck: suppCheck,
     codebookRow: codebookRow,
     codebookCsv: codebookCsv,
     CODEBOOK_FIELDS: CODEBOOK_FIELDS,

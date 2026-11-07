@@ -142,11 +142,58 @@ arrow and duckdb cards too. They do not change what Strict writes.
 
 ### What join keys do not do
 
-* `SUPP--` and `RELREC` tables, and tables without `USUBJID` (`TS`, `TA`, `TE`), are not suggested.
+* `RELREC` tables, and tables without `USUBJID` (`TS`, `TA`, `TE`), are not suggested. `SUPP--` tables are
+  merged, not joined (see the next section), so they are left out of the join suggestions above.
 * Sponsor sequence names other than `<D>SEQ` are not traced; those pairs get the subject rule.
 * Findings with findings (`LB` with `VS`) get a note, not a suggestion.
 * The widget has no Auto Map rules and no notes; they are worked out in R, in the gadget and in modules.
 * `cdisc = FALSE` turns both off.
+
+## Merging SUPP-- tables
+
+A supplemental qualifier table (`SUPPAE`, `SUPPDM`, or the generic `SUPPQUAL`) holds one row per qualifier:
+`QNAM` names the variable, `QVAL` is its value, and `USUBJID`, `IDVAR` and `IDVARVAL` say which parent record it
+belongs to. A plain join would multiply the parent rows by the number of qualifiers, so sideview folds the
+rows into the parent instead: one new column per `QNAM`, with its `QLABEL` as the column label.
+
+On a tagged `SUPPAE` card, the **Merge into AE** button adds a merge step to
+the Pipeline tab. Auto Map offers the same thing as a dashed spline group from the SUPP card to its parent.
+Pressing the button again replaces the step with a fresh plan, and one undo takes it back.
+
+The step writes tidyr + dplyr code. When the step is added, sideview records a plan (the type of the key,
+the `IDVAR` levels and the `QNAM`s) and writes it into the code, together with guards that stop the code if the
+data no longer fits the plan.
+
+### The merge check
+
+`sv_supp_check()` is the check behind the button. It runs on the study above:
+
+```{r supp-check}
+chk <- sv_supp_check(ae, suppae, parent_name = "ae", supp_name = "suppae")
+chk$status
+c(parent = chk$n_parent, supp = chk$n_supp, matched = chk$n_matched, orphan = chk$n_orphan)
+chk$columns
+```
+
+The same report is shown at the top of the Discrepancy tab (and on the step line in the Pipeline tab):
+
+* counts of parent rows, SUPP rows, matched rows, orphans (SUPP rows that match no parent record, with
+  samples) and rows of other `RDOMAIN`s;
+* problems: a `QNAM` that repeats for one record, a `QNAM` that clashes with a parent column or sits at two
+  `IDVAR` levels, and `IDVARVAL` values that do not convert to the parent's key type (counted apart from
+  orphans);
+* the new columns with their labels, and a preview of the merged parent.
+
+The status is `error` when the code would stop (repeats, clashes, two-level `QNAM`s, an unsupported key
+type), `warning` for orphans and bad `IDVARVAL`s, and `ok` otherwise. A step with an error is still added so
+that you can read the report; its step line says that it stops. When a re-check finds that the data no longer
+fits the plan (an edited `suppae`, say), the step line reads "Merge needs refreshing" and **Refresh** takes the
+plan that re-check found, as one undo step. Refresh runs no check of its own.
+
+With an arrow or duckdb parent, the parent stays lazy: only the SUPP table is collected. With an arrow parent
+the code casts a numeric key to the parent's own Arrow type, so an `int64` `AESEQ` from a parquet file joins.
+In the widget the check runs in the browser on the embedded rows; when a card's rows were cut (`max_rows`) or
+the card is lazy, the panel says "Preview rows".
 
 ## What it does not do
 
@@ -156,7 +203,22 @@ arrow and duckdb cards too. They do not change what Strict writes.
   even if it keeps SDTM-prefixed columns such as `LBTESTCD`; the tooltip records the prefix as a
   disagreement. With any other name, SDTM-prefixed columns still give an SDTM tag.
 * Column names are matched whatever their case (`STUDYID`, `studyid`), but a `STUDYID` column is still
-  required.
+  required for tagging. The SUPP merge is stricter: it needs the exact upper-case names `USUBJID`, `IDVAR`,
+  `IDVARVAL`, `QNAM` and `QVAL` (and `STUDYID`, `RDOMAIN` and `QLABEL` when present).
+* There is no hard limit on merges, but the checks are uneven. A second merge into one parent (a `SUPPAE` and
+  a `SUPPQUAL`) is checked in the browser, where a `QNAM` already made by an earlier merge, `mutate` or
+  `rename` counts as a clash. The guard inside the generated code looks only at the source parent table, so
+  after an earlier join, summarise, pivot or custom step the browser cannot see the chain's columns either,
+  and dplyr would add `.x`/`.y` suffixes instead of stopping.
+* The check runs when you press the Merge button, when you open the step line or the report, after opening a
+  workspace, after undo or redo, and after a module card is replaced or removed. Refresh runs no check, and
+  nothing checks when the code runs: if the data change later, only the guards in the generated code stop a
+  rerun on new data.
+* `IDVARVAL` is matched after conversion to the key type. The in-memory R check compares a double key as 15
+  significant digits of text, while the generated code and the lazy duckdb check compare the doubles
+  themselves, and the browser reads the shortest round-trip text. So for a double key with more than 15
+  significant digits the gadget's own report can disagree with its code, and the gadget with the widget. A key that does not look like a plain decimal (`"0x10"`, `"Inf"`, `"1d3"`) is
+  counted as a bad `IDVARVAL`.
 * `cdisc = FALSE` shows no tags, but lazy (arrow / duckdb) cards still run detection when they are built.
   A named `cdisc =` vector with several lazy cards gets slower with each verb.
 * Dataset-JSON reading was checked against `datasetjson` 0.4.1; if a file's structure differs, it is skipped

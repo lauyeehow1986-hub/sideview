@@ -1488,6 +1488,355 @@ function runAllScenarios() {
   s13e.destroy();
   results.scenario13 = s13_r;
 
+  // SCENARIO 14: SUPP-- merge: Merge into button, supp_check_request / sideview_supp_check, step line,
+  // report, Refresh, re-checks, widget check in the browser, Auto Map supp group, clashes
+  const s14_r = {};
+  const s14_P = global.SideviewPipeline;
+  const s14_aeTag = { domain: 'AE', label: 'Adverse Events', class: 'Events', standard: 'SDTM', parent: null,
+    evidence: ['name matches AE'], source: 'auto' };
+  const s14_suppTag = function (domain, targets, rdomains) {
+    return { domain: domain, label: 'Supplemental Qualifiers', class: 'Relationship', standard: 'SDTM',
+      parent: domain === 'SUPPQUAL' ? null : domain.slice(4), evidence: ['name matches ' + domain], source: 'auto',
+      rdomains: rdomains || [domain.slice(4)], merge_targets: targets };
+  };
+  const s14_cols = function (rows, cols) {
+    const out = {};
+    cols.forEach(function (c) { out[c] = rows.map(function (r) { return r[c] === undefined ? null : r[c]; }); });
+    return out;
+  };
+  const s14_aeRows = [
+    { STUDYID: 'S1', USUBJID: 'P1', AESEQ: 1, AETERM: 'HEAD' },
+    { STUDYID: 'S1', USUBJID: 'P1', AESEQ: 2, AETERM: 'NAUS' },
+    { STUDYID: 'S1', USUBJID: 'P2', AESEQ: 1, AETERM: 'RASH' }];
+  const s14_aeCols = ['STUDYID', 'USUBJID', 'AESEQ', 'AETERM'];
+  const s14_aeTypes = { STUDYID: 'character', USUBJID: 'character', AESEQ: 'integer', AETERM: 'character' };
+  const s14_sr = function (u, v, q, val, rd) {
+    return { STUDYID: 'S1', RDOMAIN: rd || 'AE', USUBJID: u, IDVAR: 'AESEQ', IDVARVAL: v, QNAM: q,
+      QLABEL: q === 'AETRTEM' ? 'Treatment <b>Emergent</b>' : q + ' label', QVAL: val };
+  };
+  const s14_okRows = [s14_sr('P1', '1', 'AETRTEM', 'Y'), s14_sr('P1', '2', 'AETRTEM', 'N'),
+    s14_sr('P2', '1', 'AETRTEM', 'Y'), s14_sr('P1', '1', 'AESOSP', '<i>x</i>')];
+  const s14_suppCols = ['STUDYID', 'RDOMAIN', 'USUBJID', 'IDVAR', 'IDVARVAL', 'QNAM', 'QLABEL', 'QVAL'];
+  const s14_aeCard = function (extra) {
+    return Object.assign({ id: 'card_ae', name: 'ae', type: 'grid', x: 10, y: 10, dims: [3, 4],
+      data: s14_cols(s14_aeRows, s14_aeCols), col_types: s14_aeTypes, cdisc: s14_aeTag }, extra || {});
+  };
+  const s14_suppCard = function (rows, extra, cols) {
+    cols = cols || s14_suppCols;
+    const types = {};
+    cols.forEach(function (c) { types[c] = 'character'; });
+    return Object.assign({ id: 'card_sae', name: 'suppae', type: 'grid', x: 400, y: 10, dims: [rows.length, cols.length],
+      data: s14_cols(rows, cols), col_types: types,
+      cdisc: s14_suppTag('SUPPAE', [{ rdomain: 'AE', card: 'card_ae' }]) }, extra || {});
+  };
+  // what R would answer: the JS twin on the same rows
+  const s14_check = function (rows, plan, parentRows, name) {
+    return s14_P.suppCheck(parentRows || s14_aeRows, rows, { parentName: 'ae', suppName: name || 'suppae', rdomain: 'AE',
+      parentTypes: s14_aeTypes, plan: plan || null });
+  };
+  const s14_btn = function (m, name) {
+    const meta = s11_byName(m, name);
+    return meta ? meta.element.querySelector('[data-action="supp-merge"]') : null;
+  };
+  const s14_last = function (name) { const l = s11_ws(name); return l.length ? l[l.length - 1].value : null; };
+  const s14_reply = function (ns, id, check) { shinyHandlers.sideview_supp_check(Object.assign({ ns: ns, id: id }, check)); };
+  const s14_texts = function (root, sel) { return root.querySelectorAll(sel).map(function (x) { return x.textContent; }); };
+
+  // the button: label, aria-label, enabled; none on the parent
+  const s14_a = s11_make('q-', [s14_aeCard(), s14_suppCard(s14_okRows)]);
+  const s14_ae = s14_a.engine;
+  const s14_b = s14_btn(s14_a, 'suppae');
+  s14_r.button_label = !!s14_b && !s14_b.disabled && s14_b.getAttribute('aria-label') === 'Merge into AE' &&
+    s14_b.querySelector('.sideview-supp-label').textContent === 'Merge into AE' &&
+    !!s14_b.querySelector('svg') && s14_b.dataset.svIcon === 'merge';
+  s14_r.no_button_on_parent = !s14_btn(s14_a, 'ae');
+  // a click asks R for the check, naming the two cards and no plan
+  const s14_req0 = s11_ws('q-supp_check_request').length;
+  s14_b.click();
+  const s14_req1 = s14_last('q-supp_check_request');
+  s14_r.click_sends_request = s11_ws('q-supp_check_request').length === s14_req0 + 1 && !!s14_req1 &&
+    s14_req1.parent === 'ae' && s14_req1.supp === 'suppae' && typeof s14_req1.id === 'string' &&
+    s14_req1.plan === undefined && s14_req1.rdomain === 'AE' && s14_ae.pipeline.steps.length === 0;
+  // an error reply: a toast, no step
+  s14_reply('q-', s14_req1.id, { error: 'Not in ae: AESEQ' });
+  s14_r.error_reply_toast_no_step = s11_toastTexts(s14_a).some(function (t) { return t.indexOf('Not in ae: AESEQ') >= 0; }) &&
+    s14_ae.pipeline.steps.length === 0;
+  // a reply adds one step (one undo step) and stores the check by the step key
+  s14_b.click();
+  const s14_req2 = s14_last('q-supp_check_request');
+  s14_reply('q-', s14_req2.id, s14_check(s14_okRows));
+  const s14_step = s14_ae.pipeline.steps[0];
+  const s14_key = JSON.stringify(['supp', 'ae', 'suppae']);
+  s14_r.reply_adds_step = s14_ae.pipeline.steps.length === 1 && s14_step.kind === 'supp' && s14_step.table === 'ae' &&
+    s14_step.supp === 'suppae' && s14_step.rdomain === 'AE' && s14_step.key === s14_key &&
+    s14_step.qnams.length === 2 && !!s14_ae.suppChecks[s14_key] && s14_ae.suppChecks[s14_key].n_matched === 4;
+  s14_ae.pipeline.undo();
+  s14_r.one_undo_removes = s14_ae.pipeline.steps.length === 0;
+  s14_ae.pipeline.redo();
+  // a reply that is not the latest for its step is dropped
+  s14_b.click();
+  const s14_old = s14_last('q-supp_check_request');
+  s14_b.click();
+  const s14_new = s14_last('q-supp_check_request');
+  s14_reply('q-', s14_old.id, s14_check(s14_okRows.concat([s14_sr('P3', '1', 'AETRTEM', 'Y')])));
+  s14_r.stale_id_dropped = s14_old.id !== s14_new.id && (!s14_ae.suppChecks[s14_key] || s14_ae.suppChecks[s14_key].n_orphan === 0) &&
+    s14_ae.suppReq[s14_key] === s14_new.id;
+  // a second press replaces the step
+  s14_reply('q-', s14_new.id, s14_check(s14_okRows));
+  s14_r.second_press_replaces = s14_ae.pipeline.steps.length === 1 && s14_ae.pipeline.steps[0].key === s14_key;
+  // the step line (§4.5), in the list as a button that opens the report
+  const s14_s = s14_ae.pipeline.steps[0];
+  s14_r.step_line_ok = s14_ae.suppLineText(s14_s) === 'merge SUPPAE (2 QNAMs on AESEQ) · 4 of 4 SUPP rows matched';
+  const s14_diagBtn = s14_a.el.querySelector('.sideview-step-diag[data-step-action="supp-diag"]');
+  s14_r.step_line_in_list = !!s14_diagBtn && s14_diagBtn.textContent === '4 of 4 SUPP rows matched' &&
+    s14_diagBtn.classList.contains('is-ok');
+  s14_ae.suppChecks[s14_key] = s14_check(s14_okRows.concat([s14_sr('P3', '1', 'AETRTEM', 'Y')]));
+  s14_r.step_line_warning = s14_ae.suppLineText(s14_s) ===
+    'merge SUPPAE (2 QNAMs on AESEQ) · 4 of 5 SUPP rows matched · 1 orphan SUPP row';
+  s14_ae.suppChecks[s14_key] = s14_check(s14_okRows.concat([s14_sr('P1', '1', 'AETRTEM', 'Y')]));
+  s14_r.step_line_error = s14_ae.suppLineText(s14_s) ===
+    'merge SUPPAE (2 QNAMs on AESEQ) · stops: AETRTEM repeats for 1 record';
+  s14_ae.suppChecks[s14_key] = s14_check(s14_okRows);
+
+  // the report at the top of the Discrepancy tab: the latest of join check and merge check
+  s14_ae.activateDrawerTab('discrepancy');
+  // the mock module page has no drawer: give it the report box, as scenario 9 does
+  if (!s14_a.el.querySelector('.sideview-joincheck')) {
+    const s14_panel = new MockElement('DIV');
+    s14_panel.className = 'sideview-joincheck';
+    s14_a.el.appendChild(s14_panel);
+  }
+  const s14_box = s14_a.el.querySelector('.sideview-joincheck');
+  const s14_n0 = s11_ws('q-supp_check_request').length;
+  s14_ae.showSuppCheck(s14_s.id);
+  const s14_recheck = s14_last('q-supp_check_request');
+  let s14_plan = null;
+  try { s14_plan = JSON.parse(s14_recheck.plan); } catch (err) {}
+  s14_r.open_report_rechecks_with_plan = s11_ws('q-supp_check_request').length === s14_n0 + 1 &&
+    !!s14_plan && !Array.isArray(s14_plan) && Array.isArray(s14_plan.keys) && s14_plan.qnams.length === 2 &&
+    s14_plan.idvars[0].idvar === 'AESEQ' && s14_plan.rdomain_col === true;
+  // the re-check names the step's own RDOMAIN, a hint R takes when the SUPP card's tags allow it
+  s14_r.recheck_sends_step_rdomain = s14_recheck.rdomain === s14_s.rdomain && s14_s.rdomain === 'AE';
+  s14_reply('q-', s14_recheck.id, s14_check(s14_okRows, s14_plan));
+  s14_r.report_focus_supp = !!s14_ae.reportFocus && s14_ae.reportFocus.kind === 'supp' &&
+    !!s14_box.querySelector('.sideview-suppcheck-title') &&
+    s14_box.querySelector('.sideview-suppcheck-title').textContent === 'Merge check: SUPPAE into ae';
+  const s14_dts = s14_texts(s14_box, '.sideview-suppcheck-stats dt');
+  const s14_dds = s14_texts(s14_box, '.sideview-suppcheck-stats dd');
+  s14_r.report_counts = s14_dts.join('|') === 'ae rows|SUPP rows|Matched|Orphaned|Other RDOMAIN rows' &&
+    s14_dds.join('|') === '3|4|4|0|0';
+  const s14_colItems = s14_texts(s14_box, '.sideview-suppcheck-columns li code');
+  const s14_colLabels = s14_texts(s14_box, '.sideview-suppcheck-columns li span');
+  s14_r.report_columns_labels = s14_colItems.join('|') === 'AETRTEM|AESOSP' &&
+    s11_decode(s14_colLabels[0]) === 'Treatment <b>Emergent</b>' && !s14_box.querySelector('b');
+  const s14_th = s14_texts(s14_box, '.sideview-suppcheck-preview th');
+  const s14_td = s14_texts(s14_box, '.sideview-suppcheck-preview td');
+  s14_r.report_preview = s14_th.join('|') === 'STUDYID|USUBJID|AESEQ|AETRTEM|AESOSP' &&
+    s14_box.querySelectorAll('.sideview-suppcheck-preview tbody tr').length === 3 &&
+    s11_decode(s14_td[4]) === '<i>x</i>' && !s14_box.querySelector('i');
+  s14_r.report_no_preview_note_on_full = !s14_box.querySelector('.sideview-suppcheck-basis');
+  // problems: repeats, clashes, two-level QNAMs, bad IDVARVAL with samples
+  s14_ae.suppChecks[s14_key] = s14_check(s14_okRows.concat([s14_sr('P1', '1', 'AETRTEM', 'Y'), s14_sr('P1', 'x', 'AESOSP', 'z')]));
+  s14_ae.renderJoinCheck();
+  const s14_probs = s14_texts(s14_box, '.sideview-suppcheck-problems li');
+  s14_r.report_problems = s14_box.classList.contains('is-error') &&
+    s14_probs.some(function (t) { return t.indexOf('AETRTEM repeats for 1 record') >= 0; }) &&
+    s14_probs.some(function (t) { return t.indexOf('1 IDVARVAL value does not convert') >= 0; }) &&
+    s14_texts(s14_box, '.sideview-suppcheck-samples code').some(function (t) { return t.indexOf('P1 AESEQ x AESOSP') >= 0; });
+  s14_ae.suppChecks[s14_key] = s14_check(s14_okRows);
+  // a join check shown later takes the top; the merge check comes back when opened
+  s14_ae.pipeline.add({ kind: 'join', type: 'left_join', table: 'ae', right: 'suppae',
+    by: [{ left: 'USUBJID', right: 'USUBJID' }] });
+  const s14_join = s14_ae.pipeline.steps.filter(function (x) { return x.kind === 'join'; })[0];
+  s14_ae.showJoinCheck(s14_join.id);
+  s14_r.join_check_takes_top = s14_ae.reportFocus.kind === 'join' && !s14_box.querySelector('.sideview-suppcheck-title');
+  s14_r.join_report_not_marked_supp = s14_box.getAttribute('data-report') !== 'supp';
+  s14_ae.showSuppCheck(s14_s.id);
+  s14_r.merge_check_back_on_top = s14_ae.reportFocus.kind === 'supp' && !!s14_box.querySelector('.sideview-suppcheck-title');
+  s14_ae.pipeline.remove(s14_join.id);
+
+  // drift: the step line and the report say so; Refresh replaces the plan as one undo step
+  const s14_aeout = s14_okRows.concat([s14_sr('P1', '2', 'AEOUT', 'R')]);
+  const s14_req3 = s14_last('q-supp_check_request');
+  s14_reply('q-', s14_req3.id, s14_check(s14_aeout, s14_plan));
+  const s14_li = s14_a.el.querySelector('.sideview-step[data-step-id="' + s14_s.id + '"]');
+  s14_r.drift_step_line = s14_ae.suppLineText(s14_ae.pipeline.find(s14_s.id)) ===
+    'merge SUPPAE (2 QNAMs on AESEQ) · Merge needs refreshing' && !!s14_li &&
+    !!s14_li.querySelector('[data-step-action="supp-refresh"]') &&
+    !!s14_ae.pipeline.find(s14_s.id) && s14_ae.pipeline.steps.length === 1;
+  s14_r.drift_report = !!s14_box.querySelector('.sideview-suppcheck-drift') &&
+    s14_texts(s14_box, '.sideview-suppcheck-drift span').indexOf('Merge needs refreshing') >= 0 &&
+    s14_texts(s14_box, '.sideview-suppcheck-drift li').indexOf('New QNAM: AEOUT') >= 0 &&
+    !!s14_box.querySelector('[data-supp-refresh]');
+  const s14_undo0 = s14_ae.pipeline.undoStack.length;
+  s14_box.querySelector('[data-supp-refresh]').click();
+  const s14_ref = s14_ae.pipeline.steps[0];
+  s14_r.refresh_replaces_plan = s14_ae.pipeline.steps.length === 1 && s14_ref.qnams.length === 3 &&
+    s14_ref.qnams.some(function (q) { return q.qnam === 'AEOUT'; }) &&
+    s14_ae.pipeline.undoStack.length === s14_undo0 + 1 &&
+    s14_ae.suppLineText(s14_ref) === 'merge SUPPAE (3 QNAMs on AESEQ) · 5 of 5 SUPP rows matched';
+  const s14_nu = s11_ws('q-supp_check_request').length;
+  s14_ae.pipeline.undo();
+  s14_r.refresh_one_undo = s14_ae.pipeline.steps.length === 1 && s14_ae.pipeline.steps[0].qnams.length === 2;
+  const s14_ureq = s14_last('q-supp_check_request');
+  s14_r.undo_rechecks = s11_ws('q-supp_check_request').length === s14_nu + 1 && !s14_ae.suppChecks[s14_key] &&
+    JSON.parse(s14_ureq.plan).qnams.length === 2;
+  // a replaced card clears the stored check and asks again, with the plan
+  const s14_n1 = s11_ws('q-supp_check_request').length;
+  shinyHandlers.sideview_card_replace({ ns: 'q-', card: s14_suppCard(s14_okRows) });
+  const s14_req4 = s14_last('q-supp_check_request');
+  s14_r.replace_rechecks = !s14_ae.suppChecks[s14_key] && s11_ws('q-supp_check_request').length === s14_n1 + 1 &&
+    typeof s14_req4.plan === 'string' && s14_req4.supp === 'suppae';
+  s14_r.replace_forgets_pending = Object.keys(s14_ae.suppPending).length === 1 && !!s14_ae.suppPending[s14_req4.id];
+  // R answers later: the step line and the open report update (drift shown)
+  s14_reply('q-', s14_req4.id, s14_check(s14_aeout, JSON.parse(s14_req4.plan)));
+  const s14_rli4 = s14_a.el.querySelector('.sideview-step[data-step-id="' + s14_s.id + '"]');
+  const s14_rd4 = s14_rli4 ? s14_rli4.querySelector('[data-step-action="supp-diag"]') : null;
+  s14_r.recheck_reply_renders_line = !!s14_rd4 && s14_rd4.textContent === 'Merge needs refreshing' &&
+    !!s14_rli4.querySelector('[data-step-action="supp-refresh"]');
+  s14_r.recheck_reply_renders_report = !!s14_box.querySelector('.sideview-suppcheck-drift') &&
+    s14_texts(s14_box, '.sideview-suppcheck-drift li').indexOf('New QNAM: AEOUT') >= 0;
+  // the button is still on the new card
+  s14_r.replace_keeps_button = !!s14_btn(s14_a, 'suppae');
+  // a tag update that clears the SUPP tag takes the button off; a new tag puts it back
+  shinyHandlers.sideview_cdisc_update({ ns: 'q-', tags: { card_sae: null } });
+  s14_r.cleared_tag_no_button = !s14_btn(s14_a, 'suppae');
+  shinyHandlers.sideview_cdisc_update({ ns: 'q-', tags: { card_sae: s14_suppTag('SUPPAE', [{ rdomain: 'AE', card: 'card_ae' }]) } });
+  s14_r.tag_update_adds_button = !!s14_btn(s14_a, 'suppae');
+  s14_ae.suppChecks[s14_key] = { error: 'boom' };
+  s14_ae.renderPipeline();
+  const s14_li6 = s14_a.el.querySelector('.sideview-step[data-step-id="' + s14_s.id + '"]');
+  const s14_d6 = s14_li6 ? s14_li6.querySelector('button[data-step-action="supp-diag"]') : null;
+  const s14_n6 = s11_ws('q-supp_check_request').length;
+  if (s14_d6) s14_d6.click();
+  s14_r.unavailable_line_opens_report = !!s14_d6 && s14_d6.textContent === 'Merge check unavailable' &&
+    s11_ws('q-supp_check_request').length === s14_n6 + 1;
+  s14_ae.destroy();
+
+  // disabled: the three §4.1 reasons, as the title
+  const s14_d1 = s11_make('q1-', [s14_aeCard(), s14_suppCard(s14_okRows, { cdisc: s14_suppTag('SUPPAE', []) })]);
+  const s14_db1 = s14_btn(s14_d1, 'suppae');
+  s14_r.disabled_no_target = !!s14_db1 && s14_db1.disabled === true && s14_db1.title === 'No AE card on the canvas' &&
+    s14_db1.querySelector('.sideview-supp-label').textContent === 'Merge into AE';
+  s14_d1.engine.destroy();
+  const s14_noQ = s14_suppCols.filter(function (c) { return c !== 'QNAM'; });
+  const s14_d2 = s11_make('q2-', [s14_aeCard(), s14_suppCard(s14_okRows, null, s14_noQ)]);
+  const s14_db2 = s14_btn(s14_d2, 'suppae');
+  s14_r.disabled_missing_column = !!s14_db2 && s14_db2.disabled === true && s14_db2.title === 'suppae has no QNAM column';
+  s14_d2.engine.destroy();
+  const s14_noU = s14_aeCols.filter(function (c) { return c !== 'USUBJID'; });
+  const s14_d3 = s11_make('q3-', [s14_aeCard({ data: s14_cols(s14_aeRows, s14_noU) }), s14_suppCard(s14_okRows)]);
+  const s14_db3 = s14_btn(s14_d3, 'suppae');
+  s14_r.disabled_parent_no_usubjid = !!s14_db3 && s14_db3.disabled === true && s14_db3.title === 'ae has no USUBJID column';
+  const s14_dn = s11_ws('q3-supp_check_request').length;
+  s14_db3.click();
+  s14_r.disabled_click_sends_nothing = s11_ws('q3-supp_check_request').length === s14_dn;
+  s14_d3.engine.destroy();
+  // cdisc = FALSE: no tag, no button
+  const s14_d4 = s11_make('q4-', [s14_aeCard({ cdisc: null }), s14_suppCard(s14_okRows, { cdisc: null })]);
+  s14_r.no_button_without_tag = !s14_btn(s14_d4, 'suppae') && !s14_d4.el.querySelector('[data-action="supp-merge"]');
+  s14_d4.engine.destroy();
+
+  // two targets: Merge into... opens a menu, one item per target
+  const s14_cmCard = { id: 'card_cm', name: 'cm', type: 'grid', x: 10, y: 400, dims: [1, 3],
+    data: { STUDYID: ['S1'], USUBJID: ['P1'], CMSEQ: [1] },
+    col_types: { STUDYID: 'character', USUBJID: 'character', CMSEQ: 'integer' },
+    cdisc: Object.assign({}, s14_aeTag, { domain: 'CM', label: 'Concomitant Medications' }) };
+  const s14_sq = s14_suppCard(s14_okRows, { id: 'card_sq', name: 'suppqual',
+    cdisc: s14_suppTag('SUPPQUAL', [{ rdomain: 'AE', card: 'card_ae' }, { rdomain: 'CM', card: 'card_cm' }], ['AE', 'CM']) });
+  const s14_m = s11_make('q5-', [s14_aeCard(), s14_cmCard, s14_sq]);
+  const s14_mb = s14_btn(s14_m, 'suppqual');
+  s14_r.menu_label = !!s14_mb && s14_mb.querySelector('.sideview-supp-label').textContent === 'Merge into...' &&
+    s14_mb.getAttribute('aria-label') === 'Merge into...' && s14_mb.getAttribute('aria-haspopup') === 'menu';
+  const s14_mn0 = s11_ws('q5-supp_check_request').length;
+  s14_mb.click();
+  const s14_menu = s14_m.el.querySelector('.sideview-supp-menu');
+  const s14_items = s14_menu ? s14_menu.querySelectorAll('.sideview-supp-menu-item') : [];
+  s14_r.menu_two_items = !!s14_menu && s14_items.length === 2 &&
+    s14_items.map(function (x) { return x.textContent; }).join('|') === 'AE|CM' &&
+    s11_ws('q5-supp_check_request').length === s14_mn0;
+  s14_items[1].click();
+  const s14_mreq = s14_last('q5-supp_check_request');
+  s14_r.menu_item_requests = !!s14_mreq && s14_mreq.parent === 'cm' && s14_mreq.supp === 'suppqual' &&
+    !s14_m.el.querySelector('.sideview-supp-menu');
+  s14_m.engine.destroy();
+
+  // a second merge into one parent: a QNAM the first merge (or a mutate) adds is a clash
+  const s14_c = s11_make('q6-', [s14_aeCard(), s14_suppCard(s14_okRows),
+    s14_suppCard([s14_sr('P1', '1', 'AETRTEM', 'Y'), s14_sr('P1', '2', 'AENEW', 'Y')], { id: 'card_sq2', name: 'suppqual',
+      cdisc: s14_suppTag('SUPPQUAL', [{ rdomain: 'AE', card: 'card_ae' }], ['AE']) })]);
+  const s14_ce = s14_c.engine;
+  s14_btn(s14_c, 'suppae').click();
+  s14_reply('q6-', s14_last('q6-supp_check_request').id, s14_check(s14_okRows));
+  s14_ce.pipeline.add({ kind: 'mutate', table: 'ae', name: 'AENEW', expr: '1' });
+  s14_btn(s14_c, 'suppqual').click();
+  const s14_creq = s14_last('q6-supp_check_request');
+  const s14_c2 = s14_check([s14_sr('P1', '1', 'AETRTEM', 'Y'), s14_sr('P1', '2', 'AENEW', 'Y')], null, null, 'suppqual');
+  const s14_c2ok = s14_c2.status === 'ok' && s14_c2.clashes.length === 0;
+  s14_reply('q6-', s14_creq.id, s14_c2);
+  const s14_k2 = JSON.stringify(['supp', 'ae', 'suppqual']);
+  const s14_cc = s14_ce.suppChecks[s14_k2];
+  s14_r.second_merge_clash = s14_c2ok && !!s14_cc && s14_cc.status === 'error' &&
+    s14_cc.clashes.indexOf('AETRTEM') >= 0 && s14_cc.clashes.indexOf('AENEW') >= 0 &&
+    s14_ce.pipeline.steps.length === 3 &&
+    s14_ce.suppLineText(s14_ce.pipeline.steps[2]) === 'merge SUPPQUAL (2 QNAMs on AESEQ) · stops: AETRTEM, AENEW already in ae';
+  // the first merge is not touched by the second
+  s14_r.first_merge_no_clash = s14_ce.suppChecks[s14_key].status === 'ok' && s14_ce.suppChecks[s14_key].clashes.length === 0;
+  // Auto Map: a supp group is drawn dashed with the merge tooltip; a click merges and adds no join
+  s14_ce.pipeline.clear();
+  s14_ce.pipeline.add({ kind: 'join', type: 'left_join', table: 'ae', right: 'suppae',
+    by: [{ left: 'USUBJID', right: 'USUBJID' }] });
+  const s14_conn0 = s14_ce.connections.length;
+  const s14_map0 = s11_ws('q6-column_mapped').length;
+  shinyHandlers.sideview_suggested_mappings({ ns: 'q6-', candidates: [{ from_table: 'suppae', from_col: 'USUBJID',
+    to_table: 'ae', to_col: 'USUBJID', confidence: 1, group: 'cdisc:suppae~ae', kind: 'supp',
+    reason: 'CDISC SUPP merge: suppae holds qualifiers for AE' }] });
+  const s14_sp = s14_c.el.querySelector('path[data-kind="supp"]');
+  // the tooltip moves to the path's invisible hit path (attachHitPath)
+  const s14_tip = 'Suggested CDISC merge: suppae into ae (one column per QNAM). Click to merge';
+  s14_r.supp_group_drawn = !!s14_sp && s14_sp.classList.contains('sideview-spline-suggested-cdisc') &&
+    s14_c.el.querySelectorAll('.sideview-connector-hit').some(function (h) { return h.textContent === s14_tip; });
+  const s14_gn = s11_ws('q6-supp_check_request').length;
+  if (s14_sp) s14_sp.click();
+  const s14_greq = s14_last('q6-supp_check_request');
+  s14_r.supp_group_click_merges = !!s14_sp && s14_ce.connections.length === s14_conn0 &&
+    s11_ws('q6-column_mapped').length === s14_map0 && s11_ws('q6-supp_check_request').length === s14_gn + 1 &&
+    s14_greq.parent === 'ae' && s14_greq.supp === 'suppae' && !s14_c.el.querySelector('path[data-kind="supp"]');
+  s14_ce.destroy();
+
+  // widget (no R): the click checks the embedded rows in the browser
+  const s14_wel = new MockElement('DIV');
+  s14_wel.className = 'sideview-container';
+  document.body.appendChild(s14_wel);
+  const s14_w = global.Sideview.init(s14_wel, { mode: 'embedded', cards: [s14_aeCard(), s14_suppCard(s14_okRows)] });
+  const s14_wn = wsMessages.filter(function (x) { return /supp_check_request$/.test(x.event); }).length;
+  const s14_wb = s14_wel.querySelector('.sideview-card[data-card-name="suppae"] [data-action="supp-merge"]');
+  if (s14_wb) s14_wb.click();
+  const s14_wc = s14_w.suppChecks[s14_key];
+  s14_r.widget_checks_in_browser = !!s14_wb &&
+    wsMessages.filter(function (x) { return /supp_check_request$/.test(x.event); }).length === s14_wn &&
+    s14_w.pipeline.steps.length === 1 && s14_w.pipeline.steps[0].kind === 'supp' && !!s14_wc &&
+    s14_wc.status === 'ok' && s14_wc.n_matched === 4 && s14_wc.plan.idvars[0].type === 'integer';
+  s14_w.destroy();
+  // a widget card that holds a preview: the report says Preview rows
+  const s14_pel = new MockElement('DIV');
+  s14_pel.className = 'sideview-container';
+  document.body.appendChild(s14_pel);
+  const s14_pw = global.Sideview.init(s14_pel, { mode: 'embedded',
+    cards: [s14_aeCard({ truncated: true, totalRows: 50 }), s14_suppCard(s14_okRows)] });
+  s14_pel.querySelector('.sideview-card[data-card-name="suppae"] [data-action="supp-merge"]').click();
+  s14_pw.activateDrawerTab('discrepancy');
+  if (!s14_pel.querySelector('.sideview-joincheck')) {
+    const s14_ppanel = new MockElement('DIV');
+    s14_ppanel.className = 'sideview-joincheck';
+    s14_pel.appendChild(s14_ppanel);
+  }
+  s14_pw.renderJoinCheck();
+  const s14_pb = s14_pel.querySelector('.sideview-suppcheck-basis');
+  s14_r.widget_preview_note = !!s14_pb && s14_pb.textContent === 'Preview rows';
+  s14_pw.destroy();
+  results.scenario14 = s14_r;
+
   // snapshots wait for the debounce, so they finish after the synchronous scenarios
   results.__later = function () {
     const sleep = function (ms) { return new Promise(function (res) { setTimeout(res, ms); }); };

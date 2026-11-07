@@ -193,6 +193,15 @@ sv_cdisc_key_notes <- function(cx, cy, by_x, by_y, diag) {
 sv_keys_m2m_note <- function(cx, cy, by_x) {
   dx <- cx$cdisc$domain
   dy <- cy$cdisc$domain
+  # a SUPP card and its merge target: merge, do not join
+  for (pair in list(list(cx, cy), list(cy, cx))) {
+    for (tg in pair[[1L]]$cdisc$merge_targets) {
+      if (identical(tg$card, pair[[2L]]$id)) {
+        return(sprintf("%s has one row per qualifier: use Merge into %s on the %s card (one column per QNAM) instead of a join.",
+                       pair[[1L]]$cdisc$domain, tg$rdomain, pair[[1L]]$cdisc$domain))
+      }
+    }
+  }
   if (identical(cx$cdisc$class, "Findings") && identical(cy$cdisc$class, "Findings")) {
     tc <- vapply(list(cx, cy), function(cd) {
       s <- sv_keys_col(cd, paste0(cd$cdisc$domain, "TESTCD")); if (is.na(s)) NA_character_ else s

@@ -925,3 +925,451 @@ test_that("compose skips disabled steps and still parses", {
   expect_false(grepl("lab_dt", out, fixed = TRUE))
   expect_false(grepl("pid", out, fixed = TRUE))
 })
+
+# ---- the supp merge step (SUPP-- rows folded into the parent domain) -------------------------
+
+# The check's JSON (plan included) for a parent and a SUPP table, as sv_supp_check() gives it.
+supp_chk_json <- function(parent, supp, parent_name = "ae", supp_name = "suppae", rdomain = "AE") {
+  chk <- sv_supp_check(parent, supp, parent_name, supp_name, rdomain = rdomain)
+  if (!is.null(chk$error)) stop(chk$error)
+  sv_supp_check_json(chk)
+}
+
+# Compose a pipeline holding one supp step built from the check's plan. `before` / `after` are
+# JS run before / after the step is added; `meta` goes to setTables().
+supp_compose <- function(chk_json, pipe = "%>%", table = "ae", supp = "suppae", rdomain = "AE",
+                         meta = "{}", before = "", after = "") {
+  run_pipeline_js(sprintf(
+    "const p = new P.Pipeline(); p.setPipe(%s); p.setTables(%s);
+     const chk = %s;
+     %s
+     p.add(P.suppStep(%s, %s, %s, chk.plan), 'merge');
+     %s
+     out = p.compose();",
+    jsonlite::toJSON(pipe, auto_unbox = TRUE), meta, chk_json, before,
+    jsonlite::toJSON(table, auto_unbox = TRUE), jsonlite::toJSON(supp, auto_unbox = TRUE),
+    jsonlite::toJSON(rdomain, auto_unbox = TRUE), after))
+}
+
+# Run composed code with the given tables bound by name.
+supp_run <- function(code, ...) {
+  skip_if_not_installed("tidyr")  # the generated code pivots with tidyr::pivot_wider()
+  env <- list2env(list(...), parent = globalenv())
+  env$`%>%` <- dplyr::`%>%`
+  eval(parse(text = code), envir = env)
+}
+
+# What a run stops with ("" when it runs).
+supp_stop <- function(code, ...) {
+  tryCatch({ supp_run(code, ...); "" }, error = function(e) conditionMessage(e))
+}
+
+# The merge written by hand: one pivot per IDVAR level, joined on the converted key.
+supp_hand_merge <- function(parent, supp, keys = c("STUDYID", "USUBJID"), idvar = "AESEQ",
+                            convert = as.integer, labels = NULL) {
+  skip_if_not_installed("tidyr")
+  supp$IDVAR[is.na(supp$IDVAR)] <- ""
+  out <- parent
+  lv <- supp[supp$IDVAR == idvar, , drop = FALSE]
+  if (nrow(lv)) {
+    lv[[idvar]] <- convert(lv$IDVARVAL)
+    lv <- lv[!is.na(lv[[idvar]]), , drop = FALSE]
+    lv <- tidyr::pivot_wider(lv[c(keys, idvar, "QNAM", "QVAL")], names_from = QNAM, values_from = QVAL)
+    out <- dplyr::left_join(out, lv, by = c(keys, idvar))
+  }
+  sj <- supp[supp$IDVAR == "", , drop = FALSE]
+  if (nrow(sj)) {
+    sj <- tidyr::pivot_wider(sj[c(keys, "QNAM", "QVAL")], names_from = QNAM, values_from = QVAL)
+    out <- dplyr::left_join(out, sj, by = keys)
+  }
+  for (nm in names(labels)) attr(out[[nm]], "label") <- labels[[nm]]
+  out
+}
+
+test_that("supp code equals hand merge", {
+  skip_if_not_installed("tidyr")
+  fx <- sv_cdisc_fixtures()
+  code <- supp_compose(supp_chk_json(fx$ae, fx$suppae2))
+  expect_parses(code)
+  expect_match(code, 'suppae_q <- suppae %>%\n  dplyr::filter(RDOMAIN == "AE")', fixed = TRUE)
+  expect_match(code, "suppae_aeseq <- tidyr::pivot_wider(suppae_aeseq, names_from = QNAM, values_from = QVAL)",
+               fixed = TRUE)
+  expect_match(code, 'suppae_labels <- c(AETRTEM = "Label AETRTEM", AESOC2 = "Label AESOC2")', fixed = TRUE)
+  expect_match(code, 'ae %>%\n  dplyr::left_join(suppae_aeseq, by = c("STUDYID", "USUBJID", "AESEQ")) %>%\n',
+               fixed = TRUE)
+  got <- supp_run(code, ae = fx$ae, suppae = fx$suppae2)
+  # written independently of the generator
+  aeseq <- fx$suppae2 |>
+    dplyr::filter(IDVAR == "AESEQ") |>
+    dplyr::transmute(STUDYID, USUBJID, AESEQ = as.integer(IDVARVAL), QNAM, QVAL) |>
+    tidyr::pivot_wider(names_from = QNAM, values_from = QVAL)
+  subj <- fx$suppae2 |>
+    dplyr::filter(IDVAR == "") |>
+    dplyr::select(STUDYID, USUBJID, QNAM, QVAL) |>
+    tidyr::pivot_wider(names_from = QNAM, values_from = QVAL)
+  want <- fx$ae |>
+    dplyr::left_join(aeseq, by = c("STUDYID", "USUBJID", "AESEQ")) |>
+    dplyr::left_join(subj, by = c("STUDYID", "USUBJID"))
+  attr(want$AETRTEM, "label") <- "Label AETRTEM"
+  attr(want$AESOC2, "label") <- "Label AESOC2"
+  expect_equal(got, want)
+  expect_identical(attr(got$AETRTEM, "label"), "Label AETRTEM")
+  expect_identical(got$AETRTEM, structure(c("Y", "Y", NA, NA), label = "Label AETRTEM"))
+})
+
+test_that("supp code with |>", {
+  fx <- sv_cdisc_fixtures()
+  code <- supp_compose(supp_chk_json(fx$ae, fx$suppae2), pipe = "|>")
+  expect_parses(code)
+  expect_false(grepl("%>%", code, fixed = TRUE))
+  got <- supp_run(code, ae = fx$ae, suppae = fx$suppae2)
+  want <- supp_hand_merge(fx$ae, fx$suppae2,
+                          labels = c(AETRTEM = "Label AETRTEM", AESOC2 = "Label AESOC2"))
+  expect_equal(got, want)
+})
+
+test_that("supp guards stop", {
+  fx <- sv_cdisc_fixtures()
+  # a new IDVAR level after the plan was made
+  code <- supp_compose(supp_chk_json(fx$ae, fx$suppae2))
+  extra <- rbind(fx$suppae2, transform(fx$suppae2[1, ], IDVAR = "AEGRPID", IDVARVAL = "G1"))
+  expect_identical(supp_stop(code, ae = fx$ae, suppae = extra),
+                   "suppae has IDVAR values this merge does not handle: AEGRPID. Refresh the merge step.")
+  # a QNAM that is a parent column
+  code <- supp_compose(supp_chk_json(fx$ae, fx$supp_clash))
+  expect_parses(code)
+  expect_identical(supp_stop(code, ae = fx$ae, suppae = fx$supp_clash),
+                   "suppae QNAMs clash with ae columns: AESEV")
+  # a QNAM at two IDVAR levels
+  code <- supp_compose(supp_chk_json(fx$ae, fx$supp_two_level))
+  expect_parses(code)
+  expect_identical(supp_stop(code, ae = fx$ae, suppae = fx$supp_two_level),
+                   "suppae QNAMs are at two levels: AETRTEM")
+  # "01" and "1" are one record once converted
+  code <- supp_compose(supp_chk_json(fx$ae, fx$supp_repeat))
+  expect_parses(code)
+  expect_identical(supp_stop(code, ae = fx$ae, suppae = fx$supp_repeat),
+                   "suppae repeats a QNAM for 1 record(s), first: SV-001-001 AESEQ 1 AETRTEM")
+  # the subject level has its own repeat guard
+  code <- supp_compose(supp_chk_json(fx$ae, fx$suppae2))
+  twice <- rbind(fx$suppae2, fx$suppae2[3, ])
+  expect_identical(supp_stop(code, ae = fx$ae, suppae = twice),
+                   "suppae repeats a QNAM for 1 record(s), first: SV-001-001 AESOC2")
+  # a level the plan does not have is unhandled too, and named
+  code <- supp_compose(supp_chk_json(fx$ae, fx$suppae))
+  expect_identical(supp_stop(code, ae = fx$ae, suppae = fx$suppae2),
+                   "suppae has IDVAR values this merge does not handle: (subject level). Refresh the merge step.")
+})
+
+test_that("supp code on a double key converts IDVARVAL like the check", {
+  ae <- data.frame(STUDYID = "S1", USUBJID = c("P1", "P1", "P2"), AESEQ = c(1, 2, 1),
+                   AETERM = c("HEAD", "NAUS", "RASH"), stringsAsFactors = FALSE)
+  sr <- function(u, v, q, val) {
+    data.frame(STUDYID = "S1", RDOMAIN = "AE", USUBJID = u, IDVAR = "AESEQ", IDVARVAL = v, QNAM = q,
+               QLABEL = if (q == "AETRTEM") "Treatment Emergent" else "Other Site", QVAL = val,
+               stringsAsFactors = FALSE)
+  }
+  # "1.0" and " 1 " both convert to 1; "x" does not and is dropped (bad_idvarval)
+  suppae <- rbind(sr("P1", "1.0", "AETRTEM", "Y"), sr("P1", " 1 ", "AESOSP", "LEFT ARM"),
+                  sr("P2", " 1 ", "AETRTEM", "N"), sr("P1", "x", "AETRTEM", "Q"))
+  chk <- sv_supp_check(ae, suppae, "ae", "suppae", rdomain = "AE")
+  expect_identical(chk$plan$idvars[[1]]$type, "double")
+  expect_identical(chk$bad_idvarval$n, 1L)
+  expect_identical(chk$n_matched, 3L)
+  code <- supp_compose(sv_supp_check_json(chk))
+  expect_parses(code)
+  expect_match(code, "as.numeric(dplyr::if_else(grepl(", fixed = TRUE)
+  got <- supp_run(code, ae = ae, suppae = suppae)
+  expect_identical(got$AESEQ, c(1, 2, 1))
+  expect_identical(as.vector(got$AETRTEM), c("Y", NA, "N"))
+  expect_identical(as.vector(got$AESOSP), c("LEFT ARM", NA, NA))
+  expect_identical(attr(got$AETRTEM, "label"), "Treatment Emergent")
+  expect_identical(attr(got$AESOSP, "label"), "Other Site")
+  expect_identical(nrow(got), 3L)
+  want <- supp_hand_merge(ae, suppae, convert = function(x) suppressWarnings(as.numeric(x)),
+                          labels = c(AETRTEM = "Treatment Emergent", AESOSP = "Other Site"))
+  expect_equal(got, want)
+})
+
+test_that("supp merge without STUDYID, without RDOMAIN, on a character key", {
+  fx <- sv_cdisc_fixtures()
+  # no STUDYID: USUBJID alone
+  code <- supp_compose(supp_chk_json(fx$ae_nostudy, fx$suppae_nostudy))
+  expect_parses(code)
+  expect_match(code, 'by = c("USUBJID", "AESEQ")', fixed = TRUE)
+  expect_false(grepl("STUDYID", code, fixed = TRUE))
+  got <- supp_run(code, ae = fx$ae_nostudy, suppae = fx$suppae_nostudy)
+  want <- supp_hand_merge(fx$ae_nostudy, fx$suppae_nostudy, keys = "USUBJID",
+                          labels = c(AETRTEM = "Treatment Emergent"))
+  expect_equal(got, want)
+  # no RDOMAIN column: no filter
+  nord <- fx$suppae2[, setdiff(names(fx$suppae2), "RDOMAIN")]
+  code <- supp_compose(supp_chk_json(fx$ae, nord))
+  expect_parses(code)
+  expect_false(grepl("RDOMAIN", code, fixed = TRUE))
+  got <- supp_run(code, ae = fx$ae, suppae = nord)
+  expect_equal(got, supp_hand_merge(fx$ae, nord,
+                                    labels = c(AETRTEM = "Label AETRTEM", AESOC2 = "Label AESOC2")))
+  # a character key is used as it is
+  code <- supp_compose(supp_chk_json(fx$ae_grp, fx$suppae_grp))
+  expect_parses(code)
+  expect_match(code, "AEGRPID = IDVARVAL", fixed = TRUE)
+  got <- supp_run(code, ae = fx$ae_grp, suppae = fx$suppae_grp)
+  expect_equal(got, supp_hand_merge(fx$ae_grp, fx$suppae_grp, idvar = "AEGRPID", convert = identity,
+                                    labels = c(AEGRPQ = "Label AEGRPQ")))
+})
+
+test_that("supp merge: other RDOMAIN rows are dropped, bad IDVARVAL rows join nothing", {
+  fx <- sv_cdisc_fixtures()
+  code <- supp_compose(supp_chk_json(fx$ae, fx$suppqual, supp_name = "suppqual"), supp = "suppqual")
+  expect_parses(code)
+  got <- supp_run(code, ae = fx$ae, suppqual = fx$suppqual)
+  expect_equal(got, supp_hand_merge(fx$ae, fx$suppqual[fx$suppqual$RDOMAIN == "AE", ],
+                                    labels = c(AETRTEM = "Label AETRTEM")))
+  expect_false("CMPRESP" %in% names(got))
+  # "x" and "1.5" on an integer key do not convert; they are dropped, not joined as NA
+  code <- supp_compose(supp_chk_json(fx$ae, fx$supp_bad))
+  got <- supp_run(code, ae = fx$ae, suppae = fx$supp_bad)
+  expect_identical(nrow(got), nrow(fx$ae))
+  expect_true(all(is.na(got$AETRTEM)))
+})
+
+test_that("supp merge: the SUPP card's own steps come first", {
+  fx <- sv_cdisc_fixtures()
+  code <- supp_compose(supp_chk_json(fx$ae, fx$suppae2), before =
+    "p.add({kind:'filter', table:'suppae', conds:[P.condition('USUBJID', 'not_equals', 'SV-001-002', false)],
+            condCols:['USUBJID'], combine:'and'});")
+  expect_parses(code)
+  expect_match(code, 'suppae_prep <- suppae %>%\n  dplyr::filter(USUBJID != "SV-001-002")', fixed = TRUE)
+  expect_match(code, "suppae_q <- suppae_prep %>%", fixed = TRUE)
+  expect_lt(regexpr("suppae_prep <-", code), regexpr("suppae_q <-", code))
+  got <- supp_run(code, ae = fx$ae, suppae = fx$suppae2)
+  kept <- fx$suppae2[fx$suppae2$USUBJID != "SV-001-002", ]
+  expect_equal(got, supp_hand_merge(fx$ae, kept,
+                                    labels = c(AETRTEM = "Label AETRTEM", AESOC2 = "Label AESOC2")))
+})
+
+test_that("supp merge on a lazy parent equals the in-memory result", {
+  skip_unless_lazy_stack()
+  fx <- sv_cdisc_fixtures()
+  chk <- supp_chk_json(fx$ae, fx$suppae2)
+  labels <- c(AETRTEM = "Label AETRTEM", AESOC2 = "Label AESOC2")
+  want <- supp_hand_merge(fx$ae, fx$suppae2, labels = labels)
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbWriteTable(con, "ae", fx$ae)
+  DBI::dbWriteTable(con, "suppae_db", fx$suppae2)
+  cases <- list(
+    duckdb = list(meta = '{"ae": {"lazy": "duckdb", "codeRef": "dplyr::tbl(con, \\"ae\\")"}}',
+                  ae = NULL, supp = fx$suppae2, pattern = "copy = TRUE", n = 1L),
+    arrow = list(meta = '{"ae": {"lazy": "arrow", "codeRef": "ae"}}',
+                 ae = arrow::arrow_table(fx$ae), supp = fx$suppae2,
+                 pattern = "dplyr::left_join(suppae_aeseq, by", n = 1L),
+    lazy_supp = list(meta = '{"suppae": {"lazy": "arrow", "codeRef": "suppae"}}',
+                     ae = fx$ae, supp = arrow::arrow_table(fx$suppae2),
+                     pattern = "dplyr::collect() %>%\n  dplyr::mutate(IDVAR", n = 1L),
+    both = list(meta = '{"ae": {"lazy": "duckdb", "codeRef": "dplyr::tbl(con, \\"ae\\")"},
+                         "suppae": {"lazy": "duckdb", "codeRef": "dplyr::tbl(con, \\"suppae_db\\")"}}',
+                ae = NULL, supp = NULL, pattern = "copy = TRUE", n = 2L))
+  for (nm in names(cases)) {
+    cs <- cases[[nm]]
+    code <- supp_compose(chk, meta = cs$meta)
+    expect_parses(code, nm)
+    expect_match(code, cs$pattern, fixed = TRUE, info = nm)
+    expect_equal(n_collect(code), cs$n, info = nm)
+    args <- list(code = code, con = con)
+    if (!is.null(cs$ae)) args$ae <- cs$ae
+    if (!is.null(cs$supp)) args$suppae <- cs$supp
+    got <- tryCatch(do.call(supp_run, args), error = function(e) {
+      fail(paste0(nm, ": ", conditionMessage(e), "\n", code)); NULL
+    })
+    if (is.null(got)) next
+    for (lab in names(labels)) expect_identical(attr(got[[lab]], "label"), labels[[lab]], info = nm)
+    expect_same_rows(got, want, info = nm)
+  }
+  # a lazy parent's chain prepared for another chain stays lazy and gets no labels
+  code <- supp_compose(chk, meta = cases$duckdb$meta,
+                       after = "p.addJoinKey('dm', 'ae', 'USUBJID', 'USUBJID');")
+  expect_parses(code)
+  expect_match(code, "ae_prep <- dplyr::tbl(con, \"ae\") %>%", fixed = TRUE)
+  expect_false(grepl("suppae_labels", code, fixed = TRUE))
+})
+
+test_that("supp merge on an arrow parent with an int64 key joins on the parent's type", {
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("tidyr")
+  fx <- sv_cdisc_fixtures()
+  meta <- '{"ae": {"lazy": "arrow", "codeRef": "ae"}}'
+  labels <- c(AETRTEM = "Label AETRTEM", AESOC2 = "Label AESOC2")
+  int64_ae <- function(df) {
+    sch <- arrow::schema(lapply(df, function(x) if (is.character(x)) arrow::utf8() else arrow::int64()))
+    arrow::Table$create(df, schema = sch)
+  }
+  # an integer key (as.integer gives int32) and a parquet-style int64 parent
+  ae64 <- int64_ae(fx$ae)
+  expect_identical(ae64$schema[["AESEQ"]]$type$ToString(), "int64")
+  code <- supp_compose(supp_chk_json(fx$ae, fx$suppae2), meta = meta)
+  expect_parses(code)
+  got <- supp_run(code, ae = ae64, suppae = fx$suppae2)
+  want <- supp_hand_merge(fx$ae, fx$suppae2, labels = labels)
+  expect_same_rows(got, want)
+  # a double key (plan type "double") on an int64 parent; "1.5" joins nothing
+  ae_dbl <- fx$ae
+  ae_dbl$AESEQ <- as.numeric(ae_dbl$AESEQ)
+  supp_dbl <- rbind(fx$suppae2, transform(fx$suppae2[1, ], IDVARVAL = "1.5", QNAM = "AEXTRA"))
+  chk <- sv_supp_check(ae_dbl, supp_dbl, "ae", "suppae", rdomain = "AE")
+  expect_identical(chk$plan$idvars[[1]]$type, "double")
+  code <- supp_compose(sv_supp_check_json(chk), meta = meta)
+  expect_parses(code)
+  got <- supp_run(code, ae = ae64, suppae = supp_dbl)
+  want <- supp_hand_merge(fx$ae, supp_dbl, convert = function(x) suppressWarnings(as.numeric(x)))
+  want$AESEQ <- as.integer(want$AESEQ)
+  got[] <- lapply(got, function(x) { attr(x, "label") <- NULL; x })
+  expect_same_rows(got, want)
+  expect_true(all(is.na(got$AEXTRA)))
+  # an in-memory or duckdb parent's code is unchanged: no cast
+  plain <- supp_compose(supp_chk_json(fx$ae, fx$suppae2))
+  expect_false(grepl("as_arrow_table", plain, fixed = TRUE))
+})
+
+test_that("supp clash guard reads an arrow query's columns", {
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("tidyr")
+  fx <- sv_cdisc_fixtures()
+  code <- supp_compose(supp_chk_json(fx$ae, fx$supp_clash),
+                       meta = '{"ae": {"lazy": "arrow", "codeRef": "ae"}}')
+  expect_parses(code)
+  q <- dplyr::filter(arrow::arrow_table(fx$ae), AESEQ > 0)
+  expect_identical(supp_stop(code, ae = q, suppae = fx$supp_clash),
+                   "suppae QNAMs clash with ae columns: AESEV")
+})
+
+test_that("odd QNAM and QLABEL parse", {
+  fx <- sv_cdisc_fixtures()
+  odd <- fx$suppae
+  odd$QNAM <- "AE TRT"
+  odd$QLABEL <- 'He said "x" \\ y'
+  code <- supp_compose(supp_chk_json(fx$ae, odd))
+  expect_parses(code)
+  got <- supp_run(code, ae = fx$ae, suppae = odd)
+  expect_identical(attr(got$`AE TRT`, "label"), 'He said "x" \\ y')
+  expect_equal(got, supp_hand_merge(fx$ae, odd, labels = c(`AE TRT` = 'He said "x" \\ y')))
+  # a supp card name that is not syntactic goes through ident()
+  code <- supp_compose(supp_chk_json(fx$ae, odd, supp_name = "supp ae"), supp = "supp ae")
+  expect_parses(code)
+  expect_match(code, "`supp ae_q` <- `supp ae` %>%", fixed = TRUE)
+  env_args <- list(code = code, ae = fx$ae)
+  env_args[["supp ae"]] <- odd
+  expect_identical(attr(do.call(supp_run, env_args)$`AE TRT`, "label"), 'He said "x" \\ y')
+})
+
+test_that("factor keys run", {
+  fx <- sv_cdisc_fixtures()
+  ae_f <- fx$ae
+  ae_f$STUDYID <- factor(ae_f$STUDYID)
+  ae_f$USUBJID <- factor(ae_f$USUBJID)
+  code <- supp_compose(supp_chk_json(ae_f, fx$suppae2))
+  expect_parses(code)
+  got <- supp_run(code, ae = ae_f, suppae = fx$suppae2)
+  want <- supp_hand_merge(ae_f, fx$suppae2,
+                          labels = c(AETRTEM = "Label AETRTEM", AESOC2 = "Label AESOC2"))
+  expect_equal(got, want)
+  expect_identical(got$AETRTEM[1:2], c("Y", "Y"))
+})
+
+test_that("supp merge without labels writes no labels", {
+  fx <- sv_cdisc_fixtures()
+  nolab <- fx$suppae[, setdiff(names(fx$suppae), "QLABEL")]
+  code <- supp_compose(supp_chk_json(fx$ae, nolab))
+  expect_parses(code)
+  expect_false(grepl("labels", code, fixed = TRUE))
+  got <- supp_run(code, ae = fx$ae, suppae = nolab)
+  expect_equal(got, supp_hand_merge(fx$ae, nolab))
+})
+
+test_that("supp step: describe, disableMissing and the parent's columns", {
+  fx <- sv_cdisc_fixtures()
+  chk <- supp_chk_json(fx$ae, fx$suppae2)
+  out <- run_pipeline_js(sprintf("
+    const chk = %s;
+    const mk = () => { const p = new P.Pipeline(); p.add(P.suppStep('ae', 'suppae', 'AE', chk.plan)); return p; };
+    const aeCols = ['STUDYID', 'DOMAIN', 'USUBJID', 'AESEQ', 'AETERM', 'AEDECOD', 'AESEV', 'AESTDTC'];
+    const gone = mk();
+    const rg = gone.disableMissing('suppae', null);
+    const nokey = mk();
+    const rk = nokey.disableMissing('ae', aeCols.filter(c => c !== 'AESEQ'));
+    const later = mk();
+    later.add({kind:'arrange', table:'ae', cols:[{col:'AETRTEM'}, {col:'AESOC2'}]});
+    later.add({kind:'filter', table:'ae', conds:[P.condition('AETRTEM', 'equals', 'Y', false)],
+               condCols:['AETRTEM'], combine:'and'});
+    const rl = later.disableMissing('ae', aeCols);
+    const keep = mk();
+    const rs = keep.disableMissing('suppae', ['STUDYID', 'RDOMAIN', 'USUBJID', 'IDVAR', 'IDVARVAL', 'QNAM', 'QLABEL', 'QVAL']);
+    const noq = mk();
+    const rq = noq.disableMissing('suppae', ['STUDYID', 'RDOMAIN', 'USUBJID', 'IDVAR', 'IDVARVAL', 'QVAL']);
+    const s = gone.steps[0];
+    out = { desc: P.describe(s), descP: gone.describe(s), key: s.key,
+            rg: rg, gone: gone.steps[0].enabled, rk: rk, nokey: nokey.steps[0].enabled,
+            rl: rl, later: later.steps.map(x => x.enabled), rs: rs, keep: keep.steps[0].enabled,
+            rq: rq, noq: noq.steps[0].enabled, one: P.describe(P.suppStep('ae', 'suppae', 'AE',
+              { keys: ['USUBJID'], idvars: [{ idvar: 'AESEQ', type: 'integer' }],
+                qnams: [{ qnam: 'A', label: '', idvar: 'AESEQ' }], rdomain_col: true })),
+            strict: (() => { const p = mk(); p.addJoinKey('ae', 'dm', 'USUBJID', 'USUBJID');
+                             return p.strictApplies(p.steps[1]).ok; })(),
+            lazy: (() => { const p = mk(); p.setTables({ suppae: { lazy: 'arrow', codeRef: 'suppae' } });
+                           return p.hasLazy(); })() };
+  ", chk))
+  expect_identical(out$desc, "merge SUPPAE (2 QNAMs on AESEQ and subject)")
+  expect_identical(out$descP, out$desc)
+  expect_identical(out$one, "merge SUPPAE (1 QNAMs on AESEQ)")
+  expect_identical(out$key, '["supp","ae","suppae"]')
+  expect_false(out$gone)
+  expect_length(out$rg$disabled, 1)
+  expect_false(out$nokey)
+  expect_equal(unlist(out$rk$missing), "AESEQ")
+  # the QNAM columns are known after the merge
+  expect_equal(unlist(out$later), c(TRUE, TRUE, TRUE))
+  expect_length(out$rl$disabled, 0)
+  expect_true(out$keep)
+  expect_false(out$noq)
+  expect_equal(unlist(out$rq$missing), "QNAM")
+  # not row-changing: a later join can still be Strict
+  expect_true(out$strict)
+  expect_true(out$lazy)
+})
+
+test_that("supp step state round trip", {
+  fx <- sv_cdisc_fixtures()
+  chk <- supp_chk_json(fx$ae, fx$suppae2)
+  chk1 <- supp_chk_json(fx$ae, fx$suppae)
+  first <- run_pipeline_js(sprintf("
+    const p = new P.Pipeline();
+    p.add(P.suppStep('ae', 'suppae', 'AE', (%s).plan), 'merge');
+    out = { state: JSON.stringify({ version: '0.3.0', pipeline: { steps: p.toJSON().steps, pipe: p.pipe } }),
+            code: p.compose() };
+  ", chk))
+  # through R's state reader and writer, as a saved workspace goes
+  st <- sv_state_from_json(first$state)
+  back <- sv_state_json(st)
+  out <- run_pipeline_js(sprintf("
+    const st = %s;
+    const q = new P.Pipeline();
+    q.load(st.pipeline);
+    const code = q.compose();
+    // plain table meta (cards without CDISC tags, cdisc = FALSE): the step carries its plan
+    const bare = new P.Pipeline();
+    bare.setTables({ ae: { lazy: null, codeRef: 'ae' }, suppae: { lazy: null, codeRef: 'suppae' } });
+    bare.load(JSON.parse(JSON.stringify(st.pipeline)));
+    const n = q.undoStack.length;
+    q.add(P.suppStep('ae', 'suppae', 'AE', (%s).plan), 'merge');
+    out = { code: code, bare: bare.compose(), n: q.steps.length, undo: q.undoStack.length - n,
+            qnams: q.steps[0].qnams.map(x => x.qnam), kind: q.steps[0].kind };
+  ", back, chk1))
+  expect_identical(out$code, first$code)
+  expect_identical(out$bare, first$code)
+  # re-adding with the same key replaces the step, one undo step
+  expect_equal(out$n, 1)
+  expect_equal(out$undo, 1)
+  expect_equal(unlist(out$qnams), "AETRTEM")
+  expect_identical(out$kind, "supp")
+})

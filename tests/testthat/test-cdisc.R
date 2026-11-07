@@ -691,3 +691,53 @@ test_that("cdisc names that clean to the same table are refused", {
   expect_error(sv_cdisc_check_arg(c("a.xpt" = "AE", "a.csv" = "LB")), "duplicate")
   expect_no_error(sv_cdisc_check_arg(c(lab = "AE", LAB = "LB")))
 })
+
+test_that("supp tags carry rdomains and merge_targets", {
+  f <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(ae = f$ae, suppae = f$suppae), "auto")
+  tag <- cards[[2]]$cdisc
+  expect_identical(tag$rdomains, "AE")
+  expect_identical(tag$merge_targets, list(list(rdomain = "AE", card = cards[[1]]$id)))
+  expect_identical(cards[[1]]$cdisc$rdomains, character(0))
+  expect_identical(cards[[1]]$cdisc$merge_targets, list())
+  solo <- sv_cdisc_finalize(sv_cdisc_cards(suppae = f$suppae), "auto")
+  expect_length(solo[[1]]$cdisc$merge_targets, 0L)
+})
+
+test_that("suppqual targets follow rdomains", {
+  f <- sv_cdisc_fixtures()
+  one <- sv_cdisc_finalize(sv_cdisc_cards(ae = f$ae, suppqual = f$suppqual), "auto")
+  tag <- one[[2]]$cdisc
+  expect_identical(tag$domain, "SUPPQUAL")
+  expect_identical(tag$rdomains, c("AE", "CM"))
+  expect_identical(tag$merge_targets, list(list(rdomain = "AE", card = one[[1]]$id)))
+  two <- sv_cdisc_finalize(sv_cdisc_cards(ae = f$ae, cm = f$cm, suppqual = f$suppqual), "auto")
+  expect_identical(two[[3]]$cdisc$merge_targets,
+                   list(list(rdomain = "AE", card = two[[1]]$id),
+                        list(rdomain = "CM", card = two[[2]]$id)))
+})
+
+test_that("wire tag keeps arrays", {
+  f <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(ae = f$ae, suppae = f$suppae), "auto")
+  json <- as.character(jsonlite::toJSON(sv_cdisc_wire_tag(cards[[2]]$cdisc), auto_unbox = TRUE))
+  expect_match(json, '"rdomains":["AE"]', fixed = TRUE)
+  expect_match(json, '"merge_targets":[{"rdomain":"AE","card":', fixed = TRUE)
+  plain <- as.character(jsonlite::toJSON(sv_cdisc_wire_tag(cards[[1]]$cdisc), auto_unbox = TRUE))
+  expect_match(plain, '"rdomains":[]', fixed = TRUE)
+  expect_match(plain, '"merge_targets":[]', fixed = TRUE)
+})
+
+test_that("a user SUPPAE tag takes rdomains from the data", {
+  f <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(ae = f$ae, x = f$suppae), c(x = "SUPPAE"))
+  expect_identical(cards[[2]]$cdisc$rdomains, "AE")
+  expect_identical(cards[[2]]$cdisc$merge_targets[[1]]$card, cards[[1]]$id)
+})
+
+test_that("SEND canvas: a SUPP table targets its SEND parent", {
+  f <- sv_cdisc_fixtures()
+  cards <- sv_cdisc_finalize(sv_cdisc_cards(dm = f$send_dm, bw = f$bw, suppbw = f$suppbw), "auto")
+  expect_identical(cards[[3]]$cdisc$standard, "SEND")
+  expect_identical(cards[[3]]$cdisc$merge_targets, list(list(rdomain = "BW", card = cards[[2]]$id)))
+})

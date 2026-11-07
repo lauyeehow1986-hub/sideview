@@ -26,7 +26,7 @@
 #'     \item{`reason`}{Human-readable justification describing similarity components.}
 #'     \item{`group`}{`NA` for heuristic rows; `"cdisc:<from>~<to>"` for the rows of
 #'       one CDISC key (the columns of one join).}
-#'     \item{`kind`}{`NA` for heuristic rows; `"trace"`, `"subject"` or `"visit"`.}
+#'     \item{`kind`}{`NA` for heuristic rows; `"trace"`, `"subject"` or `"visit"`; `"supp"` for a SUPP-- merge.}
 #'   }
 #' @export
 #' @examples
@@ -132,6 +132,26 @@ sv_suggest_mappings <- function(cards, ..., min_confidence = 0.6, cdisc = "auto"
       )
     })
     rule_rows <- if (length(rule_rows)) do.call(rbind, rule_rows) else NULL
+
+    # SUPP merge rows, after the rule rows: one per SUPP card and merge target
+    card_ids <- vapply(valid_cards, function(cd) cd$id, character(1))
+    supp_rows <- list()
+    for (i in seq_len(n_cards)) {
+      for (tg in valid_cards[[i]]$cdisc$merge_targets) {
+        j <- match(tg$card, card_ids)
+        if (is.na(j) || j == i) next
+        skip_pair[min(i, j), max(i, j)] <- TRUE
+        supp_rows[[length(supp_rows) + 1L]] <- data.frame(
+          from_table = card_names[i], from_col = "USUBJID",
+          to_table = card_names[j], to_col = "USUBJID",
+          confidence = 1,
+          reason = sprintf("CDISC SUPP merge: %s holds qualifiers for %s", card_names[i], tg$rdomain),
+          group = paste0("cdisc:", card_names[i], "~", card_names[j]),
+          kind = "supp", stringsAsFactors = FALSE
+        )
+      }
+    }
+    if (length(supp_rows)) rule_rows <- rbind(rule_rows, do.call(rbind, supp_rows))
   }
 
   # Precompute unique sets and column metadata once per table
