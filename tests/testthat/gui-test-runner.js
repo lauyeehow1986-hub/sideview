@@ -1579,7 +1579,7 @@ function runAllScenarios() {
   s14_b.click();
   const s14_new = s14_last('q-supp_check_request');
   s14_reply('q-', s14_old.id, s14_check(s14_okRows.concat([s14_sr('P3', '1', 'AETRTEM', 'Y')])));
-  s14_r.stale_id_dropped = s14_old.id !== s14_new.id && s14_ae.suppChecks[s14_key].n_orphan === 0 &&
+  s14_r.stale_id_dropped = s14_old.id !== s14_new.id && (!s14_ae.suppChecks[s14_key] || s14_ae.suppChecks[s14_key].n_orphan === 0) &&
     s14_ae.suppReq[s14_key] === s14_new.id;
   // a second press replaces the step
   s14_reply('q-', s14_new.id, s14_check(s14_okRows));
@@ -1648,6 +1648,7 @@ function runAllScenarios() {
   const s14_join = s14_ae.pipeline.steps.filter(function (x) { return x.kind === 'join'; })[0];
   s14_ae.showJoinCheck(s14_join.id);
   s14_r.join_check_takes_top = s14_ae.reportFocus.kind === 'join' && !s14_box.querySelector('.sideview-suppcheck-title');
+  s14_r.join_report_not_marked_supp = s14_box.getAttribute('data-report') !== 'supp';
   s14_ae.showSuppCheck(s14_s.id);
   s14_r.merge_check_back_on_top = s14_ae.reportFocus.kind === 'supp' && !!s14_box.querySelector('.sideview-suppcheck-title');
   s14_ae.pipeline.remove(s14_join.id);
@@ -1672,14 +1673,27 @@ function runAllScenarios() {
     s14_ref.qnams.some(function (q) { return q.qnam === 'AEOUT'; }) &&
     s14_ae.pipeline.undoStack.length === s14_undo0 + 1 &&
     s14_ae.suppLineText(s14_ref) === 'merge SUPPAE (3 QNAMs on AESEQ) · 5 of 5 SUPP rows matched';
+  const s14_nu = s11_ws('q-supp_check_request').length;
   s14_ae.pipeline.undo();
   s14_r.refresh_one_undo = s14_ae.pipeline.steps.length === 1 && s14_ae.pipeline.steps[0].qnams.length === 2;
+  const s14_ureq = s14_last('q-supp_check_request');
+  s14_r.undo_rechecks = s11_ws('q-supp_check_request').length === s14_nu + 1 && !s14_ae.suppChecks[s14_key] &&
+    JSON.parse(s14_ureq.plan).qnams.length === 2;
   // a replaced card clears the stored check and asks again, with the plan
   const s14_n1 = s11_ws('q-supp_check_request').length;
   shinyHandlers.sideview_card_replace({ ns: 'q-', card: s14_suppCard(s14_okRows) });
   const s14_req4 = s14_last('q-supp_check_request');
   s14_r.replace_rechecks = !s14_ae.suppChecks[s14_key] && s11_ws('q-supp_check_request').length === s14_n1 + 1 &&
     typeof s14_req4.plan === 'string' && s14_req4.supp === 'suppae';
+  s14_r.replace_forgets_pending = Object.keys(s14_ae.suppPending).length === 1 && !!s14_ae.suppPending[s14_req4.id];
+  // R answers later: the step line and the open report update (drift shown)
+  s14_reply('q-', s14_req4.id, s14_check(s14_aeout, JSON.parse(s14_req4.plan)));
+  const s14_rli4 = s14_a.el.querySelector('.sideview-step[data-step-id="' + s14_s.id + '"]');
+  const s14_rd4 = s14_rli4 ? s14_rli4.querySelector('[data-step-action="supp-diag"]') : null;
+  s14_r.recheck_reply_renders_line = !!s14_rd4 && s14_rd4.textContent === 'Merge needs refreshing' &&
+    !!s14_rli4.querySelector('[data-step-action="supp-refresh"]');
+  s14_r.recheck_reply_renders_report = !!s14_box.querySelector('.sideview-suppcheck-drift') &&
+    s14_texts(s14_box, '.sideview-suppcheck-drift li').indexOf('New QNAM: AEOUT') >= 0;
   // the button is still on the new card
   s14_r.replace_keeps_button = !!s14_btn(s14_a, 'suppae');
   // a tag update that clears the SUPP tag takes the button off; a new tag puts it back
@@ -1687,6 +1701,14 @@ function runAllScenarios() {
   s14_r.cleared_tag_no_button = !s14_btn(s14_a, 'suppae');
   shinyHandlers.sideview_cdisc_update({ ns: 'q-', tags: { card_sae: s14_suppTag('SUPPAE', [{ rdomain: 'AE', card: 'card_ae' }]) } });
   s14_r.tag_update_adds_button = !!s14_btn(s14_a, 'suppae');
+  s14_ae.suppChecks[s14_key] = { error: 'boom' };
+  s14_ae.renderPipeline();
+  const s14_li6 = s14_a.el.querySelector('.sideview-step[data-step-id="' + s14_s.id + '"]');
+  const s14_d6 = s14_li6 ? s14_li6.querySelector('button[data-step-action="supp-diag"]') : null;
+  const s14_n6 = s11_ws('q-supp_check_request').length;
+  if (s14_d6) s14_d6.click();
+  s14_r.unavailable_line_opens_report = !!s14_d6 && s14_d6.textContent === 'Merge check unavailable' &&
+    s11_ws('q-supp_check_request').length === s14_n6 + 1;
   s14_ae.destroy();
 
   // disabled: the three §4.1 reasons, as the title
@@ -1760,6 +1782,8 @@ function runAllScenarios() {
   s14_r.first_merge_no_clash = s14_ce.suppChecks[s14_key].status === 'ok' && s14_ce.suppChecks[s14_key].clashes.length === 0;
   // Auto Map: a supp group is drawn dashed with the merge tooltip; a click merges and adds no join
   s14_ce.pipeline.clear();
+  s14_ce.pipeline.add({ kind: 'join', type: 'left_join', table: 'ae', right: 'suppae',
+    by: [{ left: 'USUBJID', right: 'USUBJID' }] });
   const s14_conn0 = s14_ce.connections.length;
   const s14_map0 = s11_ws('q6-column_mapped').length;
   shinyHandlers.sideview_suggested_mappings({ ns: 'q6-', candidates: [{ from_table: 'suppae', from_col: 'USUBJID',

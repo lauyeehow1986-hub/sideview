@@ -1704,6 +1704,11 @@ html.sv-standalone body {
   cursor: default;
 }
 
+/* a merge line that is still checking (or could not check) opens the report too */
+.sideview-container button.sideview-step-diag.is-pending[data-step-action="supp-diag"] {
+  cursor: pointer;
+}
+
 .sideview-container .sideview-step-refresh {
   order: 3;
   margin: 2px 0 0 4px;

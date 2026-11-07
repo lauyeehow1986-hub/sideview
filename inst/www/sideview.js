@@ -688,6 +688,7 @@ function sendToShiny(name, value) {
     this.pipeline = new global.SideviewPipeline.Pipeline({
       pipe: this.options.pipe,
       onChange: function (_p, label) {
+        if (label === 'undo' || label === 'redo') self.forgetSuppChecks(null);
         self.renderPipeline();
         // a join check result is not a change of the work; everything else is
         if (label !== 'checks') self.scheduleSnapshot();
@@ -3502,11 +3503,11 @@ function sendToShiny(name, value) {
     if (!pairs.length) return;
 
     // An existing join in the opposite direction decides: the new keys follow it.
-    var opposite = !isSupp && self.connections.some(function (conn) {
+    var opposite = !isSupp && (self.connections.some(function (conn) {
       return conn.fromTable === toTable && conn.toTable === fromTable;
     }) || (self.pipeline.steps || []).some(function (s) {
       return s.kind === 'join' && s.table === toTable && s.right === fromTable;
-    });
+    }));
     if (opposite) {
       var t = fromTable; fromTable = toTable; toTable = t;
       pairs = pairs.map(function (p) {
@@ -4777,7 +4778,8 @@ function sendToShiny(name, value) {
     if (supp) { this.renderSuppCheck(box, supp); return; }
     var s = joins.filter(function (j) { return j.id === self.joinCheckStepId; })[0] || joins[joins.length - 1];
     box.className = 'sideview-joincheck';
-    if (!s) { box.innerHTML = ''; return; }
+    box.setAttribute('data-report', 'join');
+    if (!s) { box.innerHTML = ''; box.removeAttribute('data-report'); return; }
     var d = this.joinDiagFor(s);
     var esc = escapeHtml;
     if (!d) {
@@ -5006,9 +5008,10 @@ function sendToShiny(name, value) {
     var cardEl = btn.closest('.sideview-card');
     var meta = cardEl ? this.cards.get(cardEl.dataset.cardId) : null;
     if (!meta || !suppIsTag(meta.cdisc)) return;
-    var ts = this.suppTargets(meta).targets.filter(function (t) { return !t.reason; });
+    var all = this.suppTargets(meta).targets;
+    var ts = all.filter(function (t) { return !t.reason; });
     if (!ts.length) return;
-    if (ts.length === 1 && this.suppTargets(meta).targets.length === 1) {
+    if (ts.length === 1 && all.length === 1) {
       this.mergeSupp(meta.name, ts[0].name, ts[0].rdomain);
       return;
     }
@@ -5110,7 +5113,9 @@ function sendToShiny(name, value) {
     }
     var d = this.localSuppCheck(parentName, suppName, rdomain, plan);
     d.id = id;
-    this.onSuppCheck(d);
+    // answered inside the render that asked: that render draws the result
+    this._suppSync = (this._suppSync || 0) + 1;
+    try { this.onSuppCheck(d); } finally { this._suppSync -= 1; }
     return id;
   };
 
@@ -5119,7 +5124,9 @@ function sendToShiny(name, value) {
     var self = this;
     if (this.send('supp_check_request', req)) return;
     if (attempt >= 40 || !this.container.isConnected) {
-      this.onSuppCheck({ id: req.id, error: 'The R session is not connected.' });
+      // the first attempt runs inside the render that asked: answer after it
+      var self0 = this;
+      setTimeout(function () { self0.onSuppCheck({ id: req.id, error: 'The R session is not connected.' }); }, 0);
       return;
     }
     setTimeout(function () { self.sendSuppRequest(req, attempt + 1); }, 250);
@@ -5211,7 +5218,9 @@ function sendToShiny(name, value) {
       this.widenSuppClashes(d, ctx.parent, ctx.key, false);
       this.suppChecks[ctx.key] = d;
     }
-    if (ctx.quiet) return;
+    // a quiet check answered synchronously is drawn by the render that asked; a reply from R comes
+    // later and is drawn now (the stored check stops the render from asking again)
+    if (ctx.quiet && this._suppSync) return;
     this.renderPipeline();
     this.renderJoinCheck();
   };
@@ -5266,8 +5275,9 @@ function sendToShiny(name, value) {
     if (s.enabled === false && !this.suppChecks[s.key]) return '';
     var st = this.suppDiagState(s);
     if (st.status === 'pending') {
-      return '<span class="sideview-step-diag is-pending"' + (st.title ? ' title="' + escapeHtml(st.title) + '"' : '') +
-        '>' + escapeHtml(st.text) + '</span>';
+      return '<button type="button" class="sideview-step-diag is-pending" data-step-action="supp-diag" title="' +
+        escapeHtml(st.title || 'Show the merge check') + '"><span>' +
+        escapeHtml(st.text) + '</span></button>';
     }
     var html = '<button type="button" class="sideview-step-diag is-' + st.status + '" data-step-action="supp-diag"' +
       ' title="Show the merge check">' + icon(st.status === 'ok' ? 'check' : 'alert') +
@@ -5306,14 +5316,19 @@ function sendToShiny(name, value) {
     return true;
   };
 
-  /** Drop the merge checks (and pending replies) of steps that read this card. */
+  /** Drop the merge checks (and pending replies) of steps that read this card (`null`: all of them). */
   SideviewEngine.prototype.forgetSuppChecks = function (name) {
     var self = this;
     var touches = function (key) {
+      if (name === null || name === undefined) return true;
       try { var k = JSON.parse(key); return k[1] === name || k[2] === name; } catch (e) { return false; }
     };
     Object.keys(this.suppChecks).forEach(function (k) { if (touches(k)) delete self.suppChecks[k]; });
     Object.keys(this.suppReq).forEach(function (k) { if (touches(k)) delete self.suppReq[k]; });
+    // a reply to a forgotten request is dropped (its id is no longer pending)
+    Object.keys(this.suppPending).forEach(function (id) {
+      if (touches(self.suppPending[id].key)) delete self.suppPending[id];
+    });
   };
 
   // A join step the engine has not seen before takes the top of the Discrepancy tab.
