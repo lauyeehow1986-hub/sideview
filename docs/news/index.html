@@ -51,6 +51,20 @@
 <strong><code><a href="../reference/sv_supp_check.html">sv_supp_check()</a></code></strong> (new, exported) runs the merge check on two data frames or cards. <code><a href="../reference/sv_supp_check.html">sv_supp_check_json()</a></code> and <code><a href="../reference/sv_supp_check.html">sv_supp_key_type()</a></code> are exported with it. <code><a href="../reference/sv_suggest_mappings.html">sv_suggest_mappings()</a></code> gains rows with <code>kind = "supp"</code>.</li>
 <li>New Shiny wire items: the input <code>supp_check_request</code> (<code>{id, parent, supp, plan?, rdomain?}</code>) and the message <code>sideview_supp_check</code>.</li>
 </ul><div class="section level4">
+<h4 id="edge-cases-fixed-in-the-merge-0-7-0">Edge cases fixed in the merge<a class="anchor" aria-label="anchor" href="#edge-cases-fixed-in-the-merge-0-7-0"></a></h4>
+<ul><li>An <code>IDVARVAL</code> such as <code>1e999</code> (too large for a number) is now counted as “does not convert”, not as an orphan, and no longer stops the generated code on an Arrow int64 parent.</li>
+<li>A missing <code>QNAM</code> is read as the text <code>NA</code> in the gadget and the widget alike (the merged column is named <code>NA</code>).</li>
+<li>On a duckdb parent, records whose <code>USUBJID</code> or <code>STUDYID</code> is <code>NA</code> now receive their qualifiers, as the check says they do.</li>
+<li>A float32 parent key is compared as the double it holds (0.1 stored as float32 is not <code>"0.1"</code>): such rows are orphans in the check, and the generated Arrow code no longer rounds them onto the parent.</li>
+<li>On an Arrow parent with a narrow or decimal key (int8, int16, decimal), the generated code drops supp keys that the parent’s type cannot hold exactly. Before, 300 on int8 wrapped onto another record, and 0.125 on decimal(10, 2) was rounded onto one. The check already called such rows orphans.</li>
+<li>A lazy <code>SUPPQUAL</code> with three or more <code>RDOMAIN</code>s now offers a merge for every one, as in memory (only the first two were seen before). The default <code>RDOMAIN</code> is the first in byte order (<code>AE</code> before <code>CM</code>), the same in any locale and on every backend.</li>
+<li>Only ASCII whitespace around a numeric <code>IDVARVAL</code> is ignored, as R does. A no-break space, BOM or ideographic space makes the value “does not convert”, in the gadget and the widget alike (the widget ignored them before).</li>
+<li>A double <code>IDVARVAL</code> past 1e308 “does not convert” in the gadget and the widget alike. Before, R and the widget disagreed at the very top of the range.</li>
+<li>With both a missing <code>QNAM</code> and a <code>QNAM</code> of <code>"NA"</code>, the generated code now treats them as one name, as the check does.</li>
+<li>A full-precision <code>IDVARVAL</code> of a float32 key (<code>0.10000000149011612</code>) matches in the lazy check as it does in memory.</li>
+<li>An Arrow int64 key is a double key whatever its values (as a duckdb <code>BIGINT</code> already was), so a key past 2^31 no longer reads as “does not convert” on Arrow.</li>
+</ul></div>
+<div class="section level4">
 <h4 id="limits-to-know-about-0-7-0">Limits to know about<a class="anchor" aria-label="anchor" href="#limits-to-know-about-0-7-0"></a></h4>
 <ul><li>The merge needs the exact upper-case column names <code>USUBJID</code>, <code>IDVAR</code>, <code>IDVARVAL</code>, <code>QNAM</code> and <code>QVAL</code>.</li>
 <li>A second merge into one parent is checked for clashes in the browser; the guard in the generated code checks the source parent table only.</li>
@@ -60,6 +74,9 @@
 <li>A re-check sends the step’s <code>RDOMAIN</code>, so a step loaded with <code>cdisc = FALSE</code>, or after a tag changed, keeps its domain.</li>
 <li>
 <code>RELREC</code> tables are still not merged or suggested.</li>
+<li>A float16 parent key is not supported (Arrow cannot create float16 columns).</li>
+<li>A double key beyond 1e308 is always “does not convert”, on purpose: R and JavaScript read the largest doubles differently.</li>
+<li>At most 1000 <code>RDOMAIN</code>s are read from a lazy <code>SUPPQUAL</code>.</li>
 </ul></div>
 </div>
 </div>

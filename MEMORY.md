@@ -1005,3 +1005,8 @@ Each sub-project gets its own spec, plan and build, in this order:
 - **Cause:** `sv_cdisc_lazy_query()` took `distinct(.sv_v) |> head(2)` with no order, and duckdb returns DISTINCT values in varying order (RDOMAIN `c("AE","ae","LB","AE")` gave `AE|LB` 29 of 40, `LB|AE` 11 of 40); the in-memory `clean()` kept first-appearance order, so `rdomains` differed positionally (~30% of runs).
 - **Fix:** `sort(unique(...))` in `sv_cdisc_peek()` (R/cdisc.R) and `arrange(.sv_v)` before `head(2)` in the lazy query (R/lazy.R), so both paths give the same sorted pair. (Correction, same day: this was true only for two RDOMAINs. With three or more, the lazy path kept the first two while memory kept all, and `sort()` is locale-ordered while duckdb `arrange()` is byte-ordered. Fixed in the "SUPP merge: review fixes" entry at the top.)
 - **Verified:** the test looped 40 times on duckdb and arrow, 0 failures (was ~30%); test-cdisc.R 321 passed.
+
+### 2026-11-08 - Site and README refreshed with CDISC screenshots
+- **Change:** `tools/cdisc-screenshots.R` (chromote, real mouse clicks, synthetic fixture) makes `vignettes/articles/cdisc/{canvas,automap,merge}.png`; wired into the CDISC article and README; docs/ rebuilt and scrubbed of CLAUDE/MEMORY pages and their sitemap and search entries.
+- **Gotcha:** the fixture must call `sv_cdisc_finalize()` on its cards, or SUPP cards get no merge targets and the Merge button is disabled (the first Merge shot showed 0 steps for that reason).
+- **Verified:** merge.png shows 1 step, 16 of 16 SUPP rows matched; `check_pkgdown()` clean; build_site ran; search.json has no CLAUDE/MEMORY paths. Not yet checked: live site after merge.
