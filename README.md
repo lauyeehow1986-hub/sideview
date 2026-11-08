@@ -13,6 +13,8 @@
 
 **[Take the visual tour](https://lauyeehow1986-hub.github.io/sideview/articles/tour.html)** to see every feature in a screenshot.
 
+<img src="man/figures/cdisc-canvas.png" width="100%" alt="CDISC tables on the canvas: DM, AE, SUPPAE and ADSL cards with domain badges, and a Merge into AE button on the SUPPAE card" />
+
 ## Installation
 
 Install from r-universe (binaries for Windows and macOS):

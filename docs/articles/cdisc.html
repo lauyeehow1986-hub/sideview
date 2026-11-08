@@ -107,6 +107,11 @@ real patients).</p>
 </h2>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="../reference/sideview_widget.html">sideview_widget</a></span><span class="op">(</span>dm <span class="op">=</span> <span class="va">dm</span>, ae <span class="op">=</span> <span class="va">ae</span>, suppae <span class="op">=</span> <span class="va">suppae</span>, adsl <span class="op">=</span> <span class="va">adsl</span><span class="op">)</span></span></code></pre></div>
+<div class="float">
+<img src="cdisc/canvas.png" alt="The canvas with DM, AE, SUPPAE and ADSL cards, each with its domain badge and a Merge into AE button on the SUPPAE card"><div class="figcaption">The canvas with DM, AE, SUPPAE and ADSL cards,
+each with its domain badge and a Merge into AE button on the SUPPAE
+card</div>
+</div>
 <p>Each recognised card gets a badge after its name: <code>DM</code>,
 <code>AE</code>, <code>SUPPAE</code> and <code>ADSL</code> here. Hover
 over a badge for the dataset label, the standard and class, and the
@@ -298,8 +303,14 @@ sideview folds the rows into the parent instead: one new column per
 <p>On a tagged <code>SUPPAE</code> card, the <strong>Merge into
 AE</strong> button adds a merge step to the Pipeline tab. Auto Map
 offers the same thing as a dashed spline group from the SUPP card to its
-parent. Pressing the button again replaces the step with a fresh plan,
-and one undo takes it back.</p>
+parent. <img src="cdisc/automap.png" alt="Auto Map draws dashed splines on the shared STUDYID and USUBJID columns, and the SUPPAE card offers Merge into AE"></p>
+<div class="float">
+<img src="cdisc/merge.png" alt="The Pipeline tab after Merge into AE: one step, 16 of 16 SUPP rows matched, with the generated tidyr and dplyr code"><div class="figcaption">The Pipeline tab after Merge into AE: one step,
+16 of 16 SUPP rows matched, with the generated tidyr and dplyr
+code</div>
+</div>
+<p>Pressing the button again replaces the step with a fresh plan, and
+one undo takes it back.</p>
 <p>The step writes tidyr + dplyr code. When the step is added, sideview
 records a plan (the type of the key, the <code>IDVAR</code> levels and
 the <code>QNAM</code>s) and writes it into the code, together with

@@ -48,6 +48,8 @@ adsl <- data.frame(STUDYID = sid, USUBJID = usub, TRT01P = c("A", "B", "A", "B")
 sideview_widget(dm = dm, ae = ae, suppae = suppae, adsl = adsl)
 ```
 
+![The canvas with DM, AE, SUPPAE and ADSL cards, each with its domain badge and a Merge into AE button on the SUPPAE card](cdisc/canvas.png)
+
 Each recognised card gets a badge after its name: `DM`, `AE`, `SUPPAE` and `ADSL` here. Hover over a badge
 for the dataset label, the standard and class, and the evidence used (for example "DOMAIN column = DM" or
 "STUDYID + USUBJID"). `SUPPAE` also says which parent it supplements. Column headers show a variable's label
@@ -158,6 +160,10 @@ rows into the parent instead: one new column per `QNAM`, with its `QLABEL` as th
 
 On a tagged `SUPPAE` card, the **Merge into AE** button adds a merge step to
 the Pipeline tab. Auto Map offers the same thing as a dashed spline group from the SUPP card to its parent.
+![Auto Map draws dashed splines on the shared STUDYID and USUBJID columns, and the SUPPAE card offers Merge into AE](cdisc/automap.png)
+
+![The Pipeline tab after Merge into AE: one step, 16 of 16 SUPP rows matched, with the generated tidyr and dplyr code](cdisc/merge.png)
+
 Pressing the button again replaces the step with a fresh plan, and one undo takes it back.
 
 The step writes tidyr + dplyr code. When the step is added, sideview records a plan (the type of the key,
