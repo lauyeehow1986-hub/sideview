@@ -54,8 +54,8 @@ raw lists that are hard to follow with a screen reader.
   and `sideviewUI(view =)`, default `getOption("sideview.view", "canvas")`, validated with `match.arg`.
   The gadget carries it as `data-sv-view` on the container; the widget as `options.view`.
 - **State:** the current view is the optional field `view.mode` in workspace state, without a schema bump
-  (as `view.labels_row`). A state without it keeps the starting view. A restored list view skips nothing on the
-  canvas (the auto-fit still runs when the user switches to the canvas).
+  (as `view.labels_row`). A state without it keeps the starting view. Restoring a state that has `view.mode` does
+  not change the canvas restore: the saved zoom and pan still apply, and the first auto-fit is still skipped.
 - **Hiding:** in list mode the canvas viewport, minimap, connector SVG and hit layer get `hidden` and
   `aria-hidden="true"`; in canvas mode the list view does. Switching back restores the canvas exactly.
 - **Data:** the list view has no data path of its own.
