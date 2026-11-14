@@ -270,10 +270,12 @@
     var seen = {};
     var index = 0;
     var prev = null;
+    var lost = null; // focus was inside a section that goes away: where it was, so it can be handed on
     this.engine.cards.forEach(function (meta, id) {
       var vt = meta.element && meta.element._virtualTable ? meta.element._virtualTable : null;
       var st = self.tables.get(id);
       if (st && (st.vt !== vt || st.meta !== meta || st.name !== meta.name)) {
+        if (st.section.contains(document.activeElement)) lost = { name: st.name, index: st.index };
         self.dropTable(id);
         st = null;
       }
@@ -286,7 +288,13 @@
       st.index = index++;
       prev = st.section;
     });
-    Array.from(this.tables.keys()).forEach(function (id) { if (!seen[id]) self.dropTable(id); });
+    Array.from(this.tables.keys()).forEach(function (id) {
+      if (seen[id]) return;
+      var gone = self.tables.get(id);
+      if (gone && gone.section.contains(document.activeElement)) lost = { name: gone.name, index: gone.index };
+      self.dropTable(id);
+    });
+    if (lost) this.refocusAfterDrop(lost);
     var none = body.querySelector('.sideview-lv-no-tables');
     if (!this.engine.cards.size && !none) body.appendChild(el('p', 'sideview-lv-no-tables', 'No tables yet.'));
     else if (this.engine.cards.size && none) body.removeChild(none);
@@ -294,6 +302,19 @@
     this.syncJoin();
     this.syncSupp();
     this.engine.refreshBuilders();
+  };
+
+  /** A focused section was removed: focus its same-named replacement, else the nearest heading, never body. */
+  ListView.prototype.refocusAfterDrop = function (lost) {
+    var st = this.tableState(lost.name);
+    var best = null;
+    this.tables.forEach(function (t) {
+      if (!best || Math.abs(t.index - lost.index) < Math.abs(best.index - lost.index)) best = t;
+    });
+    var target = (st || best) && (st || best).heading;
+    if (target && target.isConnected) {
+      try { target.focus(); } catch (e) { /* nothing to focus */ }
+    } else this.focusSection('tables');
   };
 
   ListView.prototype.dropTable = function (id) {

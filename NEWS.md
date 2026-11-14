@@ -61,7 +61,7 @@
 
 * New real-browser accessibility tests (`test-a11y-browser.R`): every canvas control has an accessible name in the
   gadget, widget and module; Tab reaches the toolbar before the drawer; axe-core (WCAG 2.2 A/AA) finds no
-  violation across the three modes, two themes and two sizes (the on-screen `target-size` rule is accepted for now);
+  violation across the three modes, two themes and two sizes (the list view with none; the canvas has one documented `target-size` exception);
   and today's single-key shortcut and typing rules are pinned (typing in the AI bar never fires a shortcut).
 * Contrast and control-size fixes found by the matrix. A new `a11y` CI job runs these tests with axe-core 4.10.3 pinned.
 * Internal sentence helpers (`sv_say_*` in R, `say*` on `SideviewPipeline`) for plain-text output, with R and JS

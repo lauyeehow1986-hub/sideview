@@ -50,6 +50,7 @@ test_that("Tab reaches the toolbar, then the drawer tabs, in DOM order", {
 # The canvas keeps one: card and column-header buttons are 24 px in CSS but the canvas scales cards
 # (fit-to-view scale 0.5 to 0.71 here), so they are 12 to 17 px on screen. Making them pass means
 # zoom-independent chrome (counter-scaled controls or a minimum zoom), which is a canvas redesign.
+# Tracking: remove this entry once sub-project B (counter-scaled chrome or a minimum zoom) lands.
 SV_AXE_ACCEPTED <- c(
   "target-size" = "Canvas controls scale with the canvas zoom (12 to 17 px on screen); the list view is the accessible path."
 )
@@ -1282,15 +1283,59 @@ test_that("with shortcuts off, f, t and d on a list heading change nothing", {
   b <- sv_walk_open()
   app <- attr(b, "sv_app")
   withr::defer({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
-  sv_js(b, paste0(sv_eng, ".setShortcuts(false); true"))
   state <- function() sv_js(b, sprintf("(() => { const c = document.querySelector('.sideview-container');
     return { scale: %s.panzoom.getScale(), collapsed: c.querySelector('.sideview-drawer').classList.contains('collapsed'),
              cls: c.className, theme: document.documentElement.getAttribute('data-theme') || '' }; })()", sv_eng))
-  sv_js(b, "document.querySelector('.sideview-listview h2').focus(); true")
+  settle <- function() expect_true(sv_wait_js(b, "new Promise(r => requestAnimationFrame(() => setTimeout(() => r(true), 0)))"))
+  focus_heading <- function() sv_js(b, "document.querySelector('.sideview-listview h2').focus(); true")
+  # control: with shortcuts ON the same keys, pressed on the same list heading, do act (so the test below can fail)
+  focus_heading()
+  on_before <- state()
+  sv_key(b, "d", text = "d")
+  expect_true(sv_wait_js(b, sprintf("%s.container.querySelector('.sideview-drawer').classList.contains('collapsed') !== %s",
+                                    sv_eng, if (isTRUE(on_before$collapsed)) "true" else "false")))
+  expect_false(identical(state(), on_before))
+  # now OFF: f, t and d change nothing
+  sv_js(b, paste0(sv_eng, ".setShortcuts(false); true"))
+  focus_heading()
   before <- state()
   for (k in c("f", "t", "d")) sv_key(b, k, text = k)
-  expect_true(sv_wait_js(b, "new Promise(r => requestAnimationFrame(() => setTimeout(() => r(true), 0)))"))
+  settle()
   expect_identical(state(), before)
+})
+
+test_that("a card update keeps open details and pager pages, and focus never falls to body", {
+  skip_if_no_browser()
+  app <- sv_start_app(app_file = sv_example_app("proxy"))
+  ready <- "(() => { const c = document.querySelector('[data-sv-ns=\"a-\"]'); return !!c && c.querySelectorAll('.sideview-card').length >= 2 && !!c._sideviewInstance; })()"
+  b <- sv_open_page(app$url, 1400, 900, wait_for = ready)
+  withr::defer({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
+  eng <- "document.querySelector('[data-sv-ns=\"a-\"]')._sideviewInstance"
+  sv_js(b, paste0(eng, ".setView('list'); true"))
+  sec <- function(n) sprintf("document.querySelector('[data-sv-ns=\"a-\"] .sideview-listview [data-sv-table=\"%s\"]')", n)
+  expect_true(sv_wait_js(b, paste0("!!", sec("visits"), " && !!", sec("labs"))))
+  # visits: an open Columns list (if it has one) and page 2; the labs refresh must not disturb them
+  sv_js(b, paste0("(() => { const d = ", sec("visits"), ".querySelector('details'); if (d) d.open = true; return true; })()"))
+  sv_js(b, paste0(sec("visits"), ".querySelector('.sideview-lv-pager button:nth-of-type(2)').click(); true"))
+  expect_true(sv_wait_js(b, paste0(sec("visits"), ".querySelector('.sideview-lv-pager').textContent.indexOf('Rows 26') >= 0")))
+  status <- function() sv_js(b, paste0(sec("visits"), ".querySelector('.sideview-lv-pager').textContent"))
+  page <- status()
+  has_details <- isTRUE(sv_js(b, paste0("!!", sec("visits"), ".querySelector('details')")))
+  sv_js(b, "document.querySelector('#replace').click(); true")
+  expect_true(sv_wait_js(b, paste0(eng, ".announceLog.indexOf('Table labs replaced.') >= 0")))
+  expect_identical(status(), page)
+  if (has_details) expect_true(sv_js(b, paste0(sec("visits"), ".querySelector('details').open")))
+  # focus inside a section whose card is removed goes to a heading, not body
+  sv_js(b, "document.querySelector('#add').click(); true")
+  expect_true(sv_wait_js(b, paste0("!!", sec("extra1"))))
+  sv_js(b, paste0(sec("extra1"), ".querySelector('h3').focus(); true"))
+  sv_js(b, "document.querySelector('#remove').click(); true")
+  expect_true(sv_wait_js(b, paste0("!", sec("extra1"))))
+  expect_true(sv_wait_js(b, "(document.activeElement || {}).tagName === 'H3' || (document.activeElement || {}).tagName === 'H2'"))
+  # and when the focused section's card is replaced the new heading takes it
+  sv_js(b, paste0(sec("labs"), ".querySelector('h3').focus(); true"))
+  sv_js(b, "document.querySelector('#replace').click(); true")
+  expect_true(sv_wait_js(b, paste0("(document.activeElement || {}).tagName === 'H3' && ", sec("labs"), ".contains(document.activeElement)")))
 })
 
 test_that("AX facts in the list view: row counts and every control named", {

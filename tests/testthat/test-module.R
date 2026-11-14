@@ -21,6 +21,8 @@ test_that("ready sends every card in store order with ns", {
     expect_equal(vapply(adds, function(m) m$message$card$name, ""), c("visits", "labs"))
     for (m in session$userData$custom_messages) expect_identical(m$message$ns, session$ns(""))
     expect_true(all(vapply(adds, function(m) isTRUE(m$message$card$remote), TRUE)))
+    # the ready-time population is flagged initial, so the browser does not announce it
+    expect_true(all(vapply(adds, function(m) isTRUE(m$message$initial), TRUE)))
     expect_true(all(vapply(adds, function(m) nrow(m$message$card$data) <= 500L, TRUE)))
   })
 })
@@ -107,6 +109,9 @@ test_that("reactive cards are diffed by name", {
       c("sideview_card_replace b", "sideview_card_add c", "sideview_card_remove a")
     )
     expect_equal(px$cards(), c("b", "c"))
+    # a reactive add is not initial: the browser announces it
+    added <- Filter(function(m) m$type == "sideview_card_add", new)
+    expect_null(added[[1]]$message$initial)
 
     n1 <- length(session$userData$custom_messages)
     rv(list(b = labs[1:3, ], c = mtcars))
