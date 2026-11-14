@@ -16,6 +16,15 @@ test_that("every control has an accessible name (canvas, all modes)", {
   }
 })
 
+# A slow browser start: wait by condition until the engine is up, the document has focus and a frame has painted.
+sv_wait_ready_for_keys <- function(b) {
+  ok <- sv_wait_js(b, "!!document.querySelector('.sideview-container')._sideviewInstance &&
+    document.readyState === 'complete' &&
+    new Promise(r => requestAnimationFrame(() => setTimeout(() => r(true), 0)))", timeout = 60)
+  expect_true(ok)
+  invisible(b)
+}
+
 test_that("Tab reaches the toolbar, then the drawer tabs, in DOM order", {
   skip_if_no_browser()
   b <- sv_a11y_pages()$gadget$open("light", 1360, 820)
@@ -24,6 +33,7 @@ test_that("Tab reaches the toolbar, then the drawer tabs, in DOM order", {
     try(b$close(), silent = TRUE)
     if (!is.null(app)) try(app$proc$kill(), silent = TRUE)
   })
+  sv_wait_ready_for_keys(b)
   # Cards come first in the DOM (about 40 stops), then the toolbar, then the drawer.
   seen <- character()
   for (i in 1:150) {
@@ -36,27 +46,37 @@ test_that("Tab reaches the toolbar, then the drawer tabs, in DOM order", {
   expect_true(which(grepl("^Fit", seen))[1] < which(seen == "Pipeline")[1])
 })
 
-# Rules that belong to sub-project B (rule id -> reason). Task 16 must remove the target-size
-# entry (once B fixes it) and re-run this matrix.
+# Rules accepted on the CANVAS view only (rule id -> reason). The list view has none: it passes axe outright.
+# The canvas keeps one: card and column-header buttons are 24 px in CSS but the canvas scales cards
+# (fit-to-view scale 0.5 to 0.71 here), so they are 12 to 17 px on screen. Making them pass means
+# zoom-independent chrome (counter-scaled controls or a minimum zoom), which is a canvas redesign.
 SV_AXE_ACCEPTED <- c(
-  "target-size" = "Card controls are 24 px in CSS but the canvas scales cards (fit-to-view zoom < 1), so on-screen size is below 24 px; sub-project B (minimum zoom or zoom-independent chrome)."
+  "target-size" = "Canvas controls scale with the canvas zoom (12 to 17 px on screen); the list view is the accessible path."
 )
 
-test_that("axe-core finds no WCAG 2.2 A/AA violation on the canvas (modes x themes x sizes)", {
+test_that("axe-core finds no WCAG 2.2 A/AA violation (views x modes x themes x sizes)", {
   skip_if_no_browser()
   skip_if_no_axe()
-  for (mode in c("gadget", "widget", "module")) {
-    for (theme in c("light", "dark")) {
-      for (size in list(c(1360, 820), c(375, 812))) {
-        b <- sv_a11y_pages()[[mode]]$open(theme = theme, width = size[1], height = size[2])
-        app <- attr(b, "sv_app")
-        v <- tryCatch(sv_axe_run(b), finally = {
-          try(b$close(), silent = TRUE)
-          if (!is.null(app)) try(app$proc$kill(), silent = TRUE)
-        })
-        v <- v[!v$id %in% names(SV_AXE_ACCEPTED), , drop = FALSE]
-        expect_equal(nrow(v), 0,
-                     info = paste(mode, theme, size[1], paste(v$id, v$targets, collapse = "; ")))
+  for (view in c("canvas", "list")) {
+    for (mode in c("gadget", "widget", "module")) {
+      for (theme in c("light", "dark")) {
+        for (size in list(c(1360, 820), c(375, 812))) {
+          b <- sv_a11y_pages()[[mode]]$open(theme = theme, width = size[1], height = size[2])
+          app <- attr(b, "sv_app")
+          v <- tryCatch({
+            if (view == "list") {
+              sv_js(b, "document.querySelector('.sideview-container')._sideviewInstance.setView('list'); true")
+              stopifnot(sv_wait_js(b, "!!document.querySelector('.sideview-listview h2') && !document.querySelector('.sideview-listview').hidden"))
+            }
+            sv_axe_run(b)
+          }, finally = {
+            try(b$close(), silent = TRUE)
+            if (!is.null(app)) try(app$proc$kill(), silent = TRUE)
+          })
+          if (view == "canvas") v <- v[!v$id %in% names(SV_AXE_ACCEPTED), , drop = FALSE]
+          expect_equal(nrow(v), 0,
+                       info = paste(view, mode, theme, size[1], paste(v$id, v$targets, collapse = "; ")))
+        }
       }
     }
   }
@@ -86,6 +106,7 @@ for (sv_sc_state in c(TRUE, FALSE)) {
     test_that(paste("typing never fires shortcuts, shortcuts", if (on) "on" else "off"), {
       skip_if_no_browser()
       b <- sv_open_gadget()
+      sv_wait_ready_for_keys(b)
       sv_js(b, sprintf("document.querySelector('.sideview-container')._sideviewInstance.setShortcuts(%s)", tolower(on)))
       before <- sv_canvas_state(b)
       sv_js(b, "document.querySelector('.sideview-ai-input').focus()")
@@ -1133,4 +1154,178 @@ test_that("a module list view has no code-execution buttons and no Copilot witho
   expect_true(r$code)
   expect_false("Copilot" %in% unlist(r$h2))
   expect_true("Code" %in% unlist(r$h2))
+})
+
+# ---- card changes, keyboard walkthrough and AX facts in the list view (Task 16) ----
+
+test_that("replacing a card re-renders only its section", {
+  skip_if_no_browser()
+  app <- sv_start_app(app_file = sv_example_app("proxy"))
+  ready <- "(() => { const c = document.querySelector('[data-sv-ns=\"a-\"]'); return !!c && c.querySelectorAll('.sideview-card').length >= 2 && !!c._sideviewInstance; })()"
+  b <- sv_open_page(app$url, 1400, 900, wait_for = ready)
+  withr::defer({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
+  eng <- "document.querySelector('[data-sv-ns=\"a-\"]')._sideviewInstance"
+  sv_js(b, paste0(eng, ".setView('list'); true"))
+  sec <- function(n) sprintf("document.querySelector('[data-sv-ns=\"a-\"] .sideview-listview [data-sv-table=\"%s\"]')", n)
+  expect_true(sv_wait_js(b, paste0("!!", sec("visits"), " && !!", sec("labs"))))
+  before <- sv_js(b, paste0(sec("labs"), ".querySelector('h3').textContent"))
+  expect_match(before, "^labs, 90 rows by 4 columns")
+  sv_js(b, paste0(sec("visits"), ".setAttribute('data-test-mark', 'keep'); true"))
+  sv_js(b, "Shiny.setInputValue('refresh', 'drop'); true")
+  sv_js(b, "document.querySelector('#replace').click(); true")
+  expect_true(sv_wait_js(b, paste0(eng, ".announceLog.indexOf('Table labs replaced.') >= 0")))
+  expect_true(sv_wait_js(b, paste0(sec("labs"), ".querySelector('h3').textContent.indexOf('by 3 columns') > 0")))
+  expect_identical(sv_js(b, paste0(sec("visits"), ".getAttribute('data-test-mark')")), "keep")
+  # add and remove announce, and the Tables section says so when empty
+  sv_js(b, "document.querySelector('#add').click(); true")
+  expect_true(sv_wait_js(b, paste0(eng, ".announceLog.indexOf('Table extra1 added.') >= 0")))
+  expect_true(sv_wait_js(b, paste0("!!", sec("extra1"))))
+  sv_js(b, "document.querySelector('#remove').click(); true")
+  expect_true(sv_wait_js(b, paste0(eng, ".announceLog.indexOf('Table extra1 removed.') >= 0")))
+  expect_true(sv_wait_js(b, paste0("!", sec("extra1"))))
+  expect_identical(sv_js(b, paste0(sec("visits"), ".getAttribute('data-test-mark')")), "keep")
+  sv_js(b, paste0("['visits', 'labs'].forEach(n => ", eng, ".removeCard(n)); true"))
+  expect_true(sv_wait_js(b, "(document.querySelector('[data-sv-ns=\"a-\"] .sideview-listview [data-sv-lv-body=\"tables\"]') || {}).textContent === 'No tables yet.'"))
+})
+
+# Tab until focus lands on an element that `pred` (JS on `e`) accepts.
+sv_tab_to <- function(b, pred, max = 400L) {
+  for (i in seq_len(max)) {
+    sv_tab(b)
+    if (isTRUE(sv_js(b, sprintf("(e => !!(%s))(document.activeElement)", pred)))) return(invisible(TRUE))
+  }
+  stop("Tab never reached: ", pred)
+}
+sv_press <- function(b, key, n = 1L) {
+  for (i in seq_len(n)) {
+    if (key == "Enter") sv_key(b, "Enter", text = "\r")
+    else if (key == "Space") sv_key(b, " ", code = "Space", text = " ")
+    else sv_key(b, key)
+  }
+  invisible(b)
+}
+sv_type <- function(b, text) {
+  for (ch in strsplit(text, "")[[1]]) sv_key(b, ch, text = ch)
+  invisible(b)
+}
+
+sv_walk_open <- function() {
+  root <- sv_pkg_root()
+  if (!nzchar(root)) skip("the walkthrough needs the source tree (helper-cdisc.R)")
+  helper <- normalizePath(file.path(root, "tests", "testthat", "helper-cdisc.R"), winslash = "/")
+  app <- sv_start_app(app_expr = sprintf(
+    "{ source('%s'); f <- sv_cdisc_fixtures(); sideview(patients = patients, visits = visits, ae = f$ae, suppae = f$suppae, view = 'list', run = FALSE) }",
+    helper))
+  b <- sv_open_page(app$url, 1360, 820, wait_for = sv_wait_eng)
+  attr(b, "sv_app") <- app
+  sv_wait_js(b, "!!document.querySelector('.sideview-listview h2') && document.querySelectorAll('.sideview-listview [data-sv-table]').length === 4")
+  b
+}
+
+test_that("keyboard-only walkthrough gives the canvas code", {
+  skip_if_no_browser()
+  b <- sv_walk_open()
+  app <- attr(b, "sv_app")
+  withr::defer({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
+  expect_identical(sv_js(b, paste0(sv_eng, ".view")), "list")
+  J <- ".sideview-listview [data-sv-lv-body=\"join\"]"
+  # 1. the join patients.patient_id to visits.pid
+  sv_tab_to(b, "e.matches && e.matches('select[data-sv-field=\"left-table\"]')")
+  sv_press(b, "ArrowDown")
+  sv_tab(b); sv_press(b, "ArrowDown", 2)
+  sv_tab(b); sv_press(b, "ArrowDown")
+  sv_tab(b); sv_press(b, "ArrowDown", 2)
+  got <- sv_js(b, sprintf("[...document.querySelectorAll('%s select[data-sv-field]')].slice(0, 4).map(s => s.value)", J))
+  expect_identical(as.character(unlist(got)), c("patients", "visits", "patient_id", "pid"))
+  sv_tab_to(b, "e.tagName === 'BUTTON' && e.textContent === 'Check join'")
+  sv_press(b, "Space")
+  expect_true(sv_wait_js(b, sprintf("(b => !!b && !b.disabled)([...document.querySelectorAll('%s button')].find(x => x.textContent === 'Add join step'))", J), timeout = 30))
+  sv_tab_to(b, "e.tagName === 'BUTTON' && e.textContent === 'Add join step'")
+  sv_press(b, "Enter")
+  expect_true(sv_wait_js(b, paste0(sv_eng, ".pipeline.steps.some(s => s.kind === 'join')")))
+  # 2. the filter age > 30 on patients
+  F <- ".sideview-listview [data-builder=\"filter\"]"
+  sv_tab_to(b, "e.matches && e.matches('select[data-field=\"table\"]') && e.closest('[data-builder=\"filter\"]')")
+  expect_identical(sv_js(b, "document.activeElement.value"), "patients")
+  sv_tab(b)                                # combine
+  sv_tab(b); sv_press(b, "ArrowDown", 2)   # column: age
+  sv_tab(b); sv_press(b, "ArrowDown", 2)   # operator: >
+  sv_tab(b); sv_type(b, "30")
+  vals <- sv_js(b, sprintf("[...document.querySelectorAll('%s [data-field=\"col\"], %s [data-field=\"op\"], %s [data-field=\"val\"]')].map(f => f.value)", F, F, F))
+  expect_identical(as.character(unlist(vals)), c("age", "gt", "30"))
+  sv_tab_to(b, "e.matches && e.matches('[data-builder-action=\"submit\"]') && e.closest('[data-builder=\"filter\"]')")
+  sv_press(b, "Enter")
+  expect_true(sv_wait_js(b, paste0(sv_eng, ".pipeline.steps.some(s => s.kind === 'filter')")))
+  # 3. merge SUPPAE into AE
+  sv_tab_to(b, "e.tagName === 'BUTTON' && e.textContent === 'Merge' && e.closest('[data-sv-supp=\"suppae\"]')")
+  sv_press(b, "Enter")
+  expect_true(sv_wait_js(b, paste0(sv_eng, ".pipeline.steps.some(s => s.kind === 'supp')"), timeout = 30))
+  expect_true(sv_wait_js(b, paste0(sv_eng, ".generatedCode === ", sv_eng, ".pipeline.compose()")))
+  code <- sv_js(b, paste0(sv_eng, ".generatedCode"))
+  expect_no_error(parse(text = code))
+  expect_identical(sv_js(b, paste0(sv_eng, ".pipeline.steps.map(s => s.kind).join(',')")), "join,filter,supp")
+
+  # the same three steps through the engine calls, in a second session
+  b2 <- sv_walk_open()
+  app2 <- attr(b2, "sv_app")
+  withr::defer({ try(b2$close(), silent = TRUE); try(app2$proc$kill(), silent = TRUE) })
+  sv_js(b2, paste0(sv_eng, ".addConnections([{fromTable: 'patients', fromCol: 'patient_id', toTable: 'visits', toCol: 'pid', type: 'left_join'}]); true"))
+  sv_js(b2, paste0(sv_eng, ".pipeline.add({ kind: 'filter', table: 'patients', conds: ['age > 30'], combine: 'and', specs: [null], condCols: ['age'] }, 'filter'); true"))
+  sv_js(b2, paste0(sv_eng, ".requestSuppCheck('ae', 'suppae', null, { mode: 'add', rdomain: 'AE', list: true }); true"))
+  expect_true(sv_wait_js(b2, paste0(sv_eng, ".pipeline.steps.some(s => s.kind === 'supp')"), timeout = 30))
+  expect_true(sv_wait_js(b2, paste0(sv_eng, ".generatedCode === ", sv_eng, ".pipeline.compose()")))
+  expect_identical(sv_js(b2, paste0(sv_eng, ".generatedCode")), code)
+})
+
+test_that("with shortcuts off, f, t and d on a list heading change nothing", {
+  skip_if_no_browser()
+  b <- sv_walk_open()
+  app <- attr(b, "sv_app")
+  withr::defer({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
+  sv_js(b, paste0(sv_eng, ".setShortcuts(false); true"))
+  state <- function() sv_js(b, sprintf("(() => { const c = document.querySelector('.sideview-container');
+    return { scale: %s.panzoom.getScale(), collapsed: c.querySelector('.sideview-drawer').classList.contains('collapsed'),
+             cls: c.className, theme: document.documentElement.getAttribute('data-theme') || '' }; })()", sv_eng))
+  sv_js(b, "document.querySelector('.sideview-listview h2').focus(); true")
+  before <- state()
+  for (k in c("f", "t", "d")) sv_key(b, k, text = k)
+  expect_true(sv_wait_js(b, "new Promise(r => requestAnimationFrame(() => setTimeout(() => r(true), 0)))"))
+  expect_identical(state(), before)
+})
+
+test_that("AX facts in the list view: row counts and every control named", {
+  skip_if_no_browser()
+  b <- sv_a11y_pages()$gadget$open("light", 1360, 820)
+  app <- attr(b, "sv_app")
+  withr::defer({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-listview [data-sv-table]').length === 3"))
+  r <- sv_js(b, "[...document.querySelectorAll('.sideview-listview [data-sv-table]')].map(s => {
+    const t = s.querySelector('table');
+    const card = document.querySelector('.sideview-card[data-card-name=\"' + CSS.escape(s.getAttribute('data-sv-table')) + '\"]');
+    return { rc: parseInt(t.getAttribute('aria-rowcount'), 10), total: card._virtualTable.getRowCount(),
+             shown: t.querySelectorAll('tbody tr').length }; })")
+  for (x in r) {
+    expect_equal(x$rc, x$total + 1)
+    expect_gt(x$shown, 0)
+  }
+  bad <- sv_ax_unnamed(sv_ax_tree(b))
+  expect_equal(nrow(bad), 0, info = paste(bad$role, collapse = ", "))
+})
+
+test_that("the toolbar List view toggle stays inside the container at the narrow width", {
+  skip_if_no_browser()
+  b <- sv_a11y_pages()$gadget$open("light", 375, 812)
+  app <- attr(b, "sv_app")
+  withr::defer({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
+  expect_true(sv_wait_js(b, "document.querySelector('.sideview-container').classList.contains('sv-narrow')"))
+  r <- sv_js(b, "(() => { const c = document.querySelector('.sideview-container').getBoundingClientRect();
+    const t = document.querySelector('.sideview-toolbar [data-sv-view-toggle]'); const r = t.getBoundingClientRect();
+    const tb = document.querySelector('.sideview-toolbar');
+    return { left: r.left - c.left, right: c.right - r.right, w: r.width, h: r.height,
+             scroll: tb.scrollWidth - tb.clientWidth }; })()")
+  expect_gte(r$left, 0)
+  expect_gte(r$right, 0)
+  expect_gt(r$w, 0)
+  expect_lte(r$scroll, 0)
 })

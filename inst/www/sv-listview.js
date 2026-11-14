@@ -287,6 +287,9 @@
       prev = st.section;
     });
     Array.from(this.tables.keys()).forEach(function (id) { if (!seen[id]) self.dropTable(id); });
+    var none = body.querySelector('.sideview-lv-no-tables');
+    if (!this.engine.cards.size && !none) body.appendChild(el('p', 'sideview-lv-no-tables', 'No tables yet.'));
+    else if (this.engine.cards.size && none) body.removeChild(none);
     this.renderSummary();
     this.syncJoin();
     this.syncSupp();

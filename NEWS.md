@@ -1,5 +1,14 @@
 # sideview (development version)
 
+## List view: card changes and the keyboard walk
+
+* A table added, replaced or removed from R (`sv_add_card()`, `sv_replace_card()`, `sv_remove_card()`) updates only that
+  table's section of the list view and is announced ("Table labs replaced."). With no tables the Tables section reads
+  "No tables yet." A table that falls back to its preview now says so in its heading.
+* Everything the canvas does for a join, a filter or a SUPP merge can be done from the keyboard in the list view, and the
+  code it composes is the same. The accessibility tests run axe-core over the canvas and the list view in all three modes,
+  both themes and a phone width with no accepted exceptions.
+
 ## List view argument
 - `sideview()`, `sideview_widget()`, `save_sideview()`, `sideview_ui()` and `sideviewUI()` take `view = "canvas"` (default) or
   `"list"`, set for a session by `options(sideview.view = "list")`. The container carries `data-sv-view` and the widget

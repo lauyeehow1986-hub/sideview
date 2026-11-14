@@ -3343,6 +3343,8 @@ function sendToShiny(name, value) {
     this.renderPipeline();
     this.renderJoinCheck();
     this.renderInspector();
+    // the list view's heading names the basis
+    if (this.listView && el.dataset.cardName !== undefined) this.listView.renderTable(meta.name);
   };
 
   /**
@@ -7575,13 +7577,20 @@ function sendToShiny(name, value) {
     // Cards, state and highlights driven from R (a module's sideview_proxy)
     self.onMessage('sideview_card_add', function (data) {
       if (!data || !data.card) return;
+      var known = !!(data.card.name && self.cardMetaByName(data.card.name));
       self.addCardFromR(data.card);
+      // the first population (initial) and a name already on the canvas are not announced
+      if (!data.initial && !known && data.card.name && self.cardMetaByName(data.card.name)) {
+        self.announce('Table ' + data.card.name + ' added.');
+      }
     });
     self.onMessage('sideview_card_replace', function (data) {
-      if (data && data.card) self.replaceCard(data.card);
+      if (data && data.card) {
+        if (self.replaceCard(data.card)) self.announce('Table ' + data.card.name + ' replaced.');
+      }
     });
     self.onMessage('sideview_card_remove', function (data) {
-      if (data) self.removeCard(data.name);
+      if (data && self.removeCard(data.name)) self.announce('Table ' + data.name + ' removed.');
     });
     self.onMessage('sideview_state_set', function (data) {
       if (!data || data.state === undefined || data.state === null) return;

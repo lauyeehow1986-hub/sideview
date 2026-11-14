@@ -25,6 +25,8 @@ sv_normalize() (R/normalize.R)  ->  sideview_card objects
 codegen: R/codegen.R (sv_code_* generators)    engine: SideviewEngine + VirtualTable (sideview.js)
 pipeline: inst/www/sv-pipeline.js (SideviewPipeline: typed steps -> composed R code, undo/redo;
           pure JS, no DOM — the single source of generated code in both gadget and widget)
+list view: inst/www/sv-listview.js (`SideviewListView`, owned by the engine), with `setView`, `movePanes`
+          and `openBuilder` on the engine
 llm/copilot: R/llm.R, R/copilot.R              pan/zoom: inst/www/sv-panzoom.js (small in-house impl)
 state: R/state.R (sv_save_state/sv_load_state) styles: inst/www/sideview.css (--sv-* tokens)
 rstudio bridge: R/rstudio.R
@@ -44,7 +46,7 @@ rstudio bridge: R/rstudio.R
   `sideview_join_diagnostics`, `sideview_column_profile`, `sideview_supp_check` (`{id, ...check}` from `sv_supp_check()`, or `{id, error}`; carries `ns` in module mode), `sideview_codebook_saved` (module: carries `csv`, the file text, plus `filename`; the browser downloads it),
   `sideview_state_saved`, `sideview_state_loaded`,
   `sideview_cdisc_update` (module: `{tags: {<card_id>: tag | null}}`, the badges only; an unknown card id is ignored quietly),
-  `sideview_card_add`, `sideview_card_replace`, `sideview_card_remove`, `sideview_state_set`, `sideview_highlight`,
+  `sideview_card_add` (the first population on `sideview_ready` carries `initial: true`), `sideview_card_replace`, `sideview_card_remove`, `sideview_state_set`, `sideview_highlight`,
   `sideview_llm` (module without `llm_fn`: hide the AI bar and Copilot tab),
   `sideview_toast` (`{text, type, id?, card?}`: a notice from R, e.g. the lazy-to-preview fallback; a toast with the same `id` is updated in place, as for codebook progress; `card` is the id of the card the notice is about: the browser then sets that card's `data-rows-basis` to `preview`, as for a lost link).
 - `sideview_code_update` carries `source`: `event` (echo of a client step; ignored), `auto_clean`
@@ -208,6 +210,9 @@ rstudio bridge: R/rstudio.R
 - Try it: `devtools::load_all(); sideview(mtcars, iris, viewer = "browser")` (also `"dialog"`, `"pane"`)
 
 ## Conventions
+- **Card messages announce** "Table <name> added." / "replaced." / "removed." (not the `initial` population); the list view re-renders only that table's section, and reads "No tables yet." when empty.
+- **Standing rule:** Every new feature (0.9.0 D, 0.10.0 E and later) must work in the list view
+  (`inst/www/sv-listview.js`) and print as sentences in the console.
 - Exported R functions use the `sv_` prefix (except `sideview*` entry points), `snake_case`, roxygen docs.
 - Heavy/optional packages (`arrow`, `duckdb`, `gt`, `flextable`, `bslib`) stay in `Suggests:` behind
   `requireNamespace()` guards.

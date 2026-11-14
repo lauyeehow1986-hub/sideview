@@ -431,7 +431,8 @@ sv_module_wire <- function(input, session, store, send) {
 
   shiny::observeEvent(input$sideview_ready, {
     for (card in store$all()) {
-      send("sideview_card_add", list(card = sv_card_payload(card, sv_preview_rows)))
+      # `initial`: the first population of the canvas, which the list view does not announce
+      send("sideview_card_add", list(card = sv_card_payload(card, sv_preview_rows), initial = TRUE))
     }
     queued <- ctl$queue
     ctl$queue <- list()
