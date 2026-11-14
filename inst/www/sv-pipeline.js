@@ -2288,8 +2288,53 @@
       L + '[[dplyr::cur_column()]])))';
   }
 
+  // ---- plain-sentence helpers (twins of R/say.R) ----
+  function sayPct(num, den) {
+    if (!den) return null;
+    var tenths = Math.floor((2000 * num + den) / (2 * den));
+    return Math.floor(tenths / 10) + '.' + (tenths % 10) + ' percent';
+  }
+
+  function sayList(x) {
+    var a = (x || []).map(String), n = a.length;
+    if (n === 0) return '';
+    if (n === 1) return a[0];
+    if (n === 2) return a[0] + ' and ' + a[1];
+    return a.slice(0, n - 1).join(', ') + ', and ' + a[n - 1];
+  }
+
+  function sayValue(v) {
+    if (v === null || v === undefined || (typeof v === 'number' && isNaN(v))) return 'missing';
+    var s = String(v);
+    if (s.indexOf(', ') >= 0) s = '(' + s + ')';
+    return s;
+  }
+
+  function saySamples(x, total, max) {
+    var m = max === undefined || max === null ? 3 : max;
+    var shown = (x || []).slice(0, m).map(sayValue);
+    if (total !== undefined && total !== null && total > shown.length) {
+      return shown.join(', ') + ', and ' + fmtN(total - shown.length) + ' more';
+    }
+    return sayList(shown);
+  }
+
+  function sayNum(v) {
+    v = Number(v);
+    if (isFinite(v) && v === Math.round(v)) return fmtN(v);
+    return numKey(signif6(v));
+  }
+
+  function sayCheckLines(x) { return (x || []).map(String); }
+
   var api = {
     Pipeline: Pipeline,
+    sayPct: sayPct,
+    sayList: sayList,
+    saySamples: saySamples,
+    sayValue: sayValue,
+    sayNum: sayNum,
+    sayCheckLines: sayCheckLines,
     suppStep: suppStep,
     splitReply: splitReply,
     joinDiagnostics: joinDiagnostics,

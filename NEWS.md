@@ -7,6 +7,8 @@
   violation across the three modes, two themes and two sizes (the on-screen `target-size` rule is accepted for now);
   and today's single-key shortcut and typing rules are pinned (typing in the AI bar never fires a shortcut).
 * Contrast and control-size fixes found by the matrix. A new `a11y` CI job runs these tests with axe-core 4.10.3 pinned.
+* Internal sentence helpers (`sv_say_*` in R, `say*` on `SideviewPipeline`) for plain-text output, with R and JS
+  twins held equal by `test-say.R`.
 
 # sideview 0.7.0
 

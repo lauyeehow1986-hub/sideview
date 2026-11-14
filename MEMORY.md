@@ -4,6 +4,11 @@ Running log of what changed, why, and how it was verified. Newest entries first.
 Each entry: **date — change — why — verification**. Keep the "Open issues" table current.
 
 ---
+### 2026-11-14 - Sentence helpers with R/JS twins (A1, Task 4)
+- **Change:** `R/say.R` (`sv_say_pct`, `sv_say_list`, `sv_say_samples`, `sv_say_value`, `sv_say_num`, `sv_say_check_lines`, all internal) and JS twins `sayPct`, `sayList`, `saySamples`, `sayValue`, `sayNum`, `sayCheckLines` on `SideviewPipeline`. `sv_say_check_lines()` returns lines whole; the 100-character limit is checked by tests, not applied.
+- **Gotcha:** `jsonlite::toJSON()` rounds to 4 digits by default, which made a number twin test fail falsely; pass `digits = NA`.
+- **Verified:** test-say.R 22 passed (RED first: `P.sayPct is not a function`); `node --check` clean. No UI change.
+
 ### 2026-11-14 - Accessibility harness: shortcut/typing rules pinned, a11y CI job (PR C, Task 3)
 - **Change:** two tests in `test-a11y-browser.R`: `typing never fires shortcuts` (AI-bar input focused, F and D typed: zoom and drawer state unchanged, value `"fd"`) and `canvas shortcuts fire when the canvas owns the keyboard` (container focused, D toggles the drawer, twice returns it). New `a11y` job in `R-CMD-check.yaml` (ubuntu, `NOT_CRAN=true`, Chrome, Node 20, `npm install --no-save axe-core@4.10.3`, `SV_AXE_PATH`); it runs each of `a11y-browser` and `say` singly with `stop_on_failure = TRUE` and skips a filter that has no `test-<f>.R` yet (`test-say.R` arrives in PR A1).
 - **Behaviour:** the new tests passed on today's `isTypingTarget` / `ownsKeyboard`; `sideview.js` is unchanged.
