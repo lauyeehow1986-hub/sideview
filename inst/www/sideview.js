@@ -98,6 +98,17 @@ function sendToShiny(name, value) {
     }
   }
 
+  // A screen-reader-only <caption> with the card name (a text node, so no escaping is needed).
+  function ensureTableCaption(table, name) {
+    var cap = table.querySelector(':scope > caption');
+    if (!cap) {
+      cap = document.createElement('caption');
+      table.insertBefore(cap, table.firstChild);
+    }
+    cap.className = 'sv-sr-only';
+    cap.textContent = String(name);
+  }
+
   VirtualTable.prototype.initDOM = function () {
     this.tbody = this.table.querySelector('tbody');
     if (!this.tbody) {
@@ -235,6 +246,13 @@ function sendToShiny(name, value) {
 
   VirtualTable.prototype.render = function () {
     var totalCount = this.getRowCount();
+    // Table ARIA: the rendered window is a slice, so say how big the whole table is. Header = row 1.
+    var numColsAria = this.colNames.length || this.table.querySelectorAll('thead th').length || 1;
+    if (isFinite(totalCount)) this.table.setAttribute('aria-rowcount', String(totalCount + 1));
+    else this.table.removeAttribute('aria-rowcount');
+    this.table.setAttribute('aria-colcount', String(numColsAria));
+    var headTr = this.table.querySelector('thead tr');
+    if (headTr) headTr.setAttribute('aria-rowindex', '1');
     var totalVirtualHeight = totalCount * this.rowHeight;
     var scrollTop = this.scrollContainer ? this.scrollContainer.scrollTop : 0;
     var viewportHeight = this.scrollContainer ? (this.scrollContainer.clientHeight || 380) : 380;
@@ -270,6 +288,7 @@ function sendToShiny(name, value) {
       var tr = document.createElement('tr');
       tr.dataset.rowIndex = rawRowIndex;
       tr.dataset.virtualIndex = i;
+      tr.setAttribute('aria-rowindex', String(i + 2));
       if (remoteOn && !remoteRow) tr.className = 'sideview-row-loading';
 
       for (var c = 0; c < numCols; c++) {
@@ -2960,6 +2979,7 @@ function sendToShiny(name, value) {
     if (cardData.type === 'grid' && cardData.data) {
       var table = document.createElement('table');
       table.className = 'sideview-table sideview-table-virtual';
+      ensureTableCaption(table, cardName);
 
       // Header row
       var thead = document.createElement('thead');
@@ -3206,6 +3226,7 @@ function sendToShiny(name, value) {
       var body = cardEl.querySelector('.sideview-card-body');
       var table = cardEl.querySelector('.sideview-table');
       var vTable = null;
+      if (table) ensureTableCaption(table, cardName);
       if (table && !table._virtualTable) {
         vTable = new VirtualTable(table, {
           rowHeight: 28,

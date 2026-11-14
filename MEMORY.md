@@ -4,6 +4,11 @@ Running log of what changed, why, and how it was verified. Newest entries first.
 Each entry: **date — change — why — verification**. Keep the "Open issues" table current.
 
 ---
+### 2026-11-14 - Table ARIA (A2, Task 10)
+- **Change:** `VirtualTable.render()` sets `aria-rowcount` (rows + 1), `aria-colcount`, header `aria-rowindex=1`, data rows `aria-rowindex = virtual index + 2`; `ensureTableCaption()` adds a `sv-sr-only` caption (textContent) in both the widget/module path and `initExistingCards()` (gadget). CLAUDE.md and NEWS.md updated.
+- **Gotcha:** the gadget's tables are server-rendered and a filter there is remote (async): the count updates when the R reply renders, so the test waits on `getRowCount()`.
+- **Verified (real Chrome, NOT_CRAN=true):** test-a11y-browser.R 109 passed incl. axe matrix (modes x themes x sizes); test-layout-browser.R 750 passed; gui-test-runner.js all true; `node --check` clean. Red first confirmed (4 failures before the caption fix).
+
 ### 2026-11-14 - Shortcuts switch (A2, Task 9)
 - **Change:** `engine.shortcutsOn()` (stored `sideview.shortcuts` on/off, then in-memory choice, then `data-sv-shortcuts="false"` / `options.shortcuts === false`, then view: off in `list`) and `engine.setShortcuts(on)` (stores, updates `[data-sv-shortcuts-switch]`, announces "Keyboard shortcuts on./off."). The `?` dialog has a `role="switch"` button above the list. The single-key handler returns early when off; Ctrl+K and Ctrl+Enter are not gated. R: `sv_ui_build()` writes `data-sv-shortcuts="false"` under `options(sideview.shortcuts = FALSE)`; `sideview_widget()` sets `options$shortcuts` unless given. Docs: roxygen option, NEWS, CLAUDE.md.
 - **Decision:** with blocked localStorage the choice is kept in memory (`_shortcutsMem`) so the switch still works; the brief's order has storage first, so a stored value still wins when storage works.

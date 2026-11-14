@@ -1,5 +1,11 @@
 # sideview (development version)
 
+## Table ARIA
+
+* Each table on the canvas has a (screen-reader-only) caption with the card name and announces its full size:
+  `aria-rowcount` (rows plus the header), `aria-colcount`, and a row index on every rendered row, so a screen reader says
+  "row 2002 of 5001" while the table shows only a window of it. The counts follow sort and filter.
+
 ## Keyboard shortcuts switch
 
 * The `?` list has a "Keyboard shortcuts" switch that turns the single-key shortcuts off (WCAG 2.1.4). The choice is

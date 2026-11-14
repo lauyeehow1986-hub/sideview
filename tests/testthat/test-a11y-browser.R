@@ -392,3 +392,42 @@ test_that("shortcuts switch works when localStorage throws", {
   sv_key(b, "d", text = "d")
   expect_identical(sv_canvas_state(b)$collapsed, !before)
 })
+
+# ---- table ARIA (Task 10) ----
+
+test_that("card tables carry row counts", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  tbl <- "document.querySelector('.sideview-card[data-card-name=\"labs\"] table')"
+  tree <- sv_ax_tree(b)
+  expect_true(any(tree$role == "table" & tree$name == "labs" & !tree$ignored))
+  expect_identical(sv_js(b, sprintf("%s.getAttribute('aria-rowcount')", tbl)), "5001")
+  expect_identical(sv_js(b, sprintf("%s.getAttribute('aria-colcount')", tbl)), "3")
+  expect_identical(sv_js(b, sprintf("%s.querySelector('thead tr').getAttribute('aria-rowindex')", tbl)), "1")
+  # scrolled: the first rendered data row's index is its virtual index + 2
+  sv_js(b, sprintf("(() => { const s = %s.closest('.sideview-card-body'); s.scrollTop = 2000; s.dispatchEvent(new Event('scroll')); return true; })()", tbl))
+  Sys.sleep(0.5)
+  r <- sv_js(b, sprintf("(() => { const tr = %s.querySelector('tbody tr[data-virtual-index]');
+    return { idx: tr.getAttribute('aria-rowindex'), v: Number(tr.dataset.virtualIndex) }; })()", tbl))
+  expect_gt(r$v, 10)
+  expect_identical(r$idx, as.character(r$v + 2))
+  # a filter leaving few rows: the count follows (rows + header)
+  sv_js(b, sprintf("%s._virtualTable.filter(1, 'test', 'equals', 'HbA1c'); true", tbl))
+  expect_true(sv_wait_js(b, sprintf("%s._virtualTable.getRowCount() < 5000", tbl)))
+  Sys.sleep(0.3)
+  r <- sv_js(b, sprintf("({ n: %s._virtualTable.getRowCount(), rc: %s.getAttribute('aria-rowcount') })", tbl, tbl))
+  expect_identical(r$rc, as.character(r$n + 1))
+  expect_gt(r$n, 0)
+  expect_lt(r$n, 5000)
+})
+
+test_that("table caption is a screen-reader-only text node with the card name", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  r <- sv_js(b, "(() => { const c = document.querySelector('.sideview-card[data-card-name=\"labs\"] table > caption');
+    return { text: c.textContent, kids: c.children.length, cls: c.className, first: c.parentNode.firstElementChild === c }; })()")
+  expect_identical(r$text, "labs")
+  expect_equal(r$kids, 0)
+  expect_match(r$cls, "sv-sr-only")
+  expect_true(r$first)
+})
