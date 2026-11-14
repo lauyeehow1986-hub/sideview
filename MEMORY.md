@@ -4,6 +4,12 @@ Running log of what changed, why, and how it was verified. Newest entries first.
 Each entry: **date — change — why — verification**. Keep the "Open issues" table current.
 
 ---
+### 2026-11-14 - sv_describe() and the A1 docs (A1, Task 7)
+- **Change:** exported `sv_describe(x, ..., n_levels = 5)` (`R/describe.R`): a table line (`name, DOMAIN domain, N rows by M columns, k columns have missing values.`) and one indented line per column, returned invisibly as class `sv_description` with a `cat()` print method. Reuses `sv_say_num` / `sv_say_value`, `sv_column_profile()` and, for a lazy table, `sv_lazy_column_profile()` (never `collect()`); row count and domain come from the normalised card. `NEWS.md`, `CLAUDE.md` (sentence twins rule) and `_pkgdown.yml` updated.
+- **Decisions:** only text columns list top values (brief); the signature tolerates a missing `x` so `sv_describe(my = df)` works; a list of tables is accepted as in `sideview()`.
+- **Verified:** RED first (function missing, 6 failures). One file at a time, NOT_CRAN=true: test-describe 17 passed (duckdb and arrow give the same lines as the data frame; the lazy profile is called once per column and the in-memory profile is mocked to fail), test-say 130, test-codebook 278 (1 pre-existing warning), `check_pkgdown()` clean. test-lazy 3742 passed. Console only: no browser or RStudio change.
+
+---
 ### 2026-11-14 - SUPP, profile, discrepancy and mapping sentences, classes, print methods (A1, Task 6)
 - **Change:** `sv_say_supp(chk, parent_name, supp_name)` / `saySupp` and `sv_say_profile(p, name)` / `sayProfile` (twins, `R/say.R` and `sv-pipeline.js`); R-only `sv_say_discrepancies()` and `sv_say_mappings()`. New classes `sv_supp_check` (also on an `{error}` result and on `sv_lazy_supp_check()`), `sv_column_profile` (in memory and lazy), `sv_discrepancies` (on the list) and `sv_mappings` (prepended to the data frame), each with a `print` S3 method (`as.data.frame.sv_mappings` too), all registered in NAMESPACE. The check stores `parent_name` / `supp_name`; the profile stores `name` only when known (the lazy profile sets it to `column`).
 - **Browser payload unchanged:** `sv_supp_check_json()` and `sv_column_profile_json()` `unclass()` and drop the name fields; the server handlers `unclass()` the discrepancies and `as.data.frame()` the mappings. Tests pin the JSON text taken from the base commit (`snap_supp_ok`, `snap_supp_orphan`, `snap_prof_num`, `snap_prof_txt`).

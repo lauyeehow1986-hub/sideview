@@ -66,6 +66,7 @@ reference:
     contents:
       - sv_column_profile
       - sv_codebook
+      - sv_describe
 
   - title: "Canvas State Persistence & Cloud Sharing"
     desc: "Serialize complete canvas topologies, card positions, splines, and pipelines to JSON or RDS."

@@ -17,6 +17,8 @@
   example "Merging suppae into ae adds 1 column: AETRTEM." These results have the classes `sv_supp_check`,
   `sv_column_profile`, `sv_discrepancies` and `sv_mappings`; they are still a list or data frame, and
   `as.data.frame()` on the mappings gives the plain data frame. The data the browser receives is unchanged.
+* Results print as sentences. Use `as.data.frame()` (mappings) or `unclass()` (discrepancies, checks, profiles) for the raw object.
+* New `sv_describe()` writes a table sentence and one line per column (label, kind, missing, distinct, ranges, top values) as plain text. It reads lazy duckdb and Arrow tables through their summaries and never collects them.
 
 # sideview 0.7.0
 
