@@ -1122,3 +1122,6 @@ Each sub-project gets its own spec, plan and build, in this order:
 - Drove NVDA 2026.2 (Speech Viewer read by screenshot) against `viewer = "pane"` in RStudio. **Task 1 passed** (`List view toggle button not pressed`; after activation `sideview list view region Summary heading level 2`, `List view`). Task 4's column sentences were seen on screen. Tasks 2, 3, 5-15 NOT run; RStudio dialog and browser NOT run (browsers are read-only for computer use; the pane's focus order was hard to steer).
 - The public label ("NVDA script written but has not yet been run") is left as is: it understates one confirmed task. No claim of a full pass.
 - The earlier "stall" of the console after the launch was slow loading under a concurrent `devtools::check()` plus a console that had not repainted; the gadget did come up ("Listening on http://127.0.0.1:3845").
+
+## devtools::check() on 475b1be (2026-11-14)
+- `devtools::check(args = "--no-manual")`: 0 errors, 0 warnings, 1 NOTE ("non-standard things in the check directory: NULL", environment only). 28m 55s. Run with NOT_CRAN=false, so the real-browser tests were skipped in the check; they were run singly earlier (a11y-browser 344, layout-browser 761, say 130, all passing).
