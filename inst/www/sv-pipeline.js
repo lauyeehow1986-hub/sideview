@@ -2338,6 +2338,9 @@
   // A sentence ends in ".", "!" or "?"; add a "." when it does not (twin of sv_say_sentence).
   function saySentence(s) { s = String(s); return /[.!?]$/.test(s) ? s : s + '.'; }
 
+  // "1 row of NAME" or "N rows of NAME" (twin of sv_say_rows).
+  function sayRows(n, nm) { return sayNum(n) + (n === 1 ? ' row of ' : ' rows of ') + nm; }
+
   // A join check as plain sentences (twin of sv_say_join in R/say.R).
   function sayJoin(d, xName, yName) {
     var X = xName === undefined || xName === null ? 'x' : xName;
@@ -2362,12 +2365,12 @@
       if (k <= 0) return;
       var eg = !samples.length ? '' : dup === 0 ? ', for example ' + saySamples(samples, k) :
         ', for example keys ' + saySamples(samples);
-      out.push(sayNum(k) + ' ' + nm + ' rows have no match' + eg + '.');
+      out.push(sayRows(k, nm) + (k === 1 ? ' has' : ' have') + ' no match' + eg + '.');
     };
     missLine(d.n_x, d.matched_x, d.dup_keys_x, d.unmatched_x, X);
     missLine(d.n_y, d.matched_y, d.dup_keys_y, d.unmatched_y, Y);
-    if (d.na_x > 0) out.push(sayNum(d.na_x) + ' ' + X + ' rows have a missing key.');
-    if (d.na_y > 0) out.push(sayNum(d.na_y) + ' ' + Y + ' rows have a missing key.');
+    if (d.na_x > 0) out.push(sayRows(d.na_x, X) + (d.na_x === 1 ? ' has' : ' have') + ' a missing key.');
+    if (d.na_y > 0) out.push(sayRows(d.na_y, Y) + (d.na_y === 1 ? ' has' : ' have') + ' a missing key.');
     var types = [['left', 'left_join'], ['inner', 'inner_join'], ['right', 'right_join'],
                  ['full', 'full_join'], ['semi', 'semi_join'], ['anti', 'anti_join']];
     var parts = [];

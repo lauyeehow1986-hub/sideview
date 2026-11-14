@@ -120,7 +120,7 @@ test_that("sayJoin twin: R and JS give the same sentences", {
 
   lines <- r$one_to_many
   expect_identical(lines[1], "Join of patients and visits by patient_id is one to many.")
-  expect_true("10 patients rows have no match, for example P05, P09, P12, and 7 more." %in% lines)
+  expect_true("10 rows of patients have no match, for example P05, P09, P12, and 7 more." %in% lines)
   expect_true("140 of 150 patients rows match, 93.3 percent." %in% lines)
   expect_identical(r$one_to_one[1], "Join of patients and visits by id is one to one.")
   expect_true(any(grepl("^Date rule: lab_date within -7[.][.][+]7 days of visit_date[.]$", r$date_rule)))
@@ -161,7 +161,30 @@ test_that("sayJoin twin: edge cases agree", {
   names(js) <- names(r)
   expect_identical(r, js)
   expect_identical(r$empty[2], "0 of 0 x rows match.")
-  expect_true("1 x rows have no match, for example keys (a, b)." %in% r$dup_unmatched ||
-              any(grepl("have no match, for example keys ", r$dup_unmatched)))
-  expect_true("2 x rows have a missing key." %in% r$na_keys)
+  expect_identical(r$dup_unmatched[grepl("of x have no match", r$dup_unmatched, fixed = TRUE)],
+                   "5 rows of x have no match, for example keys (a, b), c, and d.")
+  expect_identical(r$na_keys[grepl("of x ", r$na_keys, fixed = TRUE) & grepl("missing key", r$na_keys)], "2 rows of x have a missing key.")
+})
+
+test_that("sayJoin twin: singular and plural, all matched, special names, extra_y hint", {
+  cases <- list(
+    one_each = list(x = data.frame(id = c(1, 2)), y = data.frame(id = c(1, NA)), by = "id"),
+    all_matched = list(x = data.frame(id = 1:3), y = data.frame(id = c(1:3, 3L)), by = "id"),
+    hint_y_only = list(x = data.frame(k = "a"), y = data.frame(k = c("a", " a")), by = "k"),
+    special = list(x = stats::setNames(data.frame(c("a", "b")), "visit date"),
+                   y = stats::setNames(data.frame(c("a", "z")), "患者"),
+                   by = stats::setNames("患者", "visit date"))
+  )
+  nm <- c("pat<ients>", "a \"b\"")
+  r <- lapply(cases, function(cs) sv_say_join(
+    sv_join_diagnostics(cs$x, cs$y, cs$by, x_name = nm[1], y_name = nm[2]), nm[1], nm[2]))
+  js <- lapply(say_join_js(cases, nm), unlist)
+  names(js) <- names(r)
+  expect_identical(r, js)
+  expect_true("1 row of pat<ients> has no match, for example 2." %in% r$one_each)
+  expect_true("1 row of a \"b\" has a missing key." %in% r$one_each)
+  expect_false(any(grepl("no match", r$all_matched)))
+  expect_true("Trimming whitespace would match 1 more a \"b\" rows." %in% r$hint_y_only)
+  expect_identical(r$special[1],
+                   "Join of pat<ients> and a \"b\" by visit date = \u60a3\u8005 is one to one.")
 })

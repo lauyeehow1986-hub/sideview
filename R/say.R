@@ -58,6 +58,9 @@ sv_say_sentence <- function(s) {
   ifelse(grepl("[.!?]$", s), s, paste0(s, "."))
 }
 
+# "1 row of NAME" or "N rows of NAME" (twin of sayRows).
+sv_say_rows <- function(n, nm) paste0(sv_say_num(n), if (n == 1) " row of " else " rows of ", nm)
+
 # A join check as plain sentences (twin of sayJoin() in sv-pipeline.js). `d` is the result of
 # sv_join_diagnostics() or an `{error}` list. A count of a table's rows is "<n> NAME rows".
 sv_say_join <- function(d, x_name = "x", y_name = "y") {
@@ -87,12 +90,12 @@ sv_say_join <- function(d, x_name = "x", y_name = "y") {
     } else {
       paste0(", for example keys ", sv_say_samples(samples))
     }
-    paste0(sv_say_num(k), " ", nm, " rows have no match", eg, ".")
+    paste0(sv_say_rows(k, nm), if (k == 1) " has" else " have", " no match", eg, ".")
   }
   out <- c(out, miss_line(d$n_x, d$matched_x, d$dup_keys_x, d$unmatched_x, X),
            miss_line(d$n_y, d$matched_y, d$dup_keys_y, d$unmatched_y, Y))
-  if (d$na_x > 0) out <- c(out, paste0(sv_say_num(d$na_x), " ", X, " rows have a missing key."))
-  if (d$na_y > 0) out <- c(out, paste0(sv_say_num(d$na_y), " ", Y, " rows have a missing key."))
+  if (d$na_x > 0) out <- c(out, paste0(sv_say_rows(d$na_x, X), if (d$na_x == 1) " has" else " have", " a missing key."))
+  if (d$na_y > 0) out <- c(out, paste0(sv_say_rows(d$na_y, Y), if (d$na_y == 1) " has" else " have", " a missing key."))
   types <- c(left = "left_join", inner = "inner_join", right = "right_join", full = "full_join",
              semi = "semi_join", anti = "anti_join")
   parts <- character()

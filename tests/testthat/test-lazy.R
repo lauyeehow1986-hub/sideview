@@ -1891,3 +1891,23 @@ test_that("lazy join says the same", {
     }
   }
 })
+
+test_that("lazy join says the same with special names and singular counts", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  fx <- lazy_fixture()
+  x <- stats::setNames(data.frame(c("a", "b", NA), stringsAsFactors = FALSE), "visit date")
+  y <- stats::setNames(data.frame(c("a", "a", "z"), stringsAsFactors = FALSE), "\u60a3\u8005")
+  by <- stats::setNames("\u60a3\u8005", "visit date")
+  nm <- c("pat<ients>", "a \"b\"")
+  want <- sv_say_join(sv_join_diagnostics(x, y, by, x_name = nm[1], y_name = nm[2]), nm[1], nm[2])
+  expect_true("1 row of pat<ients> has a missing key." %in% want)
+  for (kind in c("duckdb", "arrow")) {
+    got <- sv_say_join(
+      sv_lazy_join_diagnostics(join_side(x, kind, fx$con, "jx"), join_side(y, kind, fx$con, "jy"),
+                               by, x_name = nm[1], y_name = nm[2]), nm[1], nm[2])
+    expect_identical(got, want, label = kind)
+  }
+})

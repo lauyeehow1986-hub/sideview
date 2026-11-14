@@ -6,6 +6,7 @@ Each entry: **date — change — why — verification**. Keep the "Open issues"
 ---
 ### 2026-11-14 - Join checks as sentences: sv_say_join / sayJoin (A1, Task 5)
 - **Change:** `sv_say_join(d, x_name, y_name)` in `R/say.R` and JS twin `sayJoin(d, xName, yName)` (plus `saySentence`); `print.sv_join_diagnostics()` now prints those sentences. `sv_join_diagnostics()`, `sv_lazy_join_diagnostics()` and `joinDiagnostics()` carry `x_name` / `y_name`.
+- **Fix round 1:** counts read "1 row of X has no match" / "N rows of X have no match" and "has/have a missing key" (`sv_say_rows` / `sayRows`); parity tests with `<`, quotes, spaces and CJK names.
 - **Decisions:** the unmatched sentence is left out when no sample keys exist (for example only NA-key rows are unmatched); a nearest-match rule has no right/full counts, so "Rows by join type" omits them; a hint with `extra_x == 0` drops the "0 more X rows" part; an error ending in `.` gets no second one.
 - **Verified:** test-say.R 51 passed (R and JS sentences identical for one-to-one, one-to-many, multi-key hint, date rule, empty, NA, duplicate and Unicode keys); the ASCII and 100-character checks hold for the four fixtures. test-diagnostics 5123 passed, test-lazy 3724 passed (duckdb and arrow say the same as in memory), test-join-rules 10753 passed. `node --check` clean. No UI change.
 
