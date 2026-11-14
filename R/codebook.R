@@ -101,7 +101,21 @@ sv_column_profile <- function(x, top_n = 10L, bins = 20L, column = NULL) {
   }
 
   out$issues <- sv_profile_issues(kind, vals, out)
-  out
+  sv_profile_classify(out)
+}
+
+# The class of a profile, with the column name when it is known. sv_column_profile_json() drops
+# the name and the class, so the browser payload is the same as before.
+sv_profile_classify <- function(p, name = NULL) {
+  if (!is.null(name)) p$name <- name
+  structure(p, class = "sv_column_profile")
+}
+
+#' @export
+print.sv_column_profile <- function(x, ...) {
+  cat(sv_say_profile(x), sep = "
+")
+  invisible(x)
 }
 
 # Coarse kind of a column, shared by the inspector and the codebook.
@@ -394,6 +408,8 @@ sv_write_codebook <- function(cb, file) {
 
 # Profile as plain lists for Shiny (data frames would serialise column-wise).
 sv_column_profile_json <- function(p) {
+  p <- unclass(p)
+  p$name <- NULL
   p$top <- lapply(seq_len(nrow(p$top)), function(i) list(value = p$top$value[i], n = p$top$n[i]))
   p$issues <- as.list(p$issues)
   if (!is.null(p$histogram)) p$histogram <- lapply(p$histogram, as.list)

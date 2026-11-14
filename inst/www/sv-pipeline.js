@@ -2389,6 +2389,84 @@
     return out;
   }
 
+  // "1 row has" / "N rows have" for a count of NAME's rows (twin of sv_say_n_rows).
+  function sayNRows(n, nm, one, many) { return sayNum(n) + ' ' + nm + (n === 1 ? ' row ' + one : ' rows ' + many); }
+
+  // One "USUBJID IDVAR IDVARVAL" per sample row; an empty or missing part is left out.
+  function saySuppSamples(s) {
+    return (s || []).map(function (r) {
+      return [r.USUBJID, r.IDVAR, r.IDVARVAL].filter(function (v) {
+        return v !== null && v !== undefined && String(v) !== '';
+      }).map(String).join(' ');
+    });
+  }
+
+  // A SUPP merge check as plain sentences (twin of sv_say_supp in R/say.R).
+  function saySupp(chk, parentName, suppName) {
+    var P = parentName === undefined || parentName === null ? 'parent' : parentName;
+    var S = suppName === undefined || suppName === null ? 'supp' : suppName;
+    if (chk.error !== undefined && chk.error !== null) return ['SUPP check failed: ' + saySentence(chk.error)];
+    var cols = (chk.columns || []).map(function (c) { return String(c.name); });
+    var nc = cols.length;
+    var out = ['Merging ' + S + ' into ' + P + ' adds ' + sayNum(nc) + (nc === 1 ? ' column' : ' columns') +
+      (nc > 0 ? ': ' + sayList(cols) : '') + '.'];
+    out.push(sayNum(chk.n_matched) + ' of ' + sayNum(chk.n_supp) + ' ' + S + ' rows match a ' + P + ' row.');
+    var withEg = function (n, samples) {
+      var eg = saySuppSamples(samples);
+      return eg.length ? ', for example ' + saySamples(eg, n) : '';
+    };
+    if (chk.n_orphan > 0) {
+      out.push(sayNRows(chk.n_orphan, S, 'has no ' + P + ' row', 'have no ' + P + ' row') +
+        withEg(chk.n_orphan, chk.orphan_samples) + '.');
+    }
+    if (chk.bad_idvarval.n > 0) {
+      out.push(sayNRows(chk.bad_idvarval.n, S, 'has an IDVARVAL that does not convert',
+        'have an IDVARVAL that does not convert') + withEg(chk.bad_idvarval.n, chk.bad_idvarval.samples) + '.');
+    }
+    if (chk.n_other_rdomain > 0) {
+      out.push(sayNRows(chk.n_other_rdomain, S, 'is for another domain and is left out',
+        'are for another domain and are left out') + '.');
+    }
+    if (chk.repeats.n > 0) {
+      out.push(sayNRows(chk.repeats.n, S, 'repeats a QNAM for the same ' + P + ' row',
+        'repeat a QNAM for the same ' + P + ' row') + '.');
+    }
+    if ((chk.clashes || []).length) out.push('These QNAMs clash with ' + P + ' columns: ' + sayList(chk.clashes) + '.');
+    if ((chk.two_level || []).length) out.push('These QNAMs use more than one IDVAR: ' + sayList(chk.two_level) + '.');
+    if (chk.drift && chk.drift.stale === true) out.push('Merge needs refreshing: ' + sayList(chk.drift.reasons) + '.');
+    return out;
+  }
+
+  // A column profile as plain sentences (twin of sv_say_profile in R/say.R).
+  function sayProfile(p, name) {
+    var N = name === undefined || name === null ? 'Column' : name;
+    var nl = p.label !== null && p.label !== undefined && p.label !== '' ? N + ', ' + p.label : N;
+    var words = { numeric: 'number', character: 'text', logical: 'true or false', date: 'date', datetime: 'date-time' };
+    var word = words[p.kind] || p['class'] || 'other';
+    var out = [nl + ' is a ' + word + ' column.'];
+    out.push(p.n_missing === 0 ? 'No values are missing.' :
+      sayNum(p.n_missing) + ' of ' + sayNum(p.n) + ' values are missing, ' + sayPct(p.n_missing, p.n) + '.');
+    out.push('It has ' + sayNum(p.n_distinct) + (p.n_distinct === 1 ? ' distinct value.' : ' distinct values.'));
+    if (p.unique_key === true) out.push('Every value is unique, so it can be a key.');
+    var st = p.stats;
+    if (p.kind === 'numeric' && st) {
+      out.push('Minimum ' + sayNum(st.min) + ', median ' + sayNum(st.median) + ', maximum ' + sayNum(st.max) + '.');
+      out.push('Mean ' + sayNum(st.mean) + ', standard deviation ' + sayNum(st.sd) + '.');
+    } else if ((p.kind === 'date' || p.kind === 'datetime') && st) {
+      out.push('Earliest ' + st.min + ', latest ' + st.max + '.');
+    }
+    var top = p.top || [];
+    if (p.kind !== 'numeric' && top.length > 0) {
+      var shown = top.slice(0, 5);
+      out.push('Most common values: ' + shown.map(function (t) { return sayValue(t.value) + ' (' + sayNum(t.n) + ')'; })
+        .join(', ') + '.');
+      var left = p.n_other + (top.length - shown.length);
+      if (left > 0) out.push(sayNum(left) + (left === 1 ? ' other value is' : ' other values are') + ' not listed.');
+    }
+    (p.issues || []).forEach(function (s) { out.push(saySentence(s)); });
+    return out;
+  }
+
   var api = {
     Pipeline: Pipeline,
     sayPct: sayPct,
@@ -2398,6 +2476,8 @@
     sayNum: sayNum,
     sayCheckLines: sayCheckLines,
     sayJoin: sayJoin,
+    saySupp: saySupp,
+    sayProfile: sayProfile,
     suppStep: suppStep,
     splitReply: splitReply,
     joinDiagnostics: joinDiagnostics,

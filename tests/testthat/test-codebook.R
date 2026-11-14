@@ -414,3 +414,24 @@ test_that("the gadget codebook agrees with the canvas when a tag was cleared", {
   expect_true(all(sv_codebook(ae = f$ae)$domain == "AE"))
   expect_true(all(is.na(sv_codebook_domain(f$ae, "ae", sv_cdisc_domains(cards)))))
 })
+
+# Snapshots of the profile JSON taken at the base commit, before the class existed.
+snap_prof_num <- r"({"kind":"numeric","class":"numeric","label":null,"n":5,"n_missing":1,"pct_missing":0.2,"n_distinct":4,"unique_key":false,"stats":{"min":47,"q1":52.25,"median":57.5,"q3":295.5,"max":999,"mean":290.25,"sd":472.534566636841},"histogram":{"breaks":[47,94.6,142.2,189.8,237.4,285,332.6,380.2,427.8,475.4,523,570.6,618.2,665.8,713.4,761,808.6,856.2,903.8,951.4,999],"counts":[3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]},"top":[{"value":"47","n":1},{"value":"54","n":1},{"value":"61","n":1},{"value":"999","n":1}],"n_other":0,"issues":[]})"
+snap_prof_txt <- r"({"kind":"character","class":"character","label":null,"n":4,"n_missing":1,"pct_missing":0.25,"n_distinct":3,"unique_key":false,"stats":null,"histogram":null,"top":[{"value":" Male","n":1},{"value":"Female","n":1},{"value":"male","n":1}],"n_other":0,"issues":["1 value has leading or trailing spaces.","1 value differs only in case or spacing (e.g. \" Male\" / \"male\")."]})"
+
+test_that("a column profile carries a class and prints as sentences", {
+  p <- sv_column_profile(c(54, 61, 47, 999, NA))
+  expect_s3_class(p, "sv_column_profile")
+  expect_true(is.list(unclass(p)))
+  expect_null(p$name)
+  expect_output(print(p), "Column is a number column.", fixed = TRUE)
+  p$name <- "age"
+  expect_identical(capture.output(print(p))[1], "age is a number column.")
+  # the browser payload is what it was before the class (snapshots taken at the base commit)
+  js <- function(x) as.character(jsonlite::toJSON(sv_column_profile_json(x), auto_unbox = TRUE,
+                                                  null = "null", na = "null", digits = NA))
+  expect_identical(js(p), snap_prof_num)
+  expect_identical(js(sv_column_profile(c(" Male", "male", "Female", NA))), snap_prof_txt)
+  expect_false(grepl("\"name\"", js(p)))
+  expect_false(is.null(sv_column_profile_json(p)$kind))
+})

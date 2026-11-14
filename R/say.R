@@ -112,3 +112,132 @@ sv_say_join <- function(d, x_name = "x", y_name = "y") {
   }
   c(out, sv_say_sentence(unlist(c(d$type_issues, d$warnings))))
 }
+
+# "1 row has" / "N rows have" for a count of NAME's rows: `one` and `many` are the verb phrases.
+sv_say_n_rows <- function(n, nm, one, many) {
+  paste0(sv_say_num(n), " ", nm, if (n == 1) paste0(" row ", one) else paste0(" rows ", many))
+}
+
+# One "USUBJID IDVAR IDVARVAL" per sample row; an empty or missing part is left out.
+sv_say_supp_samples <- function(s) {
+  if (is.null(s) || NROW(s) == 0L) return(character())
+  vapply(seq_len(nrow(s)), function(i) {
+    parts <- as.character(c(s$USUBJID[i], s$IDVAR[i], s$IDVARVAL[i]))
+    paste(parts[!is.na(parts) & nzchar(parts)], collapse = " ")
+  }, "")
+}
+
+# A SUPP merge check as plain sentences (twin of saySupp() in sv-pipeline.js). `chk` is the
+# result of sv_supp_check() or an `{error}` list; S is the SUPP table name and P the parent.
+sv_say_supp <- function(chk, parent_name = chk$parent_name %||% "parent",
+                        supp_name = chk$supp_name %||% "supp") {
+  if (!is.null(chk$error)) return(paste0("SUPP check failed: ", sv_say_sentence(chk$error)))
+  S <- supp_name
+  P <- parent_name
+  cols <- vapply(chk$columns, function(c) as.character(c$name), "")
+  nc <- length(cols)
+  out <- paste0("Merging ", S, " into ", P, " adds ", sv_say_num(nc), if (nc == 1) " column" else " columns",
+                if (nc > 0) paste0(": ", sv_say_list(cols)), ".")
+  out <- c(out, paste0(sv_say_num(chk$n_matched), " of ", sv_say_num(chk$n_supp), " ", S,
+                       " rows match a ", P, " row."))
+  if (chk$n_orphan > 0) {
+    eg <- sv_say_supp_samples(chk$orphan_samples)
+    out <- c(out, paste0(sv_say_n_rows(chk$n_orphan, S, paste0("has no ", P, " row"),
+                                       paste0("have no ", P, " row")),
+                         if (length(eg)) paste0(", for example ", sv_say_samples(eg, total = chk$n_orphan)), "."))
+  }
+  if (chk$bad_idvarval$n > 0) {
+    eg <- sv_say_supp_samples(chk$bad_idvarval$samples)
+    out <- c(out, paste0(sv_say_n_rows(chk$bad_idvarval$n, S, "has an IDVARVAL that does not convert",
+                                       "have an IDVARVAL that does not convert"),
+                         if (length(eg)) paste0(", for example ", sv_say_samples(eg, total = chk$bad_idvarval$n)), "."))
+  }
+  if (chk$n_other_rdomain > 0) {
+    out <- c(out, paste0(sv_say_n_rows(chk$n_other_rdomain, S, "is for another domain and is left out",
+                                       "are for another domain and are left out"), "."))
+  }
+  if (chk$repeats$n > 0) {
+    out <- c(out, paste0(sv_say_n_rows(chk$repeats$n, S, paste0("repeats a QNAM for the same ", P, " row"),
+                                       paste0("repeat a QNAM for the same ", P, " row")), "."))
+  }
+  if (length(chk$clashes)) {
+    out <- c(out, paste0("These QNAMs clash with ", P, " columns: ", sv_say_list(chk$clashes), "."))
+  }
+  if (length(chk$two_level)) {
+    out <- c(out, paste0("These QNAMs use more than one IDVAR: ", sv_say_list(chk$two_level), "."))
+  }
+  if (isTRUE(chk$drift$stale)) {
+    out <- c(out, paste0("Merge needs refreshing: ", sv_say_list(chk$drift$reasons), "."))
+  }
+  out
+}
+
+# A column profile as plain sentences (twin of sayProfile() in sv-pipeline.js). `name` is the
+# column name; the label, when there is one, follows it after a comma.
+sv_say_profile <- function(p, name = p$name %||% "Column") {
+  lab <- p$label
+  nl <- if (is.character(lab) && length(lab) == 1L && !is.na(lab) && nzchar(lab)) paste0(name, ", ", lab) else name
+  word <- switch(p$kind, numeric = "number", character = "text", logical = "true or false",
+                 date = "date", datetime = "date-time", p$class %||% "other")
+  out <- paste0(nl, " is a ", word, " column.")
+  out <- c(out, if (p$n_missing == 0) "No values are missing." else {
+    paste0(sv_say_num(p$n_missing), " of ", sv_say_num(p$n), " values are missing, ",
+           sv_say_pct(p$n_missing, p$n), ".")
+  })
+  out <- c(out, paste0("It has ", sv_say_num(p$n_distinct),
+                       if (p$n_distinct == 1) " distinct value." else " distinct values."))
+  if (isTRUE(p$unique_key)) out <- c(out, "Every value is unique, so it can be a key.")
+  st <- p$stats
+  if (p$kind == "numeric" && !is.null(st)) {
+    out <- c(out, paste0("Minimum ", sv_say_num(st$min), ", median ", sv_say_num(st$median),
+                         ", maximum ", sv_say_num(st$max), "."),
+             paste0("Mean ", sv_say_num(st$mean), ", standard deviation ", sv_say_num(st$sd), "."))
+  } else if (p$kind %in% c("date", "datetime") && !is.null(st)) {
+    out <- c(out, paste0("Earliest ", st$min, ", latest ", st$max, "."))
+  }
+  top <- p$top
+  if (p$kind != "numeric" && NROW(top) > 0L) {
+    shown <- utils::head(seq_len(nrow(top)), 5L)
+    out <- c(out, paste0("Most common values: ",
+                         paste0(vapply(top$value[shown], sv_say_value, ""), " (",
+                                vapply(top$n[shown], sv_say_num, ""), ")", collapse = ", "), "."))
+    left <- p$n_other + (nrow(top) - length(shown))
+    if (left > 0) {
+      out <- c(out, paste0(sv_say_num(left), if (left == 1) " other value is" else " other values are", " not listed."))
+    }
+  }
+  c(out, sv_say_sentence(as.character(unlist(p$issues))))
+}
+
+# "1 value matches" / "N values match": the verb phrases are for one and for many.
+sv_say_n_values <- function(n, one, many) paste0(sv_say_num(n), if (n == 1) " value " else " values ", if (n == 1) one else many)
+
+# The result of sv_detect_discrepancies() as plain sentences (R only; the browser has its own panel).
+sv_say_discrepancies <- function(d) {
+  st <- d$stats
+  only <- function(n, samples, nm) {
+    paste0(sv_say_n_values(n, "is only in", "are only in"), " ", nm,
+           if (n > 0 && length(samples)) paste0(", for example ", sv_say_samples(samples, total = n)), ".")
+  }
+  out <- c(paste0(sv_say_n_values(st$exact_count, "matches exactly", "match exactly"), "."),
+           paste0(sv_say_n_values(st$fuzzy_count, "nearly matches", "nearly match"), "."),
+           only(st$only_x_count, d$only_in_x, "x"), only(st$only_y_count, d$only_in_y, "y"))
+  pct <- sv_say_pct(st$exact_count, st$unique_x)
+  if (!is.na(pct)) out <- c(out, paste0("Match rate ", pct, "."))
+  out
+}
+
+# The result of sv_suggest_mappings() as plain sentences (R only): a count, then one line per
+# suggested join; the rows of a CDISC group name the group.
+sv_say_mappings <- function(m) {
+  m <- as.data.frame(m)
+  n <- nrow(m)
+  if (n == 0L) return("No suggested joins.")
+  grp <- if ("group" %in% names(m)) m$group else rep(NA_character_, n)
+  lines <- vapply(seq_len(n), function(i) {
+    sv_say_sentence(paste0(if (!is.na(grp[i])) paste0("Group ", grp[i], ": "),
+                           m$from_table[i], ".", m$from_col[i], " to ", m$to_table[i], ".", m$to_col[i],
+                           ", confidence ", sprintf("%.2f", m$confidence[i]), ": ", m$reason[i]))
+  }, "")
+  c(paste0(sv_say_num(n), if (n == 1) " suggested join." else " suggested joins."), lines)
+}

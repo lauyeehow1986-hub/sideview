@@ -188,3 +188,127 @@ test_that("sayJoin twin: singular and plural, all matched, special names, extra_
   expect_identical(r$special[1],
                    "Join of pat<ients> and a \"b\" by visit date = \u60a3\u8005 is one to one.")
 })
+
+# ---- saySupp / sayProfile (Task 6) ------------------------------------------
+
+say_supp_js <- function(parent, supp, parent_name, supp_name, rdomain = NULL, plan = NULL) {
+  types <- lapply(parent, function(col) class(col)[1])
+  opts <- list(parentName = parent_name, suppName = supp_name, parentTypes = types,
+               sampleN = 5L, parentCols = names(parent), suppCols = names(supp))
+  if (!is.null(rdomain)) opts$rdomain <- rdomain
+  if (!is.null(plan)) opts$plan <- plan
+  rows <- function(d) {
+    rownames(d) <- NULL
+    jsonlite::toJSON(d, dataframe = "rows", na = "null")
+  }
+  run_pipeline_js(sprintf(
+    "out = P.saySupp(P.suppCheck(%s, %s, %s), %s, %s);", rows(parent), rows(supp),
+    jsonlite::toJSON(opts, auto_unbox = TRUE, na = "null", null = "null"),
+    jsonlite::toJSON(parent_name, auto_unbox = TRUE), jsonlite::toJSON(supp_name, auto_unbox = TRUE)))
+}
+
+test_that("saySupp twin: R and JS give the same sentences", {
+  fx <- sv_cdisc_fixtures()
+  many_orphans <- rbind(fx$supp_orphan, fx$supp_orphan, fx$supp_orphan, fx$supp_orphan, fx$supp_orphan)
+  many_orphans$USUBJID <- sprintf("SV-001-9%02d", seq_len(nrow(many_orphans)))
+  one_bad <- fx$supp_bad[1, ]
+  stale <- sv_supp_check(fx$ae, fx$suppae2, supp_name = "suppae")$plan
+  stale$qnams <- stale$qnams[-1]
+  cases <- list(
+    clean = list(p = fx$ae, s = fx$suppae),
+    two_cols = list(p = fx$ae, s = fx$suppae2),
+    orphan = list(p = fx$ae, s = fx$supp_orphan),
+    many_orphans = list(p = fx$ae, s = many_orphans),
+    bad = list(p = fx$ae, s = fx$supp_bad),
+    one_bad = list(p = fx$ae, s = one_bad),
+    clash = list(p = fx$ae, s = fx$supp_clash),
+    other_domain = list(p = fx$ae, s = fx$suppqual, rd = "AE"),
+    repeats = list(p = fx$ae, s = fx$supp_repeat),
+    two_level = list(p = fx$ae, s = fx$supp_two_level),
+    drift = list(p = fx$ae, s = fx$suppae2, plan = stale),
+    subject_level = list(p = fx$ae, s = fx$supp_na_idvar),
+    error = list(p = fx$ae, s = fx$supp_noqnam),
+    special = list(p = fx$ae, s = fx$supp_orphan, pn = "a<b \"c\"", sn = "SUPP 患者", rd = "AE")
+  )
+  for (nm in names(cases)) {
+    cs <- cases[[nm]]
+    pn <- cs$pn %||% "ae"
+    sn <- cs$sn %||% "suppae"
+    chk <- sv_supp_check(cs$p, cs$s, parent_name = pn, supp_name = sn, rdomain = cs$rd, plan = cs$plan)
+    r <- sv_say_supp(chk, pn, sn)
+    js <- unlist(say_supp_js(cs$p, cs$s, pn, sn, cs$rd, cs$plan))
+    expect_identical(r, js, info = nm)
+    if (nm != "special") {
+      expect_true(all(!grepl("[^\x20-\x7e]", r)), info = nm)
+    }
+  }
+  e <- sv_say_supp(sv_supp_check(fx$ae, fx$supp_noqnam, parent_name = "ae", supp_name = "suppae"), "ae", "suppae")
+  expect_identical(e, "SUPP check failed: Not in suppae: QNAM.")
+
+  say <- function(supp, ...) {
+    sv_say_supp(sv_supp_check(fx$ae, supp, parent_name = "ae", supp_name = "suppae", ...), "ae", "suppae")
+  }
+  expect_identical(say(fx$suppae),
+                   c("Merging suppae into ae adds 1 column: AETRTEM.",
+                     "4 of 4 suppae rows match a ae row."))
+  expect_identical(say(fx$suppae2)[1], "Merging suppae into ae adds 2 columns: AETRTEM and AESOC2.")
+  o <- say(fx$supp_orphan)
+  expect_true("1 suppae row has no ae row, for example SV-001-999 AESEQ 99." %in% o)
+  expect_true(any(grepl("^[0-9]+ suppae rows have no ae row, for example .*, and [0-9]+ more[.]$", say(many_orphans))))
+  expect_true("1 suppae row has an IDVARVAL that does not convert, for example SV-001-001 AESEQ x." %in% say(one_bad))
+  expect_true("2 suppae rows are for another domain and are left out." %in% say(fx$suppqual, rdomain = "AE"))
+  expect_true("1 suppae row repeats a QNAM for the same ae row." %in% say(fx$supp_repeat))
+  expect_true("These QNAMs clash with ae columns: AESEV." %in% say(fx$supp_clash))
+  expect_true("These QNAMs use more than one IDVAR: AETRTEM." %in% say(fx$supp_two_level))
+  expect_true("Merge needs refreshing: New QNAM: AETRTEM." %in% say(fx$suppae2, plan = stale))
+})
+
+say_profile_js <- function(x, type, name, label = NULL) {
+  opts <- if (is.null(label)) "{}" else sprintf("{label: %s}", jsonlite::toJSON(label, auto_unbox = TRUE))
+  run_pipeline_js(sprintf("out = P.sayProfile(P.columnProfile(%s, %s, %s), %s);",
+    jsonlite::toJSON(x, na = "null", digits = NA), jsonlite::toJSON(type, auto_unbox = TRUE), opts,
+    jsonlite::toJSON(name, auto_unbox = TRUE)))
+}
+
+test_that("sayProfile twin: R and JS give the same sentences", {
+  cols <- list(
+    num = list(x = c(54, 61, 47, 999, NA), type = "numeric", name = "age", label = "Age at baseline"),
+    txt = list(x = c(" Male", "male", "Female", NA, "a, b"), type = "character", name = "sex"),
+    date = list(x = as.Date("2024-01-01") + c(0, 10, 20, 30, NA), type = "Date", name = "visit date"),
+    allna = list(x = rep(NA_real_, 3), type = "numeric", name = "x"),
+    key = list(x = sprintf("P%03d", 1:20), type = "character", name = "pid"),
+    one = list(x = 5, type = "numeric", name = "one"),
+    lgl = list(x = c(TRUE, FALSE, TRUE, NA), type = "logical", name = "flag"),
+    int = list(x = c(1L, 2L, 2L, 3L, 3L, 3L), type = "integer", name = "n"),
+    many = list(x = rep(letters[1:8], 8:1), type = "character", name = "g"),
+    thousands = list(x = c(1000, 2500.5, 1e6, NA), type = "numeric", name = "pay"),
+    special = list(x = c("b", "a", "a"), type = "character", name = "a<b \"c\"", label = "Pér \"x\"")
+  )
+  for (nm in names(cols)) {
+    cs <- cols[[nm]]
+    x <- cs$x
+    if (!is.null(cs$label)) attr(x, "label") <- cs$label
+    r <- sv_say_profile(sv_column_profile(x), cs$name)
+    js <- unlist(say_profile_js(cs$x, cs$type, cs$name, cs$label))
+    expect_identical(r, js, info = nm)
+    if (nm != "special") expect_true(all(!grepl("[^\x20-\x7e]", r)), info = nm)
+  }
+  p <- function(x, name = "x") sv_say_profile(sv_column_profile(x), name)
+  expect_identical(p(c(54, 61, 47, 999, NA), "age")[1:3],
+                   c("age is a number column.", "1 of 5 values are missing, 20.0 percent.",
+                     "It has 4 distinct values."))
+  expect_true("Minimum 47, median 57.5, maximum 999." %in% p(c(54, 61, 47, 999, NA)))
+  expect_true("Mean 290.25, standard deviation 472.535." %in% p(c(54, 61, 47, 999, NA)))
+  expect_identical(p(1:3)[2], "No values are missing.")
+  lab <- structure(c(1, 2), label = "Age")
+  expect_identical(sv_say_profile(sv_column_profile(lab), "age")[1], "age, Age is a number column.")
+  expect_identical(p(5)[3], "It has 1 distinct value.")
+  expect_true("Every value is unique, so it can be a key." %in% p(sprintf("P%03d", 1:20)))
+  expect_true("Earliest 2024-01-01, latest 2024-01-31." %in% p(as.Date("2024-01-01") + c(0, 10, 20, 30)))
+  expect_true("Most common values: a (8), b (7), c (6), d (5), e (4)." %in% p(rep(letters[1:8], 8:1)))
+  expect_true("3 other values are not listed." %in% p(rep(letters[1:8], 8:1)))
+  expect_true("1 value has leading or trailing spaces." %in% p(c(" a", "b")))
+  expect_true("All values are missing." %in% p(c(NA_real_, NA)))
+  expect_identical(sv_say_profile(sv_column_profile(c(TRUE, FALSE)), "f")[1], "f is a true or false column.")
+  expect_identical(sv_say_profile(sv_column_profile(Sys.time() + 1:2), "t")[1], "t is a date-time column.")
+})
