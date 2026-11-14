@@ -139,6 +139,12 @@ rstudio bridge: R/rstudio.R
 - **Mode-aware overrides:** a custom colour that must differ by mode uses `-light`/`-dark` variables:
   the base block has `--sv-primary-text: var(--sv-primary-text-light, #...)`, the dark blocks use
   `var(--sv-primary-text-dark, #...)`. Use `--sv-primary-text` (not `--sv-primary`) for primary-coloured *text*.
+- **Shortcuts switch (WCAG 2.1.4):** `engine.shortcutsOn()` reads `localStorage['sideview.shortcuts']` (`on`/`off`, in
+  try/catch; a throw is no value), then the in-memory choice `setShortcuts()` made, then the R default
+  (`data-sv-shortcuts="false"` from `options(sideview.shortcuts = FALSE)` in `sv_ui_build()`, or
+  `options.shortcuts === false` from `sideview_widget()`), then the view (off in `engine.view === 'list'`). `setShortcuts(on)`
+  updates every `[data-sv-shortcuts-switch]` and announces. The single-key handler returns early when off; `Ctrl+K` and
+  `Ctrl+Enter` are never gated. No new Shiny input or message.
 - **Keyboard:** single-key shortcuts (F, 0, +/-, T, D, M, L, /, ?) and Ctrl+K (card search) only fire when the
   canvas owns the keyboard (`ownsKeyboard()`: standalone, or focus inside an embedded widget) and never while
   typing. Ctrl+Enter submits a drawer builder. Add new shortcuts to the `?` dialog list too.

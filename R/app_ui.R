@@ -618,6 +618,8 @@ sv_ui_build <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
     class = paste0("sideview-container ", if (!module) "sv-standalone ", "sv-theme-", theme$mode),
     `data-sv-theme` = theme$mode,
     `data-sv-ns` = ns,
+    # option(sideview.shortcuts = FALSE): single-key shortcuts start off (a stored choice wins)
+    `data-sv-shortcuts` = if (isFALSE(getOption("sideview.shortcuts", TRUE))) "false" else NULL,
     # Save/Open use RStudio's file dialog through R when there is one.
     `data-sv-file-dialog` = if (isTRUE(gadget) && sv_has_file_dialog()) "r" else NULL,
     style = if (module) {

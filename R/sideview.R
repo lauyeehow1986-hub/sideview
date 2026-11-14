@@ -121,13 +121,17 @@ sv_find_tables <- function(env = parent.frame()) {
 #' Single-key shortcuts work when the canvas has the keyboard and you are not
 #' typing: `F` fit all cards, `0` reset zoom, `+`/`-` zoom, `M` show or hide
 #' the minimap, `D` the drawer, `T` light/dark, `/` the AI prompt and `?` the
-#' full list. `Ctrl+K` finds a card or column, `Ctrl+Z`/`Ctrl+Y` undo and
+#' full list (the list also has a switch that turns the single keys off). `Ctrl+K` finds a card or column, `Ctrl+Z`/`Ctrl+Y` undo and
 #' redo a pipeline step, and `Esc` cancels a connection or closes a popover.
 #' Double-click a card title, a minimap rectangle or a search result to zoom
 #' to that card.
 #'
 #' @section Options:
 #' \describe{
+#'   \item{`sideview.shortcuts`}{`FALSE` starts the canvas with the single-key
+#'     shortcuts off (default `TRUE`). It is the default only: the "Keyboard
+#'     shortcuts" switch in the `?` list is remembered in the browser and wins.
+#'     `Ctrl+K` and `Ctrl+Enter` always work. [sideview_widget()] reads it too.}
 #'   \item{`sideview.session_grace`}{Seconds the gadget waits after its last
 #'     browser session closes before stopping (default `5`), so reloading the
 #'     page does not end the app.}

@@ -1720,6 +1720,33 @@ function sendToShiny(name, value) {
 
   var shortcutsSeq = 0;
 
+  // WCAG 2.1.4: single-key shortcuts can be turned off. Order: the stored choice, then the
+  // R default (data-sv-shortcuts="false" / options.shortcuts === false), then the view
+  // (off in the list view, on otherwise). A blocked localStorage counts as no stored value;
+  // the choice is then kept for the session in memory.
+  var SHORTCUTS_KEY = 'sideview.shortcuts';
+
+  SideviewEngine.prototype.shortcutsOn = function () {
+    var stored = null;
+    try { stored = global.localStorage.getItem(SHORTCUTS_KEY); } catch (e) { stored = null; }
+    if (stored === 'on') return true;
+    if (stored === 'off') return false;
+    if (this._shortcutsMem === true || this._shortcutsMem === false) return this._shortcutsMem;
+    var attr = this.container.getAttribute ? this.container.getAttribute('data-sv-shortcuts') : null;
+    if (attr === 'false' || this.options.shortcuts === false) return false;
+    return this.view !== 'list';
+  };
+
+  SideviewEngine.prototype.setShortcuts = function (on) {
+    on = !!on;
+    this._shortcutsMem = on;
+    try { global.localStorage.setItem(SHORTCUTS_KEY, on ? 'on' : 'off'); } catch (e) {}
+    var sw = this.container.querySelectorAll('[data-sv-shortcuts-switch]');
+    for (var i = 0; i < sw.length; i++) sw[i].setAttribute('aria-checked', on ? 'true' : 'false');
+    this.announce(on ? 'Keyboard shortcuts on.' : 'Keyboard shortcuts off.');
+    return on;
+  };
+
   SideviewEngine.prototype.toggleShortcuts = function (show) {
     var self = this;
     var existing = this.container.querySelector('.sideview-shortcuts-scrim');
@@ -1747,7 +1774,13 @@ function sendToShiny(name, value) {
       '<div class="sideview-shortcuts" role="dialog" aria-modal="true" aria-labelledby="' + id + '" tabindex="-1">' +
       '<div class="sideview-shortcuts-head"><span id="' + id + '">Keyboard shortcuts</span>' +
       '<button type="button" class="sideview-icon-btn" data-action="close-shortcuts" aria-label="Close shortcuts">' +
-      icon('close') + '</button></div><dl>' + rows + '</dl></div>';
+      icon('close') + '</button></div>' +
+      '<button type="button" class="sideview-shortcuts-switch" role="switch" data-sv-shortcuts-switch aria-checked="' +
+      (this.shortcutsOn() ? 'true' : 'false') + '"><span class="sideview-shortcuts-switch-track" aria-hidden="true"></span>' +
+      '<span>Keyboard shortcuts</span></button>' +
+      '<dl>' + rows + '</dl></div>';
+    var sw = scrim.querySelector('[data-sv-shortcuts-switch]');
+    sw.addEventListener('click', function () { self.setShortcuts(!self.shortcutsOn()); });
     scrim.addEventListener('click', function (e) {
       if (e.target === scrim) self.toggleShortcuts(false);
     });
@@ -2753,6 +2786,7 @@ function sendToShiny(name, value) {
     this.listenGlobal(document, 'keydown', function (e) {
       if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
       if (isTypingTarget(e.target) || !self.ownsKeyboard()) return;
+      if (!self.shortcutsOn()) return;
       var k = e.key;
       var open = !!self.container.querySelector('.sideview-shortcuts-scrim');
       var rect = self.container.getBoundingClientRect();

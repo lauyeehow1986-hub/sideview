@@ -44,7 +44,8 @@ sideview_widget_dependencies <- function() {
 #' @param width Optional widget width (e.g. \code{"100\%"}).
 #' @param height Optional widget height (e.g. \code{"600px"}).
 #' @param elementId Optional HTML element identifier.
-#' @param options Named list of canvas options (e.g. \code{snapToEdge},
+#' @param options Named list of canvas options (e.g. \code{shortcuts = FALSE} to start with
+#'   the single-key shortcuts off, default \code{getOption("sideview.shortcuts", TRUE)}, \code{snapToEdge},
 #'   \code{snapThreshold}, \code{minScale}, \code{maxScale}).
 #' @param theme Canvas theme: `"auto"` (default; follows the reader's
 #'   `prefers-color-scheme`), `"light"`, `"dark"`, an [sv_theme()] or a
@@ -132,6 +133,7 @@ sideview_widget <- function(...,
   # Forward options using x payload
   theme <- sv_resolve_theme(theme)
   if (is.null(options$theme)) options$theme <- theme$mode
+  if (is.null(options$shortcuts)) options$shortcuts <- getOption("sideview.shortcuts", TRUE)
   if (length(theme$vars)) {
     options$themeVars <- stats::setNames(theme$vars, paste0("--sv-", names(theme$vars)))
   }

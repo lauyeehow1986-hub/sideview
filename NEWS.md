@@ -1,5 +1,12 @@
 # sideview (development version)
 
+## Keyboard shortcuts switch
+
+* The `?` list has a "Keyboard shortcuts" switch that turns the single-key shortcuts off (WCAG 2.1.4). The choice is
+  remembered in the browser; if the browser blocks storage it holds for the session. `Ctrl+K` and `Ctrl+Enter` always work.
+* New option `sideview.shortcuts` (default `TRUE`): `FALSE` starts the gadget, widget and module with the shortcuts off.
+  `sideview_widget(options = list(shortcuts = FALSE))` does the same for one widget.
+
 ## Live announcements
 
 * The canvas has a polite live region (`.sideview-announcer`, `role="status"`) that says what happened: a finished

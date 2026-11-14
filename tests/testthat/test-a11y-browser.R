@@ -80,18 +80,24 @@ sv_canvas_state <- function(b) {
              collapsed: c.querySelector('.sideview-drawer').classList.contains('collapsed') }; })()")
 }
 
-test_that("typing never fires shortcuts", {
-  skip_if_no_browser()
-  b <- sv_open_gadget()
-  before <- sv_canvas_state(b)
-  sv_js(b, "document.querySelector('.sideview-ai-input').focus()")
-  sv_key(b, "f", text = "f")
-  sv_key(b, "d", text = "d")
-  after <- sv_canvas_state(b)
-  expect_equal(after$scale, before$scale)
-  expect_identical(after$collapsed, before$collapsed)
-  expect_identical(sv_js(b, "document.querySelector('.sideview-ai-input').value"), "fd")
-})
+for (sv_sc_state in c(TRUE, FALSE)) {
+  local({
+    on <- sv_sc_state
+    test_that(paste("typing never fires shortcuts, shortcuts", if (on) "on" else "off"), {
+      skip_if_no_browser()
+      b <- sv_open_gadget()
+      sv_js(b, sprintf("document.querySelector('.sideview-container')._sideviewInstance.setShortcuts(%s)", tolower(on)))
+      before <- sv_canvas_state(b)
+      sv_js(b, "document.querySelector('.sideview-ai-input').focus()")
+      sv_key(b, "f", text = "f")
+      sv_key(b, "d", text = "d")
+      after <- sv_canvas_state(b)
+      expect_equal(after$scale, before$scale)
+      expect_identical(after$collapsed, before$collapsed)
+      expect_identical(sv_js(b, "document.querySelector('.sideview-ai-input').value"), "fd")
+    })
+  })
+}
 
 test_that("canvas shortcuts fire when the canvas owns the keyboard", {
   skip_if_no_browser()
@@ -310,4 +316,79 @@ test_that("an error toast replaces a plain one with a fresh alert element; error
   expect_equal(r$n, 1)
   expect_identical(r$alert, "Merge failed.")
   expect_false(identical(r$polite, "Merge failed."))
+})
+
+# ---- shortcuts switch (Task 9, WCAG 2.1.4) ----
+
+test_that("shortcuts switch turns single keys off; Ctrl+K stays", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_js(b, "document.querySelector('.sideview-container').focus()")
+  before <- sv_canvas_state(b)$collapsed
+  sv_js(b, paste0(sv_eng, ".setShortcuts(false)"))
+  expect_false(sv_js(b, paste0(sv_eng, ".shortcutsOn()")))
+  sv_key(b, "d", text = "d")
+  expect_identical(sv_canvas_state(b)$collapsed, before)
+  sv_key(b, "k", code = "KeyK", modifiers = 2L)
+  expect_true(sv_js(b, "!!document.querySelector('.sideview-search-scrim')"))
+  expect_true("Keyboard shortcuts off." %in% sv_announce_log(b))
+  sv_key(b, "Escape")
+  sv_js(b, paste0(sv_eng, ".setShortcuts(true)"))
+  sv_key(b, "d", text = "d")
+  expect_identical(sv_canvas_state(b)$collapsed, !before)
+  expect_true("Keyboard shortcuts on." %in% sv_announce_log(b))
+})
+
+test_that("the ? dialog has a Keyboard shortcuts switch that follows the state", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_js(b, paste0(sv_eng, ".toggleShortcuts(true)"))
+  r <- sv_js(b, "(() => { const s = document.querySelector('[data-sv-shortcuts-switch]');
+    return { role: s.getAttribute('role'), on: s.getAttribute('aria-checked'), name: s.textContent.trim(),
+             first: document.querySelector('.sideview-shortcuts dl') ? s.compareDocumentPosition(
+               document.querySelector('.sideview-shortcuts dl')) & 4 : 0 }; })()")
+  expect_identical(r$role, "switch")
+  expect_identical(r$on, "true")
+  expect_match(r$name, "Keyboard shortcuts")
+  expect_true(r$first > 0)
+  sv_js(b, "document.querySelector('[data-sv-shortcuts-switch]').click()")
+  expect_identical(sv_js(b, "document.querySelector('[data-sv-shortcuts-switch]').getAttribute('aria-checked')"), "false")
+  expect_false(sv_js(b, paste0(sv_eng, ".shortcutsOn()")))
+  sv_js(b, paste0(sv_eng, ".setShortcuts(true)"))
+})
+
+test_that("R option turns shortcuts off", {
+  skip_if_no_browser()
+  app <- sv_start_app("{ options(sideview.shortcuts = FALSE); sideview(patients, visits, labs, run = FALSE) }")
+  b <- sv_open_page(app$url, 1360, 820, wait_for = "!!document.querySelector('.sideview-container')._sideviewInstance")
+  withr::defer({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
+  expect_false(sv_js(b, paste0(sv_eng, ".shortcutsOn()")))
+  sv_js(b, "document.querySelector('.sideview-container').focus()")
+  before <- sv_canvas_state(b)$collapsed
+  sv_key(b, "d", text = "d")
+  expect_identical(sv_canvas_state(b)$collapsed, before)
+  # a stored choice wins over the R default
+  sv_js(b, paste0(sv_eng, ".setShortcuts(true)"))
+  expect_true(sv_js(b, paste0(sv_eng, ".shortcutsOn()")))
+  sv_js(b, "localStorage.removeItem('sideview.shortcuts')")
+})
+
+test_that("shortcuts switch works when localStorage throws", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  b$Page$enable()
+  b$Page$addScriptToEvaluateOnNewDocument(
+    "Object.defineProperty(window, 'localStorage', {get: function () { throw new Error('blocked'); }})")
+  sv_navigate(b, sv_js(b, "location.href"))
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-container')._sideviewInstance && document.querySelectorAll('.sideview-card').length >= 2", timeout = 60))
+  expect_true(sv_js(b, "(() => { try { window.localStorage; return false; } catch (e) { return true; } })()"))
+  expect_true(sv_js(b, paste0(sv_eng, ".shortcutsOn()")))
+  sv_js(b, "document.querySelector('.sideview-container').focus()")
+  before <- sv_canvas_state(b)$collapsed
+  sv_js(b, paste0(sv_eng, ".setShortcuts(false)"))
+  sv_key(b, "d", text = "d")
+  expect_identical(sv_canvas_state(b)$collapsed, before)
+  sv_js(b, paste0(sv_eng, ".setShortcuts(true)"))
+  sv_key(b, "d", text = "d")
+  expect_identical(sv_canvas_state(b)$collapsed, !before)
 })
