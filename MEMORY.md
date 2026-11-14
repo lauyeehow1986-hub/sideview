@@ -4,6 +4,11 @@ Running log of what changed, why, and how it was verified. Newest entries first.
 Each entry: **date — change — why — verification**. Keep the "Open issues" table current.
 
 ---
+### 2026-11-14 - Accessibility harness: shortcut/typing rules pinned, a11y CI job (PR C, Task 3)
+- **Change:** two tests in `test-a11y-browser.R`: `typing never fires shortcuts` (AI-bar input focused, F and D typed: zoom and drawer state unchanged, value `"fd"`) and `canvas shortcuts fire when the canvas owns the keyboard` (container focused, D toggles the drawer, twice returns it). New `a11y` job in `R-CMD-check.yaml` (ubuntu, `NOT_CRAN=true`, Chrome, Node 20, `npm install --no-save axe-core@4.10.3`, `SV_AXE_PATH`); it runs each of `a11y-browser` and `say` singly with `stop_on_failure = TRUE` and skips a filter that has no `test-<f>.R` yet (`test-say.R` arrives in PR A1).
+- **Behaviour:** the new tests passed on today's `isTypingTarget` / `ownsKeyboard`; `sideview.js` is unchanged.
+- **Verified:** `NOT_CRAN=true devtools::test(filter = "a11y-browser")` -> 23 passed, 0 failed, 0 skipped. Mutation check: removing the `isTypingTarget` guard from the shortcut handler made the typing test fail (2 failures), then restored. Accepted axe rules: `target-size` only (card controls scale below 24 px with fit-to-view zoom; sub-project B). Not run: the workflow itself (needs GitHub).
+
 
 ### 2026-11-07 - SUPP merge: review fixes (Opus 5.5 high review, R1-R3, S1-S7)
 - **Arrow key casts (R1, R2):** the generated arrow code cast a numeric supp key to the parent's Arrow type, but only checked the result for float32. On a narrow or decimal parent it was wrong in two ways. A value outside the type's range (300 on int8) wrapped onto another record's key. A value the type rounds (0.125 on decimal(10, 2)) was rounded onto a record, or, past the range, stopped the run. Now every cast level keeps only keys that survive an unsafe test cast (`$cast(ty, safe = FALSE)`) unchanged. When a decimal cast stops even unsafe, the keys are tested one at a time. Rows that fail are dropped, never rounded, as the check counts them as orphans. The halffloat branch is gone: Arrow cannot create float16 columns (S6).

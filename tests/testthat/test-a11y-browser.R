@@ -61,3 +61,45 @@ test_that("axe-core finds no WCAG 2.2 A/AA violation on the canvas (modes x them
     }
   }
 })
+
+# ---- today's shortcut and typing rules (pinned; sub-project B may change them on purpose) ----
+
+sv_open_gadget <- function() {
+  b <- sv_a11y_pages()$gadget$open("light", 1360, 820)
+  app <- attr(b, "sv_app")
+  withr::defer_parent({
+    try(b$close(), silent = TRUE)
+    if (!is.null(app)) try(app$proc$kill(), silent = TRUE)
+  })
+  b
+}
+
+sv_canvas_state <- function(b) {
+  sv_js(b, "(() => { const c = document.querySelector('.sideview-container');
+    return { scale: c._sideviewInstance.panzoom.getScale(),
+             collapsed: c.querySelector('.sideview-drawer').classList.contains('collapsed') }; })()")
+}
+
+test_that("typing never fires shortcuts", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  before <- sv_canvas_state(b)
+  sv_js(b, "document.querySelector('.sideview-ai-input').focus()")
+  sv_key(b, "f", text = "f")
+  sv_key(b, "d", text = "d")
+  after <- sv_canvas_state(b)
+  expect_equal(after$scale, before$scale)
+  expect_identical(after$collapsed, before$collapsed)
+  expect_identical(sv_js(b, "document.querySelector('.sideview-ai-input').value"), "fd")
+})
+
+test_that("canvas shortcuts fire when the canvas owns the keyboard", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_js(b, "document.querySelector('.sideview-container').focus()")
+  before <- sv_canvas_state(b)$collapsed
+  sv_key(b, "d", text = "d")
+  expect_identical(sv_canvas_state(b)$collapsed, !before)
+  sv_key(b, "d", text = "d")
+  expect_identical(sv_canvas_state(b)$collapsed, before)
+})
