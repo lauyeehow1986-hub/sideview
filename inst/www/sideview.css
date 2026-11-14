@@ -3173,3 +3173,86 @@ html.sv-standalone body {
   background: var(--sv-primary-subtle);
   border-color: var(--sv-primary);
 }
+
+/* ---- List view: tables, columns, paged rows ---- */
+.sideview-container .sideview-lv-table {
+  margin: 0 0 24px;
+}
+
+.sideview-container .sideview-lv-table-heading {
+  margin: 16px 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-lv-table-heading:focus {
+  outline: 2px solid var(--sv-focus-ring);
+  outline-offset: 2px;
+}
+
+.sideview-container .sideview-lv-cols {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.sideview-container .sideview-lv-cols > li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--sv-border-light);
+}
+
+.sideview-container .sideview-lv-col-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.sideview-container .sideview-lv-col-actions .sideview-btn,
+.sideview-container .sideview-lv-pager .sideview-btn {
+  min-height: 28px;
+  min-width: 24px;
+  width: auto;
+  margin: 0;
+}
+
+.sideview-container .sideview-lv-profile p {
+  margin: 4px 0;
+  line-height: 1.5;
+}
+
+.sideview-container .sideview-lv-rows-wrap {
+  overflow-x: auto;
+}
+
+.sideview-container .sideview-lv-rows-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.sideview-container .sideview-lv-rows-table th,
+.sideview-container .sideview-lv-rows-table td {
+  padding: 4px 8px;
+  border: 1px solid var(--sv-border-light);
+  text-align: left;
+}
+
+.sideview-container .sideview-lv-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.sideview-container .sideview-lv-pager input[type="number"] {
+  width: 8ch;
+  min-height: 28px;
+  padding: 0 6px;
+  color: var(--sv-text);
+  background: var(--sv-card-bg);
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-sm);
+}

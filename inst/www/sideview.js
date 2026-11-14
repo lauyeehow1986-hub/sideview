@@ -244,6 +244,42 @@ function sendToShiny(name, value) {
     return '';
   };
 
+  // What a cell shows for a value: "NA" for a missing one. The card render and cellText share it.
+  function cellDisplay(val) {
+    return (val === null || val === undefined) ? 'NA' : val;
+  }
+
+  /**
+   * The text the card cell at virtual row i (sorted, filtered order) and column col (a name or a
+   * position) shows: "NA" when missing. null while the row's block has not landed yet (the request
+   * is made; onBlock tells when it is in), or when i is outside the table.
+   */
+  VirtualTable.prototype.cellText = function (i, col) {
+    var c = typeof col === 'number' ? col : this.colNames.indexOf(col);
+    if (c < 0 || c >= this.colNames.length || i < 0 || i >= this.getRowCount()) return null;
+    var val;
+    if (this.remote && this.remote.active) {
+      var row = this.remoteRowAt(i);
+      if (!row) return null;
+      val = row.get(c);
+    } else {
+      var active = this.getActiveIndices();
+      val = this.getCellValue(active !== null ? active[i] : i, this.colNames[c], c);
+    }
+    return String(cellDisplay(val));
+  };
+
+  /** Call fn(blockIndex) after a remote row block lands; returns the function that unsubscribes. */
+  VirtualTable.prototype.onBlock = function (fn) {
+    var self = this;
+    if (!this._blockListeners) this._blockListeners = [];
+    this._blockListeners.push(fn);
+    return function () {
+      var k = self._blockListeners ? self._blockListeners.indexOf(fn) : -1;
+      if (k >= 0) self._blockListeners.splice(k, 1);
+    };
+  };
+
   VirtualTable.prototype.render = function () {
     var totalCount = this.getRowCount();
     // Table ARIA: the rendered window is a slice, so say how big the whole table is. Header = row 1.
@@ -297,7 +333,7 @@ function sendToShiny(name, value) {
         var val = remoteOn
           ? (remoteRow ? remoteRow.get(c) : '…')
           : this.getCellValue(rawRowIndex, colName, c);
-        td.textContent = (val === null || val === undefined) ? 'NA' : val;
+        td.textContent = cellDisplay(val);
 
         var knownType = this.colTypes ? this.colTypes[colName] : null;
         var isNum = (knownType === 'numeric' || knownType === 'integer' || knownType === 'double') ||
@@ -632,12 +668,16 @@ function sendToShiny(name, value) {
     r.count = msg.total;
     this.render();
     if (countChanged && typeof this.onRemoteCount === 'function') this.onRemoteCount(msg.total, r.total);
+    (this._blockListeners || []).slice().forEach(function (fn) {
+      try { fn(b); } catch (e) { /* a listener never breaks the table */ }
+    });
   };
 
   VirtualTable.prototype.destroy = function () {
     if (this.scrollContainer && typeof this.scrollContainer.removeEventListener === 'function' && this._scrollHandler) {
       this.scrollContainer.removeEventListener('scroll', this._scrollHandler);
     }
+    this._blockListeners = [];
   };
 
   function SideviewEngine(containerElement, options) {
@@ -3105,7 +3145,7 @@ function sendToShiny(name, value) {
     this.pipeline.setTables(meta);
     // a card came or went: the Merge into buttons name their targets on the canvas
     this.refreshSuppButtons();
-    if (this.listView) this.listView.renderSummary();
+    if (this.listView) this.listView.syncTables();
   };
 
   /** 'arrow' | 'duckdb' when the table is lazy, else null. */
@@ -6988,7 +7028,7 @@ function sendToShiny(name, value) {
     });
     if (this.listView) {
       this.listView.el.hidden = !list;
-      if (list) this.listView.render();
+      if (list) this.listView.refresh();
     }
     var toggles = this.container.querySelectorAll('[data-sv-view-toggle]');
     for (var i = 0; i < toggles.length; i++) toggles[i].setAttribute('aria-pressed', list ? 'true' : 'false');
@@ -7371,7 +7411,7 @@ function sendToShiny(name, value) {
     // A module started without llm_fn: hide the AI bar and the Copilot tab.
     self.onMessage('sideview_llm', function (data) {
       self.container.classList.toggle('sv-no-llm', !!data && data.enabled === false);
-      if (self.listView) self.listView.render();
+      if (self.listView) self.listView.updateSections();
     });
     self.onMessage('sideview_highlight', function (data) {
       if (data) self.highlightColumns(data.name, data.cols);

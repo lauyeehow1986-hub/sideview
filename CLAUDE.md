@@ -153,6 +153,15 @@ rstudio bridge: R/rstudio.R
   and a module, or `data-sv-llm="true"`). Result hooks `onJoinDiag` / `onSuppCheck` / `onColumnProfile` go through
   `engine.listHook()` (a failing hook never breaks the reply). A hidden card measures 0, so `setView('list')` keeps card sizes in
   `_hiddenGeom` for `getState()` and `setView('canvas')` re-renders the virtual tables. No new Shiny input or message.
+- **List view tables (0.8.0):** one `<div data-sv-table="<name>">` per card (`h3#<ns>sv-lv-t-<i>`, a `<ul>` of columns, or
+  `<details>` closed above 30 columns, then a captioned `<table>` with Ruling 2 counts, 25 rows a page). The rows come from
+  `VirtualTable.cellText(i, col)` (the string the card cell shows, `null` while a remote block is missing; the card render
+  shares `cellDisplay()`) and refill through `VirtualTable.onBlock(fn)` (returns an unsubscribe, called in `destroy()`).
+  List-view updates are narrow: `refresh()` (list shown), `updateSections()` (the Copilot section comes and goes; used by
+  `sideview_llm`), `syncTables()` (cards came, went or were replaced; called from `syncTableMeta()`) never rebuild the shell,
+  so focus, scroll, the rows page and an open Columns list survive; only `render()` rebuilds everything. Sort goes through
+  `engine.sortColumn`; Filter calls `engine.openBuilder('filter', {table, column})` when it exists (Task 15). Lazy cards are
+  paged through `sideview_rows_request` windows only; the list never collects a table.
 - **View precedence:** the `view` argument (`data-sv-view` / `options.view`) is the default; a restored workspace state's valid
   `view.mode` wins over it (at start, `applyState` records it and the constructor applies it after the first layout; on Open,
   `setView` at once). A state without `view.mode`, or with an invalid one, leaves the view as it is. The starting view is

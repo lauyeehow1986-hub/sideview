@@ -17,6 +17,15 @@
 * `view = "list"` starts in it. A saved workspace now records the view (`view.mode`) and wins over the `view` argument when
   it is opened. The section contents arrive in the next changes.
 
+## List view tables
+
+* The Tables section lists every table: a heading ("labs, 5,000 rows by 3 columns, full table.", or "preview of the first
+  50 rows"), one line per column (name, label, kind, and the distinct and missing counts when the card shows them) with Sort,
+  Filter and Inspect buttons, and the rows as a captioned table, 25 a page, with Previous rows, Next rows and Go to row.
+  A page change is announced ("Rows 26 to 50 of 5,000.") and focus stays on the button. Rows follow the canvas sort and
+  filter; a large (lazy) table is read a window at a time from R. Sort announces its result; Inspect writes the profile as
+  sentences under the column. A table with more than 30 columns starts with its columns closed.
+
 ## Table ARIA
 
 * Each table on the canvas has a (screen-reader-only) caption with the card name and announces its full size:

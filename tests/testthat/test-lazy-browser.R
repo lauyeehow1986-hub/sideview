@@ -309,3 +309,50 @@ test_that("a saved widget labels a lazy card as a preview and says so in the ins
   expect_true(none)
   expect_length(attr(b, "sv_errors")(), 0)
 })
+
+test_that("list paging of a lazy card asks R for windows", {
+  skip_if_no_browser()
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  x <- sv_big_x()
+  b <- sv_with_app('{
+    con <- DBI::dbConnect(duckdb::duckdb())
+    set.seed(1)
+    DBI::dbWriteTable(con, "big", data.frame(id = 1:200000, x = round(rnorm(200000), 4)))
+    big <- dplyr::tbl(con, "big")
+    sideview(patients, big, run = FALSE)
+  }')
+  expect_true(attr(b, "sv_ready"))
+  sv_js(b, "(() => { window.__reqs = []; const f = Shiny.setInputValue;
+    Shiny.setInputValue = function (n, v, o) { if (n === 'sideview_rows_request') window.__reqs.push(v); return f.apply(this, arguments); };
+    return true; })()")
+  sv_js(b, "window._sideviewInstance.setView('list'); true")
+  sec <- "document.querySelector('.sideview-listview [data-sv-table=\"big\"]')"
+  expect_identical(sv_js(b, sprintf("%s.querySelector('table').getAttribute('aria-rowcount')", sec)), "200001")
+  btn <- function(label) sprintf("[...%s.querySelectorAll('button')].find(b => b.textContent === '%s')", sec, label)
+  first_rows <- function() sv_js(b, sprintf("[...%s.querySelectorAll('tbody tr')].map(tr => ({ i: tr.getAttribute('aria-rowindex'), c: [...tr.cells].map(td => td.textContent) }))", sec))
+  # Go to row 176 (block 0), then Next crosses into block 1: a window request
+  set_row <- function(n) sv_js(b, sprintf("(() => { const i = %s.querySelector('input[type=number]');
+    i.value = '%d'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()", sec, n))
+  set_row(176)
+  sv_js(b, sprintf("%s.click(); true", btn("Go")))
+  n0 <- sv_js(b, "window.__reqs.length")
+  sv_js(b, sprintf("%s.click(); true", btn("Next rows")))
+  expect_true(sv_wait_js(b, sprintf("(() => { const r = %s.querySelector('tbody tr'); return !!r && r.getAttribute('aria-rowindex') === '202' && r.cells[0].textContent !== '\u2026'; })()", sec)))
+  expect_gt(sv_js(b, "window.__reqs.length"), n0)
+  rows <- first_rows()
+  expect_equal(length(rows), 25)
+  expect_identical(vapply(rows, function(r) r$c[[1]], ""), as.character(201:225))
+  expect_identical(vapply(rows, function(r) r$c[[2]], ""), as.character(x[201:225]))
+  # far away: Go to row 4000
+  set_row(4000)
+  sv_js(b, sprintf("%s.click(); true", btn("Go")))
+  expect_true(sv_wait_js(b, sprintf("(() => { const r = %s.querySelector('tbody tr'); return !!r && r.getAttribute('aria-rowindex') === '4001' && r.cells[0].textContent !== '\u2026'; })()", sec)))
+  rows <- first_rows()
+  expect_identical(vapply(rows, function(r) r$c[[1]], ""), as.character(4000:4024))
+  expect_identical(vapply(rows, function(r) r$c[[2]], ""), as.character(x[4000:4024]))
+  # every request is a window, never the whole table
+  reqs <- sv_js(b, "window.__reqs.map(r => r.limit)")
+  expect_true(all(unlist(reqs) <= 200))
+  expect_length(attr(b, "sv_errors")(), 0)
+})

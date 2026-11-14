@@ -589,3 +589,149 @@ test_that("the list view keeps its summary current and is gone after destroy", {
   sv_js(b, paste0(sv_eng, ".destroy(); true"))
   expect_equal(sv_js(b, "document.querySelectorAll('.sideview-listview').length"), 0)
 })
+
+# ---- list view tables (Task 13) ----
+
+sv_lv <- "document.querySelector('.sideview-listview')"
+sv_js_str <- function(x) as.character(jsonlite::toJSON(x, auto_unbox = TRUE))
+sv_lv_table <- function(name) {
+  sprintf("document.querySelector('.sideview-listview [data-sv-table=\"' + CSS.escape(%s) + '\"]')",
+          sv_js_str(name))
+}
+# Rows the list view shows now: aria-rowindex and the cell texts of each row.
+sv_lv_rows_js <- function(name) {
+  sprintf("(() => { const s = %s; const t = s.querySelector('table');
+    return { rc: t.getAttribute('aria-rowcount'), cc: t.getAttribute('aria-colcount'),
+      rows: [...t.querySelectorAll('tbody tr')].map(tr => ({ i: tr.getAttribute('aria-rowindex'),
+        c: [...tr.cells].map(td => td.textContent) })) }; })()", sv_lv_table(name))
+}
+sv_lv_btn <- function(name, label) {
+  sprintf("[...%s.querySelectorAll('button')].find(b => b.textContent === %s || b.getAttribute('aria-label') === %s)",
+          sv_lv_table(name), sv_js_str(label), sv_js_str(label))
+}
+
+sv_set_fixture <- function() {
+  env <- new.env(parent = globalenv())
+  eval(parse(text = sv_fixture_code), envir = env)
+  env
+}
+
+test_that("list rows table matches the card", {
+  skip_if_no_browser()
+  fx <- sv_set_fixture()
+  b <- sv_open_gadget()
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  heading <- sv_js(b, sprintf("%s.querySelector('h3').textContent", sv_lv_table("labs")))
+  expect_identical(heading, "labs, 5,000 rows by 3 columns, full table.")
+  r <- sv_js(b, sv_lv_rows_js("labs"))
+  expect_identical(r$rc, "5001")
+  expect_identical(r$cc, "3")
+  expect_equal(length(r$rows), 25)
+  sv_js(b, sprintf("%s.click(); true", sv_lv_btn("labs", "Next rows")))
+  r <- sv_js(b, sv_lv_rows_js("labs"))
+  expect_identical(r$rows[[1]]$i, "27")
+  vt <- "document.querySelector('.sideview-card[data-card-name=\"labs\"]')._virtualTable"
+  expect <- sv_js(b, sprintf("(() => { const vt = %s; return vt.colNames.map(c => vt.cellText(25, c)); })()", vt))
+  expect_identical(unlist(r$rows[[1]]$c), unlist(expect))
+  expect_identical(unlist(r$rows[[1]]$c)[3], as.character(fx$labs$value[26]))
+  expect_identical(sv_js(b, paste0(sv_eng, ".announceLog.slice(-1)[0]")), "Rows 26 to 50 of 5,000.")
+  # the pressed control keeps focus
+  expect_identical(sv_focus_info(b)$name, "Next rows")
+  # Go to row 4990
+  sv_js(b, sprintf("(() => { const s = %s; const i = s.querySelector('input[type=number]');
+    i.value = '4990'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()", sv_lv_table("labs")))
+  sv_js(b, sprintf("%s.click(); true", sv_lv_btn("labs", "Go")))
+  r <- sv_js(b, sv_lv_rows_js("labs"))
+  expect_equal(length(r$rows), 11)
+  expect_identical(r$rows[[1]]$i, "4991")
+  expect_identical(sv_js(b, paste0(sv_eng, ".announceLog.slice(-1)[0]")), "Rows 4,990 to 5,000 of 5,000.")
+  expect_true(sv_js(b, sprintf("%s.disabled", sv_lv_btn("labs", "Next rows"))))
+  expect_false(sv_js(b, sprintf("%s.disabled", sv_lv_btn("labs", "Previous rows"))))
+})
+
+test_that("list rows follow canvas sort and filter", {
+  skip_if_no_browser()
+  fx <- sv_set_fixture()
+  b <- sv_open_gadget()
+  card <- "document.querySelector('.sideview-card[data-card-name=\"labs\"]')"
+  # the canvas: sort by value descending (two sort clicks), then filter value > 10
+  sv_js(b, sprintf("(() => { const b = %s.querySelector('[data-action=\"sort-col\"][data-col-name=\"value\"]');
+    b.click(); b.click(); return true; })()", card))
+  sv_js(b, sprintf("%s._virtualTable.filter(2, 'value', 'gt', '10'); true", card))
+  Sys.sleep(1)
+  want <- dplyr::arrange(dplyr::filter(fx$labs, value > 10), dplyr::desc(value))
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  expect_true(sv_wait_js(b, sprintf("%s.querySelector('table').getAttribute('aria-rowcount') === '%d'",
+                                    sv_lv_table("labs"), nrow(want) + 1L)))
+  r <- sv_js(b, sv_lv_rows_js("labs"))
+  expect_equal(length(r$rows), 25)
+  expect_identical(vapply(r$rows, function(x) x$c[[3]], ""), as.character(want$value[1:25]))
+  expect_identical(vapply(r$rows, function(x) x$c[[1]], ""), as.character(want$patient_id[1:25]))
+  expect_identical(r$rows[[1]]$i, "2")
+})
+
+test_that("list view escapes names", {
+  skip_if_no_browser()
+  app <- sv_start_app(paste0(
+    "sideview(list(`a<b \"c\" é` = data.frame(`x <y>` = 1:3, check.names = FALSE)), run = FALSE)"))
+  b <- sv_open_page(app$url, 1360, 820, wait_for = sv_wait_eng)
+  withr::defer({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  nm <- "a<b \"c\" é"
+  r <- sv_js(b, sprintf("(() => { const s = %s; const lv = %s;
+    return { found: !!s, h3: s.querySelector('h3').textContent, cap: s.querySelector('caption').textContent,
+      item: s.querySelector('ul li').textContent,
+      btns: [...s.querySelectorAll('ul li button')].map(b => b.getAttribute('aria-label') || b.textContent),
+      bold: lv.querySelectorAll('b').length, html: lv.innerHTML.indexOf('<b ') }; })()",
+    sv_lv_table(nm), sv_lv))
+  expect_true(r$found)
+  expect_true(grepl(nm, r$h3, fixed = TRUE))
+  expect_identical(r$cap, paste(nm, "rows"))
+  expect_true(grepl("x <y>", r$item, fixed = TRUE))
+  expect_true(all(c("Sort x <y>", "Filter x <y>", "Inspect x <y>") %in% unlist(r$btns)))
+  expect_equal(r$bold, 0)
+  expect_equal(r$html, -1)
+})
+
+test_that("a table with more than 30 columns starts closed", {
+  skip_if_no_browser()
+  app <- sv_start_app(paste0(
+    "sideview(list(wide = as.data.frame(setNames(as.list(1:40), paste0('v', 1:40))), narrow = data.frame(a = 1:3)), run = FALSE)"))
+  b <- sv_open_page(app$url, 1360, 820, wait_for = sv_wait_eng)
+  withr::defer({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  r <- sv_js(b, sprintf("(() => { const d = %s.querySelector('details');
+    return { open: d.open, sum: d.querySelector('summary').textContent, n: d.querySelectorAll('li').length,
+      narrow: !%s.querySelector('details') }; })()", sv_lv_table("wide"), sv_lv_table("narrow")))
+  expect_false(r$open)
+  expect_identical(r$sum, "Columns (40)")
+  expect_equal(r$n, 40)
+  expect_true(r$narrow)
+})
+
+test_that("Inspect writes the profile sentences", {
+  skip_if_no_browser()
+  fx <- sv_set_fixture()
+  b <- sv_open_gadget()
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  sv_js(b, sprintf("%s.click(); true", sv_lv_btn("patients", "Inspect age")))
+  expect_true(sv_wait_js(b, sprintf("%s.querySelectorAll('li p').length > 2", sv_lv_table("patients"))))
+  got <- sv_js(b, sprintf("[...%s.querySelectorAll('li p')].map(p => p.textContent)", sv_lv_table("patients")))
+  expect_identical(unlist(got), sv_say_profile(sv_column_profile(fx$patients$age), "age"))
+  item <- sv_js(b, sprintf("%s.querySelector('ul li').textContent", sv_lv_table("patients")))
+  expect_match(item, "^patient_id, text")
+})
+
+test_that("list view updates keep the sections, the page and the open details", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  sv_js(b, sprintf("%s.click(); true", sv_lv_btn("labs", "Next rows")))
+  sv_js(b, paste0("window.__marker = ", sv_lv_table("labs"), "; true"))
+  # a hand-off to the canvas and back, and an llm message, must not rebuild the sections
+  sv_js(b, paste0(sv_eng, ".setView('canvas'); ", sv_eng, ".setView('list'); true"))
+  sv_js(b, sprintf("%s.listView.updateSections(); true", sv_eng))
+  expect_true(sv_js(b, paste0("window.__marker === ", sv_lv_table("labs"))))
+  r <- sv_js(b, sv_lv_rows_js("labs"))
+  expect_identical(r$rows[[1]]$i, "27")
+})
