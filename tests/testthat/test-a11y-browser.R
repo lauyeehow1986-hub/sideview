@@ -759,3 +759,129 @@ test_that("column counts: full in-memory cards show them, sampled and preview ca
     return lv.columnText(st, 1); })()")
   expect_identical(r, "sex, text")
 })
+
+# ---- list view join and Merge SUPP (Task 14) ----
+
+sv_lv_join <- "document.querySelector('.sideview-listview [data-sv-lv-body=\"join\"]')"
+# Pick a value in a labelled select of the Join form (first match of a field id) and fire change.
+sv_lv_pick <- function(b, field, value, idx = 0) {
+  sv_js(b, sprintf("(() => { const s = %s.querySelectorAll('select[data-sv-field=%s]')[%d];
+    s.value = %s; s.dispatchEvent(new Event('change', { bubbles: true })); return s.value; })()",
+                   sv_lv_join, sv_js_str(field), idx, sv_js_str(value)))
+}
+sv_lv_join_form <- function(b, left = "patients", lcol = "patient_id", right = "visits", rcol = "pid") {
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  sv_lv_pick(b, "left-table", left)
+  sv_lv_pick(b, "right-table", right)
+  sv_lv_pick(b, "left-column", lcol)
+  sv_lv_pick(b, "right-column", rcol)
+}
+sv_lv_join_paras <- function(b) {
+  as.character(unlist(sv_js(b, sprintf(
+    "[...%s.querySelectorAll('[data-sv-join-result] p')].map(p => p.textContent)", sv_lv_join))))
+}
+sv_lv_join_btn <- function(label) {
+  sprintf("[...%s.querySelectorAll('button')].find(x => x.textContent === %s)", sv_lv_join, sv_js_str(label))
+}
+
+test_that("list join check speaks the R sentence", {
+  skip_if_no_browser()
+  fx <- sv_set_fixture()
+  b <- sv_open_gadget()
+  sv_lv_join_form(b)
+  sv_js(b, paste0(sv_lv_join_btn("Check join"), ".click(); true"))
+  want <- sv_say_join(sv_join_diagnostics(fx$patients, fx$visits, by = c(patient_id = "pid")),
+                      "patients", "visits")
+  expect_true(sv_wait_js(b, sprintf("%s.querySelectorAll('[data-sv-join-result] p').length === %d",
+                                    sv_lv_join, length(want)), timeout = 30))
+  expect_identical(sv_lv_join_paras(b), want)
+  expect_true(want[1] %in% sv_announce_log(b))
+  expect_false(sv_js(b, paste0(sv_lv_join_btn("Add join step"), ".disabled")))
+})
+
+test_that("Add join step adds one step and draws its spline", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_lv_join_form(b)
+  sv_js(b, paste0(sv_lv_join_btn("Check join"), ".click(); true"))
+  expect_true(sv_wait_js(b, sprintf("!%s.disabled", sv_lv_join_btn("Add join step")), timeout = 30))
+  sv_js(b, paste0(sv_lv_join_btn("Add join step"), ".click(); true"))
+  expect_equal(sv_js(b, paste0(sv_eng, ".pipeline.enabledCount()")), 1)
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-connector-svg path').length"), 1)
+  expect_true(sv_js(b, sprintf("(() => { const a = document.activeElement;
+    return !!a && !!a.closest('.sideview-listview, .sideview-drawer') && (a.hasAttribute('data-step-id') ||
+      /pipeline/i.test(a.textContent)); })()")))
+})
+
+test_that("a failing check keeps Add disabled", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_lv_join_form(b)
+  sv_lv_pick(b, "rule-shape", "between")
+  sv_js(b, paste0(sv_lv_join_btn("Check join"), ".click(); true"))
+  expect_true(sv_wait_js(b, sprintf("%s.querySelectorAll('[data-sv-join-result] p').length > 0 &&
+    %s.querySelector('[data-sv-join-result] p').textContent !== 'Checking the join.'", sv_lv_join, sv_lv_join),
+    timeout = 30))
+  expect_true(sv_js(b, paste0(sv_lv_join_btn("Add join step"), ".disabled")))
+})
+
+sv_lv_cdisc_page <- function() {
+  skip_if_no_browser()
+  root <- sv_pkg_root()
+  if (!nzchar(root)) skip("CDISC browser tests need the source tree (helper-cdisc.R)")
+  helper <- normalizePath(file.path(root, "tests", "testthat", "helper-cdisc.R"), winslash = "/")
+  app <- sv_start_app(app_expr = sprintf(
+    "{ source('%s'); f <- sv_cdisc_fixtures(); sideview(dm = f$dm, ae = f$ae, adae = f$adae_pfx, suppae = f$suppae, run = FALSE) }",
+    helper))
+  b <- sv_open_page(app$url, 1360, 820, wait_for = sv_wait_eng)
+  withr::defer_parent({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
+  b
+}
+
+test_that("CDISC group adds as one undo step", {
+  b <- sv_lv_cdisc_page()
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  sv_js(b, paste0(sv_lv_join_btn("Suggest joins"), ".click(); true"))
+  expect_true(sv_wait_js(b, sprintf("%s.querySelectorAll('[data-sv-suggestions] li').length > 0", sv_lv_join),
+                         timeout = 30))
+  idx <- sv_js(b, sprintf("[...%s.querySelectorAll('[data-sv-suggestions] li')].findIndex(
+    l => /^adae to ae by/.test(l.textContent))", sv_lv_join))
+  expect_gte(idx, 0)
+  sv_js(b, sprintf("%s.querySelectorAll('[data-sv-suggestions] li')[%d].querySelector('button').click(); true",
+                   sv_lv_join, idx))
+  n <- sv_js(b, paste0(sv_eng, ".pipeline.steps.filter(s => s.kind === 'join').reduce((a, s) => a + s.by.length, 0)"))
+  expect_gt(n, 1)
+  sv_js(b, paste0(sv_eng, ".pipeline.undo(); true"))
+  expect_equal(sv_js(b, paste0(sv_eng, ".pipeline.steps.length")), 0)
+})
+
+test_that("SUPP check and merge from the list", {
+  b <- sv_lv_cdisc_page()
+  f <- (function() { source(file.path(sv_pkg_root(), "tests", "testthat", "helper-cdisc.R"), local = TRUE)
+    sv_cdisc_fixtures() })()
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  sel <- "document.querySelector('.sideview-listview [data-sv-supp=\"suppae\"]')"
+  expect_identical(sv_js(b, paste0(sel, ".querySelector('h3').textContent")),
+                   "suppae into ae, 1 QNAM")
+  btn <- function(l) sprintf("[...%s.querySelectorAll('button')].find(x => x.textContent === %s)", sel, sv_js_str(l))
+  sv_js(b, paste0(btn("Check"), ".click(); true"))
+  want <- sv_say_supp(sv_supp_check(f$ae, f$suppae, parent_name = "ae", supp_name = "suppae"), "ae", "suppae")
+  expect_true(sv_wait_js(b, sprintf("%s.querySelectorAll('[data-sv-supp-result] p').length === %d", sel, length(want)),
+                         timeout = 30))
+  got <- as.character(unlist(sv_js(b, sprintf("[...%s.querySelectorAll('[data-sv-supp-result] p')].map(p => p.textContent)", sel))))
+  expect_identical(got, want)
+  sv_js(b, paste0(btn("Merge"), ".click(); true"))
+  expect_true(sv_wait_js(b, paste0(sv_eng, ".pipeline.steps.some(s => s.kind === 'supp')"), timeout = 30))
+})
+
+test_that("reply lands after a view switch", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_lv_join_form(b)
+  sv_js(b, paste0(sv_lv_join_btn("Check join"), ".click(); ", sv_eng, ".setView('canvas'); true"))
+  Sys.sleep(1)
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  expect_true(sv_wait_js(b, sprintf("%s.querySelectorAll('[data-sv-join-result] p').length > 0 &&
+    %s.querySelector('[data-sv-join-result] p').textContent !== 'Checking the join.'", sv_lv_join, sv_lv_join),
+    timeout = 30))
+})

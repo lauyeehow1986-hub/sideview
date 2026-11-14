@@ -5250,11 +5250,13 @@ function sendToShiny(name, value) {
   SideviewEngine.prototype.requestSuppCheck = function (parentName, suppName, plan, opts) {
     opts = opts || {};
     var key = suppKeyOf(parentName, suppName);
+    // 'peek': a check for the list view with no step to keep it on: nothing is stored
     var mode = opts.mode || (plan ? 'check' : 'add');
     var rdomain = opts.rdomain || this.suppRdomain(suppName, parentName);
     var id = 'supp' + (++this._suppSeq);
     this.suppReq[key] = id;
-    this.suppPending[id] = { key: key, parent: parentName, supp: suppName, rdomain: rdomain, mode: mode, quiet: !!opts.quiet };
+    this.suppPending[id] = { key: key, parent: parentName, supp: suppName, rdomain: rdomain, mode: mode, quiet: !!opts.quiet,
+      list: !!opts.list };
     if (this.hasR()) {
       var req = { id: id, parent: parentName, supp: suppName };
       // a named object as JSON text: R reads it with jsonlite (an unnamed plan would be dropped)
@@ -5348,8 +5350,9 @@ function sendToShiny(name, value) {
     var P = global.SideviewPipeline;
     if (data.error) {
       var msg = String(data.error);
-      if (ctx.mode === 'add') {
-        this.showToast('Merge ' + ctx.supp + ' into ' + ctx.parent + ': ' + msg, 'danger');
+      if (ctx.mode === 'add' || ctx.mode === 'peek') {
+        if (ctx.mode === 'add') this.showToast('Merge ' + ctx.supp + ' into ' + ctx.parent + ': ' + msg, 'danger');
+        this.listHook('onSuppCheck', { error: msg }, ctx.key, !!ctx.list);
         return;
       }
       this.suppChecks[ctx.key] = { error: msg };
@@ -5357,6 +5360,11 @@ function sendToShiny(name, value) {
       var d = suppNormalize(data);
       delete d.id;
       delete d.ns;
+      if (ctx.mode === 'peek') {
+        this.widenSuppClashes(d, ctx.parent, ctx.key, true);
+        this.listHook('onSuppCheck', d, ctx.key, !!ctx.list);
+        return;
+      }
       if (ctx.mode === 'add') {
         this.widenSuppClashes(d, ctx.parent, ctx.key, true);
         // stored first: adding the step renders the pipeline, which reads it
@@ -5366,7 +5374,7 @@ function sendToShiny(name, value) {
         this.pipeline.add(P.suppStep(ctx.parent, ctx.supp, ctx.rdomain, d.plan), 'supp');
         if (d.status === 'error') this.showToast('Merge ' + ctx.supp + ' into ' + ctx.parent + ': ' + this.suppStops(d, ctx.parent), 'warning', null, { silent: !ctx.quiet });
         this.renderJoinCheck();
-        this.listHook('onSuppCheck', d, ctx.key);
+        this.listHook('onSuppCheck', d, ctx.key, !!ctx.list);
         return;
       }
       var step = this.pipeline.steps.filter(function (s) { return s.key === ctx.key; })[0];
@@ -5380,11 +5388,12 @@ function sendToShiny(name, value) {
     if (ctx.quiet && this._suppSync) return;
     this.renderPipeline();
     this.renderJoinCheck();
-    this.listHook('onSuppCheck', this.suppChecks[ctx.key], ctx.key);
+    this.listHook('onSuppCheck', this.suppChecks[ctx.key], ctx.key, !!ctx.list);
   };
 
   SideviewEngine.prototype.announceSupp = function (ctx, chk) {
-    if (!chk || ctx.quiet) return;
+    // the list view speaks for its own checks
+    if (!chk || ctx.quiet || ctx.list) return;
     try {
       this.announce(global.SideviewPipeline.saySupp(chk, ctx.parent, ctx.supp)[0], { assertive: !!chk.error });
     } catch (e) { /* silent */ }
@@ -7360,6 +7369,7 @@ function sendToShiny(name, value) {
     self.onMessage('sideview_suggested_mappings', function (data) {
       if (data) {
         self.renderSuggestedSplines(data);
+        self.listHook('onSuggested', data);
       }
     });
 

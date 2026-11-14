@@ -3256,3 +3256,70 @@ html.sv-standalone body {
   border: 1px solid var(--sv-border);
   border-radius: var(--sv-radius-sm);
 }
+
+/* list view: join form, suggestions, Merge SUPP */
+.sideview-container .sideview-lv-row,
+.sideview-container .sideview-lv-pair,
+.sideview-container .sideview-lv-rulebox {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+  margin: 8px 0;
+}
+
+.sideview-container .sideview-lv-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-lv-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-lv-select,
+.sideview-container .sideview-lv-field input[type="number"] {
+  min-height: 28px;
+  padding: 0 6px;
+  color: var(--sv-text);
+  background: var(--sv-card-bg);
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-sm);
+}
+
+.sideview-container .sideview-lv-suggestions {
+  margin: 8px 0;
+  padding-left: 18px;
+}
+
+.sideview-container .sideview-lv-suggestion {
+  margin: 4px 0;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-lv-suggestion .sideview-btn {
+  margin-left: 8px;
+}
+
+.sideview-container .sideview-lv-join-result p,
+.sideview-container .sideview-lv-supp-result p,
+.sideview-container .sideview-lv-suggest-status {
+  margin: 4px 0;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-lv-supp {
+  margin: 12px 0;
+}
+
+.sideview-container .sideview-lv-supp-heading {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: var(--sv-text);
+}
