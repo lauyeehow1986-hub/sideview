@@ -137,9 +137,10 @@ to that card.
 shortcuts off (default \code{TRUE}). It is the default only: the "Keyboard
 shortcuts" switch in the \verb{?} list is remembered in the browser and wins.
 \code{Ctrl+K} and \code{Ctrl+Enter} always work. \code{\link[=sideview_widget]{sideview_widget()}} reads it too.}
-\item{\code{sideview.view}}{\code{"list"} starts \code{\link[=sideview]{sideview()}}, \code{\link[=sideview_widget]{sideview_widget()}} and
-\code{\link[=sideviewUI]{sideviewUI()}} in the text-first list view (default \code{"canvas"}). The \code{view}
-argument wins.}
+\item{\code{sideview.view}}{\code{"list"} starts the text-first list view in \code{\link[=sideview]{sideview()}},
+\code{\link[=sideview_ui]{sideview_ui()}}, \code{\link[=sideviewUI]{sideviewUI()}}, \code{\link[=sideview_widget]{sideview_widget()}} and \code{\link[=save_sideview]{save_sideview()}}
+(default \code{"canvas"}). The \code{view} argument wins, and so does
+\code{options = list(view = )} in \code{\link[=sideview_widget]{sideview_widget()}}.}
 \item{\code{sideview.session_grace}}{Seconds the gadget waits after its last
 browser session closes before stopping (default \code{5}), so reloading the
 page does not end the app.}

@@ -57,7 +57,7 @@
 #' @export
 sideviewUI <- function(id, height = "600px", title = NULL, theme = "auto",
                        view = getOption("sideview.view", "canvas")) {
-  view <- match.arg(view, c("canvas", "list"))
+  view <- sv_check_view(view)
   ns <- shiny::NS(id)("")
   sv_ui_build(title = title, theme = theme, ns = ns, height = height, view = view)
 }

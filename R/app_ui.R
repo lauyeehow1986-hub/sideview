@@ -395,7 +395,7 @@ render_card_tag <- function(card, index = 1L) {
 #' @export
 sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALSE, theme = "auto",
                         state = NULL, view = getOption("sideview.view", "canvas")) {
-  view <- match.arg(view, c("canvas", "list"))
+  view <- sv_check_view(view)
   sv_ui_build(cards = cards, title = title, gadget = gadget, theme = theme, state = state, view = view)
 }
 
@@ -664,3 +664,10 @@ sv_drawer_tabs <- c(
   discrepancy = "Discrepancy",
   chat = "Copilot"
 )
+
+# Validates a `view` argument: one of "canvas" / "list" (match.arg would let a length-2
+# vector equal to the choices through as "canvas").
+sv_check_view <- function(view) {
+  if (length(view) != 1L) stop("'view' must be of length 1", call. = FALSE)
+  match.arg(view, c("canvas", "list"))
+}

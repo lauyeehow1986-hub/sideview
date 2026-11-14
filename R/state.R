@@ -146,6 +146,7 @@ sv_load_state <- function(file, tables = NULL, launch = FALSE, format = NULL, ..
   }
 
   class(state) <- c("sideview_state", "list")
+  state <- sv_state_scrub(state)
   state <- sv_migrate_state(state)
 
   if (isTRUE(launch) && sv_interactive()) {

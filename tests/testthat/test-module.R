@@ -642,3 +642,8 @@ test_that("sideviewUI carries data-sv-view", {
   expect_true(grepl('data-sv-view="list"', as.character(sideviewUI("a", view = "list")), fixed = TRUE))
   expect_error(sideviewUI("a", view = "grid"), "should be one of")
 })
+
+test_that("sideviewUI with an invalid sideview.view option errors", {
+  withr::with_options(list(sideview.view = "bogus"),
+    expect_error(sideviewUI("a"), "should be one of"))
+})

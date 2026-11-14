@@ -79,7 +79,7 @@ sideview_widget <- function(...,
                             cdisc = "auto",
                             max_rows = 5000,
                             view = getOption("sideview.view", "canvas")) {
-  view <- match.arg(view, c("canvas", "list"))
+  view <- sv_check_view(view)
   max_rows <- sv_check_max_rows(max_rows)
   cdisc <- sv_cdisc_check_arg(cdisc)
   state <- sv_as_state(state)
@@ -137,7 +137,11 @@ sideview_widget <- function(...,
   # Forward options using x payload
   theme <- sv_resolve_theme(theme)
   if (is.null(options$theme)) options$theme <- theme$mode
-  options$view <- view
+  if (is.null(options$view)) {
+    options$view <- view
+  } else {
+    options$view <- sv_check_view(options$view)
+  }
   if (is.null(options$shortcuts)) options$shortcuts <- getOption("sideview.shortcuts", TRUE)
   if (length(theme$vars)) {
     options$themeVars <- stats::setNames(theme$vars, paste0("--sv-", names(theme$vars)))
@@ -245,7 +249,7 @@ save_sideview <- function(widget,
                           cdisc = "auto",
                           view = getOption("sideview.view", "canvas"),
                           ...) {
-  view <- match.arg(view, c("canvas", "list"))
+  view <- sv_check_view(view)
   if (!inherits(widget, "htmlwidget")) {
     widget <- sideview_widget(widget, max_rows = max_rows, cdisc = cdisc, view = view)
   }

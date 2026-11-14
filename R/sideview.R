@@ -135,9 +135,10 @@ sv_find_tables <- function(env = parent.frame()) {
 #'     shortcuts off (default `TRUE`). It is the default only: the "Keyboard
 #'     shortcuts" switch in the `?` list is remembered in the browser and wins.
 #'     `Ctrl+K` and `Ctrl+Enter` always work. [sideview_widget()] reads it too.}
-#'   \item{`sideview.view`}{`"list"` starts [sideview()], [sideview_widget()] and
-#'     [sideviewUI()] in the text-first list view (default `"canvas"`). The `view`
-#'     argument wins.}
+#'   \item{`sideview.view`}{`"list"` starts the text-first list view in [sideview()],
+#'     [sideview_ui()], [sideviewUI()], [sideview_widget()] and [save_sideview()]
+#'     (default `"canvas"`). The `view` argument wins, and so does
+#'     `options = list(view = )` in [sideview_widget()].}
 #'   \item{`sideview.session_grace`}{Seconds the gadget waits after its last
 #'     browser session closes before stopping (default `5`), so reloading the
 #'     page does not end the app.}
@@ -172,7 +173,7 @@ sideview <- function(...,
                      env = parent.frame(),
                      run = interactive()) {
   force(env) # parent.frame() is lazy: resolve it before sideview() returns
-  view <- match.arg(view, c("canvas", "list"))
+  view <- sv_check_view(view)
   state <- sv_as_state(state)
   cdisc <- sv_cdisc_check_arg(cdisc)
   viewer <- sv_resolve_viewer(viewer, title)

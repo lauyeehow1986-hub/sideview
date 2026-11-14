@@ -485,3 +485,15 @@ test_that("view.mode survives a JSON round trip and an invalid one is dropped", 
   expect_false(grepl('"mode"', sv_state_json(list(version = "0.3.0", view = list(mode = c("list", "x")))),
                      fixed = TRUE))
 })
+
+test_that("an invalid view$mode is dropped on RDS save and on load", {
+  tf <- tempfile(fileext = ".rds"); on.exit(unlink(tf))
+  sv_save_state(list(version = "0.3.0", view = list(labels_row = TRUE, mode = "grid")), tf)
+  st <- sv_load_state(tf)
+  expect_null(st$view$mode)
+  expect_true(st$view$labels_row)
+  saveRDS(list(version = "0.3.0", view = list(mode = "grid")), tf)
+  expect_null(sv_load_state(tf)$view$mode)
+  saveRDS(list(version = "0.3.0", view = list(mode = "list")), tf)
+  expect_equal(sv_load_state(tf)$view$mode, "list")
+})
