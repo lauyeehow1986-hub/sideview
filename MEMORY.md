@@ -257,7 +257,7 @@ Each sub-project gets its own spec, plan and build, in this order:
   - E: ARD / TLG cards (analysis results datasets and tables as cards);
   - F: spec / define.xml checks (conformance, which 0.5.0 deliberately does not do).
 - **Sub-project B (keyboard and low vision) backlog:**
-  - axe `target-size` (WCAG 2.5.8) is accepted in `SV_AXE_ACCEPTED` (test-a11y-browser.R): card and column-header icon buttons are 24 px in CSS (since 0.8.0) but the canvas fit-to-view zoom shrinks them on screen (about 17 px). Needs a minimum zoom, or zoom-independent chrome.
+  - axe `target-size` (WCAG 2.5.8) is accepted in `SV_AXE_ACCEPTED` (test-a11y-browser.R): card and column-header icon buttons are 24 px in CSS (since 0.8.0) but the canvas fit-to-view zoom shrinks them on screen (about 17 px). Needs a minimum zoom, or zoom-independent chrome. Remove `target-size` from `SV_AXE_ACCEPTED` and re-run the matrix in Task 16.
 - Table version diff by key (data-lock comparisons between dataset versions).
 - Validation rules (ranges, allowed values, ID uniqueness) exporting `pointblank`-style checks.
 - PHI/PII column tagging that excludes tagged columns from the LLM schema context.

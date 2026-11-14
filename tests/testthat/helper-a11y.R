@@ -143,7 +143,8 @@ sv_axe_run <- function(b, context = ".sideview-container") {
     if (!is.null(res$exceptionDetails)) stop("could not inject axe-core")
   }
   js <- sprintf("(async () => { const c = document.querySelector(%s);
-    document.body.style.backgroundColor = getComputedStyle(c).backgroundColor;
+    const bg = getComputedStyle(c).backgroundColor;
+    if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') document.body.style.backgroundColor = bg;
     const r = await axe.run(c, {runOnly: {type: 'tag', values: %s}});
     return JSON.stringify(r.violations.map(v => ({ id: v.id, impact: v.impact || '', n_nodes: v.nodes.length,
       targets: v.nodes.slice(0, 3).map(n => n.target.join(' ')).join(' | ') }))); })()",

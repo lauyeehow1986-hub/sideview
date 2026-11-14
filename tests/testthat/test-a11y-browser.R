@@ -2,11 +2,17 @@
 
 test_that("every control has an accessible name (canvas, all modes)", {
   skip_if_no_browser()
+  sessions <- list()
+  withr::defer(for (b in sessions) {
+    try(b$close(), silent = TRUE)
+    app <- attr(b, "sv_app")
+    if (!is.null(app)) try(app$proc$kill(), silent = TRUE)
+  })
   for (mode in names(sv_a11y_pages())) {
     b <- sv_a11y_pages()[[mode]]$open(theme = "light", width = 1360, height = 820)
+    sessions[[mode]] <- b
     bad <- sv_ax_unnamed(sv_ax_tree(b))
     expect_equal(nrow(bad), 0, info = paste(mode, paste(bad$role, collapse = ", ")))
-    b$close()
   }
 })
 
@@ -30,7 +36,8 @@ test_that("Tab reaches the toolbar, then the drawer tabs, in DOM order", {
   expect_true(which(grepl("^Fit", seen))[1] < which(seen == "Pipeline")[1])
 })
 
-# Rules that belong to sub-project B (rule id -> reason). Empty until a violation is accepted.
+# Rules that belong to sub-project B (rule id -> reason). Task 16 must remove the target-size
+# entry (once B fixes it) and re-run this matrix.
 SV_AXE_ACCEPTED <- c(
   "target-size" = "Card controls are 24 px in CSS but the canvas scales cards (fit-to-view zoom < 1), so on-screen size is below 24 px; sub-project B (minimum zoom or zoom-independent chrome)."
 )
