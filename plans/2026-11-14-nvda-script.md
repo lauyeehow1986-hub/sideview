@@ -322,7 +322,20 @@ fixed.
 
 ### Pass status (2026-11-14)
 
-**Not run.** The reviewer declined computer-use access to NVDA, so its Speech Viewer could not be read and no
-speech text was captured. No task above has a pass or mismatch result. The script is ready to run by hand
-(or by a later session with NVDA access). The accessibility claim stays "checked with automated WCAG tests
-(axe) and real-browser keyboard tests; NVDA script written but not yet run; not yet tested by blind users".
+**Partly run (RStudio Viewer pane only, task 1 and a read of task 4's items).** NVDA 2026.2 with the Speech
+Viewer was driven through computer use against `viewer = "pane"`. Browsers are read-only for computer use, so the
+browser surface was not driven; the RStudio dialog was not tried. The Viewer pane is narrow and NVDA's focus order
+is hard to steer with synthetic keys, so tasks 2, 3 and 5 to 15 were **not run**.
+
+| task | surface | result | speech text (Speech Viewer) | note |
+|------|---------|--------|------------------------------|------|
+| 1 | RStudio Viewer | pass | before: `List view toggle button not pressed`; after activating: `sideview list view region Summary heading level 2`, then `List view` | matches the script; NVDA adds "region" |
+| 4 (sample) | RStudio Viewer | pass (read from the page, not by arrowing) | on screen: `DOMAIN, text, 1 values, 0 missing`; `USUBJID, Unique Subject Identifier, text, 10 values, 0 missing`; each followed by Sort, Filter, Inspect buttons | DM column list; the speech was not captured item by item |
+| other | any | not run | | |
+
+Also seen in the canvas (NVDA read the whole page): buttons have names and the toolbar toggle reports its pressed
+state. The page DOM puts the toolbar after the cards, so browse-mode `B` from the top reaches card buttons first.
+
+The accessibility claim therefore stays "checked with automated WCAG tests (axe) and real-browser keyboard tests;
+an NVDA script is written and task 1 was confirmed in the RStudio Viewer pane; the rest has not been run; not yet
+tested by blind users".

@@ -1117,3 +1117,8 @@ Each sub-project gets its own spec, plan and build, in this order:
 - **I2:** a widget that starts in the list view inside a hidden container (tab, `<details>`) no longer lays out its cards at 0 x 0. `publish()` skips the first layout while `view === 'list'`; `setView('canvas')` runs the deferred first layout. New real-browser test in test-layout-browser.R (widget at display:none, shown, switched to canvas: cards have size and do not overlap). It failed (1 failure, cards 1 and 2 overlap) with the JS edit reverted by hand and passes with it.
 - **Verified:** `node --check`, gui-test-runner.js all true, test-layout-browser.R 761 pass 0 fail, test-a11y-browser.R 344 pass 0 fail 0 skip (NOT_CRAN=true, one R process at a time).
 - **I3:** NEWS.md no longer says "no accepted exceptions" for the canvas: the target-size exemption is named.
+
+## NVDA pass, partial (2026-11-14)
+- Drove NVDA 2026.2 (Speech Viewer read by screenshot) against `viewer = "pane"` in RStudio. **Task 1 passed** (`List view toggle button not pressed`; after activation `sideview list view region Summary heading level 2`, `List view`). Task 4's column sentences were seen on screen. Tasks 2, 3, 5-15 NOT run; RStudio dialog and browser NOT run (browsers are read-only for computer use; the pane's focus order was hard to steer).
+- The public label ("NVDA script written but has not yet been run") is left as is: it understates one confirmed task. No claim of a full pass.
+- The earlier "stall" of the console after the launch was slow loading under a concurrent `devtools::check()` plus a console that had not repainted; the gadget did come up ("Listening on http://127.0.0.1:3845").
