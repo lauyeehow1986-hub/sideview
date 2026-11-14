@@ -1304,7 +1304,8 @@ sv_lazy_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_na
     unmatched_x = unmatched_x,
     unmatched_y = unmatched_y,
     type_issues = type_issues,
-    hints = list()
+    hints = list(),
+    x_name = x_name, y_name = y_name
   )
   out$strict_args <- sv_join_strict_args(core, n_x, n_y, rule)
   if (!is.null(rule)) {

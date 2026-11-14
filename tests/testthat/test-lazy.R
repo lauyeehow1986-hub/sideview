@@ -1871,3 +1871,23 @@ test_that("lazy supp check never collects the parent", {
   expect_gt(length(sizes), 4L)   # the spy saw the calls
   expect_lte(max(sizes), max(nrow(supp), sample_n))
 })
+
+test_that("lazy join says the same", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  fx <- lazy_fixture()
+  for (nm in c("text", "pair")) {
+    sc <- join_scenarios()[[nm]]
+    want <- sv_say_join(sv_join_diagnostics(sc$x, sc$y, sc$by, x_name = "patients", y_name = "visits"),
+                        "patients", "visits")
+    for (kind in c("duckdb", "arrow")) {
+      got <- sv_say_join(
+        sv_lazy_join_diagnostics(join_side(sc$x, kind, fx$con, "jx"), join_side(sc$y, kind, fx$con, "jy"),
+                                 sc$by, x_name = "patients", y_name = "visits"),
+        "patients", "visits")
+      expect_identical(got, want, label = paste(nm, kind))
+    }
+  }
+})

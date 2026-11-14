@@ -9,6 +9,9 @@
 * Contrast and control-size fixes found by the matrix. A new `a11y` CI job runs these tests with axe-core 4.10.3 pinned.
 * Internal sentence helpers (`sv_say_*` in R, `say*` on `SideviewPipeline`) for plain-text output, with R and JS
   twins held equal by `test-say.R`.
+* `print()` of a join check (`sv_join_diagnostics()`) now reads as plain sentences: "Join of patients and visits by
+  patient_id is one to many.", match counts with percentages, sample unmatched keys, rows by join type, and each hint
+  or warning as its own sentence. The result also carries `x_name` and `y_name`.
 
 # sideview 0.7.0
 

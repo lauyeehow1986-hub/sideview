@@ -1357,7 +1357,7 @@
       relationship: core.relationship, rows: core.rows,
       unmatched_x: core.unmatched_x.slice(0, sampleN).map(decodeKey),
       unmatched_y: core.unmatched_y.slice(0, sampleN).map(decodeKey),
-      type_issues: [], hints: []
+      type_issues: [], hints: [], x_name: xName, y_name: yName
     };
     byX.forEach(function (c, i) {
       if (kindsX[i] !== kindsY[i]) {
@@ -2335,6 +2335,57 @@
 
   function sayCheckLines(x) { return (x || []).map(String); }
 
+  // A sentence ends in ".", "!" or "?"; add a "." when it does not (twin of sv_say_sentence).
+  function saySentence(s) { s = String(s); return /[.!?]$/.test(s) ? s : s + '.'; }
+
+  // A join check as plain sentences (twin of sv_say_join in R/say.R).
+  function sayJoin(d, xName, yName) {
+    var X = xName === undefined || xName === null ? 'x' : xName;
+    var Y = yName === undefined || yName === null ? 'y' : yName;
+    if (d.error !== undefined && d.error !== null) return ['Join check failed: ' + saySentence(d.error)];
+    var key = sayList(d.by.map(function (p) { return p.left === p.right ? p.left : p.left + ' = ' + p.right; }));
+    var out = ['Join of ' + X + ' and ' + Y + ' by ' + key + ' is ' + d.relationship.split('-').join(' ') + '.'];
+    if (d.rule) {
+      out.push('Date rule: ' + ruleLabel(d.rule, d.rule_kind) + '.');
+      if (d.rule_dropped_x + d.rule_dropped_y > 0) {
+        out.push('The rule drops ' + sayNum(d.rule_dropped_x) + ' ' + X + ' rows and ' +
+          sayNum(d.rule_dropped_y) + ' ' + Y + ' rows.');
+      }
+    }
+    var matchLine = function (m, n, nm) {
+      var pct = sayPct(m, n);
+      return sayNum(m) + ' of ' + sayNum(n) + ' ' + nm + ' rows match' + (pct === null ? '' : ', ' + pct) + '.';
+    };
+    out.push(matchLine(d.matched_x, d.n_x, X), matchLine(d.matched_y, d.n_y, Y));
+    var missLine = function (n, matched, dup, samples, nm) {
+      var k = n - matched;
+      if (k <= 0) return;
+      var eg = !samples.length ? '' : dup === 0 ? ', for example ' + saySamples(samples, k) :
+        ', for example keys ' + saySamples(samples);
+      out.push(sayNum(k) + ' ' + nm + ' rows have no match' + eg + '.');
+    };
+    missLine(d.n_x, d.matched_x, d.dup_keys_x, d.unmatched_x, X);
+    missLine(d.n_y, d.matched_y, d.dup_keys_y, d.unmatched_y, Y);
+    if (d.na_x > 0) out.push(sayNum(d.na_x) + ' ' + X + ' rows have a missing key.');
+    if (d.na_y > 0) out.push(sayNum(d.na_y) + ' ' + Y + ' rows have a missing key.');
+    var types = [['left', 'left_join'], ['inner', 'inner_join'], ['right', 'right_join'],
+                 ['full', 'full_join'], ['semi', 'semi_join'], ['anti', 'anti_join']];
+    var parts = [];
+    types.forEach(function (t) {
+      var v = d.rows[t[1]];
+      if (v !== undefined && v !== null) parts.push(t[0] + ' ' + sayNum(v));
+    });
+    out.push('Rows by join type: ' + parts.join(', ') + '.');
+    (d.hints || []).forEach(function (h) {
+      var gain = [];
+      if (h.extra_x > 0) gain.push(sayNum(h.extra_x) + ' more ' + X + ' rows');
+      if (h.extra_y > 0) gain.push(sayNum(h.extra_y) + ' more ' + Y + ' rows');
+      out.push(h.label.charAt(0).toUpperCase() + h.label.slice(1) + ' would match ' + gain.join(' and ') + '.');
+    });
+    (d.type_issues || []).concat(d.warnings || []).forEach(function (s) { out.push(saySentence(s)); });
+    return out;
+  }
+
   var api = {
     Pipeline: Pipeline,
     sayPct: sayPct,
@@ -2343,6 +2394,7 @@
     sayValue: sayValue,
     sayNum: sayNum,
     sayCheckLines: sayCheckLines,
+    sayJoin: sayJoin,
     suppStep: suppStep,
     splitReply: splitReply,
     joinDiagnostics: joinDiagnostics,

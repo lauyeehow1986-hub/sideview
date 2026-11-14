@@ -117,7 +117,8 @@ sv_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_name = 
     unmatched_x = sv_join_decode(utils::head(core$unmatched_x, sample_n)),
     unmatched_y = sv_join_decode(utils::head(core$unmatched_y, sample_n)),
     type_issues = sv_join_type_issues(x, y, by_x, by_y, x_name, y_name),
-    hints = list()
+    hints = list(),
+    x_name = x_name, y_name = y_name
   )
   out$strict_args <- sv_join_strict_args(core, nrow(x), nrow(y), rule)
   if (!is.null(rule)) {
@@ -160,26 +161,7 @@ sv_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_name = 
 
 #' @export
 print.sv_join_diagnostics <- function(x, ...) {
-  by <- ifelse(x$by$x == x$by$y, x$by$x, paste0(x$by$x, " = ", x$by$y))
-  pct <- function(p) sprintf("%.1f%%", 100 * p)
-  cat("<sv_join_diagnostics> by ", paste(by, collapse = ", "), "\n", sep = "")
-  cat(sprintf("  relationship: %s\n", x$relationship))
-  cat(sprintf("  x rows matched: %s of %s (%s)\n", fmt_n(x$matched_x), fmt_n(x$n_x), pct(x$match_rate_x)))
-  cat(sprintf("  y rows matched: %s of %s (%s)\n", fmt_n(x$matched_y), fmt_n(x$n_y), pct(x$match_rate_y)))
-  cat("  rows after join:", paste(sprintf("%s %s", sub("_join$", "", names(x$rows)),
-                                           vapply(x$rows, fmt_n, character(1))), collapse = " | "), "\n")
-  if (!is.null(x$rule)) {
-    cat("  rule: ", sv_join_rule_label(x$rule, x$rule_kind), "\n", sep = "")
-    cat(sprintf("  dropped by the rule: %s x rows, %s y rows\n", fmt_n(x$rule_dropped_x), fmt_n(x$rule_dropped_y)))
-  }
-  if (length(x$unmatched_x)) cat("  unmatched in x:", paste(x$unmatched_x, collapse = "; "), "\n")
-  if (length(x$unmatched_y)) cat("  unmatched in y:", paste(x$unmatched_y, collapse = "; "), "\n")
-  for (h in x$hints) {
-    gain <- c(if (h$extra_x > 0) paste(fmt_n(h$extra_x), "more x rows"),
-              if (h$extra_y > 0) paste(fmt_n(h$extra_y), "more y rows"))
-    cat(sprintf("  hint: %s would match %s\n", h$label, paste(gain, collapse = " and ")))
-  }
-  for (w in c(x$type_issues, x$warnings)) cat("  ! ", w, "\n", sep = "")
+  cat(sv_say_join(x, x$x_name %||% "x", x$y_name %||% "y"), sep = "\n")
   invisible(x)
 }
 

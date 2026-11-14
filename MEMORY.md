@@ -4,6 +4,11 @@ Running log of what changed, why, and how it was verified. Newest entries first.
 Each entry: **date — change — why — verification**. Keep the "Open issues" table current.
 
 ---
+### 2026-11-14 - Join checks as sentences: sv_say_join / sayJoin (A1, Task 5)
+- **Change:** `sv_say_join(d, x_name, y_name)` in `R/say.R` and JS twin `sayJoin(d, xName, yName)` (plus `saySentence`); `print.sv_join_diagnostics()` now prints those sentences. `sv_join_diagnostics()`, `sv_lazy_join_diagnostics()` and `joinDiagnostics()` carry `x_name` / `y_name`.
+- **Decisions:** the unmatched sentence is left out when no sample keys exist (for example only NA-key rows are unmatched); a nearest-match rule has no right/full counts, so "Rows by join type" omits them; a hint with `extra_x == 0` drops the "0 more X rows" part; an error ending in `.` gets no second one.
+- **Verified:** test-say.R 51 passed (R and JS sentences identical for one-to-one, one-to-many, multi-key hint, date rule, empty, NA, duplicate and Unicode keys); the ASCII and 100-character checks hold for the four fixtures. test-diagnostics 5123 passed, test-lazy 3724 passed (duckdb and arrow say the same as in memory), test-join-rules 10753 passed. `node --check` clean. No UI change.
+
 ### 2026-11-14 - Sentence helpers with R/JS twins (A1, Task 4)
 - **Change:** `R/say.R` (`sv_say_pct`, `sv_say_list`, `sv_say_samples`, `sv_say_value`, `sv_say_num`, `sv_say_check_lines`, all internal) and JS twins `sayPct`, `sayList`, `saySamples`, `sayValue`, `sayNum`, `sayCheckLines` on `SideviewPipeline`. `sv_say_check_lines()` returns lines whole; the 100-character limit is checked by tests, not applied.
 - **Gotcha:** `jsonlite::toJSON()` rounds to 4 digits by default, which made a number twin test fail falsely; pass `digits = NA`.
