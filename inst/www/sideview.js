@@ -5039,6 +5039,8 @@ function sendToShiny(name, value) {
     return /^SUPP[A-Z]{2}$/.test(d) || d === 'SUPPQUAL';
   }
 
+  SideviewEngine.prototype.suppIsTag = function (tag) { return suppIsTag(tag); };
+
   function suppCount(n, one, many) {
     var v = Number(n) || 0;
     return global.SideviewPipeline.fmtN(v) + ' ' + (v === 1 ? one : many);

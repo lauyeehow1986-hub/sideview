@@ -924,9 +924,10 @@
   };
 
   ListView.prototype.joinStepFor = function (a, b) {
-    return this.engine.pipeline.steps.filter(function (s) {
-      return s.kind === 'join' && ((s.table === a && s.right === b) || (s.table === b && s.right === a));
-    })[0] || null;
+    var steps = this.engine.pipeline.steps.filter(function (s) { return s.kind === 'join'; });
+    // the forward step wins, as in Pipeline.addJoinKeys
+    return steps.filter(function (s) { return s.table === a && s.right === b; })[0] ||
+      steps.filter(function (s) { return s.table === b && s.right === a; })[0] || null;
   };
 
   /** Focus a pipeline step's item; the Pipeline heading when the item is not on screen. */
@@ -1022,7 +1023,7 @@
     });
     j.suggestStatus.textContent = items.length ?
       plural(items.length, 'suggested join.', 'suggested joins.') : 'No suggested joins found.';
-    this.engine.announce(j.suggestStatus.textContent);
+    if (this.engine.view === 'list') this.engine.announce(j.suggestStatus.textContent);
   };
 
   /** A CDISC key set (or a SUPP merge) as one list item. */
@@ -1100,12 +1101,6 @@
 
   // ---- merge SUPP -------------------------------------------------------------------
 
-  function suppTag(tag) {
-    if (!tag || !tag.domain) return false;
-    var d = String(tag.domain).toUpperCase();
-    return /^SUPP[A-Z]{2}$/.test(d) || d === 'SUPPQUAL';
-  }
-
   ListView.prototype.suppBody = function () { return this.el.querySelector('[data-sv-lv-body="supp"]'); };
 
   ListView.prototype.buildSupp = function (body) {
@@ -1123,7 +1118,7 @@
     var seen = {};
     var prev = this._suppNone;
     eng.cards.forEach(function (meta, id) {
-      if (!suppTag(meta.cdisc)) return;
+      if (!eng.suppIsTag(meta.cdisc)) return;
       var info = eng.suppTargets(meta);
       var vt = meta.element && meta.element._virtualTable ? meta.element._virtualTable : null;
       var sig = JSON.stringify([meta.name, info.rdomain, info.missing,

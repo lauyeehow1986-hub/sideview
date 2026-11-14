@@ -808,21 +808,47 @@ test_that("Add join step adds one step and draws its spline", {
   sv_js(b, paste0(sv_lv_join_btn("Add join step"), ".click(); true"))
   expect_equal(sv_js(b, paste0(sv_eng, ".pipeline.enabledCount()")), 1)
   expect_equal(sv_js(b, "document.querySelectorAll('.sideview-connector-svg path').length"), 1)
-  expect_true(sv_js(b, sprintf("(() => { const a = document.activeElement;
-    return !!a && !!a.closest('.sideview-listview, .sideview-drawer') && (a.hasAttribute('data-step-id') ||
-      /pipeline/i.test(a.textContent)); })()")))
+  foc <- sv_js(b, "(() => { const a = document.activeElement;
+    return { step: a.getAttribute('data-step-id'), tag: a.tagName, text: a.textContent.slice(0, 40) }; })()")
+  want_id <- sv_js(b, paste0(sv_eng, ".pipeline.steps[0].id"))
+  expect_true(identical(foc$step, want_id) ||
+                (grepl("^H[1-6]$", foc$tag) && grepl("Pipeline", foc$text)))
 })
 
 test_that("a failing check keeps Add disabled", {
   skip_if_no_browser()
   b <- sv_open_gadget()
   sv_lv_join_form(b)
-  sv_lv_pick(b, "rule-shape", "between")
+  sv_lv_pick(b, "rule-shape", "before")
+  # text columns are not dates
+  sv_lv_pick(b, "rule-xCol", "patient_id")
+  sv_lv_pick(b, "rule-yCol", "pid")
   sv_js(b, paste0(sv_lv_join_btn("Check join"), ".click(); true"))
-  expect_true(sv_wait_js(b, sprintf("%s.querySelectorAll('[data-sv-join-result] p').length > 0 &&
+  expect_true(sv_wait_js(b, sprintf("%s.querySelector('[data-sv-join-result] p') &&
     %s.querySelector('[data-sv-join-result] p').textContent !== 'Checking the join.'", sv_lv_join, sv_lv_join),
     timeout = 30))
+  paras <- sv_lv_join_paras(b)
+  expect_gt(length(paras), 0)
+  expect_match(paras[1], "(?i)(not|cannot|can't|no |error|date)")
   expect_true(sv_js(b, paste0(sv_lv_join_btn("Add join step"), ".disabled")))
+})
+
+test_that("key pairs add and remove, the last one stays, input survives view switches", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_lv_join_form(b)
+  n <- function() sv_js(b, sprintf("%s.querySelectorAll('.sideview-lv-pair').length", sv_lv_join))
+  sv_js(b, paste0(sv_lv_join_btn("Add another key pair"), ".click(); true"))
+  expect_equal(n(), 2)
+  sv_js(b, sprintf("%s.querySelectorAll('[data-sv-lv-action=\"remove-pair\"]')[1].click(); true", sv_lv_join))
+  expect_equal(n(), 1)
+  expect_true(sv_js(b, sprintf("%s.querySelector('[data-sv-lv-action=\"remove-pair\"]').disabled", sv_lv_join)))
+  for (i in 1:3) {
+    sv_js(b, paste0(sv_eng, ".setView('canvas'); ", sv_eng, ".setView('list'); true"))
+  }
+  got <- sv_js(b, sprintf("[...%s.querySelectorAll('select[data-sv-field]')].slice(0, 4).map(s => s.value)", sv_lv_join))
+  expect_identical(as.character(unlist(got)), c("patients", "visits", "patient_id", "pid"))
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-listview').length"), 1)
 })
 
 sv_lv_cdisc_page <- function() {
@@ -876,12 +902,45 @@ test_that("SUPP check and merge from the list", {
 
 test_that("reply lands after a view switch", {
   skip_if_no_browser()
+  fx <- sv_set_fixture()
   b <- sv_open_gadget()
   sv_lv_join_form(b)
   sv_js(b, paste0(sv_lv_join_btn("Check join"), ".click(); ", sv_eng, ".setView('canvas'); true"))
-  Sys.sleep(1)
   sv_js(b, paste0(sv_eng, ".setView('list'); true"))
-  expect_true(sv_wait_js(b, sprintf("%s.querySelectorAll('[data-sv-join-result] p').length > 0 &&
-    %s.querySelector('[data-sv-join-result] p').textContent !== 'Checking the join.'", sv_lv_join, sv_lv_join),
-    timeout = 30))
+  want <- sv_say_join(sv_join_diagnostics(fx$patients, fx$visits, by = c(patient_id = "pid")),
+                      "patients", "visits")
+  expect_true(sv_wait_js(b, sprintf("%s.querySelectorAll('[data-sv-join-result] p').length === %d",
+                                    sv_lv_join, length(want)), timeout = 30))
+  expect_identical(sv_lv_join_paras(b), want)
+})
+
+test_that("hostile names are literal text in the join form, suggestions and SUPP sections", {
+  skip_if_no_browser()
+  root <- sv_pkg_root()
+  if (!nzchar(root)) skip("needs the source tree (helper-cdisc.R)")
+  helper <- normalizePath(file.path(root, "tests", "testthat", "helper-cdisc.R"), winslash = "/")
+  app <- sv_start_app(app_expr = sprintf(r"({ source('%s'); f <- sv_cdisc_fixtures();
+    a <- f$ae; names(a)[names(a) == 'AETERM'] <- 'te<b>x"t é';
+    s <- list(`ae<i>"é x` = a, `supp <u>"é` = f$suppae);
+    do.call(sideview, c(s, list(cdisc = c(`ae<i>"é x` = 'AE', `supp <u>"é` = 'SUPPAE'), run = FALSE))) })", helper))
+  b <- sv_open_page(app$url, 1360, 820, wait_for = sv_wait_eng)
+  withr::defer({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
+  sv_js(b, "window.__errs = []; window.addEventListener('error', e => window.__errs.push(String(e.message))); true")
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  sv_js(b, paste0(sv_lv_join_btn("Suggest joins"), ".click(); true"))
+  expect_true(sv_wait_js(b, sprintf("%s.querySelectorAll('[data-sv-suggestions] li').length > 0", sv_lv_join), timeout = 30))
+  r <- sv_js(b, sprintf("(() => { const j = %s, s = document.querySelector('.sideview-listview [data-sv-lv-body=\"supp\"]');
+    return { inj: j.querySelectorAll('b, i, u, img').length + s.querySelectorAll('b, i, u, img').length,
+      opts: [...j.querySelectorAll('select')[0].options].map(o => o.textContent),
+      cols: [...j.querySelectorAll('select[data-sv-field=\"left-column\"] option')].map(o => o.textContent),
+      sug: [...j.querySelectorAll('[data-sv-suggestions] li')].map(l => l.textContent),
+      h3: [...s.querySelectorAll('h3')].map(h => h.textContent), errs: window.__errs }; })()", sv_lv_join))
+  expect_equal(r$inj, 0)
+  expect_true(any(grepl("ae<i>\"é x", unlist(r$opts), fixed = TRUE)))
+  expect_true(any(grepl("supp <u>\"é", unlist(r$h3), fixed = TRUE)))
+  expect_length(r$errs, 0)
+  # pick the hostile left table: its hostile column shows as text
+  sv_lv_pick(b, "left-table", "ae<i>\"é x")
+  cols <- unlist(sv_js(b, sprintf("[...%s.querySelectorAll('select[data-sv-field=\"left-column\"] option')].map(o => o.textContent)", sv_lv_join)))
+  expect_true('te<b>x"t é' %in% cols)
 })
