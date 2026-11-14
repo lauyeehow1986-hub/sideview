@@ -319,3 +319,10 @@ to the list with `List view` and the heading `Summary, heading level 2`.
 Copy the table from the preamble into `MEMORY.md` as the pass record. For a mismatch that is ours, fix it in its
 owning file and add a test in `tests/testthat/test-a11y-browser.R`; RStudio-pane weaknesses are documented, not
 fixed.
+
+### Pass status (2026-11-14)
+
+**Not run.** The reviewer declined computer-use access to NVDA, so its Speech Viewer could not be read and no
+speech text was captured. No task above has a pass or mismatch result. The script is ready to run by hand
+(or by a later session with NVDA access). The accessibility claim stays "checked with automated WCAG tests
+(axe) and real-browser keyboard tests; NVDA script written but not yet run; not yet tested by blind users".

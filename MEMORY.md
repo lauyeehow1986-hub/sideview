@@ -1085,3 +1085,8 @@ Each sub-project gets its own spec, plan and build, in this order:
 
 ## Task 13 fix round 1
 - sparkStats no longer scrapes preview-based badge counts (lazy/preview/truncated) or treats ~N distinct as exact; Filter button aria-disabled until openBuilder. Verified: a11y/lazy/layout browser tests, assets, computer-use-gui, node --check, gui-test-runner parity with BASE.
+
+## Task 17: NVDA script written, pass not run (2026-11-14)
+- `plans/2026-11-14-nvda-script.md` (15 tasks) and `tests/testthat/helper-nvda.R` (synthetic DM/AE/SUPPAE/labs fixture) are committed. The launch snippet builds a shiny.appobj.
+- **The NVDA pass itself was NOT run:** access to NVDA was declined, so no speech was read. No results are claimed. Unverified script assumptions: filter step text `AE filter AESEV == "SEVERE"`, join step text `DM left join AE on USUBJID`, header badges "N values"/"N missing".
+- Honest label until a pass is done: "automated WCAG tests (axe) and real-browser keyboard tests; NVDA script not yet run; not yet tested by blind users".
