@@ -6306,7 +6306,15 @@ function sendToShiny(name, value) {
 
   /** The id of a pipeline step's list item: one per step, safe for any table name. */
   SideviewEngine.prototype.stepElId = function (s) {
-    return (typeof this.options.ns === 'string' ? this.options.ns : '') + 'sv-step-' + String(s.id).replace(/[^A-Za-z0-9_-]/g, '_');
+    var raw = String(s.id);
+    var safe = raw.replace(/[^A-Za-z0-9_-]/g, '_');
+    if (safe !== raw) {
+      // two different ids must not collapse into one: add a hash of the original
+      var h = 0;
+      for (var i = 0; i < raw.length; i++) h = (Math.imul(h, 31) + raw.charCodeAt(i)) | 0;
+      safe += '-' + (h >>> 0).toString(36);
+    }
+    return (typeof this.options.ns === 'string' ? this.options.ns : '') + 'sv-step-' + safe;
   };
 
   /** A drawer pane node, wherever it is now (the drawer, or the list view after movePanes('list')). */
@@ -6330,7 +6338,7 @@ function sendToShiny(name, value) {
     var self = this;
     Object.keys(BUILDER_TABS).forEach(function (kind) {
       var pane = self.paneNode(kind);
-      if (pane && self.builderStale(pane)) self.renderBuilder(kind);
+      if (pane && self.builderStale(pane)) self.renderBuilder(kind, undefined, true);
     });
   };
 
@@ -6428,9 +6436,25 @@ function sendToShiny(name, value) {
     return true;
   };
 
-  SideviewEngine.prototype.renderBuilder = function (kind, keepTable) {
+  /**
+   * Draw a builder. With preserve, what was typed or picked in the old one comes back (by field name and
+   * position; a choice that no longer exists is dropped), and so does focus.
+   */
+  SideviewEngine.prototype.renderBuilder = function (kind, keepTable, preserve) {
     var pane = this.paneNode(kind);
     if (!pane) return;
+    var saved = null, focusAt = null;
+    if (preserve) {
+      saved = [];
+      var seen = {};
+      var act = document.activeElement;
+      pane.querySelectorAll('[data-field]').forEach(function (f) {
+        var n = seen[f.dataset.field] = (seen[f.dataset.field] || 0) + 1;
+        saved.push({ f: f.dataset.field, n: n, v: f.value });
+        if (f === act) focusAt = { f: f.dataset.field, n: n };
+      });
+      saved.rows = pane.querySelectorAll('.sideview-builder-row').length;
+    }
     var schemas = this.tableSchemas();
     if (!schemas.length) {
       pane.innerHTML = '<p class="sideview-drawer-desc">Add a table to the canvas to build steps.</p>';
@@ -6478,6 +6502,30 @@ function sendToShiny(name, value) {
     pane.innerHTML = '<div class="sideview-builder" data-builder="' + kind + '">' + head + body +
       '<div class="sideview-builder-actions"><button type="button" class="sideview-btn sideview-btn-primary" data-builder-action="submit">' +
       submit + '</button></div></div>';
+    if (saved) {
+      var b = pane.querySelector('.sideview-builder');
+      var rowsEl = b && b.querySelector('.sideview-builder-rows');
+      while (rowsEl && b.querySelectorAll('.sideview-builder-row').length < saved.rows) {
+        rowsEl.insertAdjacentHTML('beforeend', this.builderRow(kind, cols));
+      }
+      var cnt = {};
+      var byKey = {};
+      b.querySelectorAll('[data-field]').forEach(function (f) {
+        var n = cnt[f.dataset.field] = (cnt[f.dataset.field] || 0) + 1;
+        byKey[f.dataset.field + '#' + n] = f;
+      });
+      saved.forEach(function (sv) {
+        var f = byKey[sv.f + '#' + sv.n];
+        if (!f || sv.f === 'table') return;
+        if (f.tagName === 'SELECT' && !f.multiple) {
+          if (Array.prototype.some.call(f.options, function (o) { return o.value === sv.v; })) f.value = sv.v;
+        } else if (f.tagName !== 'SELECT') {
+          f.value = sv.v;
+        }
+      });
+      var back = focusAt && byKey[focusAt.f + '#' + focusAt.n];
+      if (back) { try { back.focus({ preventScroll: true }); } catch (e) { back.focus(); } }
+    }
   };
 
   function fieldValue(root, name) {
