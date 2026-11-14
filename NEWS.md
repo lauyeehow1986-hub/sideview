@@ -1,5 +1,14 @@
 # sideview (development version)
 
+## Live announcements
+
+* The canvas has a polite live region (`.sideview-announcer`, `role="status"`) that says what happened: a finished
+  join, SUPP or column check reads its first sentence, a step added, removed, undone or redone reads
+  "Join step added. 3 steps.", Copy and Insert read "Code copied." / "Code inserted.", and a Copilot reply reads
+  "Copilot replied, 4 lines of code." It works in the gadget, the widget and a module.
+* Toasts are no longer a live region of their own. Error toasts are `role="alert"`; the other toasts are spoken through
+  the announcer.
+
 ## Accessibility test harness
 
 * New real-browser accessibility tests (`test-a11y-browser.R`): every canvas control has an accessible name in the

@@ -679,6 +679,13 @@ function sendToShiny(name, value) {
     this.colProfiles = {};
     this.colProfilePending = {};
     this.joinCheckStepId = null;
+    // Live-region announcements (see announce()); the last 50 messages are kept for tests.
+    this.announceLog = [];
+    this._annQueue = [];
+    this._annTimer = null;
+    this._annNextAt = 0;
+    this._annPrev = null;
+    this._annSteps = [];
 
     // The composable pipeline is the single source of the generated code.
     if (!global.SideviewPipeline) {
@@ -689,6 +696,7 @@ function sendToShiny(name, value) {
       pipe: this.options.pipe,
       onChange: function (_p, label) {
         if (label === 'undo' || label === 'redo') self.forgetSuppChecks(null);
+        self.announceStepChange(label);
         self.renderPipeline();
         // a join check result is not a change of the work; everything else is
         if (label !== 'checks') self.scheduleSnapshot();
@@ -696,6 +704,7 @@ function sendToShiny(name, value) {
     });
 
     this.initDOM();
+    this.ensureAnnouncer();
     // Focusable (not in the tab order) so clicks give it keyboard focus.
     if (!this.container.hasAttribute('tabindex')) this.container.setAttribute('tabindex', '-1');
     this.ensureToolbarExtras();
@@ -1589,6 +1598,8 @@ function sendToShiny(name, value) {
 
   SideviewEngine.prototype.destroy = function () {
     this.unregisterEngine();
+    if (this._annTimer) { clearTimeout(this._annTimer); this._annTimer = null; }
+    this._annQueue = [];
     if (this._snapshotTimer) { clearTimeout(this._snapshotTimer); this._snapshotTimer = null; }
     if (this._cardResizeObserver) { this._cardResizeObserver.disconnect(); this._cardResizeObserver = null; }
     this._globalListeners.forEach(function (l) {
@@ -2171,11 +2182,12 @@ function sendToShiny(name, value) {
         self.toggleShortcuts(false);
       } else if (action === 'inject-script') {
         if (!self.sendToR('inject_script', { code: self.generatedCode }, 'Insert Script')) return;
+        self.announce('Code inserted.');
         if (self.shouldAutoClear()) {
           self.clearOperations(true);
-          self.showToast('Code inserted into script and operations cleared!', 'success');
+          self.showToast('Code inserted into script and operations cleared!', 'success', null, { silent: true });
         } else {
-          self.showToast('Code inserted into script! (Click Clear to reset)', 'success');
+          self.showToast('Code inserted into script! (Click Clear to reset)', 'success', null, { silent: true });
         }
       } else if (action === 'send-console') {
         if (!self.sendToR('send_console', { code: self.generatedCode }, 'Run Console')) return;
@@ -2194,13 +2206,14 @@ function sendToShiny(name, value) {
       } else if (action === 'copy-code') {
         if (navigator.clipboard && self.generatedCode) {
           navigator.clipboard.writeText(self.generatedCode);
+          self.announce('Code copied.');
           btn.textContent = 'Copied!';
           setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
           if (self.shouldAutoClear()) {
             self.clearOperations(true);
-            self.showToast('Code copied to clipboard and operations cleared!', 'success');
+            self.showToast('Code copied to clipboard and operations cleared!', 'success', null, { silent: true });
           } else {
-            self.showToast('Code copied to clipboard! (Click Clear to reset)', 'info');
+            self.showToast('Code copied to clipboard! (Click Clear to reset)', 'info', null, { silent: true });
           }
         }
       } else if (action === 'pipeline-undo') {
@@ -2339,6 +2352,7 @@ function sendToShiny(name, value) {
         var codeBlock = bubble ? bubble.querySelector('.sideview-chat-code') : null;
         if (codeBlock && codeBlock.textContent) {
           self.send('inject_script', { code: codeBlock.textContent.trim() });
+          self.announce('Code inserted.');
         }
       }
     });
@@ -4267,11 +4281,11 @@ function sendToShiny(name, value) {
   };
 
   SideviewEngine.prototype.undoPipeline = function () {
-    if (this.pipeline.undo()) this.showToast('Undid last pipeline change', 'info');
+    if (this.pipeline.undo()) this.showToast('Undid last pipeline change', 'info', null, { silent: true });
   };
 
   SideviewEngine.prototype.redoPipeline = function () {
-    if (this.pipeline.redo()) this.showToast('Redid pipeline change', 'info');
+    if (this.pipeline.redo()) this.showToast('Redid pipeline change', 'info', null, { silent: true });
   };
 
   // ---- the date-rule row and Strict on a join step ----------------------------------
@@ -4718,6 +4732,9 @@ function sendToShiny(name, value) {
     var step = this.pipeline.steps.filter(function (s) { return s.kind === 'join'; })
       .filter(function (s) { return this.joinDiagSig(s) === data.id; }, this)[0];
     this.announceJoinDiag(data, step);
+    try {
+      this.announce(global.SideviewPipeline.sayJoin(data, step ? step.table : 'x', step ? step.right : 'y')[0]);
+    } catch (e) { /* a check the sentence cannot describe stays silent */ }
     this.renderPipeline();
     this.renderJoinCheck();
   };
@@ -5211,6 +5228,7 @@ function sendToShiny(name, value) {
         // stored first: adding the step renders the pipeline, which reads it
         this.suppChecks[ctx.key] = d;
         this.reportFocus = { kind: 'supp', id: ctx.key };
+        this.announceSupp(ctx, d);
         this.pipeline.add(P.suppStep(ctx.parent, ctx.supp, ctx.rdomain, d.plan), 'supp');
         if (d.status === 'error') this.showToast('Merge ' + ctx.supp + ' into ' + ctx.parent + ': ' + this.suppStops(d, ctx.parent), 'warning');
         this.renderJoinCheck();
@@ -5221,11 +5239,19 @@ function sendToShiny(name, value) {
       this.widenSuppClashes(d, ctx.parent, ctx.key, false);
       this.suppChecks[ctx.key] = d;
     }
+    this.announceSupp(ctx, this.suppChecks[ctx.key]);
     // a quiet check answered synchronously is drawn by the render that asked; a reply from R comes
     // later and is drawn now (the stored check stops the render from asking again)
     if (ctx.quiet && this._suppSync) return;
     this.renderPipeline();
     this.renderJoinCheck();
+  };
+
+  SideviewEngine.prototype.announceSupp = function (ctx, chk) {
+    if (!chk || ctx.quiet) return;
+    try {
+      this.announce(global.SideviewPipeline.saySupp(chk, ctx.parent, ctx.supp)[0]);
+    } catch (e) { /* silent */ }
   };
 
   /** The stored check of a supp step; asks for one (with the step's plan) when there is none. */
@@ -5551,6 +5577,10 @@ function sendToShiny(name, value) {
       data.histogram.breaks = asArray(data.histogram.breaks);
     }
     this.colProfiles[data.id] = data;
+    try {
+      var pid = JSON.parse(data.id);
+      this.announce(global.SideviewPipeline.sayProfile(data, pid[1])[0]);
+    } catch (e) { /* silent */ }
     var t = this.inspectTarget;
     if (t && JSON.stringify([t.table, t.column]) === data.id) this.renderInspector();
   };
@@ -6781,15 +6811,99 @@ function sendToShiny(name, value) {
     }
   };
 
+  // ---- live-region announcements ----------------------------------------------------
+
+  SideviewEngine.prototype.ensureAnnouncer = function () {
+    var el = this.container.querySelector('.sideview-announcer');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'sideview-announcer sv-sr-only';
+      el.setAttribute('aria-live', 'polite');
+      el.setAttribute('role', 'status');
+      el.setAttribute('aria-atomic', 'true');
+      this.container.appendChild(el);
+    }
+    return el;
+  };
+
+  // Queue text for the polite live region. Messages are at least 500 ms apart; text equal to the
+  // previous message is cleared and set again 50 ms later so a screen reader speaks it again.
+  SideviewEngine.prototype.announce = function (text) {
+    if (text === undefined || text === null || text === '') return;
+    text = String(text);
+    this.announceLog.push(text);
+    if (this.announceLog.length > 50) this.announceLog.shift();
+    this._annQueue.push(text);
+    this.pumpAnnouncements();
+  };
+
+  SideviewEngine.prototype.pumpAnnouncements = function () {
+    var self = this;
+    if (this._annTimer || !this._annQueue.length) return;
+    var wait = Math.max(0, this._annNextAt - Date.now());
+    this._annTimer = setTimeout(function () {
+      self._annTimer = null;
+      var msg = self._annQueue.shift();
+      if (msg === undefined) return;
+      var el = self.ensureAnnouncer();
+      var repeat = msg === self._annPrev;
+      self._annPrev = msg;
+      self._annNextAt = Date.now() + 500 + (repeat ? 50 : 0);
+      if (repeat) {
+        el.textContent = '';
+        setTimeout(function () { el.textContent = msg; }, 50);
+      } else {
+        el.textContent = msg;
+      }
+      self.pumpAnnouncements();
+    }, wait);
+  };
+
+  var STEP_KIND_WORDS = {
+    join: 'Join', filter: 'Filter', arrange: 'Sort', mutate: 'Mutate', recode: 'Recode',
+    summarise: 'Summarise', pivot: 'Reshape', supp: 'SUPP merge', custom: 'Custom'
+  };
+
+  // "Join step added. 3 steps." / "Undone. 2 steps." / "Redone. 3 steps."
+  SideviewEngine.prototype.stepAnnouncement = function (kind, verb, count) {
+    var n = count + (count === 1 ? ' step.' : ' steps.');
+    if (verb === 'undone') return 'Undone. ' + n;
+    if (verb === 'redone') return 'Redone. ' + n;
+    var word = Object.prototype.hasOwnProperty.call(STEP_KIND_WORDS, kind) ? STEP_KIND_WORDS[kind] : 'Pipeline';
+    return word + ' step ' + verb + '. ' + n;
+  };
+
+  // Called from the pipeline's change emit: say what changed, by diffing the step list.
+  SideviewEngine.prototype.announceStepChange = function (label) {
+    var steps = (this.pipeline && this.pipeline.steps) || [];
+    var now = steps.map(function (s) { return { id: s.id, kind: s.kind }; });
+    var prev = this._annSteps;
+    this._annSteps = now;
+    if (label === 'checks' || label === 'pipe' || label === 'tables' || label === 'load' || label === 'refresh') return;
+    var n = now.length;
+    if (label === 'undo') { this.announce(this.stepAnnouncement(null, 'undone', n)); return; }
+    if (label === 'redo') { this.announce(this.stepAnnouncement(null, 'redone', n)); return; }
+    var ids = function (a) { return a.map(function (x) { return x.id; }); };
+    var added = now.filter(function (x) { return ids(prev).indexOf(x.id) < 0; });
+    var removed = prev.filter(function (x) { return ids(now).indexOf(x.id) < 0; });
+    if (added.length && !removed.length) {
+      this.announce(this.stepAnnouncement(added.length === 1 ? added[0].kind : null, 'added', n));
+    } else if (removed.length && !added.length) {
+      this.announce(this.stepAnnouncement(removed.length === 1 ? removed[0].kind : null, 'removed', n));
+    }
+  };
+
   // `key` (optional) names a toast that is updated in place instead of stacked, e.g. progress.
-  SideviewEngine.prototype.showToast = function (message, type, key) {
+  SideviewEngine.prototype.showToast = function (message, type, key, opts) {
     var stack = this.container.querySelector('.sideview-toast-stack');
     if (!stack) {
       stack = document.createElement('div');
       stack.className = 'sideview-toast-stack';
-      stack.setAttribute('aria-live', 'polite');
       this.container.appendChild(stack);
     }
+    // Errors are alerts (spoken at once); every other toast is spoken through the polite announcer.
+    var isError = type === 'danger' || type === 'error';
+    var silent = opts && opts.silent;
     var toast = null;
     if (key) {
       var live = stack.querySelectorAll('.sideview-toast');
@@ -6800,18 +6914,24 @@ function sendToShiny(name, value) {
     if (toast) {
       clearTimeout(toast._hideTimer);
       clearTimeout(toast._removeTimer);
+      var typeChanged = toast.getAttribute('data-toast-type') !== String(type || '');
       toast.className = 'sideview-toast visible ' + (type ? 'sideview-toast-' + type : '');
       toast.textContent = message;
+      toast.setAttribute('data-toast-type', type || '');
+      if (isError) toast.setAttribute('role', 'alert'); else toast.removeAttribute('role');
+      if (!isError && !silent && typeChanged) this.announce(message);
     } else {
       toast = document.createElement('div');
       toast.className = 'sideview-toast ' + (type ? 'sideview-toast-' + type : '');
       toast.textContent = message;
-      toast.setAttribute('role', 'status');
+      toast.setAttribute('data-toast-type', type || '');
+      if (isError) toast.setAttribute('role', 'alert');
       if (key) toast.setAttribute('data-toast-key', String(key));
       stack.appendChild(toast);
       setTimeout(function () {
         toast.classList.add('visible');
       }, 10);
+      if (!isError && !silent) this.announce(message);
     }
     // Errors carry a fix hint, so they stay up longer.
     var ttl = (type === 'danger' || type === 'warning') ? 9000 : 4500;
@@ -6929,6 +7049,12 @@ function sendToShiny(name, value) {
 
       chatMessages.appendChild(assistantBubble);
       chatMessages.scrollTop = chatMessages.scrollHeight;
+      if (hasCode) {
+        var nLines = data.code.trim().split(/\r?\n/).length;
+        self.announce('Copilot replied, ' + nLines + (nLines === 1 ? ' line' : ' lines') + ' of code.');
+      } else {
+        self.announce('Copilot replied.');
+      }
     });
 
     // Row window for a large card (reply to sideview_rows_request)

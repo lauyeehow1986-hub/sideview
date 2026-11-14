@@ -1999,6 +1999,19 @@ html.sv-standalone body {
 }
 
 
+/* Visually hidden, still read by screen readers (live-region announcer). */
+.sideview-container .sv-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* Toast Notifications */
 .sideview-toast-stack {
   position: absolute;
@@ -2051,7 +2064,8 @@ html.sv-standalone body {
   border-left: 4px solid var(--sv-warning);
 }
 
-.sideview-toast-danger {
+.sideview-toast-danger,
+.sideview-toast-error {
   border-left: 4px solid var(--sv-danger);
 }
 
