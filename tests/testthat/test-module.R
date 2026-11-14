@@ -636,3 +636,9 @@ test_that("unknown override names warn once at start for static cards only", {
     })
   )
 })
+
+test_that("sideviewUI carries data-sv-view", {
+  expect_true(grepl('data-sv-view="canvas"', as.character(sideviewUI("a")), fixed = TRUE))
+  expect_true(grepl('data-sv-view="list"', as.character(sideviewUI("a", view = "list")), fixed = TRUE))
+  expect_error(sideviewUI("a", view = "grid"), "should be one of")
+})

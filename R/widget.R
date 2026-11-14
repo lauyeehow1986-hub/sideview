@@ -60,6 +60,8 @@ sideview_widget_dependencies <- function() {
 #'   widget has no R session behind it, so every row would travel in the HTML.
 #'   Use `Inf` to embed everything. Lazy (arrow / duckdb) tables already carry
 #'   only a preview and are not affected.
+#' @param view Starting view: `"canvas"` (default) or `"list"`, a text-first list
+#'   of the tables. Default `getOption("sideview.view", "canvas")`.
 #'
 #' @return An S3 object of class \code{c("sideview", "htmlwidget")}.
 #' @export
@@ -75,7 +77,9 @@ sideview_widget <- function(...,
                             theme = "auto",
                             state = NULL,
                             cdisc = "auto",
-                            max_rows = 5000) {
+                            max_rows = 5000,
+                            view = getOption("sideview.view", "canvas")) {
+  view <- match.arg(view, c("canvas", "list"))
   max_rows <- sv_check_max_rows(max_rows)
   cdisc <- sv_cdisc_check_arg(cdisc)
   state <- sv_as_state(state)
@@ -133,6 +137,7 @@ sideview_widget <- function(...,
   # Forward options using x payload
   theme <- sv_resolve_theme(theme)
   if (is.null(options$theme)) options$theme <- theme$mode
+  options$view <- view
   if (is.null(options$shortcuts)) options$shortcuts <- getOption("sideview.shortcuts", TRUE)
   if (length(theme$vars)) {
     options$themeVars <- stats::setNames(theme$vars, paste0("--sv-", names(theme$vars)))
@@ -219,6 +224,8 @@ sv_announce_row_cap <- function(cards, max_rows) {
 #'   keeps the cap it was built with.
 #' @param cdisc CDISC awareness when `widget` is table data (see
 #'   [sideview_widget()]). A widget you built yourself keeps its own setting.
+#' @param view Starting view when `widget` is table data (see [sideview_widget()]).
+#'   A widget you built yourself keeps its own.
 #' @param ... Additional arguments passed to \code{htmlwidgets::saveWidget()}.
 #'
 #' @return The normalized path to the saved file (invisibly).
@@ -236,9 +243,11 @@ save_sideview <- function(widget,
                           background = "white",
                           max_rows = 5000,
                           cdisc = "auto",
+                          view = getOption("sideview.view", "canvas"),
                           ...) {
+  view <- match.arg(view, c("canvas", "list"))
   if (!inherits(widget, "htmlwidget")) {
-    widget <- sideview_widget(widget, max_rows = max_rows, cdisc = cdisc)
+    widget <- sideview_widget(widget, max_rows = max_rows, cdisc = cdisc, view = view)
   }
   
   if (!grepl("\\.html?$", file, ignore.case = TRUE)) {

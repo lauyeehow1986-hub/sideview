@@ -4,6 +4,11 @@ Running log of what changed, why, and how it was verified. Newest entries first.
 Each entry: **date — change — why — verification**. Keep the "Open issues" table current.
 
 ---
+### 2026-11-14 - `view =` argument and `view.mode` state field (A3, Task 11)
+- **Change:** `view = getOption("sideview.view", "canvas")` on `sideview()`, `sideview_widget()`, `save_sideview()` (passed to the widget it builds), `sideview_ui()`, `sideviewUI()`; `match.arg` validation; `data-sv-view` on the container, `options$view` on the widget. `sv_state_scrub()` drops an invalid `view$mode` (JSON save, RDS save and `sv_state_from_json()`). Roxygen `@param view`, `sideview.view` option, `devtools::document()`, NEWS, CLAUDE.md. No JS yet (Task 12 reads the attribute).
+- **Verified:** RED first (app, widget, module, state failed on the missing argument / un-dropped mode). Passing singly: test-app, test-widget, test-module, test-state. R only: no browser or RStudio check.
+
+---
 ### 2026-11-14 - Table ARIA (A2, Task 10)
 - **Change:** `VirtualTable.render()` sets `aria-rowcount` (rows + 1), `aria-colcount`, header `aria-rowindex=1`, data rows `aria-rowindex = virtual index + 2`; `ensureTableCaption()` adds a `sv-sr-only` caption (textContent) in both the widget/module path and `initExistingCards()` (gadget). CLAUDE.md and NEWS.md updated.
 - **Gotcha:** the gadget's tables are server-rendered and a filter there is remote (async): the count updates when the R reply renders, so the test waits on `getRowCount()`.

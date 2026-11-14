@@ -389,18 +389,21 @@ render_card_tag <- function(card, index = 1L) {
 #'   `bslib::bs_theme()`. See [sv_theme()].
 #' @param state Optional saved workspace to restore on load (see [sideview()]).
 #'
+#' @param view Starting view: `"canvas"` (default) or `"list"` (see [sideview()]).
+#'
 #' @return A `shiny.tag.list` UI definition.
 #' @export
 sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALSE, theme = "auto",
-                        state = NULL) {
-  sv_ui_build(cards = cards, title = title, gadget = gadget, theme = theme, state = state)
+                        state = NULL, view = getOption("sideview.view", "canvas")) {
+  view <- match.arg(view, c("canvas", "list"))
+  sv_ui_build(cards = cards, title = title, gadget = gadget, theme = theme, state = state, view = view)
 }
 
 # The chrome (toolbar, canvas, drawer, AI bar) behind sideview_ui() and sideviewUI().
 # `ns` (a module's full input prefix, e.g. "review-") switches to embedded mode: no cards,
 # no page-level rules, no buttons that run code, `data-sv-ns` and a per-container init script.
 sv_ui_build <- function(cards = list(), title = "Sideview Canvas", gadget = FALSE, theme = "auto",
-                        state = NULL, ns = NULL, height = NULL) {
+                        state = NULL, ns = NULL, height = NULL, view = "canvas") {
   module <- !is.null(ns)
   normalized_cards <- if (module) list() else sv_normalize_cards(cards)
   
@@ -618,6 +621,7 @@ sv_ui_build <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
     class = paste0("sideview-container ", if (!module) "sv-standalone ", "sv-theme-", theme$mode),
     `data-sv-theme` = theme$mode,
     `data-sv-ns` = ns,
+    `data-sv-view` = view,
     # option(sideview.shortcuts = FALSE): single-key shortcuts start off (a stored choice wins)
     `data-sv-shortcuts` = if (isFALSE(getOption("sideview.shortcuts", TRUE))) "false" else NULL,
     # Save/Open use RStudio's file dialog through R when there is one.

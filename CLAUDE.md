@@ -139,6 +139,10 @@ rstudio bridge: R/rstudio.R
 - **Mode-aware overrides:** a custom colour that must differ by mode uses `-light`/`-dark` variables:
   the base block has `--sv-primary-text: var(--sv-primary-text-light, #...)`, the dark blocks use
   `var(--sv-primary-text-dark, #...)`. Use `--sv-primary-text` (not `--sv-primary`) for primary-coloured *text*.
+- **`view =` (0.8.0):** `sideview()`, `sideview_widget()`, `save_sideview()`, `sideview_ui()`, `sideviewUI()` take
+  `view = getOption("sideview.view", "canvas")`, validated with `match.arg(view, c("canvas", "list"))`. Gadget and module
+  containers carry `data-sv-view`, the widget `options$view`. `view.mode` (`"canvas"`/`"list"`) in workspace state is kept
+  only when valid (`sv_state_scrub()` drops anything else, also on load) and never required.
 - **Shortcuts switch (WCAG 2.1.4):** `engine.shortcutsOn()` reads `localStorage['sideview.shortcuts']` (`on`/`off`, in
   try/catch; a throw is no value), then the in-memory choice `setShortcuts()` made, then the R default
   (`data-sv-shortcuts="false"` from `options(sideview.shortcuts = FALSE)` in `sv_ui_build()`, or

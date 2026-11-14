@@ -289,3 +289,10 @@ test_that("sideview_widget carries the sideview.shortcuts option", {
   withr::with_options(list(sideview.shortcuts = FALSE),
     expect_true(sideview_widget(mtcars, options = list(shortcuts = TRUE))$x$options$shortcuts))
 })
+
+test_that("sideview_widget carries view and the sideview.view option", {
+  expect_equal(sideview_widget(mtcars)$x$options$view, "canvas")
+  expect_equal(sideview_widget(mtcars, view = "list")$x$options$view, "list")
+  expect_equal(withr::with_options(list(sideview.view = "list"), sideview_widget(mtcars))$x$options$view, "list")
+  expect_error(sideview_widget(mtcars, view = "grid"), "should be one of")
+})

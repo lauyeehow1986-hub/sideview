@@ -12,6 +12,7 @@ save_sideview(
   background = "white",
   max_rows = 5000,
   cdisc = "auto",
+  view = getOption("sideview.view", "canvas"),
   ...
 )
 }
@@ -34,6 +35,9 @@ keeps the cap it was built with.}
 
 \item{cdisc}{CDISC awareness when \code{widget} is table data (see
 \code{\link[=sideview_widget]{sideview_widget()}}). A widget you built yourself keeps its own setting.}
+
+\item{view}{Starting view when \code{widget} is table data (see \code{\link[=sideview_widget]{sideview_widget()}}).
+A widget you built yourself keeps its own.}
 
 \item{...}{Additional arguments passed to \code{htmlwidgets::saveWidget()}.}
 }

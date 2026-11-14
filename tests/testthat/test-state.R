@@ -466,3 +466,22 @@ test_that("state never carries cdisc", {
   st <- new_sideview_state(cards = list(c(unclass(card), list(x = 1, y = 2))), pipeline = list(code = ""))
   expect_false(grepl('"cdisc"', sv_state_json(st), fixed = TRUE))
 })
+
+test_that("view.mode survives a JSON round trip and an invalid one is dropped", {
+  txt <- '{"version":"0.3.0","view":{"labels_row":true,"mode":"list"}}'
+  st <- sv_state_from_json(txt)
+  expect_equal(st$view$mode, "list")
+  expect_true(st$view$labels_row)
+  back <- sv_state_from_json(sv_state_json(st))
+  expect_equal(back$view, list(labels_row = TRUE, mode = "list"))
+  st <- sv_state_from_json('{"version":"0.3.0","view":{"mode":"canvas"}}')
+  expect_equal(st$view$mode, "canvas")
+  st <- sv_state_from_json('{"version":"0.3.0","view":{"labels_row":true,"mode":"grid"}}')
+  expect_null(st$view$mode)
+  expect_true(st$view$labels_row)
+  st <- sv_state_from_json('{"version":"0.3.0","view":{"labels_row":true}}')
+  expect_null(st$view$mode)
+  expect_false(grepl("mode", sv_state_json(st), fixed = TRUE))
+  expect_false(grepl('"mode"', sv_state_json(list(version = "0.3.0", view = list(mode = c("list", "x")))),
+                     fixed = TRUE))
+})

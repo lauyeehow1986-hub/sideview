@@ -1,5 +1,11 @@
 # sideview (development version)
 
+## List view argument
+- `sideview()`, `sideview_widget()`, `save_sideview()`, `sideview_ui()` and `sideviewUI()` take `view = "canvas"` (default) or
+  `"list"`, set for a session by `options(sideview.view = "list")`. The container carries `data-sv-view` and the widget
+  `options$view`. A saved workspace may now carry `view.mode`; an invalid value is dropped. The list view itself arrives in
+  the next changes.
+
 ## Table ARIA
 
 * Each table on the canvas has a (screen-reader-only) caption with the card name and announces its full size:

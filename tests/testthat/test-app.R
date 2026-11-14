@@ -1228,3 +1228,12 @@ test_that("the container tag carries data-sv-shortcuts only when the option is F
   withr::with_options(list(sideview.shortcuts = FALSE),
     expect_match(as.character(sideview_ui(mtcars)), "data-sv-shortcuts=\"false\"", fixed = TRUE))
 })
+
+test_that("view = sets data-sv-view on the container and is validated", {
+  expect_true(grepl('data-sv-view="canvas"', as.character(sideview_ui(mtcars)), fixed = TRUE))
+  expect_true(grepl('data-sv-view="list"', as.character(sideview_ui(mtcars, view = "list")), fixed = TRUE))
+  withr::with_options(list(sideview.view = "list"),
+    expect_true(grepl('data-sv-view="list"', as.character(sideview_ui(mtcars)), fixed = TRUE)))
+  expect_error(sideview(mtcars, view = "grid", run = FALSE), "should be one of")
+  expect_s3_class(sideview(mtcars, view = "list", run = FALSE), "shiny.appobj")
+})
