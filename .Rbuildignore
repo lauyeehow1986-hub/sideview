@@ -17,3 +17,4 @@
 ^vignettes/articles$
 ^tools$
 ^\.superpowers$
+^node_modules$

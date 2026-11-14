@@ -110,3 +110,48 @@ sv_a11y_pages <- function() {
     module = list(open = open_app(module_expr, ready_cards))
   )
 }
+
+# ---- axe-core (WCAG 2.2 A and AA) ----
+
+SV_AXE_TAGS <- c("wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa")
+
+# axe.min.js: SV_AXE_PATH if that file exists, else node_modules/axe-core in the source tree, else "".
+sv_axe_path <- function() {
+  env <- Sys.getenv("SV_AXE_PATH")
+  if (nzchar(env) && file.exists(env)) return(env)
+  root <- sv_pkg_root()
+  if (nzchar(root)) {
+    p <- file.path(root, "node_modules/axe-core/axe.min.js")
+    if (file.exists(p)) return(p)
+  }
+  ""
+}
+
+skip_if_no_axe <- function() {
+  if (!nzchar(sv_axe_path())) testthat::skip("axe-core not found (set SV_AXE_PATH)")
+  invisible(TRUE)
+}
+
+# Inject axe once, run it on `context`, return the violations as a data frame.
+# The host page takes the canvas background first: axe cannot resolve the background of
+# content the canvas clips (card rows at the bottom edge), falls back to the page body
+# (white) and reports a false colour-contrast failure in the dark theme.
+sv_axe_run <- function(b, context = ".sideview-container") {
+  if (!isTRUE(sv_js(b, "typeof axe !== 'undefined'"))) {
+    src <- paste(readLines(sv_axe_path(), warn = FALSE, encoding = "UTF-8"), collapse = "\n")
+    res <- b$Runtime$evaluate(src, returnByValue = TRUE)
+    if (!is.null(res$exceptionDetails)) stop("could not inject axe-core")
+  }
+  js <- sprintf("(async () => { const c = document.querySelector(%s);
+    document.body.style.backgroundColor = getComputedStyle(c).backgroundColor;
+    const r = await axe.run(c, {runOnly: {type: 'tag', values: %s}});
+    return JSON.stringify(r.violations.map(v => ({ id: v.id, impact: v.impact || '', n_nodes: v.nodes.length,
+      targets: v.nodes.slice(0, 3).map(n => n.target.join(' ')).join(' | ') }))); })()",
+    jsonlite::toJSON(context, auto_unbox = TRUE),
+    jsonlite::toJSON(SV_AXE_TAGS, auto_unbox = FALSE))
+  out <- jsonlite::fromJSON(sv_js(b, js), simplifyVector = TRUE)
+  if (!length(out) || !NROW(out)) {
+    return(data.frame(id = character(), impact = character(), n_nodes = integer(), targets = character()))
+  }
+  out[, c("id", "impact", "n_nodes", "targets"), drop = FALSE]
+}
