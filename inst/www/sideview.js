@@ -686,6 +686,9 @@ function sendToShiny(name, value) {
     this._annNextAt = 0;
     this._annPrev = null;
     this._annSteps = [];
+    this._annRepTimer = null;
+    this._annDestroyed = false;
+    this._annWatch = {};
 
     // The composable pipeline is the single source of the generated code.
     if (!global.SideviewPipeline) {
@@ -1598,8 +1601,11 @@ function sendToShiny(name, value) {
 
   SideviewEngine.prototype.destroy = function () {
     this.unregisterEngine();
+    this._annDestroyed = true;
     if (this._annTimer) { clearTimeout(this._annTimer); this._annTimer = null; }
+    if (this._annRepTimer) { clearTimeout(this._annRepTimer); this._annRepTimer = null; }
     this._annQueue = [];
+    this.container.querySelectorAll('.sideview-announcer, .sideview-announcer-alert').forEach(function (n) { n.remove(); });
     if (this._snapshotTimer) { clearTimeout(this._snapshotTimer); this._snapshotTimer = null; }
     if (this._cardResizeObserver) { this._cardResizeObserver.disconnect(); this._cardResizeObserver = null; }
     this._globalListeners.forEach(function (l) {
@@ -4732,20 +4738,27 @@ function sendToShiny(name, value) {
     var step = this.pipeline.steps.filter(function (s) { return s.kind === 'join'; })
       .filter(function (s) { return this.joinDiagSig(s) === data.id; }, this)[0];
     this.announceJoinDiag(data, step);
-    try {
-      this.announce(global.SideviewPipeline.sayJoin(data, step ? step.table : 'x', step ? step.right : 'y')[0]);
-    } catch (e) { /* a check the sentence cannot describe stays silent */ }
     this.renderPipeline();
     this.renderJoinCheck();
   };
 
   // A toast for a risky join, once per set of keys.
   SideviewEngine.prototype.announceJoinDiag = function (d, step) {
+    // The first sentence is spoken only for a check the user is waiting for: the join just added or the
+    // one shown in the Discrepancy tab, and only once; the toast then stays quiet (one event, one voice).
+    var speak = !!(d && step && !this._annDestroyed &&
+      (this._annWatch[step.id] || this.joinCheckStepId === step.id));
+    if (speak) {
+      delete this._annWatch[step.id];
+      try {
+        this.announce(global.SideviewPipeline.sayJoin(d, step.table, step.right)[0]);
+      } catch (e) { speak = false; }
+    }
     if (!d || d.error || d.status === 'ok') return;
     var msg = (d.type_issues && d.type_issues[0]) || (d.warnings && d.warnings[0]);
     if (!msg) return;
     var pair = step ? step.table + ' → ' + step.right + ': ' : '';
-    this.showToast(pair + msg, d.status === 'error' ? 'danger' : 'warning');
+    this.showToast(pair + msg, d.status === 'error' ? 'danger' : 'warning', null, { silent: speak });
   };
 
   SideviewEngine.prototype.cardElByName = function (name) {
@@ -5230,7 +5243,7 @@ function sendToShiny(name, value) {
         this.reportFocus = { kind: 'supp', id: ctx.key };
         this.announceSupp(ctx, d);
         this.pipeline.add(P.suppStep(ctx.parent, ctx.supp, ctx.rdomain, d.plan), 'supp');
-        if (d.status === 'error') this.showToast('Merge ' + ctx.supp + ' into ' + ctx.parent + ': ' + this.suppStops(d, ctx.parent), 'warning');
+        if (d.status === 'error') this.showToast('Merge ' + ctx.supp + ' into ' + ctx.parent + ': ' + this.suppStops(d, ctx.parent), 'warning', null, { silent: !ctx.quiet });
         this.renderJoinCheck();
         return;
       }
@@ -5250,7 +5263,7 @@ function sendToShiny(name, value) {
   SideviewEngine.prototype.announceSupp = function (ctx, chk) {
     if (!chk || ctx.quiet) return;
     try {
-      this.announce(global.SideviewPipeline.saySupp(chk, ctx.parent, ctx.supp)[0]);
+      this.announce(global.SideviewPipeline.saySupp(chk, ctx.parent, ctx.supp)[0], { assertive: !!chk.error });
     } catch (e) { /* silent */ }
   };
 
@@ -5577,11 +5590,13 @@ function sendToShiny(name, value) {
       data.histogram.breaks = asArray(data.histogram.breaks);
     }
     this.colProfiles[data.id] = data;
-    try {
-      var pid = JSON.parse(data.id);
-      this.announce(global.SideviewPipeline.sayProfile(data, pid[1])[0]);
-    } catch (e) { /* silent */ }
     var t = this.inspectTarget;
+    // spoken only for the column now being inspected, never for a stray or earlier reply
+    if (t && !data.error && JSON.stringify([t.table, t.column]) === data.id) {
+      try {
+        this.announce(global.SideviewPipeline.sayProfile(data, t.column)[0]);
+      } catch (e) { /* silent */ }
+    }
     if (t && JSON.stringify([t.table, t.column]) === data.id) this.renderInspector();
   };
 
@@ -6828,30 +6843,56 @@ function sendToShiny(name, value) {
 
   // Queue text for the polite live region. Messages are at least 500 ms apart; text equal to the
   // previous message is cleared and set again 50 ms later so a screen reader speaks it again.
-  SideviewEngine.prototype.announce = function (text) {
+  // The queue keeps the latest 3 messages, and a message with opts.coalesce replaces a queued one with
+  // the same tag, so a burst never reads stale text. opts.assertive speaks at once through a
+  // role="alert" region (used for errors). Every call is logged (announceLog, the last 50).
+  SideviewEngine.prototype.announce = function (text, opts) {
+    if (this._annDestroyed) return;
     if (text === undefined || text === null || text === '') return;
     text = String(text);
     this.announceLog.push(text);
     if (this.announceLog.length > 50) this.announceLog.shift();
-    this._annQueue.push(text);
+    if (opts && opts.assertive) { this.speakAlert(text); return; }
+    var tag = opts && opts.coalesce ? opts.coalesce : null;
+    if (tag) this._annQueue = this._annQueue.filter(function (m) { return m.tag !== tag; });
+    this._annQueue.push({ text: text, tag: tag });
+    while (this._annQueue.length > 3) this._annQueue.shift();
     this.pumpAnnouncements();
+  };
+
+  SideviewEngine.prototype.speakAlert = function (text) {
+    var el = this.container.querySelector('.sideview-announcer-alert');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'sideview-announcer-alert sv-sr-only';
+      el.setAttribute('role', 'alert');
+      this.container.appendChild(el);
+    }
+    el.textContent = '';
+    setTimeout(function () { el.textContent = text; }, 50);
   };
 
   SideviewEngine.prototype.pumpAnnouncements = function () {
     var self = this;
-    if (this._annTimer || !this._annQueue.length) return;
+    if (this._annTimer || !this._annQueue.length || this._annDestroyed) return;
     var wait = Math.max(0, this._annNextAt - Date.now());
     this._annTimer = setTimeout(function () {
       self._annTimer = null;
-      var msg = self._annQueue.shift();
-      if (msg === undefined) return;
+      if (self._annDestroyed) return;
+      var item = self._annQueue.shift();
+      if (item === undefined) return;
+      var msg = item.text;
       var el = self.ensureAnnouncer();
       var repeat = msg === self._annPrev;
       self._annPrev = msg;
       self._annNextAt = Date.now() + 500 + (repeat ? 50 : 0);
       if (repeat) {
         el.textContent = '';
-        setTimeout(function () { el.textContent = msg; }, 50);
+        if (self._annRepTimer) clearTimeout(self._annRepTimer);
+        self._annRepTimer = setTimeout(function () {
+          self._annRepTimer = null;
+          if (!self._annDestroyed) el.textContent = msg;
+        }, 50);
       } else {
         el.textContent = msg;
       }
@@ -6881,15 +6922,19 @@ function sendToShiny(name, value) {
     this._annSteps = now;
     if (label === 'checks' || label === 'pipe' || label === 'tables' || label === 'load' || label === 'refresh') return;
     var n = now.length;
-    if (label === 'undo') { this.announce(this.stepAnnouncement(null, 'undone', n)); return; }
-    if (label === 'redo') { this.announce(this.stepAnnouncement(null, 'redone', n)); return; }
+    var co = { coalesce: 'step' };
+    if (label === 'undo') { this.announce(this.stepAnnouncement(null, 'undone', n), co); return; }
+    if (label === 'redo') { this.announce(this.stepAnnouncement(null, 'redone', n), co); return; }
     var ids = function (a) { return a.map(function (x) { return x.id; }); };
     var added = now.filter(function (x) { return ids(prev).indexOf(x.id) < 0; });
     var removed = prev.filter(function (x) { return ids(now).indexOf(x.id) < 0; });
     if (added.length && !removed.length) {
-      this.announce(this.stepAnnouncement(added.length === 1 ? added[0].kind : null, 'added', n));
+      var self = this;
+      added.forEach(function (x) { if (x.kind === 'join') self._annWatch[x.id] = true; });
+      this.announce(this.stepAnnouncement(added.length === 1 ? added[0].kind : null, 'added', n), co);
     } else if (removed.length && !added.length) {
-      this.announce(this.stepAnnouncement(removed.length === 1 ? removed[0].kind : null, 'removed', n));
+      if (removed.length > 1 || label === 'clear') this.announce('Steps cleared.', co);
+      else this.announce(this.stepAnnouncement(removed[0].kind, 'removed', n), co);
     }
   };
 
@@ -6910,6 +6955,13 @@ function sendToShiny(name, value) {
       for (var i = 0; i < live.length; i++) {
         if (live[i].getAttribute('data-toast-key') === String(key)) toast = live[i];
       }
+    }
+    if (toast && isError && toast.getAttribute('data-toast-type') !== String(type || '')) {
+      // a new alert element, so role="alert" is announced
+      clearTimeout(toast._hideTimer);
+      clearTimeout(toast._removeTimer);
+      toast.remove();
+      toast = null;
     }
     if (toast) {
       clearTimeout(toast._hideTimer);
@@ -6934,7 +6986,7 @@ function sendToShiny(name, value) {
       if (!isError && !silent) this.announce(message);
     }
     // Errors carry a fix hint, so they stay up longer.
-    var ttl = (type === 'danger' || type === 'warning') ? 9000 : 4500;
+    var ttl = (isError || type === 'warning') ? 9000 : 4500;
     toast._hideTimer = setTimeout(function () {
       toast.classList.remove('visible');
       toast._removeTimer = setTimeout(function () { toast.remove(); }, 300);

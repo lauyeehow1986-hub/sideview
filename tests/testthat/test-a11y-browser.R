@@ -192,3 +192,122 @@ test_that("error toasts are alerts and no toast sits in a live region", {
     })
   }
 })
+
+# ---- announcement fix round 1 ----
+
+sv_eng <- "document.querySelector('.sideview-container')._sideviewInstance"
+
+test_that("a risky join is spoken once: the warning toast stays quiet", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  # a numeric key against a text key: the check reports a type problem and shows a toast
+  sv_js(b, sprintf("%s.addConnections([{fromTable: 'patients', fromCol: 'age', toTable: 'labs',
+    toCol: 'patient_id', type: 'left_join'}]); true", sv_eng))
+  expect_true(sv_wait_js(b, sprintf("%s.announceLog.some(m => m.indexOf('Join of') === 0)", sv_eng)))
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-toast-warning, .sideview-toast-danger').length > 0"))
+  Sys.sleep(1)
+  r <- sv_js(b, sprintf("(() => ({ log: %s.announceLog,
+    toasts: Array.from(document.querySelectorAll('.sideview-toast')).map(t => t.textContent) }))()", sv_eng))
+  log <- unlist(r$log)
+  expect_equal(sum(grepl("^Join of", log)), 1)
+  expect_false(any(unlist(r$toasts) %in% log))
+})
+
+test_that("the queue keeps the latest messages and step messages coalesce", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_js(b, sprintf("(() => { const e = %s; window.__spoken = [];
+    new MutationObserver(() => { const t = document.querySelector('.sideview-announcer').textContent;
+      if (t) window.__spoken.push(t); })
+      .observe(document.querySelector('.sideview-announcer'), { childList: true, characterData: true, subtree: true });
+    for (let i = 0; i < 10; i++) e.announce('m' + i);
+    for (let i = 0; i < 4; i++) e.announce('Undone. ' + i + ' steps.', { coalesce: 'step' });
+    return true; })()", sv_eng))
+  expect_true(sv_wait_js(b, sprintf("%s._annQueue.length === 0 && !%s._annTimer", sv_eng, sv_eng), timeout = 30))
+  Sys.sleep(0.3)
+  spoken <- unlist(sv_js(b, "window.__spoken"))
+  expect_lte(length(spoken), 4)
+  expect_false("m0" %in% spoken)
+  expect_true("m9" %in% spoken)
+  expect_false("Undone. 0 steps." %in% spoken)
+  expect_equal(sv_js(b, sprintf("%s.announceLog.length", sv_eng)), 14)
+})
+
+test_that("a profile reply for a column nobody is inspecting stays silent", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  n0 <- sv_js(b, sprintf("%s.announceLog.length", sv_eng))
+  sv_js(b, sprintf("(() => { const e = %s; e.inspectTarget = null;
+    e.onColumnProfile({ id: JSON.stringify(['patients', 'sex']), kind: 'character', n: 3, n_missing: 0, n_distinct: 2 });
+    e.inspectTarget = { table: 'patients', column: 'age' };
+    e.onColumnProfile({ id: JSON.stringify(['patients', 'sex']), kind: 'character', n: 3, n_missing: 0, n_distinct: 2 });
+    return true; })()", sv_eng))
+  Sys.sleep(1)
+  expect_equal(sv_js(b, sprintf("%s.announceLog.length", sv_eng)), n0)
+  # the inspected column's own reply is spoken
+  sv_js(b, sprintf("(() => { %s.columnProfileFor('patients', 'age'); return true; })()", sv_eng))
+  expect_true(sv_wait_js(b, sprintf("%s.announceLog.some(m => /^age is a number column/.test(m))", sv_eng)))
+})
+
+test_that("destroy() removes the live regions and a later announce is a no-op", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_js(b, sprintf("(() => { const e = %s; e.announce('a'); e.announce('a'); e.announce('b'); e.destroy(); return true; })()", sv_eng))
+  Sys.sleep(1)
+  r <- sv_js(b, "(() => { const c = document.querySelector('.sideview-container');
+    const e = c._sideviewInstance || window.__e; return { regions: c.querySelectorAll('.sideview-announcer, .sideview-announcer-alert').length }; })()")
+  expect_equal(r$regions, 0)
+  n <- sv_js(b, "(() => { const c = document.querySelector('.sideview-container');
+    return window._sideviewInstance ? window._sideviewInstance.announceLog.length : -1; })()")
+  sv_js(b, "window._sideviewInstance && window._sideviewInstance.announce('late'); true")
+  expect_equal(sv_js(b, "window._sideviewInstance ? window._sideviewInstance.announceLog.length : -1"), n)
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-announcer').length"), 0)
+})
+
+test_that("two module engines on one page have distinct announcers", {
+  skip_if_no_browser()
+  expr <- paste0(
+    "shiny::shinyApp(shiny::fluidPage(sideview::sideviewUI('a', height = '300px'),",
+    " sideview::sideviewUI('b', height = '300px')),",
+    " function(input, output, session) { sideview::sideviewServer('a', cards = list(patients = patients));",
+    " sideview::sideviewServer('b', cards = list(visits = visits)) })")
+  app <- sv_start_app(expr)
+  b <- sv_open_page(app$url, 1360, 900, wait_for = "document.querySelectorAll('.sideview-container').length === 2 &&
+    Array.from(document.querySelectorAll('.sideview-container')).every(c => !!c._sideviewInstance)")
+  withr::defer({
+    try(b$close(), silent = TRUE)
+    try(app$proc$kill(), silent = TRUE)
+  })
+  r <- sv_js(b, "(async () => { const cs = document.querySelectorAll('.sideview-container');
+    const ea = cs[0]._sideviewInstance, eb = cs[1]._sideviewInstance;
+    ea.announce('only in a');
+    await new Promise(r => setTimeout(r, 900));
+    const as = document.querySelectorAll('.sideview-announcer');
+    return { n: as.length, a: cs[0].querySelector('.sideview-announcer').textContent,
+             b: cs[1].querySelector('.sideview-announcer').textContent,
+             same: cs[0].querySelector('.sideview-announcer') === cs[1].querySelector('.sideview-announcer'),
+             logb: eb.announceLog.length }; })()")
+  expect_equal(r$n, 2)
+  expect_false(r$same)
+  expect_identical(r$a, "only in a")
+  expect_identical(r$b, "")
+  expect_equal(r$logb, 0)
+})
+
+test_that("an error toast replaces a plain one with a fresh alert element; errors are spoken assertively", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  r <- sv_js(b, sprintf("(async () => { const e = %s;
+    e.showToast('first', 'info', 'k'); const t0 = document.querySelector('[data-toast-key=\"k\"]');
+    e.showToast('boom', 'error', 'k'); const t1 = document.querySelector('[data-toast-key=\"k\"]');
+    e.announce('Merge failed.', { assertive: true });
+    await new Promise(r => setTimeout(r, 300));
+    return { fresh: t0 !== t1, role: t1.getAttribute('role'), n: document.querySelectorAll('[data-toast-key=\"k\"]').length,
+             alert: document.querySelector('.sideview-announcer-alert').textContent,
+             polite: document.querySelector('.sideview-announcer').textContent }; })()", sv_eng))
+  expect_true(r$fresh)
+  expect_identical(r$role, "alert")
+  expect_equal(r$n, 1)
+  expect_identical(r$alert, "Merge failed.")
+  expect_false(identical(r$polite, "Merge failed."))
+})
