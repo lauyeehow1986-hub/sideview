@@ -647,3 +647,14 @@ test_that("sideviewUI with an invalid sideview.view option errors", {
   withr::with_options(list(sideview.view = "bogus"),
     expect_error(sideviewUI("a"), "should be one of"))
 })
+
+test_that("the module chrome renders no code-execution buttons and no gadget LLM signal", {
+  html <- as.character(sideviewUI("cv"))
+  for (label in c("Insert Script", "Run &amp; Exit", "Run in R", "Run Console")) {
+    expect_false(grepl(label, html, fixed = TRUE), info = label)
+  }
+  expect_false(grepl("data-sv-llm", html, fixed = TRUE))
+  # the gadget says it has an LLM behind its Copilot
+  expect_true(grepl('data-sv-llm="true"', as.character(sideview_ui(list(a = mtcars), gadget = TRUE)), fixed = TRUE))
+  expect_false(grepl("data-sv-llm", as.character(sideview_ui(list(a = mtcars))), fixed = TRUE))
+})

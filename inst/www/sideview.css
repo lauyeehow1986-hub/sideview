@@ -3323,3 +3323,30 @@ html.sv-standalone body {
   font-size: 14px;
   color: var(--sv-text);
 }
+
+/* List view: the drawer's panes moved into the Transform, Pipeline, Code and Copilot sections */
+.sideview-container .sideview-lv-subheading {
+  margin: 16px 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-lv-subheading:focus {
+  outline: 2px solid var(--sv-focus-ring);
+  outline-offset: 2px;
+}
+
+.sideview-container .sideview-listview .sideview-tab-pane {
+  display: block;
+}
+
+.sideview-container .sideview-listview .sideview-chat-pane {
+  display: flex;
+  height: auto;
+}
+
+.sideview-container .sideview-listview .sideview-drawer-actions {
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius);
+}

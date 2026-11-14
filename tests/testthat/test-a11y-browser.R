@@ -473,7 +473,7 @@ test_that("list view headings are in order", {
   sv_js(b, paste0(sv_eng, ".setView('list'); true"))
   tree <- sv_ax_tree(b)
   h2 <- tree[tree$role == "heading" & !tree$ignored & tree$level %in% 2L, "name"]
-  expect_equal(h2, c("Summary", "Tables", "Join", "Merge SUPP", "Transform", "Pipeline", "Code"))
+  expect_equal(h2, c("Summary", "Tables", "Join", "Merge SUPP", "Transform", "Pipeline", "Code", "Copilot"))
   r <- sv_js(b, "(() => { const l = document.querySelector('.sideview-listview');
     return { tag: l.tagName, role: l.getAttribute('role'), label: l.getAttribute('aria-label'),
              skips: [...l.querySelectorAll('a.sideview-skip')].map(a => a.textContent + '|' + a.getAttribute('href')),
@@ -943,4 +943,101 @@ test_that("hostile names are literal text in the join form, suggestions and SUPP
   sv_lv_pick(b, "left-table", "ae<i>\"é x")
   cols <- unlist(sv_js(b, sprintf("[...%s.querySelectorAll('select[data-sv-field=\"left-column\"] option')].map(o => o.textContent)", sv_lv_join)))
   expect_true('te<b>x"t é' %in% cols)
+})
+
+# ---- list view transform, pipeline, code and Copilot via pane moves (Task 15) ----
+
+sv_lv_sections <- function(b) {
+  unlist(sv_js(b, "[...document.querySelectorAll('.sideview-listview h2')].map(h => h.textContent)"))
+}
+
+test_that("moved panes keep input and fire once", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_js(b, paste0(sv_eng, ".activateDrawerTab('filter'); document.querySelector('.sideview-drawer').classList.remove('collapsed'); true"))
+  sv_js(b, "(() => { const i = document.querySelector('[data-pane=\"filter\"] [data-field=\"val\"]');
+    i.value = 'age > 5'; i.setAttribute('data-test-id', 'keep'); return true; })()")
+  idx <- sv_js(b, "[...document.querySelector('.sideview-drawer-content').children].indexOf(document.querySelector('[data-pane=\"filter\"]'))")
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  r <- sv_js(b, "(() => { const i = document.querySelector('[data-test-id=\"keep\"]');
+    return { inside: !!i.closest('.sideview-listview'), v: i.value,
+             h3: i.closest('[data-sv-lv-builder]').querySelector('h3').textContent,
+             hidden: document.querySelector('.sideview-drawer').hidden,
+             actions: !!document.querySelector('.sideview-listview .sideview-drawer-actions'),
+             steps: !!document.querySelector('.sideview-listview [data-pane=\"pipeline\"] .sideview-step-list') }; })()")
+  expect_true(r$inside)
+  expect_identical(r$v, "age > 5")
+  expect_identical(r$h3, "Filter")
+  expect_true(r$hidden)
+  expect_true(r$actions)
+  expect_true(r$steps)
+  # the builder's Add, from the keyboard, adds exactly one step
+  before <- sv_js(b, paste0(sv_eng, ".pipeline.enabledCount()"))
+  sv_js(b, "document.querySelector('.sideview-listview [data-builder=\"filter\"] [data-builder-action=\"submit\"]').focus(); true")
+  sv_key(b, "Enter", text = "\r")
+  expect_true(sv_wait_js(b, sprintf("%s.pipeline.enabledCount() === %d", sv_eng, before + 1L)))
+  Sys.sleep(0.3)
+  expect_equal(sv_js(b, paste0(sv_eng, ".pipeline.enabledCount()")), before + 1L)
+  # canvas <-> list again: still one handler
+  sv_js(b, paste0(sv_eng, ".setView('canvas'); ", sv_eng, ".setView('list'); true"))
+  sv_js(b, "document.querySelector('.sideview-listview [data-builder=\"filter\"] [data-field=\"val\"]').value = '1'; true")
+  sv_js(b, "document.querySelector('.sideview-listview [data-builder=\"filter\"] [data-builder-action=\"submit\"]').click(); true")
+  Sys.sleep(0.3)
+  expect_equal(sv_js(b, paste0(sv_eng, ".pipeline.enabledCount()")), before + 2L)
+  sv_js(b, paste0(sv_eng, ".setView('canvas'); true"))
+  r <- sv_js(b, "(() => { const i = document.querySelector('[data-pane=\"filter\"]');
+    return { inDrawer: !!i.closest('.sideview-drawer-content'),
+             idx: [...document.querySelector('.sideview-drawer-content').children].indexOf(i),
+             hidden: document.querySelector('.sideview-drawer').hidden,
+             code: !!document.querySelector('.sideview-drawer > .sideview-drawer-actions'),
+             pre: !!document.querySelector('[data-pane=\"pipeline\"] > .sideview-code-block') }; })()")
+  expect_true(r$inDrawer)
+  expect_equal(r$idx, idx)
+  expect_false(r$hidden)
+  expect_true(r$code)
+  expect_true(r$pre)
+})
+
+test_that("Filter from a column opens the builder preset", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  expect_null(sv_js(b, sprintf("%s.getAttribute('aria-disabled')", sv_lv_btn("patients", "Filter age"))))
+  sv_js(b, sprintf("%s.click(); true", sv_lv_btn("patients", "Filter age")))
+  r <- sv_js(b, "(() => { const a = document.activeElement, bd = document.querySelector('.sideview-listview [data-builder=\"filter\"]');
+    return { inBuilder: !!a.closest('[data-sv-lv-builder=\"filter\"]'), tag: a.tagName,
+             table: bd.querySelector('[data-field=\"table\"]').value, col: bd.querySelector('[data-field=\"col\"]').value }; })()")
+  expect_true(r$inBuilder)
+  expect_identical(r$table, "patients")
+  expect_identical(r$col, "age")
+})
+
+test_that("a list filter step and canvas sorts keep list rows current", {
+  skip_if_no_browser()
+  fx <- sv_set_fixture()
+  b <- sv_open_gadget()
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  sv_js(b, sprintf("%s.click(); true", sv_lv_btn("labs", "Sort value")))
+  want <- dplyr::arrange(fx$labs, value)
+  expect_true(sv_wait_js(b, sprintf("%s.querySelector('tbody tr td:nth-child(3)').textContent === %s",
+                                    sv_lv_table("labs"), sv_js_str(as.character(want$value[1])))))
+})
+
+test_that("a module list view has no code-execution buttons and no Copilot without an LLM", {
+  skip_if_no_browser()
+  app <- sv_start_app(app_file = sv_example_app("proxy"))
+  ready <- "(() => { const c = document.querySelector('[data-sv-ns=\"a-\"]'); return !!c && c.querySelectorAll('.sideview-card').length >= 2 && !!c._sideviewInstance; })()"
+  b <- sv_open_page(app$url, 1400, 900, wait_for = ready)
+  withr::defer({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
+  sv_js(b, "document.querySelector('[data-sv-ns=\"a-\"]')._sideviewInstance.setView('list'); true")
+  r <- sv_js(b, "(() => { const lv = document.querySelector('[data-sv-ns=\"a-\"] .sideview-listview');
+    return { btns: [...lv.querySelectorAll('button')].map(b => b.textContent.trim()),
+             h2: [...lv.querySelectorAll('h2')].map(h => h.textContent),
+             code: !!lv.querySelector('.sideview-code-block') }; })()")
+  btns <- unlist(r$btns)
+  expect_false(any(c("Insert Script", "Run & Exit", "Run in R", "Run Console") %in% btns))
+  expect_true("Copy" %in% btns)
+  expect_true(r$code)
+  expect_false("Copilot" %in% unlist(r$h2))
+  expect_true("Code" %in% unlist(r$h2))
 })

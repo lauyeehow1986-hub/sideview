@@ -93,8 +93,12 @@
     var self = this;
     var root = this.el;
     this.releaseTables();
+    // the drawer's panes live in the sections: give them back before the sections are wiped
+    var eng = this.engine;
+    var hadPanes = !!(eng._movedPanes && eng._movedPanes.length);
+    if (hadPanes) eng.movePanes('drawer');
     while (root.firstChild) root.removeChild(root.firstChild);
-    var llm = this.engine.llmAvailable();
+    var llm = eng.llmAvailable();
     SECTIONS.forEach(function (s) {
       if (s.needsLlm && !llm) return;
       var wrap = self.makeSection(s);
@@ -102,8 +106,45 @@
       if (s.key === 'summary') self.buildSummary(wrap.lastChild);
       else if (s.key === 'join') self.buildJoin(wrap.lastChild);
       else if (s.key === 'supp') self.buildSupp(wrap.lastChild);
+      else if (s.key === 'transform') self.buildTransform(wrap.lastChild);
     });
     this.syncTables();
+    if (hadPanes && eng.view === 'list') eng.movePanes('list');
+  };
+
+  // ---- transform, pipeline, code and copilot: the drawer's own pane nodes move in (movePanes) ----
+
+  var BUILDERS = [
+    ['filter', 'Filter'], ['arrange', 'Arrange'], ['mutate', 'Mutate'],
+    ['recode', 'Recode'], ['summarise', 'Summarise']
+  ];
+
+  /** One wrapper per builder, each with an h3 the builder's pane is moved under. */
+  ListView.prototype.buildTransform = function (body) {
+    var self = this;
+    BUILDERS.forEach(function (b) {
+      var wrap = el('div', 'sideview-lv-builder');
+      wrap.setAttribute('data-sv-lv-builder', b[0]);
+      var h = el('h3', 'sideview-lv-subheading', b[1]);
+      h.id = self.ns + 'sv-lv-b-' + b[0];
+      h.tabIndex = -1;
+      wrap.appendChild(h);
+      body.appendChild(wrap);
+    });
+  };
+
+  /** A section's body element (null when the section is not drawn, e.g. Copilot without an LLM). */
+  ListView.prototype.bodyFor = function (key) {
+    return this.el.querySelector('[data-sv-lv-body="' + key + '"]');
+  };
+
+  ListView.prototype.builderHost = function (kind) {
+    return this.el.querySelector('[data-sv-lv-builder="' + cssEscape(kind) + '"]');
+  };
+
+  ListView.prototype.builderHeading = function (kind) {
+    var host = this.builderHost(kind);
+    return host ? host.querySelector('h3') : null;
   };
 
   /**
@@ -117,9 +158,12 @@
     var want = this.engine.llmAvailable();
     if (want && !have) {
       this.el.appendChild(this.makeSection(SECTIONS[SECTIONS.length - 1]));
+      if (this.engine.view === 'list') this.engine.movePanes('list');
     } else if (!want && have) {
       var active = document.activeElement;
       var held = active && have.contains(active);
+      var chat = have.querySelector('[data-pane="chat"]');
+      if (chat) this.engine.unmovePane(chat);
       have.parentNode.removeChild(have);
       if (held) this.focusSection('summary');
     }
@@ -246,6 +290,7 @@
     this.renderSummary();
     this.syncJoin();
     this.syncSupp();
+    this.engine.refreshBuilders();
   };
 
   ListView.prototype.dropTable = function (id) {
@@ -1241,6 +1286,7 @@
   };
 
   ListView.prototype.destroy = function () {
+    try { if (this.engine.movePanes) this.engine.movePanes('drawer'); } catch (e) {}
     this._destroyed = true;
     this._summaryText = null;
     this.releaseTables();

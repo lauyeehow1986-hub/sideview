@@ -4306,6 +4306,7 @@ function sendToShiny(name, value) {
 
     // 4. Reset generated code and drawer UI
     this.resetDrawerCode();
+    this.listHook('refresh');
 
     // 5. Notify user if not silent
     if (!silent) {
@@ -4710,7 +4711,7 @@ function sendToShiny(name, value) {
           }
           return '<li class="sideview-step' + (on ? '' : ' is-disabled') + (diag ? ' has-diag' : '') +
             (s.kind === 'join' ? ' is-join' : '') + (ruleRow ? ' has-rule-row' : '') +
-            '" data-step-id="' + escapeHtml(s.id) + '">' +
+            '" data-step-id="' + escapeHtml(s.id) + '" id="' + escapeHtml(self.stepElId(s)) + '" tabindex="-1">' +
             '<input type="checkbox" class="sideview-step-toggle"' + (on ? ' checked' : '') +
             ' aria-label="Include step ' + (i + 1) + '" />' +
             '<span class="sideview-step-text" title="' + escapeHtml(title) + '">' +
@@ -6303,8 +6304,132 @@ function sendToShiny(name, value) {
     input.click();
   };
 
+  /** The id of a pipeline step's list item: one per step, safe for any table name. */
+  SideviewEngine.prototype.stepElId = function (s) {
+    return (typeof this.options.ns === 'string' ? this.options.ns : '') + 'sv-step-' + String(s.id).replace(/[^A-Za-z0-9_-]/g, '_');
+  };
+
+  /** A drawer pane node, wherever it is now (the drawer, or the list view after movePanes('list')). */
+  SideviewEngine.prototype.paneNode = function (id) {
+    return this.container.querySelector('[data-pane="' + id + '"]');
+  };
+
+  /** Does a builder show other tables than the cards now on the canvas? */
+  SideviewEngine.prototype.builderStale = function (pane) {
+    var sel = pane.querySelector('select[data-field="table"]');
+    var names = this.tableSchemas().map(function (t) { return t.name; });
+    if (!names.length) return !!sel;
+    if (!sel) return true;
+    var have = Array.prototype.map.call(sel.options, function (o) { return o.value; });
+    return have.join('\u0001') !== names.join('\u0001');
+  };
+
+  /** List mode: builders follow the cards. Only a builder that shows other tables is drawn again. */
+  SideviewEngine.prototype.refreshBuilders = function () {
+    if (this.view !== 'list' || !this._movedPanes || !this._movedPanes.length) return;
+    var self = this;
+    Object.keys(BUILDER_TABS).forEach(function (kind) {
+      var pane = self.paneNode(kind);
+      if (pane && self.builderStale(pane)) self.renderBuilder(kind);
+    });
+  };
+
+  /** Put one moved pane node back where it came from (used when its list section goes away). */
+  SideviewEngine.prototype.unmovePane = function (node) {
+    var moved = this._movedPanes || [];
+    for (var i = moved.length - 1; i >= 0; i--) {
+      if (moved[i].node !== node) continue;
+      var r = moved.splice(i, 1)[0];
+      if (r.parent) r.parent.insertBefore(r.node, r.next && r.next.parentNode === r.parent ? r.next : null);
+      r.node.style.display = r.display;
+      return true;
+    }
+    return false;
+  };
+
+  /**
+   * Move the drawer's own pane nodes (never clones, so typed text, handlers and focus stay) into the list
+   * view's sections ('list') or back to the exact place they came from ('drawer'). The drawer shell is
+   * hidden while its panes are away. Idempotent: a node already moved is left where it is.
+   */
+  SideviewEngine.prototype.movePanes = function (target) {
+    var self = this;
+    var moved = this._movedPanes || (this._movedPanes = []);
+    var drawer = this.container.querySelector('.sideview-drawer');
+    if (target === 'drawer') {
+      // a stack: the last node moved is the first put back, so every next sibling is in place again
+      while (moved.length) {
+        var r = moved.pop();
+        if (r.parent) r.parent.insertBefore(r.node, r.next && r.next.parentNode === r.parent ? r.next : null);
+        r.node.style.display = r.display;
+      }
+      if (drawer) drawer.removeAttribute('hidden');
+      return;
+    }
+    var lv = this.listView;
+    if (target !== 'list' || !lv || lv._destroyed) return;
+    var put = function (node, host) {
+      if (!node || !host) return;
+      for (var i = 0; i < moved.length; i++) if (moved[i].node === node) return;
+      moved.push({ node: node, parent: node.parentNode, next: node.nextSibling, display: node.style.display });
+      node.style.display = '';
+      host.appendChild(node);
+    };
+    Object.keys(BUILDER_TABS).forEach(function (kind) {
+      var pane = self.paneNode(kind);
+      if (!pane) return;
+      if (!pane.querySelector('.sideview-builder') || self.builderStale(pane)) self.renderBuilder(kind);
+      put(pane, lv.builderHost(kind));
+    });
+    put(this.paneNode('pipeline'), lv.bodyFor('pipeline'));
+    // the code area and its buttons leave the drawer too
+    put(this.container.querySelector('.sideview-code-block'), lv.bodyFor('code'));
+    put(this.container.querySelector('.sideview-drawer-actions'), lv.bodyFor('code'));
+    if (lv.bodyFor('copilot')) put(this.paneNode('chat'), lv.bodyFor('copilot'));
+    if (drawer) drawer.hidden = true;
+  };
+
+  /**
+   * Open a builder (filter, arrange, mutate, recode, summarise) with an optional preset
+   * ({ table, column }). In the list view: focus its heading, fill the selects and focus the first
+   * empty field. On the canvas: open the drawer on its tab (the same preset applies).
+   */
+  SideviewEngine.prototype.openBuilder = function (kind, preset) {
+    if (!BUILDER_TABS[kind]) return false;
+    preset = preset || {};
+    var listMode = this.view === 'list';
+    var heading = null;
+    if (listMode) {
+      this.movePanes('list');
+      heading = this.listView && this.listView.builderHeading(kind);
+    } else {
+      var drawer = this.container.querySelector('.sideview-drawer');
+      if (drawer) drawer.classList.remove('collapsed');
+      this.activateDrawerTab(kind);
+    }
+    var pane = this.paneNode(kind);
+    if (!pane) return false;
+    var tableSel = pane.querySelector('select[data-field="table"]');
+    if (preset.table && tableSel && tableSel.value !== preset.table &&
+        Array.prototype.some.call(tableSel.options, function (o) { return o.value === preset.table; })) {
+      this.renderBuilder(kind, preset.table);
+    }
+    var builder = pane.querySelector('.sideview-builder');
+    if (builder && preset.column) {
+      var colSel = builder.querySelector('[data-field="col"]');
+      if (colSel && Array.prototype.some.call(colSel.options, function (o) { return o.value === preset.column; })) {
+        colSel.value = preset.column;
+      }
+    }
+    if (listMode && heading) { try { heading.focus({ preventScroll: false }); } catch (e) { heading.focus(); } }
+    var fields = builder ? Array.prototype.slice.call(builder.querySelectorAll('input[data-field], textarea[data-field]')) : [];
+    var empty = fields.filter(function (f) { return !f.value; })[0] || fields[0] || null;
+    if (empty) { try { empty.focus({ preventScroll: false }); } catch (e2) { empty.focus(); } }
+    return true;
+  };
+
   SideviewEngine.prototype.renderBuilder = function (kind, keepTable) {
-    var pane = this.container.querySelector('.sideview-drawer-content > [data-pane="' + kind + '"]');
+    var pane = this.paneNode(kind);
     if (!pane) return;
     var schemas = this.tableSchemas();
     if (!schemas.length) {
@@ -6614,6 +6739,7 @@ function sendToShiny(name, value) {
           code: arrangeCode
         });
       }
+      self.listHook('renderTable', cardEl.dataset.cardName || 'df');
     } else {
       // Fallback for non-virtualized table
       var rows = Array.from(tbody.querySelectorAll('tr'));
@@ -6845,6 +6971,7 @@ function sendToShiny(name, value) {
       }
       btn.classList.remove('active');
       self.pipeline.removeKey(headerFilterKey(cardName), 'filter');
+      self.listHook('renderTable', cardName);
       closePopover();
       self.updateConnectors();
       self.showToast('Cleared filter on ' + colName, 'info');
@@ -6932,6 +7059,7 @@ function sendToShiny(name, value) {
         condition: condExpr,
         code: filterCode
       });
+      self.listHook('renderTable', cardName);
 
       closePopover();
       self.updateConnectors();
@@ -7039,7 +7167,7 @@ function sendToShiny(name, value) {
     });
     if (this.listView) {
       this.listView.el.hidden = !list;
-      if (list) this.listView.refresh();
+      if (list) { this.listView.refresh(); this.movePanes('list'); } else this.movePanes('drawer');
     }
     var toggles = this.container.querySelectorAll('[data-sv-view-toggle]');
     for (var i = 0; i < toggles.length; i++) toggles[i].setAttribute('aria-pressed', list ? 'true' : 'false');
