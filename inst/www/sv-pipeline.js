@@ -2305,6 +2305,11 @@
 
   function sayValue(v) {
     if (v === null || v === undefined || (typeof v === 'number' && isNaN(v))) return 'missing';
+    if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+    if (typeof v === 'number') {
+      if (!isFinite(v)) return v > 0 ? 'Inf' : '-Inf';
+      return numKey(v);
+    }
     var s = String(v);
     if (s.indexOf(', ') >= 0) s = '(' + s + ')';
     return s;
@@ -2320,8 +2325,11 @@
   }
 
   function sayNum(v) {
-    v = Number(v);
-    if (isFinite(v) && v === Math.round(v)) return fmtN(v);
+    if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+    if (typeof v !== 'number') return v === null || v === undefined ? 'NA' : String(v);
+    if (isNaN(v)) return 'NaN';
+    if (!isFinite(v)) return v > 0 ? 'Inf' : '-Inf';
+    if (v === Math.round(v)) return fmtN(v);
     return numKey(signif6(v));
   }
 

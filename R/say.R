@@ -19,9 +19,13 @@ sv_say_list <- function(x) {
   paste0(paste(x[-n], collapse = ", "), ", and ", x[n])
 }
 
-# One value as it is spoken: missing, or the text; a value holding ", " is wrapped.
+# One value as it is spoken: "missing" for NA or NaN; TRUE or FALSE for a logical; a number
+# as format_key() writes it (up to 15 significant digits, no exponent, no thousands marks);
+# a string as it is, wrapped in parentheses when it holds ", ".
 sv_say_value <- function(v) {
   if (length(v) == 0L || is.na(v)) return("missing")
+  if (is.logical(v)) return(if (v) "TRUE" else "FALSE")
+  if (is.numeric(v)) return(format_key(v))
   s <- as.character(v)
   if (grepl(", ", s, fixed = TRUE)) s <- paste0("(", s, ")")
   s
@@ -37,8 +41,9 @@ sv_say_samples <- function(x, total = NULL, max = 3) {
 }
 
 # A whole number with thousands separators; any other number as its codebook key text
-# at 6 significant digits.
+# at 6 significant digits. Not a number: NA gives "NA", other values their text.
 sv_say_num <- function(v) {
+  if (!is.numeric(v)) return(if (length(v) == 0L || is.na(v)) "NA" else as.character(v))
   if (is.finite(v) && v == round(v)) return(fmt_n(v))
   format_key(signif(v, 6))
 }

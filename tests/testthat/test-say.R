@@ -43,3 +43,28 @@ test_that("say helpers: R and JS agree byte for byte", {
   expect_identical(sv_say_check_lines(c("a", long)), c("a", long))
   expect_identical(unlist(run_pipeline_js(sprintf("out = P.sayCheckLines(['a', '%s']);", long))), c("a", long))
 })
+
+test_that("say helpers: cell values and edge numbers agree in R and JS", {
+  vals <- list(1e6, 1e5, 0.1 + 0.2, 123456.789, -5, -1234567, TRUE, FALSE, NA, NaN, NULL, "", "P05, 2", "x", 0.00001234)
+  r <- vapply(vals, sv_say_value, "")
+  js <- unlist(run_pipeline_js(sprintf("out = %s.map(function (v) { return P.sayValue(v); });",
+                                       jsonlite::toJSON(vals, null = "null", na = "null", digits = NA, auto_unbox = TRUE))))
+  expect_identical(r, js)
+  expect_identical(r[1:10], c("1000000", "100000", "0.3", "123456.789", "-5", "-1234567",
+                              "TRUE", "FALSE", "missing", "missing"))
+  expect_identical(r[11], "missing")
+  expect_identical(sv_say_value(Inf), "Inf")
+  expect_identical(unlist(run_pipeline_js("out = [P.sayValue(Infinity), P.sayValue(-Infinity), P.sayValue(undefined)];")),
+                   c("Inf", "-Inf", "missing"))
+
+  nums <- c(1e6, 1e5, 0.1 + 0.2, 123456.789, -5, -1234567, -0.5)
+  expect_identical(
+    vapply(nums, sv_say_num, ""),
+    unlist(run_pipeline_js(sprintf("out = %s.map(function (v) { return P.sayNum(v); });",
+                                   jsonlite::toJSON(nums, digits = NA)))))
+  expect_identical(sv_say_num(-1234567), "-1,234,567")
+  expect_identical(
+    c(sv_say_num(NA), sv_say_num(NaN), sv_say_num(Inf), sv_say_num(-Inf), sv_say_num(""), sv_say_num(TRUE)),
+    unlist(run_pipeline_js(paste0("out = [P.sayNum(null), P.sayNum(NaN), P.sayNum(Infinity), ",
+                                  "P.sayNum(-Infinity), P.sayNum(''), P.sayNum(true)];"))))
+})
