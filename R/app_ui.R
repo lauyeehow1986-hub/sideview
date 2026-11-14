@@ -28,7 +28,7 @@ find_sideview_www <- function() {
 #' @param files Asset file names.
 #' @return A version string such as `"0.2.0.1234567"`.
 #' @noRd
-sv_asset_version <- function(www_dir, files = c("sideview.js", "sideview.css", "sv-panzoom.js", "sv-pipeline.js")) {
+sv_asset_version <- function(www_dir, files = c("sideview.js", "sideview.css", "sv-panzoom.js", "sv-pipeline.js", "sv-listview.js")) {
   pkg <- tryCatch(as.character(utils::packageVersion("sideview")), error = function(e) "0.0.0")
   paths <- file.path(www_dir, files)
   paths <- paths[file.exists(paths)]
@@ -52,7 +52,7 @@ sideview_html_dependency <- function(www_dir = find_sideview_www()) {
     version = sv_asset_version(www_dir),
     src = c(file = www_dir),
     stylesheet = "sideview.css",
-    script = c("sv-panzoom.js", "sv-pipeline.js", "sideview.js")
+    script = c("sv-panzoom.js", "sv-pipeline.js", "sv-listview.js", "sideview.js")
   )
 }
 

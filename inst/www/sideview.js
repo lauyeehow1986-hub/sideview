@@ -700,6 +700,11 @@ function sendToShiny(name, value) {
     this.joinCheckStepId = null;
     // Live-region announcements (see announce()); the last 50 messages are kept for tests.
     this.announceLog = [];
+    // 'canvas' | 'list' (see setView); the list view is built the first time it is shown.
+    this.view = 'canvas';
+    this.listView = null;
+    this._hiddenGeom = null;
+    this._pendingView = null;
     this._annQueue = [];
     this._annTimer = null;
     this._annNextAt = 0;
@@ -759,6 +764,13 @@ function sendToShiny(name, value) {
     this.registerShinyHandlers();
     this.initMinimap();
     this.initLayoutObserver();
+    // The starting view. A restored state's view.mode (applyState) wins over the `view` argument.
+    // Applied after the first layout, so the cards are measured while visible; silent: nothing is
+    // announced and focus stays where it is.
+    var startView = this._pendingView || this.options.view ||
+      (this.container.getAttribute ? this.container.getAttribute('data-sv-view') : null);
+    this._pendingView = null;
+    if (startView === 'list') this.setView('list', { silent: true });
 
     // Registered last: an engine whose setup threw never replaces a working one for this ns.
     this.registerEngine();
@@ -800,6 +812,7 @@ function sendToShiny(name, value) {
     inspect: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
     download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
     alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    list: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
     save: '<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>',
     folderOpen: '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
     search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
@@ -1637,6 +1650,7 @@ function sendToShiny(name, value) {
       if (card.virtualTable && card.virtualTable.destroy) card.virtualTable.destroy();
     });
     this.closeActivePopover();
+    if (this.listView) { try { this.listView.destroy(); } catch (e) {} this.listView = null; }
     var dialogs = this.container.querySelectorAll('.sideview-shortcuts-scrim, .sideview-search-scrim');
     for (var di = 0; di < dialogs.length; di++) {
       if (dialogs[di].parentNode) dialogs[di].parentNode.removeChild(dialogs[di]);
@@ -1711,12 +1725,18 @@ function sendToShiny(name, value) {
         else tb.appendChild(b);
       }
       after = b;
+      return b;
     };
     add('open-search', 'search', 'Find a card or column (Ctrl+K)');
     add('save-workspace', 'save', 'Save workspace (cards, joins, pipeline)');
     add('open-workspace', 'folderOpen', 'Open a saved workspace');
     add('toggle-theme', 'moon', 'Switch to dark theme (T)');
     add('show-shortcuts', 'keyboard', 'Keyboard shortcuts (?)');
+    // The view toggle keeps one name; aria-pressed says whether the list is showing.
+    var vt = add('toggle-view', 'list', 'List view');
+    vt.setAttribute('data-sv-view-toggle', '');
+    vt.setAttribute('aria-pressed', this.view === 'list' ? 'true' : 'false');
+    vt.title = 'List view: the tables as text, for keyboard and screen-reader use';
   };
 
   // Keys in the shortcut list. Kept in sync with the keydown handlers.
@@ -2234,6 +2254,8 @@ function sendToShiny(name, value) {
         self.toggleFullscreen(btn);
       } else if (action === 'toggle-theme') {
         self.toggleTheme();
+      } else if (action === 'toggle-view') {
+        self.setView(self.view === 'list' ? 'canvas' : 'list');
       } else if (action === 'show-shortcuts') {
         self.toggleShortcuts(true);
       } else if (action === 'close-shortcuts') {
@@ -3083,6 +3105,7 @@ function sendToShiny(name, value) {
     this.pipeline.setTables(meta);
     // a card came or went: the Merge into buttons name their targets on the canvas
     this.refreshSuppButtons();
+    if (this.listView) this.listView.renderSummary();
   };
 
   /** 'arrow' | 'duckdb' when the table is lazy, else null. */
@@ -4616,6 +4639,7 @@ function sendToShiny(name, value) {
     var p = this.pipeline;
     var code = p.compose();
     this.generatedCode = code;
+    if (this.listView) this.listView.renderSummary();
     var codeText = this.container.querySelector('.sideview-code-text');
     if (codeText) codeText.textContent = code || CODE_PLACEHOLDER;
 
@@ -4783,6 +4807,7 @@ function sendToShiny(name, value) {
       this.pipeline.setJoinCheck(data.id, null);
       this.renderPipeline();
       this.renderJoinCheck();
+      this.listHook('onJoinDiag', data.id, this.joinDiag[data.id]);
       return;
     }
     ['by', 'unmatched_x', 'unmatched_y', 'type_issues', 'warnings', 'hints'].forEach(function (k) {
@@ -4795,6 +4820,7 @@ function sendToShiny(name, value) {
     this.announceJoinDiag(data, step);
     this.renderPipeline();
     this.renderJoinCheck();
+    this.listHook('onJoinDiag', data.id, data);
   };
 
   // A toast for a risky join, once per set of keys.
@@ -5300,6 +5326,7 @@ function sendToShiny(name, value) {
         this.pipeline.add(P.suppStep(ctx.parent, ctx.supp, ctx.rdomain, d.plan), 'supp');
         if (d.status === 'error') this.showToast('Merge ' + ctx.supp + ' into ' + ctx.parent + ': ' + this.suppStops(d, ctx.parent), 'warning', null, { silent: !ctx.quiet });
         this.renderJoinCheck();
+        this.listHook('onSuppCheck', d, ctx.key);
         return;
       }
       var step = this.pipeline.steps.filter(function (s) { return s.key === ctx.key; })[0];
@@ -5313,6 +5340,7 @@ function sendToShiny(name, value) {
     if (ctx.quiet && this._suppSync) return;
     this.renderPipeline();
     this.renderJoinCheck();
+    this.listHook('onSuppCheck', this.suppChecks[ctx.key], ctx.key);
   };
 
   SideviewEngine.prototype.announceSupp = function (ctx, chk) {
@@ -5653,6 +5681,7 @@ function sendToShiny(name, value) {
       } catch (e) { /* silent */ }
     }
     if (t && JSON.stringify([t.table, t.column]) === data.id) this.renderInspector();
+    this.listHook('onColumnProfile', data);
   };
 
   // Variable label from R (haven/labelled `label` attribute), sent with widget cards.
@@ -5941,6 +5970,7 @@ function sendToShiny(name, value) {
   }
 
   SideviewEngine.prototype.getState = function () {
+    var self = this;
     var pz = this.panzoom;
     var pan = pz && pz.getPan ? pz.getPan() : { x: 0, y: 0 };
     var cards = [];
@@ -5948,6 +5978,10 @@ function sendToShiny(name, value) {
       var el = card.element;
       if (!el) return;
       var w = el.offsetWidth, h = el.offsetHeight;
+      // the list view hides the canvas: the size the card had is kept in _hiddenGeom
+      var hg = self._hiddenGeom && self._hiddenGeom[card.id];
+      if (!w && hg) w = hg.w;
+      if (!h && hg) h = hg.h;
       if (el.classList.contains('is-maximized') && el._svRestore) {
         w = parseFloat(el._svRestore.style.width) || null;
         h = parseFloat(el._svRestore.style.height) || null;
@@ -5982,7 +6016,7 @@ function sendToShiny(name, value) {
         steps: this.pipeline.toJSON().steps,
         pipe: this.pipeline.pipe
       },
-      view: { labels_row: !!this.labelsRow }
+      view: { labels_row: !!this.labelsRow, mode: this.view }
     };
   };
 
@@ -6086,6 +6120,12 @@ function sendToShiny(name, value) {
     }
     if (state.view && typeof state.view === 'object' && typeof state.view.labels_row === 'boolean') {
       this.toggleLabelsRow(state.view.labels_row);
+    }
+    // A saved view.mode wins over the `view` argument. At start it is applied once the first layout is
+    // done (the constructor), later (Open) at once; a missing or unknown mode changes nothing.
+    var vm = state.view && typeof state.view === 'object' ? state.view.mode : null;
+    if (vm === 'canvas' || vm === 'list') {
+      if (this._constructed) this.setView(vm); else this._pendingView = vm;
     }
     // Keep the saved view: the first layout only places cards the state lacks.
     if (out.restored.length) this._restoredView = true;
@@ -6881,6 +6921,100 @@ function sendToShiny(name, value) {
     }
   };
 
+  // ---- list view (text-first alternative to the canvas) ---------------------------------
+
+  SideviewEngine.prototype.noCode = function () { return isNoCode(this.generatedCode); };
+
+  SideviewEngine.prototype.iconHtml = function (name) { return icon(name); };
+
+  // Is there an LLM behind the Copilot? A module without llm_fn hides it (sv-no-llm); a module
+  // with one shows it; otherwise R must say so with data-sv-llm="true".
+  SideviewEngine.prototype.llmAvailable = function () {
+    var c = this.container;
+    if (c.classList.contains('sv-no-llm')) return false;
+    if (c.getAttribute && c.getAttribute('data-sv-llm') === 'true') return true;
+    return typeof this.options.ns === 'string';
+  };
+
+  // A reply hook for the list view; a failing hook never breaks the reply handler.
+  SideviewEngine.prototype.listHook = function (name) {
+    var lv = this.listView;
+    if (!lv || typeof lv[name] !== 'function') return;
+    try { lv[name].apply(lv, Array.prototype.slice.call(arguments, 1)); } catch (e) {
+      if (typeof console !== 'undefined' && console.warn) console.warn('[Sideview] list view ' + name + ':', e);
+    }
+  };
+
+  /**
+   * Switch between the canvas and the list view. The hidden side leaves the accessibility tree
+   * (hidden + aria-hidden), the toggles follow, the switch is announced and focus moves to the list's
+   * first heading (or back to the container). opts.silent (the starting view): none of the last two.
+   */
+  SideviewEngine.prototype.setView = function (mode, opts) {
+    if (mode !== 'canvas' && mode !== 'list') return this.view;
+    if (mode === this.view || this._destroyed) return this.view;
+    var self = this;
+    var silent = !!(opts && opts.silent);
+    var list = mode === 'list';
+    if (list) {
+      if (!this.listView) {
+        if (typeof global.SideviewListView !== 'function') {
+          if (typeof console !== 'undefined' && console.warn) console.warn('[Sideview] sv-listview.js is not loaded');
+          return this.view;
+        }
+        this.listView = new global.SideviewListView(this);
+      }
+      // a maximized card and an open popover belong to the canvas
+      this.closeActivePopover();
+      this.cards.forEach(function (card) {
+        var el = card.element;
+        if (el && el.classList.contains('is-maximized')) {
+          self.toggleMaximizeCard(el, el.querySelector('[data-action="maximize-card"]'));
+        }
+      });
+      // a hidden card measures 0: remember the sizes so a saved state keeps them
+      var geom = {};
+      this.cards.forEach(function (card) {
+        var el = card.element;
+        if (el && el.offsetWidth) geom[card.id] = { w: el.offsetWidth, h: el.offsetHeight };
+      });
+      this._hiddenGeom = geom;
+    }
+    this.view = mode;
+    [this.viewport, this.minimap, this.svg, this.hitSvg].forEach(function (el) {
+      if (!el) return;
+      el.hidden = list;
+      if (list) el.setAttribute('aria-hidden', 'true'); else el.removeAttribute('aria-hidden');
+    });
+    if (this.listView) {
+      this.listView.el.hidden = !list;
+      if (list) this.listView.render();
+    }
+    var toggles = this.container.querySelectorAll('[data-sv-view-toggle]');
+    for (var i = 0; i < toggles.length; i++) toggles[i].setAttribute('aria-pressed', list ? 'true' : 'false');
+    if (!list) {
+      this._hiddenGeom = null;
+      // the tables were hidden while their rows may have changed: measure and draw them again
+      this.cards.forEach(function (card) {
+        var vt = card.element && card.element._virtualTable;
+        if (vt && vt.render) vt.render();
+      });
+      this.scheduleConnectorUpdate();
+    }
+    this.container.classList.toggle('sv-view-list', list);
+    if (!silent) {
+      this.announce(list ? 'List view' : 'Canvas view');
+      if (list) {
+        var h = this.listView && this.listView.el.querySelector('h2');
+        if (h) { try { h.focus({ preventScroll: false }); } catch (e) { h.focus(); } }
+      } else {
+        try { this.container.focus({ preventScroll: true }); } catch (e) { this.container.focus(); }
+      }
+      this.scheduleSnapshot();
+    }
+    return this.view;
+  };
+
   // ---- live-region announcements ----------------------------------------------------
 
   SideviewEngine.prototype.ensureAnnouncer = function () {
@@ -7237,6 +7371,7 @@ function sendToShiny(name, value) {
     // A module started without llm_fn: hide the AI bar and the Copilot tab.
     self.onMessage('sideview_llm', function (data) {
       self.container.classList.toggle('sv-no-llm', !!data && data.enabled === false);
+      if (self.listView) self.listView.render();
     });
     self.onMessage('sideview_highlight', function (data) {
       if (data) self.highlightColumns(data.name, data.cols);

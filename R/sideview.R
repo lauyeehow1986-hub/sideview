@@ -58,7 +58,9 @@ sv_find_tables <- function(env = parent.frame()) {
 #'   still detected).
 #' @param view Starting view: `"canvas"` (default, the pan/zoom canvas) or `"list"`
 #'   (a text-first list of the tables, for keyboard and screen-reader use). The
-#'   default is `getOption("sideview.view", "canvas")`.
+#'   default is `getOption("sideview.view", "canvas")`. A saved workspace
+#'   (`state`) that records a view wins over this argument; a state without
+#'   one leaves it as it is.
 #' @param env Environment where **Run in R** evaluates the generated code and
 #'   stores its result (as `sv_result` unless you name it). Defaults to the
 #'   environment `sideview()` is called from, which is your workspace when you
@@ -138,7 +140,8 @@ sv_find_tables <- function(env = parent.frame()) {
 #'   \item{`sideview.view`}{`"list"` starts the text-first list view in [sideview()],
 #'     [sideview_ui()], [sideviewUI()], [sideview_widget()] and [save_sideview()]
 #'     (default `"canvas"`). The `view` argument wins, and so does
-#'     `options = list(view = )` in [sideview_widget()].}
+#'     `options = list(view = )` in [sideview_widget()]. A restored workspace
+#'     state that records a view (`view.mode`) wins over both.}
 #'   \item{`sideview.session_grace`}{Seconds the gadget waits after its last
 #'     browser session closes before stopping (default `5`), so reloading the
 #'     page does not end the app.}

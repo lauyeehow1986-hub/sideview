@@ -6,6 +6,17 @@
   `options$view`. A saved workspace may now carry `view.mode`; an invalid value is dropped. The list view itself arrives in
   the next changes.
 
+## List view
+
+* The toolbar has a "List view" toggle (and the Summary section repeats it). The list view shows the tables as text in a
+  normal-flow column that keyboard and screen-reader users can read: a Summary (counts of tables, join steps and pipeline
+  steps, whether code is ready, skip links, Save, Open and the keyboard shortcuts switch) and the headings Tables, Join,
+  Merge SUPP, Transform, Pipeline and Code (and Copilot when a model is set up). The canvas leaves the accessibility
+  tree while the list is shown. Switching is announced ("List view" / "Canvas view") and moves focus to the list's first
+  heading. The single-key shortcuts default to off in the list view.
+* `view = "list"` starts in it. A saved workspace now records the view (`view.mode`) and wins over the `view` argument when
+  it is opened. The section contents arrive in the next changes.
+
 ## Table ARIA
 
 * Each table on the canvas has a (screen-reader-only) caption with the card name and announces its full size:

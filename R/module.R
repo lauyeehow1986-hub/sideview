@@ -20,7 +20,8 @@
 #' @param theme `"auto"`, `"light"`, `"dark"`, an [sv_theme()] or a `bslib::bs_theme()`.
 #' @param view Starting view: `"canvas"` (default, the pan/zoom canvas) or
 #'   `"list"` (a text-first list of the tables, for keyboard and screen-reader
-#'   use). The default is `getOption("sideview.view", "canvas")`.
+#'   use). The default is `getOption("sideview.view", "canvas")`. A workspace
+#'   restored later (Open) that records a view switches to it.
 #' @param cards Tables for the canvas: a (named) list as [sideview()] takes, or a
 #'   **reactive** returning one. A reactive is compared with the canvas by name each
 #'   time it fires: new names are added, names that are gone are removed, and names

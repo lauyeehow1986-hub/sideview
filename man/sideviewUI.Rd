@@ -26,7 +26,8 @@ sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto")
 
 \item{view}{Starting view: \code{"canvas"} (default, the pan/zoom canvas) or
 \code{"list"} (a text-first list of the tables, for keyboard and screen-reader
-use). The default is \code{getOption("sideview.view", "canvas")}.}
+use). The default is \code{getOption("sideview.view", "canvas")}. A workspace
+restored later (Open) that records a view switches to it.}
 
 \item{cards}{Tables for the canvas: a (named) list as \code{\link[=sideview]{sideview()}} takes, or a
 \strong{reactive} returning one. A reactive is compared with the canvas by name each

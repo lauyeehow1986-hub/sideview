@@ -61,7 +61,9 @@ sideview_widget_dependencies <- function() {
 #'   Use `Inf` to embed everything. Lazy (arrow / duckdb) tables already carry
 #'   only a preview and are not affected.
 #' @param view Starting view: `"canvas"` (default) or `"list"`, a text-first list
-#'   of the tables. Default `getOption("sideview.view", "canvas")`.
+#'   of the tables. Default `getOption("sideview.view", "canvas")`. A saved
+#'   workspace (`options = list(state = )`) that records a view wins over this
+#'   argument; a state without one leaves it as it is.
 #'
 #' @return An S3 object of class \code{c("sideview", "htmlwidget")}.
 #' @export

@@ -3093,3 +3093,83 @@ html.sv-standalone body {
   min-height: 24px;
   box-sizing: border-box;
 }
+
+/* ---- List view (text-first alternative to the canvas) ----
+   A normal-flow, scrolling column under the top bar. The canvas parts it replaces carry `hidden`. */
+.sideview-container [hidden] {
+  display: none !important;
+}
+
+.sideview-container .sideview-listview {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  overflow-y: auto;
+  padding: calc(var(--sv-topbar-h, 56px) + 24px) 24px 96px;
+  background: var(--sv-canvas-bg);
+  color: var(--sv-text);
+  user-select: text;
+}
+
+.sideview-container .sideview-listview > * {
+  max-width: 72ch;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.sideview-container .sideview-lv-section {
+  margin: 0 auto 24px;
+}
+
+.sideview-container .sideview-lv-heading {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-lv-heading:focus {
+  outline: 2px solid var(--sv-focus-ring);
+  outline-offset: 2px;
+}
+
+.sideview-container .sideview-lv-skips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0 0 8px;
+}
+
+.sideview-container .sideview-listview .sideview-skip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 4px;
+  color: var(--sv-primary-text, var(--sv-primary));
+  text-decoration: underline;
+}
+
+.sideview-container .sideview-lv-summary-text {
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+.sideview-container .sideview-lv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.sideview-container .sideview-lv-actions .sideview-btn,
+.sideview-container .sideview-lv-actions .sideview-shortcuts-switch {
+  min-height: 32px;
+  min-width: 24px;
+  width: auto;
+  margin: 0;
+}
+
+.sideview-container .sideview-lv-actions .sideview-btn[aria-pressed="true"] {
+  background: var(--sv-primary-subtle);
+  border-color: var(--sv-primary);
+}

@@ -143,6 +143,20 @@ rstudio bridge: R/rstudio.R
   `view = getOption("sideview.view", "canvas")`, validated with `match.arg(view, c("canvas", "list"))`. Gadget and module
   containers carry `data-sv-view`, the widget `options$view`. `view.mode` (`"canvas"`/`"list"`) in workspace state is kept
   only when valid (`sv_state_scrub()` drops anything else, also on load) and never required.
+- **List view shell (0.8.0):** `inst/www/sv-listview.js` defines `SideviewListView` (loaded after `sv-pipeline.js`, before
+  `sideview.js`; in `sv_asset_version()` and the dependency). `engine.setView('canvas'|'list')` (sideview.js) sets `hidden` +
+  `aria-hidden` on the viewport, minimap and the two connector SVGs (the canvas `transform` is untouched), flips every
+  `[data-sv-view-toggle]` (`aria-pressed`; the name stays "List view"), announces "List view"/"Canvas view", and moves focus to
+  the list's first `<h2>` (or the container). The list (`<section class="sideview-listview" role="region">`) is built the
+  first time and appended to the container; its text is DOM/`textContent` only (never `innerHTML` for a name). Sections, in
+  order: Summary, Tables, Join, Merge SUPP, Transform, Pipeline, Code, Copilot (only when `engine.llmAvailable()`: not `sv-no-llm`,
+  and a module, or `data-sv-llm="true"`). Result hooks `onJoinDiag` / `onSuppCheck` / `onColumnProfile` go through
+  `engine.listHook()` (a failing hook never breaks the reply). A hidden card measures 0, so `setView('list')` keeps card sizes in
+  `_hiddenGeom` for `getState()` and `setView('canvas')` re-renders the virtual tables. No new Shiny input or message.
+- **View precedence:** the `view` argument (`data-sv-view` / `options.view`) is the default; a restored workspace state's valid
+  `view.mode` wins over it (at start, `applyState` records it and the constructor applies it after the first layout; on Open,
+  `setView` at once). A state without `view.mode`, or with an invalid one, leaves the view as it is. The starting view is
+  silent (no announcement, no focus move). `getState().view.mode` is `engine.view`.
 - **Shortcuts switch (WCAG 2.1.4):** `engine.shortcutsOn()` reads `localStorage['sideview.shortcuts']` (`on`/`off`, in
   try/catch; a throw is no value), then the in-memory choice `setShortcuts()` made, then the R default
   (`data-sv-shortcuts="false"` from `options(sideview.shortcuts = FALSE)` in `sv_ui_build()`, or

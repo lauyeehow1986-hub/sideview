@@ -431,3 +431,161 @@ test_that("table caption is a screen-reader-only text node with the card name", 
   expect_match(r$cls, "sv-sr-only")
   expect_true(r$first)
 })
+
+# ---- list view shell (Task 12) ----
+
+sv_ax_inside <- function(b, selector) {
+  # non-ignored AX nodes whose DOM node lies inside `selector`
+  tree <- sv_ax_tree(b)
+  tree <- tree[!tree$ignored & !is.na(tree$backend_id), , drop = FALSE]
+  b$DOM$enable()
+  root <- b$DOM$getDocument()$root$nodeId
+  hit <- b$DOM$querySelectorAll(root, selector)$nodeIds
+  ids <- integer()
+  walk <- function(x) c(x$backendNodeId, unlist(lapply(x$children, walk)))
+  for (n in hit) {
+    d <- b$DOM$describeNode(nodeId = n, depth = -1L, pierce = TRUE)$node
+    ids <- c(ids, walk(d))
+  }
+  tree[tree$backend_id %in% ids, , drop = FALSE]
+}
+
+sv_wait_eng <- "!!document.querySelector('.sideview-container')._sideviewInstance"
+
+test_that("list view hides the canvas from the AX tree and canvas view restores it", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  before <- sv_js(b, "document.querySelector('.sideview-viewport').style.transform")
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  expect_identical(sv_js(b, paste0(sv_eng, ".view")), "list")
+  expect_equal(nrow(sv_ax_inside(b, ".sideview-viewport")), 0)
+  expect_true(sv_js(b, "[...document.querySelectorAll('.sideview-viewport, .sideview-minimap, .sideview-connector-svg, .sideview-connector-hitlayer')].every(e => e.hidden && e.getAttribute('aria-hidden') === 'true')"))
+  expect_gt(nrow(sv_ax_inside(b, ".sideview-listview")), 0)
+  sv_js(b, paste0(sv_eng, ".setView('canvas'); true"))
+  expect_equal(nrow(sv_ax_inside(b, ".sideview-listview")), 0)
+  expect_identical(sv_js(b, "document.querySelector('.sideview-viewport').style.transform"), before)
+  expect_gt(nrow(sv_ax_inside(b, ".sideview-viewport")), 0)
+})
+
+test_that("list view headings are in order", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  tree <- sv_ax_tree(b)
+  h2 <- tree[tree$role == "heading" & !tree$ignored & tree$level %in% 2L, "name"]
+  expect_equal(h2, c("Summary", "Tables", "Join", "Merge SUPP", "Transform", "Pipeline", "Code"))
+  r <- sv_js(b, "(() => { const l = document.querySelector('.sideview-listview');
+    return { tag: l.tagName, role: l.getAttribute('role'), label: l.getAttribute('aria-label'),
+             skips: [...l.querySelectorAll('a.sideview-skip')].map(a => a.textContent + '|' + a.getAttribute('href')),
+             sentence: l.querySelector('.sideview-lv-summary-text').textContent }; })()")
+  expect_identical(r$tag, "SECTION")
+  expect_identical(r$role, "region")
+  expect_identical(r$label, "sideview list view")
+  expect_identical(unlist(r$skips), c("Skip to tables|#sv-lv-tables", "Skip to join|#sv-lv-join", "Skip to code|#sv-lv-code"))
+  expect_match(r$sentence, "^3 tables, 0 join steps, 0 pipeline steps\\. No code yet\\.$")
+})
+
+test_that("view switch moves focus and announces", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  tog <- "document.querySelector('.sideview-toolbar [data-sv-view-toggle]')"
+  sv_js(b, paste0(tog, ".focus()"))
+  sv_key(b, "Enter", text = "\r")
+  expect_true(sv_wait_js(b, paste0(sv_eng, ".view === 'list'")))
+  expect_identical(sv_focus_info(b)$tag, "h2")
+  expect_true(sv_wait_js(b, paste0(sv_eng, ".announceLog.slice(-1)[0] === 'List view'")))
+  expect_identical(sv_js(b, paste0(tog, ".getAttribute('aria-pressed')")), "true")
+  sv_js(b, paste0(tog, ".focus()"))
+  sv_key(b, "Enter", text = "\r")
+  expect_true(sv_wait_js(b, paste0(sv_eng, ".view === 'canvas'")))
+  expect_true(sv_wait_js(b, paste0(sv_eng, ".announceLog.slice(-1)[0] === 'Canvas view'")))
+  expect_identical(sv_js(b, paste0(tog, ".getAttribute('aria-pressed')")), "false")
+})
+
+test_that("view = 'list' starts in the list view (gadget and widget)", {
+  skip_if_no_browser()
+  app <- sv_start_app("sideview(patients, visits, labs, view = 'list', run = FALSE)")
+  b <- sv_open_page(app$url, 1360, 820, wait_for = sv_wait_eng)
+  withr::defer({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
+  expect_identical(sv_js(b, paste0(sv_eng, ".view")), "list")
+  expect_true(sv_js(b, "document.querySelector('.sideview-viewport').hidden"))
+  expect_false(sv_js(b, paste0(sv_eng, ".shortcutsOn()")))
+  # a silent start: no announcement
+  expect_equal(sv_js(b, paste0(sv_eng, ".announceLog.length")), 0)
+  expect_identical(sv_js(b, paste0(sv_eng, ".getState().view.mode")), "list")
+  url <- sv_widget_url("sideview_widget(patients, visits, labs, view = 'list')")
+  w <- sv_open_page(url, 1360, 820, wait_for = sv_wait_eng)
+  withr::defer(try(w$close(), silent = TRUE))
+  expect_identical(sv_js(w, paste0(sv_eng, ".view")), "list")
+})
+
+test_that("a restored state's view.mode wins over the view argument; no mode keeps the argument", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_js(b, paste0(sv_eng, ".applyState({ view: { mode: 'list' } }); true"))
+  expect_identical(sv_js(b, paste0(sv_eng, ".view")), "list")
+  sv_js(b, paste0(sv_eng, ".applyState({ view: { labels_row: true } }); true"))
+  expect_identical(sv_js(b, paste0(sv_eng, ".view")), "list")
+  sv_js(b, paste0(sv_eng, ".applyState({ view: { mode: 'bogus' } }); true"))
+  expect_identical(sv_js(b, paste0(sv_eng, ".view")), "list")
+  sv_js(b, paste0(sv_eng, ".applyState({ view: { mode: 'canvas' } }); true"))
+  expect_identical(sv_js(b, paste0(sv_eng, ".view")), "canvas")
+  open_with <- function(expr) {
+    app <- sv_start_app(expr)
+    bb <- sv_open_page(app$url, 1360, 820, wait_for = sv_wait_eng)
+    withr::defer_parent({ try(bb$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
+    bb
+  }
+  b2 <- open_with("sideview(patients, visits, labs, view = 'canvas', state = list(view = list(mode = 'list')), run = FALSE)")
+  expect_identical(sv_js(b2, paste0(sv_eng, ".view")), "list")
+  b3 <- open_with("sideview(patients, visits, labs, view = 'list', state = list(view = list(mode = 'canvas')), run = FALSE)")
+  expect_identical(sv_js(b3, paste0(sv_eng, ".view")), "canvas")
+  b4 <- open_with("sideview(patients, visits, labs, view = 'list', state = list(view = list(labels_row = FALSE)), run = FALSE)")
+  expect_identical(sv_js(b4, paste0(sv_eng, ".view")), "list")
+})
+
+test_that("shortcuts follow the view when localStorage throws (list half of the Task 9 test)", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  b$Page$enable()
+  b$Page$addScriptToEvaluateOnNewDocument(
+    "Object.defineProperty(window, 'localStorage', {get: function () { throw new Error('blocked'); }})")
+  sv_navigate(b, sv_js(b, "location.href"))
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-container')._sideviewInstance && document.querySelectorAll('.sideview-card').length >= 2", timeout = 60))
+  expect_true(sv_js(b, "(() => { try { window.localStorage; return false; } catch (e) { return true; } })()"))
+  expect_true(sv_js(b, paste0(sv_eng, ".shortcutsOn()")))
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  expect_false(sv_js(b, paste0(sv_eng, ".shortcutsOn()")))
+  sw <- "document.querySelector('.sideview-listview [data-sv-shortcuts-switch]')"
+  expect_identical(sv_js(b, paste0(sw, ".getAttribute('aria-checked')")), "false")
+  sv_js(b, paste0(sw, ".click()"))
+  expect_true(sv_js(b, paste0(sv_eng, ".shortcutsOn()")))
+  expect_identical(sv_js(b, paste0(sw, ".getAttribute('aria-checked')")), "true")
+  sv_js(b, paste0(sv_eng, ".setShortcuts(false); ", sv_eng, ".setView('canvas'); true"))
+  expect_false(sv_js(b, paste0(sv_eng, ".shortcutsOn()")))
+})
+
+test_that("a hostile table name is never parsed as HTML in the list view", {
+  skip_if_no_browser()
+  app <- sv_start_app(paste0(
+    "sideview(list(`x<img src=x onerror=window.__pwn=1>\"q\" é` = patients, visits = visits), run = FALSE)"))
+  b <- sv_open_page(app$url, 1360, 820, wait_for = sv_wait_eng)
+  withr::defer({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
+  sv_js(b, paste0(sv_eng, ".setView('list'); ", sv_eng, ".listView.render(); true"))
+  r <- sv_js(b, "({ imgs: document.querySelectorAll('.sideview-listview img').length, pwn: !!window.__pwn,
+    html: document.querySelector('.sideview-listview').innerHTML.indexOf('<img') })")
+  expect_equal(r$imgs, 0)
+  expect_false(r$pwn)
+  expect_equal(r$html, -1)
+  expect_match(sv_js(b, "document.querySelector('.sideview-lv-summary-text').textContent"), "^2 tables")
+})
+
+test_that("the list view keeps its summary current and is gone after destroy", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  sv_js(b, paste0(sv_eng, ".pipeline.add({ kind: 'custom', code: 'x |> head()' }); true"))
+  expect_true(sv_wait_js(b, "/1 pipeline step\\. Code is ready\\./.test(document.querySelector('.sideview-lv-summary-text').textContent)"))
+  sv_js(b, paste0(sv_eng, ".destroy(); true"))
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-listview').length"), 0)
+})

@@ -45,7 +45,9 @@ still detected).}
 
 \item{view}{Starting view: \code{"canvas"} (default, the pan/zoom canvas) or \code{"list"}
 (a text-first list of the tables, for keyboard and screen-reader use). The
-default is \code{getOption("sideview.view", "canvas")}.}
+default is \code{getOption("sideview.view", "canvas")}. A saved workspace
+(\code{state}) that records a view wins over this argument; a state without
+one leaves it as it is.}
 
 \item{env}{Environment where \strong{Run in R} evaluates the generated code and
 stores its result (as \code{sv_result} unless you name it). Defaults to the
@@ -140,7 +142,8 @@ shortcuts" switch in the \verb{?} list is remembered in the browser and wins.
 \item{\code{sideview.view}}{\code{"list"} starts the text-first list view in \code{\link[=sideview]{sideview()}},
 \code{\link[=sideview_ui]{sideview_ui()}}, \code{\link[=sideviewUI]{sideviewUI()}}, \code{\link[=sideview_widget]{sideview_widget()}} and \code{\link[=save_sideview]{save_sideview()}}
 (default \code{"canvas"}). The \code{view} argument wins, and so does
-\code{options = list(view = )} in \code{\link[=sideview_widget]{sideview_widget()}}.}
+\code{options = list(view = )} in \code{\link[=sideview_widget]{sideview_widget()}}. A restored workspace
+state that records a view (\code{view.mode}) wins over both.}
 \item{\code{sideview.session_grace}}{Seconds the gadget waits after its last
 browser session closes before stopping (default \code{5}), so reloading the
 page does not end the app.}

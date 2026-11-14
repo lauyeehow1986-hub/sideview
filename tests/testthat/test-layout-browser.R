@@ -208,12 +208,14 @@ test_that("zoom label tracks the canvas scale", {
   b <- sv_shared_page()
   r <- sv_js(b, "(async () => {
     const zin = document.querySelector('[data-action=\"zoom-in\"]');
+    const before = document.querySelector('[data-action=\"zoom-reset\"]').textContent.trim();
     zin.click(); await new Promise(r => setTimeout(r, 300));
     const label = document.querySelector('[data-action=\"zoom-reset\"]').textContent.trim();
     document.querySelector('[data-action=\"zoom-reset\"]').click(); await new Promise(r => setTimeout(r, 300));
-    return { label: label, after: document.querySelector('[data-action=\"zoom-reset\"]').textContent.trim() };
+    return { before: before, label: label, after: document.querySelector('[data-action=\"zoom-reset\"]').textContent.trim() };
   })()")
-  expect_false(identical(r$label, "100%"))
+  # the label follows the scale (the fit scale at start depends on the toolbar's size, so it is not fixed)
+  expect_false(identical(r$label, r$before))
   expect_equal(r$after, "100%")
 })
 
