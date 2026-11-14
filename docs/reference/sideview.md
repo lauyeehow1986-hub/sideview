@@ -15,6 +15,7 @@ sideview(
   theme = "auto",
   state = NULL,
   cdisc = "auto",
+  view = getOption("sideview.view", "canvas"),
   env = parent.frame(),
   run = interactive()
 )
@@ -70,6 +71,14 @@ sideview(
   SEND or ADaM datasets; `FALSE` turns it off; a named character vector
   such as `c(my_ae = "AE")` sets a table's domain by name (other tables
   are still detected).
+
+- view:
+
+  Starting view: `"canvas"` (default, the pan/zoom canvas) or `"list"`
+  (a text-first list of the tables, for keyboard and screen-reader use).
+  The default is `getOption("sideview.view", "canvas")`. A saved
+  workspace (`state`) that records a view wins over this argument; a
+  state without one leaves it as it is.
 
 - env:
 
@@ -162,12 +171,36 @@ exceptions:
 Single-key shortcuts work when the canvas has the keyboard and you are
 not typing: `F` fit all cards, `0` reset zoom, `+`/`-` zoom, `M` show or
 hide the minimap, `D` the drawer, `T` light/dark, `/` the AI prompt and
-`?` the full list. `Ctrl+K` finds a card or column, `Ctrl+Z`/`Ctrl+Y`
-undo and redo a pipeline step, and `Esc` cancels a connection or closes
-a popover. Double-click a card title, a minimap rectangle or a search
-result to zoom to that card.
+`?` the full list (the list also has a switch that turns the single keys
+off). `Ctrl+K` finds a card or column, `Ctrl+Z`/`Ctrl+Y` undo and redo a
+pipeline step, and `Esc` cancels a connection or closes a popover.
+Double-click a card title, a minimap rectangle or a search result to
+zoom to that card.
 
 ## Options
+
+- `sideview.shortcuts`:
+
+  `FALSE` starts the canvas with the single-key shortcuts off (default
+  `TRUE`). It is the default only: the "Keyboard shortcuts" switch in
+  the `?` list is remembered in the browser and wins. `Ctrl+K` and
+  `Ctrl+Enter` always work.
+  [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md)
+  reads it too.
+
+- `sideview.view`:
+
+  `"list"` starts the text-first list view in `sideview()`,
+  [`sideview_ui()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_ui.md),
+  [`sideviewUI()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewUI.md),
+  [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md)
+  and
+  [`save_sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/save_sideview.md)
+  (default `"canvas"`). The `view` argument wins, and so does
+  `options = list(view = )` in
+  [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md).
+  A restored workspace state that records a view (`view.mode`) wins over
+  both.
 
 - `sideview.session_grace`:
 

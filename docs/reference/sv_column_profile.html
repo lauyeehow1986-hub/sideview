@@ -15,7 +15,7 @@ empty strings, extreme values)."><meta property="og:image" content="https://lauy
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.7.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.8.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -25,6 +25,7 @@ empty strings, extreme values)."><meta property="og:image" content="https://lauy
     <div id="navbar" class="collapse navbar-collapse ms-3">
       <ul class="navbar-nav me-auto"><li class="nav-item"><a class="nav-link" href="../articles/tour.html">Visual tour</a></li>
 <li class="nav-item"><a class="nav-link" href="../articles/cdisc.html">CDISC</a></li>
+<li class="nav-item"><a class="nav-link" href="../articles/screen-reader.html">Screen reader</a></li>
 <li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
@@ -103,49 +104,12 @@ class <code>"factor"</code>.</p>
     <div class="section level2">
     <h2 id="ref-examples">Examples<a class="anchor" aria-label="anchor" href="#ref-examples"></a></h2>
     <div class="sourceCode"><pre class="sourceCode r"><code><span class="r-in"><span><span class="fu">sv_column_profile</span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">" Male"</span>, <span class="st">"male"</span>, <span class="st">"Female"</span>, <span class="cn">NA</span><span class="op">)</span><span class="op">)</span></span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $kind</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] "character"</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $class</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] "character"</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $label</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> NULL</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $n</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] 4</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $n_missing</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] 1</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $pct_missing</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] 0.25</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $n_distinct</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] 3</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $unique_key</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] FALSE</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $stats</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> NULL</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $histogram</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> NULL</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $top</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>    value n</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 1   Male 1</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 2 Female 1</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 3   male 1</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $n_other</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] 0</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> $issues</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1] "1 value has leading or trailing spaces."                             </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [2] "1 value differs only in case or spacing (e.g. \" Male\" / \"male\")."</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> Column is a text column.</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1 of 4 values are missing, 25.0 percent.</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> It has 3 distinct values.</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> Most common values:  Male (1), Female (1), male (1).</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1 value has leading or trailing spaces.</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 1 value differs only in case or spacing (e.g. " Male" / "male").</span>
 <span class="r-in"><span><span class="fu">sv_column_profile</span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">54</span>, <span class="fl">61</span>, <span class="fl">47</span>, <span class="fl">999</span>, <span class="cn">NA</span><span class="op">)</span><span class="op">)</span><span class="op">$</span><span class="va">issues</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> character(0)</span>
 </code></pre></div>

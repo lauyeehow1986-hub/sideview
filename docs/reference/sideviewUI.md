@@ -15,7 +15,13 @@ the user's work is read back with the reactives of the returned proxy.
 ## Usage
 
 ``` r
-sideviewUI(id, height = "600px", title = NULL, theme = "auto")
+sideviewUI(
+  id,
+  height = "600px",
+  title = NULL,
+  theme = "auto",
+  view = getOption("sideview.view", "canvas")
+)
 
 sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto")
 ```
@@ -40,6 +46,13 @@ sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto")
   [`sv_theme()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_theme.md)
   or a
   [`bslib::bs_theme()`](https://rstudio.github.io/bslib/reference/bs_theme.html).
+
+- view:
+
+  Starting view: `"canvas"` (default, the pan/zoom canvas) or `"list"`
+  (a text-first list of the tables, for keyboard and screen-reader use).
+  The default is `getOption("sideview.view", "canvas")`. A workspace
+  restored later (Open) that records a view switches to it.
 
 - cards:
 

@@ -13,7 +13,8 @@ sideview_ui(
   title = "Sideview Canvas",
   gadget = FALSE,
   theme = "auto",
-  state = NULL
+  state = NULL,
+  view = getOption("sideview.view", "canvas")
 )
 ```
 
@@ -46,6 +47,11 @@ sideview_ui(
 - state:
 
   Optional saved workspace to restore on load (see
+  [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)).
+
+- view:
+
+  Starting view: `"canvas"` (default) or `"list"` (see
   [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)).
 
 ## Value

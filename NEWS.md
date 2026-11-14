@@ -1,4 +1,10 @@
-# sideview (development version)
+# sideview 0.8.0
+
+Text-first accessibility: a list view that reads top to bottom, results printed as plain sentences, live announcements and
+an accessibility test suite. sideview 0.8.0 is checked with automated WCAG tests (axe) and real-browser keyboard tests; an
+NVDA script is written but has not yet been run; not yet tested by blind users. See the new article "Using sideview with a
+screen reader" and the accessibility feedback issue template.
+
 
 ## List view: card changes and the keyboard walk
 
