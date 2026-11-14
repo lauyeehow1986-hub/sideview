@@ -156,9 +156,11 @@ for example P05, P09, P12, and 7 more."
 - `sv_column_profile()` and `sv_supp_check()` (plain lists today) get classes `sv_column_profile` and
   `sv_supp_check` and print methods, in the in-memory and lazy versions alike. The Shiny handlers send
   `unclass(x)`, so the JSON to the browser is unchanged (tested).
-- `sv_detect_discrepancies()` and `sv_suggest_mappings()` (data frames) get subclasses `sv_discrepancies` and
-  `sv_mappings` in front of `data.frame`, with sentence print methods. `as.data.frame()` drops the subclass.
-  NEWS: "prints as sentences; use `as.data.frame()` for the table."
+- `sv_detect_discrepancies()` returns a list: it gets class `c("sv_discrepancies", "list")`, and `unclass()`
+  gives the plain list. `sv_suggest_mappings()` returns a data frame: it gets `c("sv_mappings", "data.frame")`,
+  and `as.data.frame()` drops the subclass. Both get sentence print methods, and the handlers send the plain
+  object. NEWS: "prints as sentences; use `as.data.frame()` (mappings) or `unclass()` (discrepancies) for the
+  raw object."
 - `sv_codebook()` stays a plain data frame (deliverable for CSV/XLSX; byte-equal CSV test).
 
 **`sv_describe(x, ..., n_levels = 5)`** (new export). Takes data frames, lazy tables or `sideview_card`s.
