@@ -60,6 +60,7 @@ jobs:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       NOT_CRAN: true
       SV_AXE_PATH: ${{ github.workspace }}/node_modules/axe-core/axe.min.js
+      CHROMOTE_CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
     steps:
       - uses: actions/checkout@v4
 
@@ -69,19 +70,20 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::chromote, any::shinytest2, any::duckdb, any::arrow
+          extra-packages: any::devtools, any::chromote, any::shinytest2, any::duckdb, any::arrow
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
       - uses: browser-actions/setup-chrome@v1
+        id: setup-chrome
 
       - name: Install axe-core
         run: npm install --no-save axe-core@4.10.3
 
-      # Test files that do not exist yet (a PR in the series adds test-say.R) are skipped,
-      # not failed; each existing file runs on its own and any failure stops the job.
+      # Test files that do not exist yet (a PR in the series adds test-say.R) are skipped, not
+      # failed. The script fails the job on a failed expectation, on 0 passed expectations, or
+      # on a skip for a missing Chrome / axe-core (testthat reports those as green).
       - name: Run accessibility tests
-        run: |
-          Rscript -e 'for (f in c("a11y-browser", "say")) if (file.exists(file.path("tests/testthat", paste0("test-", f, ".R")))) devtools::test(filter = f, stop_on_failure = TRUE) else message("no test file for filter: ", f)'
+        run: Rscript .github/scripts/run-a11y-tests.R

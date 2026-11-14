@@ -13,7 +13,8 @@ screen reader" and the accessibility feedback issue template.
   "No tables yet." A table that falls back to its preview now says so in its heading.
 * Everything the canvas does for a join, a filter or a SUPP merge can be done from the keyboard in the list view, and the
   code it composes is the same. The accessibility tests run axe-core over the canvas and the list view in all three modes,
-  both themes and a phone width with no accepted exceptions.
+  both themes and a phone width, with no accepted exceptions in the list view; on the canvas, axe's target-size rule is
+  accepted because the fit zoom shrinks the 24 px icon buttons (to be fixed in sub-project B).
 
 ## List view argument
 - `sideview()`, `sideview_widget()`, `save_sideview()`, `sideview_ui()` and `sideviewUI()` take `view = "canvas"` (default) or

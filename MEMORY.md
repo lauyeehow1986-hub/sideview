@@ -1111,3 +1111,9 @@ Each sub-project gets its own spec, plan and build, in this order:
 - `plans/2026-11-14-nvda-script.md` (15 tasks) and `tests/testthat/helper-nvda.R` (synthetic DM/AE/SUPPAE/labs fixture) are committed. The launch snippet builds a shiny.appobj.
 - **The NVDA pass itself was NOT run:** access to NVDA was declined, so no speech was read. No results are claimed. Unverified script assumptions: filter step text `AE filter AESEV == "SEVERE"`, join step text `DM left join AE on USUBJID`, header badges "N values"/"N missing".
 - Honest label until a pass is done: "automated WCAG tests (axe) and real-browser keyboard tests; NVDA script not yet run; not yet tested by blind users".
+
+## Final review fixes I1-I3 (2026-11-14)
+- **I1:** the a11y CI job installs `any::devtools`, gets `CHROMOTE_CHROME` from setup-chrome's `chrome-path`, and runs `.github/scripts/run-a11y-tests.R`, which fails on a failed expectation, on 0 passed expectations, or on a skip for a missing Chrome / axe-core. YAML parsed with `yaml::read_yaml`. Script checked locally with `NOT_CRAN=false`: exits non-zero (0 passed). The job itself cannot run here.
+- **I2:** a widget that starts in the list view inside a hidden container (tab, `<details>`) no longer lays out its cards at 0 x 0. `publish()` skips the first layout while `view === 'list'`; `setView('canvas')` runs the deferred first layout. New real-browser test in test-layout-browser.R (widget at display:none, shown, switched to canvas: cards have size and do not overlap). It failed (1 failure, cards 1 and 2 overlap) with the JS edit reverted by hand and passes with it.
+- **Verified:** `node --check`, gui-test-runner.js all true, test-layout-browser.R 761 pass 0 fail, test-a11y-browser.R 344 pass 0 fail 0 skip (NOT_CRAN=true, one R process at a time).
+- **I3:** NEWS.md no longer says "no accepted exceptions" for the canvas: the target-size exemption is named.
