@@ -534,3 +534,5 @@ Quarto page), plus new features for clinical data work.
 * Universal S3 normalization engine (`sv_normalize()`) supporting `data.frame`, `tibble`, `base::table`, `matrix`, `gt`, `flextable`, and `htmlwidgets`.
 * Standalone self-contained HTML widget export via `save_sideview()`.
 * Interactive Shiny Gadget and RStudio Addin (`sideview()`, `sideview_addin()`).
+
+- List view columns no longer state counts taken from the canvas badges on lazy, preview or truncated cards (they come from the 50-row preview); a sampled "~N distinct" is never shown as exact. Filter in the list view is `aria-disabled` until the builder exists.

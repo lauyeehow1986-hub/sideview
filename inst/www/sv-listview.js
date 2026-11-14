@@ -307,6 +307,8 @@
         b.setAttribute('data-sv-lv-action', a[1]);
         b.setAttribute('data-col-index', String(c));
         b.setAttribute('aria-label', a[0] + ' ' + colName);
+        // the Filter builder arrives with engine.openBuilder: until then the button says it is inert
+        if (a[1] === 'filter' && !eng.openBuilder) b.setAttribute('aria-disabled', 'true');
         b.addEventListener('click', function () { self.onColumnAction(st, a[1], c); });
         acts.appendChild(b);
       });
@@ -388,17 +390,30 @@
     this.renderRows(st);
   };
 
+  /**
+   * Counts read from a card's header badges. A card that only holds a preview of its table (lazy,
+   * truncated, or data-rows-basis="preview") has badges computed from those rows, so they say nothing
+   * here: Inspect gives the exact numbers. A title that does not match the expected text, and an
+   * approximate ("~N distinct", a sampled column), give no count rather than a guess.
+   */
   function sparkStats(card, c) {
-    var th = card && card.querySelectorAll ? card.querySelectorAll('thead th')[c] : null;
     var out = { distinct: null, missing: null };
+    if (!card || !card.querySelectorAll) return out;
+    var ds = card.dataset || {};
+    if (ds.lazy || ds.truncated || ds.rowsBasis === 'preview') return out;
+    var th = card.querySelectorAll('thead th')[c];
     if (!th) return out;
     var na = th.querySelector('.sideview-na-badge');
     var cat = th.querySelector('.sideview-cat-profile');
     var spark = th.querySelector('.sideview-sparkline');
-    var m = na ? /^(\d+) missing/.exec(na.getAttribute('title') || '') : null;
-    if (m) out.missing = parseInt(m[1], 10);
-    else if (spark || (cat && !/^All values missing/.test(cat.getAttribute('title') || ''))) out.missing = 0;
-    var d = cat ? /(\d+) distinct/.exec(cat.getAttribute('title') || '') : null;
+    var catTitle = cat ? (cat.getAttribute('title') || '') : '';
+    if (na) {
+      var m = /^(\d+) missing values \(/.exec(na.getAttribute('title') || '');
+      if (m) out.missing = parseInt(m[1], 10);
+    } else if (spark || (cat && /\| \d+ distinct$/.test(catTitle))) {
+      out.missing = 0;
+    }
+    var d = /\| (\d+) distinct$/.exec(catTitle);
     if (d) out.distinct = parseInt(d[1], 10);
     return out;
   }

@@ -229,3 +229,5 @@ Every UI change must also be checked in a **real browser** (shinytest2/chromote 
 - `MEMORY.md` — running change log, decisions, open issues, backlog. Update it with every change.
 - `plans/` — design specs; `plans/2026-10-24-ui-qa-checklist.md` — the feature QA checklist.
 - `NEWS.md` — user-facing release notes.
+
+- **List view counts (0.8.0):** `sparkStats` (sv-listview.js) reads header badges only for full in-memory cards; lazy, truncated and `rowsBasis="preview"` cards, `~N distinct` and unexpected titles give no count. Task 15 must call `refreshTable`/`renderTable` after canvas-side filter changes.

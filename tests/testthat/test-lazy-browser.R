@@ -356,3 +356,20 @@ test_that("list paging of a lazy card asks R for windows", {
   expect_true(all(unlist(reqs) <= 200))
   expect_length(attr(b, "sv_errors")(), 0)
 })
+
+test_that("a lazy card's list view states no counts taken from its 50-row preview", {
+  skip_if_no_browser()
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  b <- sv_with_app('{
+    con <- DBI::dbConnect(duckdb::duckdb())
+    DBI::dbWriteTable(con, "gaps", data.frame(id = 1:2000, y = c(1:60, rep(NA, 1940)), g = c(rep("a", 60), rep(NA, 1940))))
+    gaps <- dplyr::tbl(con, "gaps")
+    sideview(patients, gaps, run = FALSE)
+  }')
+  expect_true(attr(b, "sv_ready"))
+  sv_js(b, "window._sideviewInstance.setView('list'); true")
+  t <- sv_js(b, "[...document.querySelectorAll('.sideview-listview [data-sv-table=\"gaps\"] .sideview-lv-col-text')].map(e => e.textContent)")
+  expect_length(t, 3)
+  expect_false(any(grepl("missing|values", unlist(t))))
+})

@@ -735,3 +735,27 @@ test_that("list view updates keep the sections, the page and the open details", 
   r <- sv_js(b, sv_lv_rows_js("labs"))
   expect_identical(r$rows[[1]]$i, "27")
 })
+
+test_that("column counts: full in-memory cards show them, sampled and preview cards do not guess", {
+  skip_if_no_browser()
+  fx <- sv_set_fixture()
+  app <- sv_start_app(paste0(
+    "sideview(list(patients = patients, bigcat = data.frame(k = sprintf('k%d', seq_len(30000)), n = c(rep(NA, 10), seq_len(29990)))), run = FALSE)"))
+  b <- sv_open_page(app$url, 1360, 820, wait_for = sv_wait_eng)
+  withr::defer({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  txt <- function(tbl, i) sv_js(b, sprintf("%s.querySelectorAll('ul li .sideview-lv-col-text')[%d].textContent", sv_lv_table(tbl), i))
+  sex <- txt("patients", 1)
+  expect_identical(sex, sprintf("sex, text, %d values, %d missing",
+                                length(unique(stats::na.omit(fx$patients$sex))), sum(is.na(fx$patients$sex))))
+  # a sampled categorical (30,000 values): "~N distinct" is never read as exact
+  k <- txt("bigcat", 0)
+  expect_false(grepl("values", k))
+  # the bare-title case: a title in an unexpected format gives no count
+  r <- sv_js(b, "(() => { const lv = window._sideviewInstance.listView; const st = lv.tableState('patients');
+    const th = st.meta.element.querySelectorAll('thead th')[1];
+    const cat = th.querySelector('.sideview-cat-profile'); cat.setAttribute('title', 'Top: x | about 4 distinct');
+    const na = th.querySelector('.sideview-na-badge'); if (na) na.setAttribute('title', 'lots missing');
+    return lv.columnText(st, 1); })()")
+  expect_identical(r, "sex, text")
+})

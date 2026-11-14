@@ -1075,3 +1075,6 @@ Each sub-project gets its own spec, plan and build, in this order:
 - **Change:** `tools/cdisc-screenshots.R` (chromote, real mouse clicks, synthetic fixture) makes `vignettes/articles/cdisc/{canvas,automap,merge}.png`; wired into the CDISC article and README; docs/ rebuilt and scrubbed of CLAUDE/MEMORY pages and their sitemap and search entries.
 - **Gotcha:** the fixture must call `sv_cdisc_finalize()` on its cards, or SUPP cards get no merge targets and the Merge button is disabled (the first Merge shot showed 0 steps for that reason).
 - **Verified:** merge.png shows 1 step, 16 of 16 SUPP rows matched; `check_pkgdown()` clean; build_site ran; search.json has no CLAUDE/MEMORY paths. Not yet checked: live site after merge.
+
+## Task 13 fix round 1
+- sparkStats no longer scrapes preview-based badge counts (lazy/preview/truncated) or treats ~N distinct as exact; Filter button aria-disabled until openBuilder. Verified: a11y/lazy/layout browser tests, assets, computer-use-gui, node --check, gui-test-runner parity with BASE.
