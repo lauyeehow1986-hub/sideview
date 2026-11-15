@@ -630,9 +630,9 @@ sv_ui_build <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
     `data-sv-theme` = theme$mode,
     `data-sv-ns` = ns,
     `data-sv-view` = view,
-    # option(sideview.shortcuts = FALSE): single-key shortcuts start off (a stored choice wins)
     # access = TRUE (or option sideview.access): the Accessible canvas switch starts on
     `data-sv-access` = if (access) "true" else NULL,
+    # option(sideview.shortcuts = FALSE): single-key shortcuts start off (a stored choice wins)
     `data-sv-shortcuts` = if (isFALSE(getOption("sideview.shortcuts", TRUE))) "false" else NULL,
     # Save/Open use RStudio's file dialog through R when there is one.
     `data-sv-file-dialog` = if (isTRUE(gadget) && sv_has_file_dialog()) "r" else NULL,
@@ -679,12 +679,13 @@ sv_drawer_tabs <- c(
 
 # Validates a `view` argument: one of "canvas" / "list" (match.arg would let a length-2
 # vector equal to the choices through as "canvas").
-sv_check_access <- function(x) {
-  if (!is.logical(x) || length(x) != 1L || is.na(x)) stop("`access` must be TRUE or FALSE.", call. = FALSE)
-  x
-}
-
 sv_check_view <- function(view) {
   if (length(view) != 1L) stop("'view' must be of length 1", call. = FALSE)
   match.arg(view, c("canvas", "list"))
+}
+
+# Validates an `access` argument: a single TRUE or FALSE.
+sv_check_access <- function(x) {
+  if (!is.logical(x) || length(x) != 1L || is.na(x)) stop("`access` must be TRUE or FALSE.", call. = FALSE)
+  x
 }

@@ -82,13 +82,13 @@ sv_widget_url <- function(widget_expr) {
   paste0("file:///", normalizePath(tmp, winslash = "/"))
 }
 
-# Page specs for the three modes; each `open(theme, width, height)` returns a ready session.
+# Page specs for the three modes; each `open(theme, width, height, access = FALSE)` returns a ready session.
 # The caller closes the session (b$close()).
 sv_a11y_pages <- function() {
   open_app <- function(app_expr, ready) {
     force(app_expr)
-    function(theme = "light", width = 1360, height = 820) {
-      expr <- sprintf(app_expr, theme)
+    function(theme = "light", width = 1360, height = 820, access = FALSE) {
+      expr <- sprintf(app_expr, theme, if (isTRUE(access)) ", access = TRUE" else "")
       app <- sv_start_app(expr)
       b <- sv_open_page(app$url, width, height, wait_for = ready)
       attr(b, "sv_app") <- app
@@ -98,13 +98,14 @@ sv_a11y_pages <- function() {
   ready_cards <- "document.querySelectorAll('.sideview-card').length >= 2 && !!document.querySelector('.sideview-container')._sideviewInstance"
   module_expr <- paste0(
     "shiny::shinyApp(",
-    "shiny::fluidPage(sideview::sideviewUI('m', height = '780px', theme = '%s')),",
+    "shiny::fluidPage(sideview::sideviewUI('m', height = '780px', theme = '%s'%s)),",
     "function(input, output, session) sideview::sideviewServer('m', cards = list(",
     "patients = patients, visits = visits, labs = labs)))")
   list(
-    gadget = list(open = open_app("sideview(patients, visits, labs, theme = '%s', run = FALSE)", ready_cards)),
-    widget = list(open = function(theme = "light", width = 1360, height = 820) {
-      url <- sv_widget_url(sprintf("sideview_widget(patients, visits, labs, theme = '%s')", theme))
+    gadget = list(open = open_app("sideview(patients, visits, labs, theme = '%s'%s, run = FALSE)", ready_cards)),
+    widget = list(open = function(theme = "light", width = 1360, height = 820, access = FALSE) {
+      url <- sv_widget_url(sprintf("sideview_widget(patients, visits, labs, theme = '%s'%s)", theme,
+                                   if (isTRUE(access)) ", options = list(access = TRUE)" else ""))
       sv_open_page(url, width, height, wait_for = ready_cards)
     }),
     module = list(open = open_app(module_expr, ready_cards))

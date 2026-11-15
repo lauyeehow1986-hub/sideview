@@ -740,6 +740,7 @@ function sendToShiny(name, value) {
     this.joinCheckStepId = null;
     // Live-region announcements (see announce()); the last 50 messages are kept for tests.
     this.announceLog = [];
+    this._accessSubs = [];
     // 'canvas' | 'list' (see setView); the list view is built the first time it is shown.
     this.view = 'canvas';
     this.listView = null;
@@ -801,6 +802,8 @@ function sendToShiny(name, value) {
       if (restoredOut.missing.length) this.showToast(stateSummary(restoredOut), 'warning');
     }
 
+    // The Accessible canvas class, from the stored choice / R default (no announcement at start).
+    if (this.container.classList) this.container.classList.toggle('sv-access', this.accessOn());
     this.registerShinyHandlers();
     this.initMinimap();
     this.initLayoutObserver();
@@ -1686,6 +1689,7 @@ function sendToShiny(name, value) {
       try { l[0].removeEventListener(l[1], l[2], l[3]); } catch (e) {}
     });
     this._globalListeners = [];
+    this._accessSubs = [];
     if (this._resizeObserver) { this._resizeObserver.disconnect(); this._resizeObserver = null; }
     if (this.panzoom && this.panzoom.destroy) this.panzoom.destroy();
     this.cards.forEach(function (card) {
@@ -1828,6 +1832,46 @@ function sendToShiny(name, value) {
     return on;
   };
 
+  // The Accessible canvas switch. Order: the stored choice, then this session's memory (a blocked
+  // localStorage), then the R default (data-sv-access="true" / options.access === true), else off.
+  // There is no view fallback.
+  var ACCESS_KEY = 'sideview.access';
+
+  SideviewEngine.prototype.accessOn = function () {
+    var stored = null;
+    try { stored = global.localStorage.getItem(ACCESS_KEY); } catch (e) { stored = null; }
+    if (stored === 'on') return true;
+    if (stored === 'off') return false;
+    if (this._accessMem === true || this._accessMem === false) return this._accessMem;
+    var attr = this.container.getAttribute ? this.container.getAttribute('data-sv-access') : null;
+    return attr === 'true' || this.options.access === true;
+  };
+
+  SideviewEngine.prototype.setAccess = function (on) {
+    on = !!on;
+    this._accessMem = on;
+    try { global.localStorage.setItem(ACCESS_KEY, on ? 'on' : 'off'); } catch (e) {}
+    if (this.container.classList) this.container.classList.toggle('sv-access', on);
+    var sw = this.container.querySelectorAll('[data-sv-access-switch]');
+    for (var i = 0; i < sw.length; i++) sw[i].setAttribute('aria-checked', on ? 'true' : 'false');
+    this.announce(on ? 'Accessible canvas on.' : 'Accessible canvas off.');
+    var subs = this._accessSubs.slice();
+    for (var j = 0; j < subs.length; j++) {
+      try { subs[j](on); } catch (e) {}
+    }
+    return on;
+  };
+
+  // Subscribe to switch changes; fn(on) runs after the class has changed. Returns an unsubscribe function.
+  SideviewEngine.prototype.onAccessChange = function (fn) {
+    var subs = this._accessSubs;
+    subs.push(fn);
+    return function () {
+      var i = subs.indexOf(fn);
+      if (i >= 0) subs.splice(i, 1);
+    };
+  };
+
   SideviewEngine.prototype.toggleShortcuts = function (show) {
     var self = this;
     var existing = this.container.querySelector('.sideview-shortcuts-scrim');
@@ -1859,9 +1903,14 @@ function sendToShiny(name, value) {
       '<button type="button" class="sideview-shortcuts-switch" role="switch" data-sv-shortcuts-switch aria-checked="' +
       (this.shortcutsOn() ? 'true' : 'false') + '"><span class="sideview-shortcuts-switch-track" aria-hidden="true"></span>' +
       '<span>Keyboard shortcuts</span></button>' +
+      '<button type="button" class="sideview-shortcuts-switch" role="switch" data-sv-access-switch aria-checked="' +
+      (this.accessOn() ? 'true' : 'false') + '"><span class="sideview-shortcuts-switch-track" aria-hidden="true"></span>' +
+      '<span>Accessible canvas</span></button>' +
       '<dl>' + rows + '</dl></div>';
     var sw = scrim.querySelector('[data-sv-shortcuts-switch]');
     sw.addEventListener('click', function () { self.setShortcuts(!self.shortcutsOn()); });
+    var asw = scrim.querySelector('[data-sv-access-switch]');
+    asw.addEventListener('click', function () { self.setAccess(!self.accessOn()); });
     scrim.addEventListener('click', function (e) {
       if (e.target === scrim) self.toggleShortcuts(false);
     });
