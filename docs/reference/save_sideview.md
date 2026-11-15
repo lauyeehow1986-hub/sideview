@@ -14,6 +14,7 @@ save_sideview(
   background = "white",
   max_rows = 5000,
   cdisc = "auto",
+  view = getOption("sideview.view", "canvas"),
   ...
 )
 ```
@@ -55,6 +56,12 @@ save_sideview(
   CDISC awareness when `widget` is table data (see
   [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md)).
   A widget you built yourself keeps its own setting.
+
+- view:
+
+  Starting view when `widget` is table data (see
+  [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md)).
+  A widget you built yourself keeps its own.
 
 - ...:
 

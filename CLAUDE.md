@@ -212,7 +212,9 @@ rstudio bridge: R/rstudio.R
 ## Conventions
 - **Card messages announce** "Table <name> added." / "replaced." / "removed." (not the `initial` population); the list view re-renders only that table's section, and reads "No tables yet." when empty.
 - **Standing rule:** Every new feature (0.9.0 D, 0.10.0 E and later) must work in the list view
-  (`inst/www/sv-listview.js`) and print as sentences in the console.
+  (`inst/www/sv-listview.js`) and print as sentences in the console (a `print()` method over `sv_say_*`, with a JS twin
+  where the browser shows the same result). A feature with a canvas-only path is not finished. Say what was checked with
+  a screen reader and what was not: do not claim an NVDA pass until `plans/2026-11-14-nvda-script.md` has been run.
 - Exported R functions use the `sv_` prefix (except `sideview*` entry points), `snake_case`, roxygen docs.
 - Heavy/optional packages (`arrow`, `duckdb`, `gt`, `flextable`, `bslib`) stay in `Suggests:` behind
   `requireNamespace()` guards.

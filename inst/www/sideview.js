@@ -1182,8 +1182,10 @@ function sendToShiny(name, value) {
       // the minimap moves up above it.
       self.container.classList.toggle('sv-compact', self.container.clientWidth < 1040);
       if (self.cards) self.freezeAllCardSizes();
-      // First layout with a real size (a widget can start hidden in a tab).
-      if (self._needsInitialLayout && self.container.clientWidth > 0) {
+      // First layout with a real size (a widget can start hidden in a tab). Not while the list
+      // view is showing: the canvas is hidden then and every card would measure 0 x 0, so
+      // setView('canvas') runs the deferred layout instead.
+      if (self._needsInitialLayout && self.view !== 'list' && self.container.clientWidth > 0) {
         self._needsInitialLayout = false;
         if (self.arrangeCards(true) && !self._restoredView) self.fitAll({ maxScale: 1, minScale: READABLE_SCALE });
         self.scheduleSnapshot();
@@ -7223,6 +7225,12 @@ function sendToShiny(name, value) {
     for (var i = 0; i < toggles.length; i++) toggles[i].setAttribute('aria-pressed', list ? 'true' : 'false');
     if (!list) {
       this._hiddenGeom = null;
+      // the first layout was deferred because the list view was showing: do it now the canvas is visible
+      if (this._needsInitialLayout && this.container.clientWidth > 0) {
+        this._needsInitialLayout = false;
+        if (this.arrangeCards(true) && !this._restoredView) this.fitAll({ maxScale: 1, minScale: READABLE_SCALE });
+        this.scheduleSnapshot();
+      }
       // the tables were hidden while their rows may have changed: measure and draw them again
       this.cards.forEach(function (card) {
         var vt = card.element && card.element._virtualTable;

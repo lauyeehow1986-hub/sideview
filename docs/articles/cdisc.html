@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.7.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.8.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -39,6 +39,7 @@
       <ul class="navbar-nav me-auto">
 <li class="nav-item"><a class="nav-link" href="../articles/tour.html">Visual tour</a></li>
 <li class="active nav-item"><a class="nav-link" href="../articles/cdisc.html">CDISC</a></li>
+<li class="nav-item"><a class="nav-link" href="../articles/screen-reader.html">Screen reader</a></li>
 <li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
       </ul>
@@ -250,11 +251,11 @@ alone, and the suggestion’s reason says so.</p>
 <code>group</code> and <code>kind</code> columns:</p>
 <div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="../reference/sv_suggest_mappings.html">sv_suggest_mappings</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>dm <span class="op">=</span> <span class="va">dm</span>, ae <span class="op">=</span> <span class="va">ae</span>, adsl <span class="op">=</span> <span class="va">adsl</span><span class="op">)</span><span class="op">)</span><span class="op">[</span>, <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"from_table"</span>, <span class="st">"to_table"</span>, <span class="st">"from_col"</span>, <span class="st">"to_col"</span>, <span class="st">"kind"</span><span class="op">)</span><span class="op">]</span></span>
-<span><span class="co">#&gt;   from_table to_table from_col  to_col    kind</span></span>
-<span><span class="co">#&gt; 1         ae       dm  STUDYID STUDYID subject</span></span>
-<span><span class="co">#&gt; 2         ae       dm  USUBJID USUBJID subject</span></span>
-<span><span class="co">#&gt; 3       adsl       dm  STUDYID STUDYID subject</span></span>
-<span><span class="co">#&gt; 4       adsl       dm  USUBJID USUBJID subject</span></span></code></pre></div>
+<span><span class="co">#&gt; 4 suggested joins.</span></span>
+<span><span class="co">#&gt; ae.STUDYID to dm.STUDYID, confidence : .</span></span>
+<span><span class="co">#&gt; ae.USUBJID to dm.USUBJID, confidence : .</span></span>
+<span><span class="co">#&gt; adsl.STUDYID to dm.STUDYID, confidence : .</span></span>
+<span><span class="co">#&gt; adsl.USUBJID to dm.USUBJID, confidence : .</span></span></code></pre></div>
 <div class="section level3">
 <h3 id="key-checks">Key checks<a class="anchor" aria-label="anchor" href="#key-checks"></a>
 </h3>

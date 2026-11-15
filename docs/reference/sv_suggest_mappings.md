@@ -82,10 +82,6 @@ A `data.frame` with columns:
 df1 <- data.frame(patient_id = 1:5, age = c(20, 30, 40, 50, 60))
 df2 <- data.frame(patient_id = 3:7, score = c(10, 20, 30, 40, 50))
 sv_suggest_mappings(list(patients = df1, visits = df2))
-#>   from_table   from_col to_table     to_col confidence
-#> 1   patients patient_id   visits patient_id     0.7714
-#>                                                                reason group
-#> 1 Exact name match with ID suffix; identical types; 43% value overlap  <NA>
-#>   kind
-#> 1 <NA>
+#> 1 suggested join.
+#> patients.patient_id to visits.patient_id, confidence 0.77: Exact name match with ID suffix; identical types; 43% value overlap.
 ```

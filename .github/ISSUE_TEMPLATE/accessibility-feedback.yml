@@ -1,0 +1,43 @@
+name: Accessibility feedback
+description: Something in sideview could not be read, reached or used with a screen reader or the keyboard.
+labels: ["accessibility"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you. sideview is checked with automated WCAG tests (axe) and real-browser keyboard tests; an NVDA script is written but has not yet been run; not yet tested by blind users. Your report matters. Please use synthetic data only, never real patient data.
+  - type: input
+    id: screen-reader
+    attributes:
+      label: Screen reader and its version
+      description: For example NVDA 2026.2, JAWS 2026, VoiceOver on macOS 15. Write "none" if you use only the keyboard.
+    validations:
+      required: true
+  - type: input
+    id: surface
+    attributes:
+      label: Browser or RStudio pane
+      description: For example Chrome 130, Firefox 132, RStudio Viewer pane, RStudio dialog, saved HTML, Shiny module.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: sideview version
+      description: The output of packageVersion("sideview").
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you did
+      description: The call you ran (for example sideview(a, b, view = "list")) and the keys you pressed, step by step.
+    validations:
+      required: true
+  - type: textarea
+    id: heard
+    attributes:
+      label: What you heard or expected
+      description: What the screen reader said (or did not say), and what you expected instead.
+    validations:
+      required: true

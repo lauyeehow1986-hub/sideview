@@ -34,6 +34,7 @@ remotes::install_github("lauyeehow1986-hub/sideview")
 
 - **Many Tables at Once**: `data.frame`, `tibble`, `table`, `matrix`, `gt`, `flextable`, `arrow` tables and datasets, and `duckdb` connections each become a card on one canvas. Tables of 100,000+ rows scroll smoothly.
 - **Canvas Navigation**: Wheel zoom (15%–350%), pan, drag and snap cards, **Fit** and **Arrange**, a minimap, `Ctrl+K` to find a card or column, and double-click a card title to zoom to it.
+- **Screen Reader Ready**: a list view (`view = "list"`) and plain-sentence results; checked with automated WCAG tests (axe) and real-browser keyboard tests; an NVDA script is written but has not yet been run; not yet tested by blind users. See the [screen reader article](https://lauyeehow1986-hub.github.io/sideview/articles/screen-reader.html).
 - **Visual Joins**:
   - Draw a spline between two columns to generate `dplyr` joins, including multi-key joins.
   - `sv_suggest_mappings()` proposes likely keys from name, type and value overlap.

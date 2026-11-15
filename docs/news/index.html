@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.7.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.8.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -17,6 +17,7 @@
     <div id="navbar" class="collapse navbar-collapse ms-3">
       <ul class="navbar-nav me-auto"><li class="nav-item"><a class="nav-link" href="../articles/tour.html">Visual tour</a></li>
 <li class="nav-item"><a class="nav-link" href="../articles/cdisc.html">CDISC</a></li>
+<li class="nav-item"><a class="nav-link" href="../articles/screen-reader.html">Screen reader</a></li>
 <li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="active nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
@@ -33,6 +34,56 @@
       <small>Source: <a href="https://github.com/lauyeehow1986-hub/sideview/blob/HEAD/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.8.0" id="sideview-080">sideview 0.8.0<a class="anchor" aria-label="anchor" href="#sideview-080"></a></h2>
+<p>Text-first accessibility: a list view that reads top to bottom, results printed as plain sentences, live announcements and an accessibility test suite. sideview 0.8.0 is checked with automated WCAG tests (axe) and real-browser keyboard tests; an NVDA script is written but has not yet been run; not yet tested by blind users. See the new article “Using sideview with a screen reader” and the accessibility feedback issue template.</p>
+<div class="section level3">
+<h3 id="list-view-card-changes-and-the-keyboard-walk-0-8-0">List view: card changes and the keyboard walk<a class="anchor" aria-label="anchor" href="#list-view-card-changes-and-the-keyboard-walk-0-8-0"></a></h3>
+<ul><li>A table added, replaced or removed from R (<code><a href="../reference/sv_add_card.html">sv_add_card()</a></code>, <code><a href="../reference/sv_add_card.html">sv_replace_card()</a></code>, <code><a href="../reference/sv_add_card.html">sv_remove_card()</a></code>) updates only that table’s section of the list view and is announced (“Table labs replaced.”). With no tables the Tables section reads “No tables yet.” A table that falls back to its preview now says so in its heading.</li>
+<li>Everything the canvas does for a join, a filter or a SUPP merge can be done from the keyboard in the list view, and the code it composes is the same. The accessibility tests run axe-core over the canvas and the list view in all three modes, both themes and a phone width with no accepted exceptions.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="list-view-argument-0-8-0">List view argument<a class="anchor" aria-label="anchor" href="#list-view-argument-0-8-0"></a></h3>
+<ul><li>
+<code><a href="../reference/sideview.html">sideview()</a></code>, <code><a href="../reference/sideview_widget.html">sideview_widget()</a></code>, <code><a href="../reference/save_sideview.html">save_sideview()</a></code>, <code><a href="../reference/sideview_ui.html">sideview_ui()</a></code> and <code><a href="../reference/sideviewUI.html">sideviewUI()</a></code> take <code>view = "canvas"</code> (default) or <code>"list"</code>, set for a session by <code>options(sideview.view = "list")</code>. The container carries <code>data-sv-view</code> and the widget <code>options$view</code>. A saved workspace may now carry <code>view.mode</code>; an invalid value is dropped. The list view itself arrives in the next changes.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="list-view-0-8-0">List view<a class="anchor" aria-label="anchor" href="#list-view-0-8-0"></a></h3>
+<ul><li>The toolbar has a “List view” toggle (and the Summary section repeats it). The list view shows the tables as text in a normal-flow column that keyboard and screen-reader users can read: a Summary (counts of tables, join steps and pipeline steps, whether code is ready, skip links, Save, Open and the keyboard shortcuts switch) and the headings Tables, Join, Merge SUPP, Transform, Pipeline and Code (and Copilot when a model is set up). The canvas leaves the accessibility tree while the list is shown. Switching is announced (“List view” / “Canvas view”) and moves focus to the list’s first heading. The single-key shortcuts default to off in the list view.</li>
+<li>
+<code>view = "list"</code> starts in it. A saved workspace now records the view (<code>view.mode</code>) and wins over the <code>view</code> argument when it is opened. The section contents arrive in the next changes.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="list-view-tables-0-8-0">List view tables<a class="anchor" aria-label="anchor" href="#list-view-tables-0-8-0"></a></h3>
+<ul><li>The Tables section lists every table: a heading (“labs, 5,000 rows by 3 columns, full table.”, or “preview of the first 50 rows”), one line per column (name, label, kind, and the distinct and missing counts when the card shows them) with Sort, Filter and Inspect buttons, and the rows as a captioned table, 25 a page, with Previous rows, Next rows and Go to row. A page change is announced (“Rows 26 to 50 of 5,000.”) and focus stays on the button. Rows follow the canvas sort and filter; a large (lazy) table is read a window at a time from R. Sort announces its result; Inspect writes the profile as sentences under the column. A table with more than 30 columns starts with its columns closed.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="table-aria-0-8-0">Table ARIA<a class="anchor" aria-label="anchor" href="#table-aria-0-8-0"></a></h3>
+<ul><li>Each table on the canvas has a (screen-reader-only) caption with the card name and announces its full size: <code>aria-rowcount</code> (rows plus the header), <code>aria-colcount</code>, and a row index on every rendered row, so a screen reader says “row 2002 of 5001” while the table shows only a window of it. The counts follow sort and filter.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="keyboard-shortcuts-switch-0-8-0">Keyboard shortcuts switch<a class="anchor" aria-label="anchor" href="#keyboard-shortcuts-switch-0-8-0"></a></h3>
+<ul><li>The <code>?</code> list has a “Keyboard shortcuts” switch that turns the single-key shortcuts off (WCAG 2.1.4). The choice is remembered in the browser; if the browser blocks storage it holds for the session. <code>Ctrl+K</code> and <code>Ctrl+Enter</code> always work.</li>
+<li>New option <code>sideview.shortcuts</code> (default <code>TRUE</code>): <code>FALSE</code> starts the gadget, widget and module with the shortcuts off. <code>sideview_widget(options = list(shortcuts = FALSE))</code> does the same for one widget.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="live-announcements-0-8-0">Live announcements<a class="anchor" aria-label="anchor" href="#live-announcements-0-8-0"></a></h3>
+<ul><li>The canvas has a polite live region (<code>.sideview-announcer</code>, <code>role="status"</code>) that says what happened: a finished join, SUPP or column check reads its first sentence, a step added, removed, undone or redone reads “Join step added. 3 steps.”, Copy and Insert read “Code copied.” / “Code inserted.”, and a Copilot reply reads “Copilot replied, 4 lines of code.” It works in the gadget, the widget and a module.</li>
+<li>Toasts are no longer a live region of their own. Error toasts are <code>role="alert"</code>; the other toasts are spoken through the announcer.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="accessibility-test-harness-0-8-0">Accessibility test harness<a class="anchor" aria-label="anchor" href="#accessibility-test-harness-0-8-0"></a></h3>
+<ul><li>New real-browser accessibility tests (<code>test-a11y-browser.R</code>): every canvas control has an accessible name in the gadget, widget and module; Tab reaches the toolbar before the drawer; axe-core (WCAG 2.2 A/AA) finds no violation across the three modes, two themes and two sizes (the list view with none; the canvas has one documented <code>target-size</code> exception); and today’s single-key shortcut and typing rules are pinned (typing in the AI bar never fires a shortcut).</li>
+<li>Contrast and control-size fixes found by the matrix. A new <code>a11y</code> CI job runs these tests with axe-core 4.10.3 pinned.</li>
+<li>Internal sentence helpers (<code>sv_say_*</code> in R, <code>say*</code> on <code>SideviewPipeline</code>) for plain-text output, with R and JS twins held equal by <code>test-say.R</code>.</li>
+<li>
+<code><a href="https://rdrr.io/r/base/print.html" class="external-link">print()</a></code> of a join check (<code><a href="../reference/sv_join_diagnostics.html">sv_join_diagnostics()</a></code>) now reads as plain sentences: “Join of patients and visits by patient_id is one to many.”, match counts with percentages, sample unmatched keys, rows by join type, and each hint or warning as its own sentence. The result also carries <code>x_name</code> and <code>y_name</code>.</li>
+<li>
+<code><a href="https://rdrr.io/r/base/print.html" class="external-link">print()</a></code> of a SUPP merge check (<code><a href="../reference/sv_supp_check.html">sv_supp_check()</a></code>), a column profile (<code><a href="../reference/sv_column_profile.html">sv_column_profile()</a></code>), discrepancies (<code><a href="../reference/sv_detect_discrepancies.html">sv_detect_discrepancies()</a></code>) and suggested joins (<code><a href="../reference/sv_suggest_mappings.html">sv_suggest_mappings()</a></code>) now reads as plain sentences, for example “Merging suppae into ae adds 1 column: AETRTEM.” These results have the classes <code>sv_supp_check</code>, <code>sv_column_profile</code>, <code>sv_discrepancies</code> and <code>sv_mappings</code>; they are still a list or data frame, and <code><a href="https://rdrr.io/r/base/as.data.frame.html" class="external-link">as.data.frame()</a></code> on the mappings gives the plain data frame. The data the browser receives is unchanged.</li>
+<li>Results print as sentences. Use <code><a href="https://rdrr.io/r/base/as.data.frame.html" class="external-link">as.data.frame()</a></code> (mappings) or <code><a href="https://rdrr.io/r/base/class.html" class="external-link">unclass()</a></code> (discrepancies, checks, profiles) for the raw object.</li>
+<li>New <code><a href="../reference/sv_describe.html">sv_describe()</a></code> writes a table sentence and one line per column (label, kind, missing, distinct, ranges, top values) as plain text. It reads lazy duckdb and Arrow tables through their summaries and never collects them.</li>
+</ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.7.0" id="sideview-070">sideview 0.7.0<a class="anchor" aria-label="anchor" href="#sideview-070"></a></h2>
 <div class="section level3">
@@ -224,7 +275,7 @@
 </ul></div>
 </div>
     <div class="section level2">
-<h2 class="pkg-version" data-toc-text="0.3.0" id="sideview-030">sideview 0.3.0<a class="anchor" aria-label="anchor" href="#sideview-030"></a></h2>
+<h2 class="pkg-version" data-toc-text="0.3.0" id="sideview-030">sideview 0.3.0<a class="anchor" aria-label="anchor" href="#sideview-030"></a></h2><p class="text-muted">CRAN release: 2026-11-08</p>
 <p>A full pass over the user interface, tested in a real browser and in RStudio (dialog, Viewer pane, external browser, the addin, a saved HTML file and a Quarto page), plus new features for clinical data work.</p>
 <div class="section level3">
 <h3 id="new-features-0-3-0">New features<a class="anchor" aria-label="anchor" href="#new-features-0-3-0"></a></h3>
@@ -383,10 +434,11 @@
 </div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.1.0" id="sideview-010-1">sideview 0.1.0<a class="anchor" aria-label="anchor" href="#sideview-010-1"></a></h2>
-<ul><li>Initial release of <strong><code>sideview</code></strong>: Multi-Table 2D Infinite Canvas for interactive data exploration, visual field mapping, and LLM-assisted Tidyverse code generation.</li>
-<li>Universal S3 normalization engine (<code><a href="../reference/sv_normalize.html">sv_normalize()</a></code>) supporting <code>data.frame</code>, <code>tibble</code>, <code><a href="https://rdrr.io/r/base/table.html" class="external-link">base::table</a></code>, <code>matrix</code>, <code>gt</code>, <code>flextable</code>, and <code>htmlwidgets</code>.</li>
-<li>Standalone self-contained HTML widget export via <code><a href="../reference/save_sideview.html">save_sideview()</a></code>.</li>
-<li>Interactive Shiny Gadget and RStudio Addin (<code><a href="../reference/sideview.html">sideview()</a></code>, <code><a href="../reference/sideview_addin.html">sideview_addin()</a></code>).</li>
+<ul><li><p>Initial release of <strong><code>sideview</code></strong>: Multi-Table 2D Infinite Canvas for interactive data exploration, visual field mapping, and LLM-assisted Tidyverse code generation.</p></li>
+<li><p>Universal S3 normalization engine (<code><a href="../reference/sv_normalize.html">sv_normalize()</a></code>) supporting <code>data.frame</code>, <code>tibble</code>, <code><a href="https://rdrr.io/r/base/table.html" class="external-link">base::table</a></code>, <code>matrix</code>, <code>gt</code>, <code>flextable</code>, and <code>htmlwidgets</code>.</p></li>
+<li><p>Standalone self-contained HTML widget export via <code><a href="../reference/save_sideview.html">save_sideview()</a></code>.</p></li>
+<li><p>Interactive Shiny Gadget and RStudio Addin (<code><a href="../reference/sideview.html">sideview()</a></code>, <code><a href="../reference/sideview_addin.html">sideview_addin()</a></code>).</p></li>
+<li><p>List view columns no longer state counts taken from the canvas badges on lazy, preview or truncated cards (they come from the 50-row preview); a sampled “~N distinct” is never shown as exact. Filter in the list view is <code>aria-disabled</code> until the builder exists.</p></li>
 </ul></div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside></div>

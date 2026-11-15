@@ -11,7 +11,7 @@ discrepancy recoding, and LLM-assisted tidyverse code generation."><meta propert
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.7.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.8.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -21,6 +21,7 @@ discrepancy recoding, and LLM-assisted tidyverse code generation."><meta propert
     <div id="navbar" class="collapse navbar-collapse ms-3">
       <ul class="navbar-nav me-auto"><li class="nav-item"><a class="nav-link" href="../articles/tour.html">Visual tour</a></li>
 <li class="nav-item"><a class="nav-link" href="../articles/cdisc.html">CDISC</a></li>
+<li class="nav-item"><a class="nav-link" href="../articles/screen-reader.html">Screen reader</a></li>
 <li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
@@ -53,6 +54,7 @@ discrepancy recoding, and LLM-assisted tidyverse code generation.</p>
 <span>  theme <span class="op">=</span> <span class="st">"auto"</span>,</span>
 <span>  state <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  cdisc <span class="op">=</span> <span class="st">"auto"</span>,</span>
+<span>  view <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/options.html" class="external-link">getOption</a></span><span class="op">(</span><span class="st">"sideview.view"</span>, <span class="st">"canvas"</span><span class="op">)</span>,</span>
 <span>  env <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/sys.parent.html" class="external-link">parent.frame</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  run <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/interactive.html" class="external-link">interactive</a></span><span class="op">(</span><span class="op">)</span></span>
 <span><span class="op">)</span></span></code></pre></div>
@@ -98,6 +100,14 @@ to tables by name.</p></dd>
 SDTM, SEND or ADaM datasets; <code>FALSE</code> turns it off; a named character vector
 such as <code>c(my_ae = "AE")</code> sets a table's domain by name (other tables are
 still detected).</p></dd>
+
+
+<dt id="arg-view">view<a class="anchor" aria-label="anchor" href="#arg-view"></a></dt>
+<dd><p>Starting view: <code>"canvas"</code> (default, the pan/zoom canvas) or <code>"list"</code>
+(a text-first list of the tables, for keyboard and screen-reader use). The
+default is <code>getOption("sideview.view", "canvas")</code>. A saved workspace
+(<code>state</code>) that records a view wins over this argument; a state without
+one leaves it as it is.</p></dd>
 
 
 <dt id="arg-env">env<a class="anchor" aria-label="anchor" href="#arg-env"></a></dt>
@@ -174,7 +184,7 @@ default would match <code>NA</code> to <code>NA</code>).</p></li>
 <p>Single-key shortcuts work when the canvas has the keyboard and you are not
 typing: <code>F</code> fit all cards, <code>0</code> reset zoom, <code>+</code>/<code>-</code> zoom, <code>M</code> show or hide
 the minimap, <code>D</code> the drawer, <code>T</code> light/dark, <code>/</code> the AI prompt and <code>?</code> the
-full list. <code>Ctrl+K</code> finds a card or column, <code>Ctrl+Z</code>/<code>Ctrl+Y</code> undo and
+full list (the list also has a switch that turns the single keys off). <code>Ctrl+K</code> finds a card or column, <code>Ctrl+Z</code>/<code>Ctrl+Y</code> undo and
 redo a pipeline step, and <code>Esc</code> cancels a connection or closes a popover.
 Double-click a card title, a minimap rectangle or a search result to zoom
 to that card.</p>
@@ -183,7 +193,20 @@ to that card.</p>
     <h2 id="options">Options<a class="anchor" aria-label="anchor" href="#options"></a></h2>
 
 
-<dl><dt><code>sideview.session_grace</code></dt>
+<dl><dt><code>sideview.shortcuts</code></dt>
+<dd><p><code>FALSE</code> starts the canvas with the single-key
+shortcuts off (default <code>TRUE</code>). It is the default only: the "Keyboard
+shortcuts" switch in the <code>?</code> list is remembered in the browser and wins.
+<code>Ctrl+K</code> and <code>Ctrl+Enter</code> always work. <code><a href="sideview_widget.html">sideview_widget()</a></code> reads it too.</p></dd>
+
+<dt><code>sideview.view</code></dt>
+<dd><p><code>"list"</code> starts the text-first list view in <code>sideview()</code>,
+<code><a href="sideview_ui.html">sideview_ui()</a></code>, <code><a href="sideviewUI.html">sideviewUI()</a></code>, <code><a href="sideview_widget.html">sideview_widget()</a></code> and <code><a href="save_sideview.html">save_sideview()</a></code>
+(default <code>"canvas"</code>). The <code>view</code> argument wins, and so does
+<code>options = list(view = )</code> in <code><a href="sideview_widget.html">sideview_widget()</a></code>. A restored workspace
+state that records a view (<code>view.mode</code>) wins over both.</p></dd>
+
+<dt><code>sideview.session_grace</code></dt>
 <dd><p>Seconds the gadget waits after its last
 browser session closes before stopping (default <code>5</code>), so reloading the
 page does not end the app.</p></dd>
