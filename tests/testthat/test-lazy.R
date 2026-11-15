@@ -1,4 +1,10 @@
 # Lazy (arrow / duckdb) cards keep their source so later code can use the whole
+# A lazy profile names its column; an in-memory one is given a bare vector and has no name.
+lazy_noname <- function(p) {
+  p$name <- NULL
+  p
+}
+
 # table. The source is an R object and must never reach the browser or a file.
 
 if (!"package:sideview" %in% search()) {
@@ -1090,7 +1096,7 @@ test_that("lazy column profile equals in-memory", {
       }
       src <- profile_source(cols[[nm]], how, fx$con, "pc")
       got <- sv_column_profile(src, column = "c")
-      expect_equal(got, want, tolerance = 1e-12, label = paste(nm, how))
+      expect_equal(lazy_noname(got), want, tolerance = 1e-12, label = paste(nm, how))
     }
   }
 })
@@ -1143,7 +1149,7 @@ test_that("lazy column profile follows top_n and bins", {
       for (top_n in c(2L, 5L)) {
         for (bins in c(4L, 33L)) {
           expect_equal(
-            sv_column_profile(src, top_n = top_n, bins = bins, column = "c"),
+            lazy_noname(sv_column_profile(src, top_n = top_n, bins = bins, column = "c")),
             sv_column_profile(cols[[nm]], top_n = top_n, bins = bins),
             tolerance = 1e-12, label = paste(nm, how, top_n, bins)
           )
@@ -1159,15 +1165,15 @@ test_that("lazy column profile picks a column of a wider table", {
   skip_if_not_installed("arrow")
   fx <- lazy_fixture()
   tb <- dplyr::tbl(fx$con, "v")
-  expect_equal(sv_column_profile(tb, column = "grp"), sv_column_profile(fx$df$grp))
-  expect_equal(sv_column_profile(arrow::arrow_table(fx$df), column = "id"),
+  expect_equal(lazy_noname(sv_column_profile(tb, column = "grp")), sv_column_profile(fx$df$grp))
+  expect_equal(lazy_noname(sv_column_profile(arrow::arrow_table(fx$df), column = "id")),
                sv_column_profile(fx$df$id))
   expect_error(sv_column_profile(tb, column = "nope"), "Not in")
   # a profile run on a shared connection leaves it empty
   e <- sv_lazy_env()
   withr::defer(sv_lazy_close(e))
   p <- sv_lazy_column_profile(arrow::arrow_table(fx$df), "grp", con_env = e)
-  expect_equal(p, sv_column_profile(fx$df$grp))
+  expect_equal(lazy_noname(p), sv_column_profile(fx$df$grp))
   expect_length(DBI::dbListTables(e$con), 0L)
 })
 
@@ -1488,7 +1494,7 @@ test_that("BIGINT, HUGEINT and DECIMAL columns work in the join check, profile a
   for (cn in c("a", "b", "d")) {
     expect_equal(sv_join_diagnostics(tb, tb, by = cn)[c("n_x", "matched_x", "distinct_x")],
                  sv_join_diagnostics(df, df, by = cn)[c("n_x", "matched_x", "distinct_x")], tolerance = 1e-12)
-    expect_equal(sv_column_profile(tb, column = cn), sv_column_profile(df[[cn]]), tolerance = 1e-12)
+    expect_equal(lazy_noname(sv_column_profile(tb, column = cn)), sv_column_profile(df[[cn]]), tolerance = 1e-12)
     for (op in c("contains", "gt", "equals")) {
       req <- list(offset = 0L, limit = 30L, sort = list(col = cn, dir = "desc"),
                   filter = list(col = cn, op = op, value = "2"), version = 1L)
@@ -1870,4 +1876,86 @@ test_that("lazy supp check never collects the parent", {
   }
   expect_gt(length(sizes), 4L)   # the spy saw the calls
   expect_lte(max(sizes), max(nrow(supp), sample_n))
+})
+
+test_that("lazy join says the same", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  fx <- lazy_fixture()
+  for (nm in c("text", "pair")) {
+    sc <- join_scenarios()[[nm]]
+    want <- sv_say_join(sv_join_diagnostics(sc$x, sc$y, sc$by, x_name = "patients", y_name = "visits"),
+                        "patients", "visits")
+    for (kind in c("duckdb", "arrow")) {
+      got <- sv_say_join(
+        sv_lazy_join_diagnostics(join_side(sc$x, kind, fx$con, "jx"), join_side(sc$y, kind, fx$con, "jy"),
+                                 sc$by, x_name = "patients", y_name = "visits"),
+        "patients", "visits")
+      expect_identical(got, want, label = paste(nm, kind))
+    }
+  }
+})
+
+test_that("lazy join says the same with special names and singular counts", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  fx <- lazy_fixture()
+  x <- stats::setNames(data.frame(c("a", "b", NA), stringsAsFactors = FALSE), "visit date")
+  y <- stats::setNames(data.frame(c("a", "a", "z"), stringsAsFactors = FALSE), "\u60a3\u8005")
+  by <- stats::setNames("\u60a3\u8005", "visit date")
+  nm <- c("pat<ients>", "a \"b\"")
+  want <- sv_say_join(sv_join_diagnostics(x, y, by, x_name = nm[1], y_name = nm[2]), nm[1], nm[2])
+  expect_true("1 row of pat<ients> has a missing key." %in% want)
+  for (kind in c("duckdb", "arrow")) {
+    got <- sv_say_join(
+      sv_lazy_join_diagnostics(join_side(x, kind, fx$con, "jx"), join_side(y, kind, fx$con, "jy"),
+                               by, x_name = nm[1], y_name = nm[2]), nm[1], nm[2])
+    expect_identical(got, want, label = kind)
+  }
+})
+
+# ---- classes and sentences of the lazy twins (Task 6) ----
+
+test_that("lazy supp checks and profiles carry the classes and read as the in-memory ones do", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  fx <- lazy_fixture()
+  f <- sv_cdisc_fixtures()
+  cases <- list(clean = list(f$ae, f$suppae), orphan = list(f$ae, f$supp_orphan),
+                bad = list(f$ae, f$supp_bad), clash = list(f$ae, f$supp_clash),
+                error = list(f$ae, f$supp_noqnam))
+  for (nm in names(cases)) {
+    a <- cases[[nm]]
+    want <- sv_supp_check(a[[1]], a[[2]], parent_name = "ae", supp_name = "suppae")
+    for (how in c("arrow", "duckdb")) {
+      got <- sv_lazy_supp_check(join_side(a[[1]], how, fx$con, "sp"), join_side(a[[2]], how, fx$con, "ss"),
+                                parent_name = "ae", supp_name = "suppae", rdomain = "AE")
+      expect_s3_class(got, "sv_supp_check")
+      expect_identical(sv_say_supp(got, "ae", "suppae"), sv_say_supp(want, "ae", "suppae"),
+                       info = paste(nm, how))
+      expect_identical(capture.output(print(got)), capture.output(print(want)), info = paste(nm, how))
+      expect_identical(sv_supp_check_json(got), sv_supp_check_json(want), info = paste(nm, how))
+    }
+  }
+  cols <- list(num = c(54, 61, 47, 999, NA), txt = c(" Male", "male", "Female", NA),
+               key = sprintf("P%03d", 1:6), dt = as.Date("2024-01-01") + c(0, 10, NA))
+  for (nm in names(cols)) {
+    df <- data.frame(c = cols[[nm]], stringsAsFactors = FALSE)
+    want <- sv_column_profile(df$c)
+    for (src in list(arrow::arrow_table(df), profile_source(df$c, "duckdb", fx$con, "pc_say"))) {
+      got <- sv_column_profile(src, column = "c")
+      expect_s3_class(got, "sv_column_profile")
+      expect_identical(got$name, "c")
+      expect_identical(sv_say_profile(got, "c"), sv_say_profile(want, "c"), info = nm)
+      named <- want
+      named$name <- "c"
+      expect_identical(capture.output(print(got)), capture.output(print(named)), info = nm)
+    }
+  }
 })

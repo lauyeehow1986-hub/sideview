@@ -1,0 +1,314 @@
+test_that("say helpers: R and JS agree byte for byte", {
+  cases <- list(c(140, 150), c(1, 3), c(2, 3), c(1, 8), c(0, 7), c(7, 7), c(1, 2000))
+  r <- vapply(cases, function(k) sv_say_pct(k[1], k[2]), "")
+  js <- unlist(run_pipeline_js(sprintf("out = %s.map(function (k) { return P.sayPct(k[0], k[1]); });",
+                                       jsonlite::toJSON(cases))))
+  expect_identical(r, js)
+  expect_identical(r[1:2], c("93.3 percent", "33.3 percent"))
+  expect_identical(sv_say_pct(1, 2000), "0.1 percent")   # 0.05 rounds up
+  expect_identical(sv_say_pct(3, 0), NA_character_)
+  expect_null(run_pipeline_js("out = P.sayPct(3, 0);"))
+  expect_identical(sv_say_list(c("A", "B", "C")), "A, B, and C")
+  expect_identical(sv_say_list(c("A", "B")), "A and B")
+  expect_identical(sv_say_list("A"), "A")
+  expect_identical(sv_say_list(character()), "")
+  expect_identical(sv_say_samples(c("P05", "P09", "P12", "P20"), total = 10), "P05, P09, P12, and 7 more")
+  expect_identical(sv_say_samples(c("P05", "P09")), "P05 and P09")
+  expect_identical(sv_say_value(NA), "missing")
+  expect_identical(sv_say_value("P05, 2"), "(P05, 2)")
+  expect_identical(sv_say_num(1234567), "1,234,567")
+  expect_identical(sv_say_num(0.1234567891), "0.123457")
+
+  lists <- list(character(), "A", c("A", "B"), c("A", "B", "C"), c("A", "B", "C", "D"))
+  expect_identical(
+    vapply(lists, sv_say_list, ""),
+    unlist(run_pipeline_js(sprintf("out = %s.map(function (x) { return P.sayList(x); });",
+                                   jsonlite::toJSON(lists)))))
+  samp <- list(list(c("P05", "P09", "P12", "P20"), 10), list(c("P05", "P09"), NULL),
+               list(c("a, b", "c", "d", "e"), 4), list(c("x", "y", "z"), 3))
+  rs <- vapply(samp, function(k) sv_say_samples(k[[1]], k[[2]]), "")
+  js_s <- unlist(run_pipeline_js(sprintf(
+    "out = %s.map(function (k) { return P.saySamples(k[0], k[1]); });",
+    jsonlite::toJSON(samp, null = "null"))))
+  expect_identical(rs, js_s)
+  expect_identical(sv_say_samples(c("a, b", "c", "d", "e"), 4), "(a, b), c, d, and 1 more")
+  nums <- c(1234567, 0.1234567891, 42, -3.14159265, 1e6, 2.5)
+  expect_identical(
+    vapply(nums, sv_say_num, ""),
+    unlist(run_pipeline_js(sprintf("out = %s.map(function (v) { return P.sayNum(v); });",
+                                   jsonlite::toJSON(nums, digits = NA)))))
+  expect_identical(unlist(run_pipeline_js("out = [P.sayValue(null), P.sayValue('P05, 2'), P.sayValue(7)];")),
+                   c("missing", "(P05, 2)", "7"))
+  long <- strrep("x", 120)
+  expect_identical(sv_say_check_lines(c("a", long)), c("a", long))
+  expect_identical(unlist(run_pipeline_js(sprintf("out = P.sayCheckLines(['a', '%s']);", long))), c("a", long))
+})
+
+test_that("say helpers: cell values and edge numbers agree in R and JS", {
+  vals <- list(1e6, 1e5, 0.1 + 0.2, 123456.789, -5, -1234567, TRUE, FALSE, NA, NaN, NULL, "", "P05, 2", "x", 0.00001234)
+  r <- vapply(vals, sv_say_value, "")
+  js <- unlist(run_pipeline_js(sprintf("out = %s.map(function (v) { return P.sayValue(v); });",
+                                       jsonlite::toJSON(vals, null = "null", na = "null", digits = NA, auto_unbox = TRUE))))
+  expect_identical(r, js)
+  expect_identical(r[1:10], c("1000000", "100000", "0.3", "123456.789", "-5", "-1234567",
+                              "TRUE", "FALSE", "missing", "missing"))
+  expect_identical(r[11], "missing")
+  expect_identical(sv_say_value(Inf), "Inf")
+  expect_identical(unlist(run_pipeline_js("out = [P.sayValue(Infinity), P.sayValue(-Infinity), P.sayValue(undefined)];")),
+                   c("Inf", "-Inf", "missing"))
+
+  nums <- c(1e6, 1e5, 0.1 + 0.2, 123456.789, -5, -1234567, -0.5)
+  expect_identical(
+    vapply(nums, sv_say_num, ""),
+    unlist(run_pipeline_js(sprintf("out = %s.map(function (v) { return P.sayNum(v); });",
+                                   jsonlite::toJSON(nums, digits = NA)))))
+  expect_identical(sv_say_num(-1234567), "-1,234,567")
+  expect_identical(
+    c(sv_say_num(NA), sv_say_num(NaN), sv_say_num(Inf), sv_say_num(-Inf), sv_say_num(""), sv_say_num(TRUE)),
+    unlist(run_pipeline_js(paste0("out = [P.sayNum(null), P.sayNum(NaN), P.sayNum(Infinity), ",
+                                  "P.sayNum(-Infinity), P.sayNum(''), P.sayNum(true)];"))))
+})
+
+# ---- sv_say_join / sayJoin ---------------------------------------------------------
+
+say_join_fixtures <- function() {
+  ids <- sprintf("P%02d", 1:150)
+  gone <- c(5, 9, 12, 20, 33, 47, 60, 71, 88, 99)
+  kept <- ids[-gone]
+  d0 <- as.Date("2024-01-10")
+  list(
+    one_to_one = list(x = data.frame(id = 1:5, a = 1), y = data.frame(id = 1:5, b = 2), by = "id"),
+    one_to_many = list(x = data.frame(patient_id = ids, age = 40),
+                       y = data.frame(patient_id = rep(kept, 2), visit = 1), by = "patient_id"),
+    multi_key_hint = list(
+      x = data.frame(pid = c(1, 2, 3, 4), site = c("a", "b", "c", "d"), stringsAsFactors = FALSE),
+      y = data.frame(id = c(1, 2, 3, 9), site = c("a", " b", "C", "d"), stringsAsFactors = FALSE),
+      by = c(pid = "id", "site")),
+    date_rule = list(
+      x = data.frame(id = c(1, 2, 3), visit_date = d0 + c(0, 10, 20)),
+      y = data.frame(id = c(1, 1, 2, 3), lab_date = d0 + c(-2, 40, 11, 90)), by = "id",
+      rule = list(shape = "window", xCol = "visit_date", yCol = "lab_date", from = -7, to = 7))
+  )
+}
+
+say_join_js <- function(fx, names = c("patients", "visits")) {
+  col <- function(v) I(if (inherits(v, c("Date", "POSIXt"))) format(v) else v)
+  payload <- lapply(unname(fx), function(cs) {
+    by_x <- if (is.null(names(cs$by))) cs$by else ifelse(nzchar(names(cs$by)), names(cs$by), cs$by)
+    list(x = lapply(cs$x, col), y = lapply(cs$y, col),
+         by = lapply(seq_along(cs$by), function(i) list(left = by_x[i], right = unname(cs$by[i]))),
+         rule = cs$rule,
+         xTypes = lapply(cs$x, function(v) class(v)[1]), yTypes = lapply(cs$y, function(v) class(v)[1]))
+  })
+  json <- jsonlite::toJSON(payload, auto_unbox = TRUE, na = "null", null = "null", digits = NA)
+  run_pipeline_js(sprintf(
+    "const cases = %s; out = cases.map(c => P.sayJoin(P.joinDiagnostics(c.x, c.y, c.by,
+       {rule: c.rule, xName: %s, yName: %s, xTypes: c.xTypes, yTypes: c.yTypes}), %s, %s));",
+    json, jsonlite::toJSON(names[1], auto_unbox = TRUE), jsonlite::toJSON(names[2], auto_unbox = TRUE),
+    jsonlite::toJSON(names[1], auto_unbox = TRUE), jsonlite::toJSON(names[2], auto_unbox = TRUE)))
+}
+
+test_that("sayJoin twin: R and JS give the same sentences", {
+  fx <- say_join_fixtures()
+  r <- lapply(fx, function(cs) {
+    sv_say_join(sv_join_diagnostics(cs$x, cs$y, cs$by, rule = cs$rule, x_name = "patients", y_name = "visits"),
+                "patients", "visits")
+  })
+  js <- lapply(say_join_js(fx), function(l) unlist(l))
+  names(js) <- names(r)
+  expect_identical(r, js)
+
+  lines <- r$one_to_many
+  expect_identical(lines[1], "Join of patients and visits by patient_id is one to many.")
+  expect_true("10 rows of patients have no match, for example P05, P09, P12, and 7 more." %in% lines)
+  expect_true("140 of 150 patients rows match, 93.3 percent." %in% lines)
+  expect_identical(r$one_to_one[1], "Join of patients and visits by id is one to one.")
+  expect_true(any(grepl("^Date rule: lab_date within -7[.][.][+]7 days of visit_date[.]$", r$date_rule)))
+  expect_true(any(grepl("^The rule drops [0-9]+ patients rows and [0-9]+ visits rows[.]$", r$date_rule)))
+  expect_identical(r$multi_key_hint[1], "Join of patients and visits by pid = id and site is one to one.")
+  expect_true(any(grepl("^Trimming whitespace would match 1 more patients rows", r$multi_key_hint)))
+  expect_true(any(grepl("^Rows by join type: left [0-9]+, inner [0-9]+, right [0-9]+, full [0-9]+, semi [0-9]+, anti [0-9]+[.]$",
+                        r$one_to_many)))
+
+  lines_without_data <- unlist(r)
+  expect_true(all(!grepl("[^\x20-\x7e]", lines_without_data)))
+  expect_true(all(nchar(lines_without_data) <= 100))
+
+  # an error is one sentence in both
+  e <- sv_say_join(list(error = "Not in x: nope"), "x", "y")
+  expect_identical(e, "Join check failed: Not in x: nope.")
+  expect_identical(unlist(run_pipeline_js("out = P.sayJoin({error: 'Not in x: nope'}, 'x', 'y');")), e)
+  expect_identical(sv_say_join(list(error = "Bad window."), "x", "y"), "Join check failed: Bad window.")
+  expect_identical(unlist(run_pipeline_js("out = P.sayJoin({error: 'Bad window.'}, 'x', 'y');")),
+                   "Join check failed: Bad window.")
+  # the name fields are kept on the result, and the print method uses them
+  d <- sv_join_diagnostics(fx$one_to_one$x, fx$one_to_one$y, "id", x_name = "patients", y_name = "visits")
+  expect_identical(c(d$x_name, d$y_name), c("patients", "visits"))
+})
+
+test_that("sayJoin twin: edge cases agree", {
+  cases <- list(
+    empty = list(x = data.frame(id = integer()), y = data.frame(id = 1:3), by = "id"),
+    both_empty = list(x = data.frame(id = integer()), y = data.frame(id = integer()), by = "id"),
+    na_keys = list(x = data.frame(id = c(1, NA, NA)), y = data.frame(id = c(1, NA)), by = "id"),
+    many = list(x = data.frame(id = c(1, 1)), y = data.frame(id = c(1, 1, 1)), by = "id"),
+    dup_unmatched = list(x = data.frame(id = c("a, b", "a, b", "c", "d", "e")), y = data.frame(id = "z"), by = "id"),
+    unicode = list(x = data.frame(id = c("\u00e9a", "b")), y = data.frame(id = "b"), by = "id")
+  )
+  r <- lapply(cases, function(cs) sv_say_join(sv_join_diagnostics(cs$x, cs$y, cs$by, x_name = "x", y_name = "y"), "x", "y"))
+  js <- say_join_js(cases, c("x", "y"))
+  js <- lapply(js, function(l) unlist(l))
+  names(js) <- names(r)
+  expect_identical(r, js)
+  expect_identical(r$empty[2], "0 of 0 x rows match.")
+  expect_identical(r$dup_unmatched[grepl("of x have no match", r$dup_unmatched, fixed = TRUE)],
+                   "5 rows of x have no match, for example keys (a, b), c, and d.")
+  expect_identical(r$na_keys[grepl("of x ", r$na_keys, fixed = TRUE) & grepl("missing key", r$na_keys)], "2 rows of x have a missing key.")
+})
+
+test_that("sayJoin twin: singular and plural, all matched, special names, extra_y hint", {
+  cases <- list(
+    one_each = list(x = data.frame(id = c(1, 2)), y = data.frame(id = c(1, NA)), by = "id"),
+    all_matched = list(x = data.frame(id = 1:3), y = data.frame(id = c(1:3, 3L)), by = "id"),
+    hint_y_only = list(x = data.frame(k = "a"), y = data.frame(k = c("a", " a")), by = "k"),
+    special = list(x = stats::setNames(data.frame(c("a", "b")), "visit date"),
+                   y = stats::setNames(data.frame(c("a", "z")), "患者"),
+                   by = stats::setNames("患者", "visit date"))
+  )
+  nm <- c("pat<ients>", "a \"b\"")
+  r <- lapply(cases, function(cs) sv_say_join(
+    sv_join_diagnostics(cs$x, cs$y, cs$by, x_name = nm[1], y_name = nm[2]), nm[1], nm[2]))
+  js <- lapply(say_join_js(cases, nm), unlist)
+  names(js) <- names(r)
+  expect_identical(r, js)
+  expect_true("1 row of pat<ients> has no match, for example 2." %in% r$one_each)
+  expect_true("1 row of a \"b\" has a missing key." %in% r$one_each)
+  expect_false(any(grepl("no match", r$all_matched)))
+  expect_true("Trimming whitespace would match 1 more a \"b\" rows." %in% r$hint_y_only)
+  expect_identical(r$special[1],
+                   "Join of pat<ients> and a \"b\" by visit date = \u60a3\u8005 is one to one.")
+})
+
+# ---- saySupp / sayProfile (Task 6) ------------------------------------------
+
+say_supp_js <- function(parent, supp, parent_name, supp_name, rdomain = NULL, plan = NULL) {
+  types <- lapply(parent, function(col) class(col)[1])
+  opts <- list(parentName = parent_name, suppName = supp_name, parentTypes = types,
+               sampleN = 5L, parentCols = names(parent), suppCols = names(supp))
+  if (!is.null(rdomain)) opts$rdomain <- rdomain
+  if (!is.null(plan)) opts$plan <- plan
+  rows <- function(d) {
+    rownames(d) <- NULL
+    jsonlite::toJSON(d, dataframe = "rows", na = "null")
+  }
+  run_pipeline_js(sprintf(
+    "out = P.saySupp(P.suppCheck(%s, %s, %s), %s, %s);", rows(parent), rows(supp),
+    jsonlite::toJSON(opts, auto_unbox = TRUE, na = "null", null = "null"),
+    jsonlite::toJSON(parent_name, auto_unbox = TRUE), jsonlite::toJSON(supp_name, auto_unbox = TRUE)))
+}
+
+test_that("saySupp twin: R and JS give the same sentences", {
+  fx <- sv_cdisc_fixtures()
+  many_orphans <- rbind(fx$supp_orphan, fx$supp_orphan, fx$supp_orphan, fx$supp_orphan, fx$supp_orphan)
+  many_orphans$USUBJID <- sprintf("SV-001-9%02d", seq_len(nrow(many_orphans)))
+  one_bad <- fx$supp_bad[1, ]
+  stale <- sv_supp_check(fx$ae, fx$suppae2, supp_name = "suppae")$plan
+  stale$qnams <- stale$qnams[-1]
+  cases <- list(
+    clean = list(p = fx$ae, s = fx$suppae),
+    two_cols = list(p = fx$ae, s = fx$suppae2),
+    orphan = list(p = fx$ae, s = fx$supp_orphan),
+    many_orphans = list(p = fx$ae, s = many_orphans),
+    bad = list(p = fx$ae, s = fx$supp_bad),
+    one_bad = list(p = fx$ae, s = one_bad),
+    clash = list(p = fx$ae, s = fx$supp_clash),
+    other_domain = list(p = fx$ae, s = fx$suppqual, rd = "AE"),
+    repeats = list(p = fx$ae, s = fx$supp_repeat),
+    two_level = list(p = fx$ae, s = fx$supp_two_level),
+    drift = list(p = fx$ae, s = fx$suppae2, plan = stale),
+    subject_level = list(p = fx$ae, s = fx$supp_na_idvar),
+    error = list(p = fx$ae, s = fx$supp_noqnam),
+    special = list(p = fx$ae, s = fx$supp_orphan, pn = "a<b \"c\"", sn = "SUPP 患者", rd = "AE")
+  )
+  for (nm in names(cases)) {
+    cs <- cases[[nm]]
+    pn <- cs$pn %||% "ae"
+    sn <- cs$sn %||% "suppae"
+    chk <- sv_supp_check(cs$p, cs$s, parent_name = pn, supp_name = sn, rdomain = cs$rd, plan = cs$plan)
+    r <- sv_say_supp(chk, pn, sn)
+    js <- unlist(say_supp_js(cs$p, cs$s, pn, sn, cs$rd, cs$plan))
+    expect_identical(r, js, info = nm)
+    if (nm != "special") {
+      expect_true(all(!grepl("[^\x20-\x7e]", r)), info = nm)
+    }
+  }
+  e <- sv_say_supp(sv_supp_check(fx$ae, fx$supp_noqnam, parent_name = "ae", supp_name = "suppae"), "ae", "suppae")
+  expect_identical(e, "SUPP check failed: Not in suppae: QNAM.")
+
+  say <- function(supp, ...) {
+    sv_say_supp(sv_supp_check(fx$ae, supp, parent_name = "ae", supp_name = "suppae", ...), "ae", "suppae")
+  }
+  expect_identical(say(fx$suppae),
+                   c("Merging suppae into ae adds 1 column: AETRTEM.",
+                     "4 of 4 suppae rows match a ae row."))
+  expect_identical(say(fx$suppae2)[1], "Merging suppae into ae adds 2 columns: AETRTEM and AESOC2.")
+  o <- say(fx$supp_orphan)
+  expect_true("1 suppae row has no ae row, for example SV-001-999 AESEQ 99." %in% o)
+  expect_true(any(grepl("^[0-9]+ suppae rows have no ae row, for example .*, and [0-9]+ more[.]$", say(many_orphans))))
+  expect_true("1 suppae row has an IDVARVAL that does not convert, for example SV-001-001 AESEQ x." %in% say(one_bad))
+  expect_true("2 suppae rows are for another domain and are left out." %in% say(fx$suppqual, rdomain = "AE"))
+  expect_true("1 suppae row repeats a QNAM for the same ae row." %in% say(fx$supp_repeat))
+  expect_true("These QNAMs clash with ae columns: AESEV." %in% say(fx$supp_clash))
+  expect_true("These QNAMs use more than one IDVAR: AETRTEM." %in% say(fx$supp_two_level))
+  expect_true("Merge needs refreshing: New QNAM: AETRTEM." %in% say(fx$suppae2, plan = stale))
+})
+
+say_profile_js <- function(x, type, name, label = NULL) {
+  opts <- if (is.null(label)) "{}" else sprintf("{label: %s}", jsonlite::toJSON(label, auto_unbox = TRUE))
+  run_pipeline_js(sprintf("out = P.sayProfile(P.columnProfile(%s, %s, %s), %s);",
+    jsonlite::toJSON(x, na = "null", digits = NA), jsonlite::toJSON(type, auto_unbox = TRUE), opts,
+    jsonlite::toJSON(name, auto_unbox = TRUE)))
+}
+
+test_that("sayProfile twin: R and JS give the same sentences", {
+  cols <- list(
+    num = list(x = c(54, 61, 47, 999, NA), type = "numeric", name = "age", label = "Age at baseline"),
+    txt = list(x = c(" Male", "male", "Female", NA, "a, b"), type = "character", name = "sex"),
+    date = list(x = as.Date("2024-01-01") + c(0, 10, 20, 30, NA), type = "Date", name = "visit date"),
+    allna = list(x = rep(NA_real_, 3), type = "numeric", name = "x"),
+    key = list(x = sprintf("P%03d", 1:20), type = "character", name = "pid"),
+    one = list(x = 5, type = "numeric", name = "one"),
+    lgl = list(x = c(TRUE, FALSE, TRUE, NA), type = "logical", name = "flag"),
+    int = list(x = c(1L, 2L, 2L, 3L, 3L, 3L), type = "integer", name = "n"),
+    many = list(x = rep(letters[1:8], 8:1), type = "character", name = "g"),
+    thousands = list(x = c(1000, 2500.5, 1e6, NA), type = "numeric", name = "pay"),
+    special = list(x = c("b", "a", "a"), type = "character", name = "a<b \"c\"", label = "Pér \"x\"")
+  )
+  for (nm in names(cols)) {
+    cs <- cols[[nm]]
+    x <- cs$x
+    if (!is.null(cs$label)) attr(x, "label") <- cs$label
+    r <- sv_say_profile(sv_column_profile(x), cs$name)
+    js <- unlist(say_profile_js(cs$x, cs$type, cs$name, cs$label))
+    expect_identical(r, js, info = nm)
+    if (nm != "special") expect_true(all(!grepl("[^\x20-\x7e]", r)), info = nm)
+  }
+  p <- function(x, name = "x") sv_say_profile(sv_column_profile(x), name)
+  expect_identical(p(c(54, 61, 47, 999, NA), "age")[1:3],
+                   c("age is a number column.", "1 of 5 values are missing, 20.0 percent.",
+                     "It has 4 distinct values."))
+  expect_true("Minimum 47, median 57.5, maximum 999." %in% p(c(54, 61, 47, 999, NA)))
+  expect_true("Mean 290.25, standard deviation 472.535." %in% p(c(54, 61, 47, 999, NA)))
+  expect_identical(p(1:3)[2], "No values are missing.")
+  lab <- structure(c(1, 2), label = "Age")
+  expect_identical(sv_say_profile(sv_column_profile(lab), "age")[1], "age, Age is a number column.")
+  expect_identical(p(5)[3], "It has 1 distinct value.")
+  expect_true("Every value is unique, so it can be a key." %in% p(sprintf("P%03d", 1:20)))
+  expect_true("Earliest 2024-01-01, latest 2024-01-31." %in% p(as.Date("2024-01-01") + c(0, 10, 20, 30)))
+  expect_true("Most common values: a (8), b (7), c (6), d (5), e (4)." %in% p(rep(letters[1:8], 8:1)))
+  expect_true("3 other values are not listed." %in% p(rep(letters[1:8], 8:1)))
+  expect_true("1 value has leading or trailing spaces." %in% p(c(" a", "b")))
+  expect_true("All values are missing." %in% p(c(NA_real_, NA)))
+  expect_identical(sv_say_profile(sv_column_profile(c(TRUE, FALSE)), "f")[1], "f is a true or false column.")
+  expect_identical(sv_say_profile(sv_column_profile(Sys.time() + 1:2), "t")[1], "t is a date-time column.")
+})

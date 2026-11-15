@@ -7,6 +7,18 @@
   violation across the three modes, two themes and two sizes (the on-screen `target-size` rule is accepted for now);
   and today's single-key shortcut and typing rules are pinned (typing in the AI bar never fires a shortcut).
 * Contrast and control-size fixes found by the matrix. A new `a11y` CI job runs these tests with axe-core 4.10.3 pinned.
+* Internal sentence helpers (`sv_say_*` in R, `say*` on `SideviewPipeline`) for plain-text output, with R and JS
+  twins held equal by `test-say.R`.
+* `print()` of a join check (`sv_join_diagnostics()`) now reads as plain sentences: "Join of patients and visits by
+  patient_id is one to many.", match counts with percentages, sample unmatched keys, rows by join type, and each hint
+  or warning as its own sentence. The result also carries `x_name` and `y_name`.
+* `print()` of a SUPP merge check (`sv_supp_check()`), a column profile (`sv_column_profile()`), discrepancies
+  (`sv_detect_discrepancies()`) and suggested joins (`sv_suggest_mappings()`) now reads as plain sentences, for
+  example "Merging suppae into ae adds 1 column: AETRTEM." These results have the classes `sv_supp_check`,
+  `sv_column_profile`, `sv_discrepancies` and `sv_mappings`; they are still a list or data frame, and
+  `as.data.frame()` on the mappings gives the plain data frame. The data the browser receives is unchanged.
+* Results print as sentences. Use `as.data.frame()` (mappings) or `unclass()` (discrepancies, checks, profiles) for the raw object.
+* New `sv_describe()` writes a table sentence and one line per column (label, kind, missing, distinct, ranges, top values) as plain text. It reads lazy duckdb and Arrow tables through their summaries and never collects them.
 
 # sideview 0.7.0
 

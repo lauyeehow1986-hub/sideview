@@ -76,6 +76,7 @@ rstudio bridge: R/rstudio.R
   unregisters the Arrow views a cached lazy table put on the session connection (`sv_arrow_views` attribute). Do not use `is.nan()`/`is.infinite()` in lazy
   expressions (dbplyr turns them into `PRINTF('%f', col)`, which fails on integer types): use `isnan()`/`isinf()`.
   Lazy "contains" is `str_detect(col, "<escaped literal>")`, never `stringr::fixed()`.
+- **Sentences:** `sv_say_join` / `sv_say_supp` / `sv_say_profile` (R/say.R) and `sayJoin` / `saySupp` / `sayProfile` (sv-pipeline.js) are twins (test-say.R, byte-equal). Change them together. `sv_describe()` (R/describe.R) is R only.
 - **Codebook:** `sv_codebook()` has a `rows_profiled` column after `n` (`n` = true row count, `rows_profiled` =
   rows profiled; equal except for a preview-only card). `SideviewPipeline.codebookRow()`/`codebookCsv()` write the
   same column, so the byte-equal CSV test still holds.
