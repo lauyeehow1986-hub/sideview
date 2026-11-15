@@ -1158,3 +1158,10 @@ Each sub-project gets its own spec, plan and build, in this order:
 - 8: the list profile box hears the give-up of an unanswered profile request.
 - 11: fixed `Sys.sleep` before "nothing happened" assertions replaced by positive waits (announcer drained, row count, DOM marker).
 - Verified: `node --check`; `test-a11y-browser.R` all green in a real browser (`NOT_CRAN=true`), including 4 new tests for 5-8.
+
+## Accessible canvas: full verification on ce88b48 (2026-11-16)
+- Full `devtools::test()` with `NOT_CRAN=true`: 26094 passed, 0 failed, 0 errors, 0 skipped, 0 warnings.
+- `devtools::check(document = FALSE)` (tests with the real-browser suites, 29 min): 0 errors, 0 warnings, 1 NOTE (the known environmental `NULL` check-directory note).
+- The final whole-branch review fixes (I1-I4, P1, P2, M1, M2, M7, M8, M9) were re-reviewed: all addressed.
+- Still pending: the manual script `plans/2026-11-15-access-manual-script.md` (Magnifier 200%/400%, High Contrast, Edge, RStudio dialog and Viewer), including whether Alt+Arrows navigate Back in RStudio or Edge (`JUMP_MODS`).
+- Parked for later: test-access-browser should clean up `sideview.access` in localStorage itself (withr::defer); the switch-off axe run covers 1360x820 only.
