@@ -2,6 +2,7 @@
 
 <!-- badges: start -->
 [![R-CMD-check](https://github.com/lauyeehow1986-hub/sideview/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/lauyeehow1986-hub/sideview/actions/workflows/R-CMD-check.yaml)
+[![CRAN status](https://www.r-pkg.org/badges/version/sideview)](https://cran.r-project.org/package=sideview)
 [![r-universe](https://lauyeehow1986-hub.r-universe.dev/badges/sideview)](https://lauyeehow1986-hub.r-universe.dev/sideview)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
@@ -17,7 +18,13 @@
 
 ## Installation
 
-Install from r-universe (binaries for Windows and macOS):
+Install from CRAN:
+
+```r
+install.packages("sideview")
+```
+
+Or get the newest version from r-universe (binaries for Windows and macOS):
 
 ```r
 install.packages("sideview", repos = c("https://lauyeehow1986-hub.r-universe.dev", "https://cloud.r-project.org"))
