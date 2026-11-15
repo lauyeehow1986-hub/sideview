@@ -100,7 +100,10 @@ If you can see the screen, at least in part, or cannot use a mouse, you can use 
 # for one call
 sideview(patients, visits, access = TRUE)
 
-# for the whole session
+# an htmlwidget (sideview_widget() has no access argument)
+sideview_widget(patients, visits, options = list(access = TRUE))
+
+# for the whole session, the widget and save_sideview() included
 options(sideview.access = TRUE)
 ```
 
@@ -112,7 +115,8 @@ With the switch on:
 - The zoom never goes below 100%. Text is at least 16 px, every control is at least 24 by 24 px, the focus ring is 3 px,
   and a high-contrast colour set replaces the theme colours. Joins are 3 px wide with a dash pattern and an arrowhead each,
   so crossing joins can be told apart without colour.
-- Each card is one Tab stop, in reading order. On a card, Arrows move it 20 px (Shift+Arrows 100 px), Alt+Arrows focus the
+- Each card is a Tab stop, in reading order. Inside a card, Tab reaches its buttons, one column header and its table
+  body ("patients rows"), then the next card. On a card, Arrows move it 20 px (Shift+Arrows 100 px), Alt+Arrows focus the
   nearest card, Enter goes to its first column header, and PageUp, PageDown, Home and End scroll its table. The view
   follows focus.
 - On a column header, Left and Right move along the columns and Esc goes back to the card. `C` starts a join and Enter

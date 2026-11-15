@@ -120,7 +120,10 @@ rstudio bridge: R/rstudio.R
   State crosses the wire as **JSON text** (`sv_state_json()` / `sv_state_from_json()`), never as a Shiny
   list, so one-element arrays and nulls survive. `sideview(state =)` embeds it in
   `<script class="sideview-state">`; the widget passes `options.state`. Cards match by **name**; a restored
-  view skips the first auto-fit. Open replaces joins and pipeline and clears undo. Save/Open use
+  view skips the first auto-fit. Open replaces joins and pipeline and clears undo. A card entry may carry an optional
+  `user_sized: true` (the user resized it; no schema bump), which `applyState()` turns back into `data-sv-user-sized`.
+  With the Accessible canvas on, `getState()` saves an auto-sized card's default size (its inline width/height), never
+  the enlarged on-screen size, so a state saved with the switch on opens the same with it off. Save/Open use
   `rstudioapi::selectFile` only in the gadget when `data-sv-file-dialog="r"`; otherwise browser download/file picker.
 - **CDISC tags:** `sideview(..., cdisc = "auto")`, `sideview_widget()`, `save_sideview()`, `sideviewServer()` and
   `sv_codebook()` take `cdisc`: `"auto"`, `FALSE`, or a named character vector of domains (`c(my_ae = "AE")`).
@@ -189,9 +192,13 @@ rstudio bridge: R/rstudio.R
 - **Keyboard:** single-key shortcuts (F, 0, +/-, T, D, M, L, /, ?) and Ctrl+K (card search) only fire when the
   canvas owns the keyboard (`ownsKeyboard()`: standalone, or focus inside an embedded widget) and never while
   typing. Ctrl+Enter submits a drawer builder. Add new shortcuts to the `?` dialog list too.
-- **Accessible canvas (0.9.0):** one switch, opt-in. `engine.accessOn()` reads `localStorage['sideview.access']`
-  (`on`/`off`, try/catch), then the R default (`data-sv-access="true"` from `access =` / `options(sideview.access)` via
-  `sv_ui_build()`, or `options.access` from `sideview_widget()`), else off; `setAccess(on)` stores it, toggles the class
+- **Accessible canvas (0.9.0):** one switch, opt-in. Each engine resolves its state **once**, in the constructor
+  (`resolveAccess()`): `localStorage['sideview.access']` (`on`/`off`, try/catch), then `_accessMem`, then the R default
+  (`data-sv-access="true"` from `access =` on `sideview()` / `sideview_ui()` / `sideviewUI()` via `sv_ui_build()`, or
+  `options.access` from `sideview_widget(options = list(access = TRUE))`; all follow `options(sideview.access)`; the widget
+  and `save_sideview()` have no `access` argument), else off. `accessOn()` returns the cached value and only
+  `setAccess()` changes it, so toggling one canvas leaves another on the page as it is until the next load.
+  `setAccess(on)` stores it, toggles the class
   `sv-access` on the container, updates every `[data-sv-access-switch]` (a `role="switch"` in the `?` dialog beside the
   shortcuts switch), redraws the `?` key list and announces `Accessible canvas on.` / `off.`. Not in workspace state; no
   new Shiny input or message. Everything below happens only with the switch on.
@@ -202,8 +209,9 @@ rstudio bridge: R/rstudio.R
     test-theme.R parser strips `!important`): text 7:1, lines/ports/focus ring 4.5:1, dark and `prefers-color-scheme` blocks
     kept equal. Text is at least 16 px, controls at least 24 x 24, focus ring 3 px + 2 px offset. Layout is CSS only: no
     inline geometry writes, user-sized cards (`data-sv-user-sized`) keep their size, saved positions are untouched.
-  - **Splines:** each accepted join gets `data-sv-pat` (join order mod 6) and the six dash patterns apply under `sv-access`
-    and `forced-colors` only; never `6 6` (suggested) or `4 4` (draft). Arrowheads are marker `<path>`s in
+  - **Splines:** each accepted join gets `data-sv-pat`: the lowest of 0..5 that no live join uses (a key set added in one
+    call shares one), else the live join count mod 6. The six dash patterns apply under `sv-access` and `forced-colors`
+    only, with `stroke-linecap: butt` (round caps close the 4 px gaps); never `6 6` (suggested) or `4 4` (draft). Arrowheads are marker `<path>`s in
     `defs.sideview-marker-defs` (`ensureMarkerDefs()`), so count connectors as `.sideview-connector-svg path` outside `defs`.
   - **OS blocks (always on, switch or not):** `@media (forced-colors: active)` (system colours, patterns and markers kept)
     and `@media (prefers-contrast: more)` (stronger borders and focus ring; layout and zoom range unchanged), both scoped under
@@ -220,10 +228,14 @@ rstudio bridge: R/rstudio.R
     Viewer) navigates away, change it to `'ctrl+alt'` and update the `?` rows (`ACCESS_SHORTCUTS`), tests and docs.
     Add new access keys to `ACCESS_SHORTCUTS` too.
   - **Focus following:** `ensureVisible()` pans only (never zooms) so the item plus 24 px sits clear of the drawer, AI bar
-    and minimap. Cards get `tabindex="0"`, `role="group"`, `aria-label`; every attribute change goes through one record so
-    `disable()` restores the original exactly. Reading order re-orders card nodes by position and restores them on disable.
+    and minimap. Cards get `tabindex="0"`, `role="group"`, `aria-label`; each card body is a second Tab stop
+    (`tabindex="0"`, `role="region"`, `"<name> rows"`). Every attribute change goes through one record so `disable()`
+    restores the original exactly; it then moves focus to the container if it was on an element that lost its tab stop
+    (header, card body), and a dialog's return focus (`engine.returnFocus()`) falls back to the container the same way.
+    Reading order re-orders card nodes by position and restores them on disable.
   - **Tests:** `test-access-browser.R` (keys, Tab order, floor, switch precedence, forced-colors with
-    `Emulation.setEmulatedMedia`), `test-a11y-browser.R` (axe with the switch on and off, **empty** `SV_AXE_ACCEPTED`),
+    `Emulation.setEmulatedMedia`), `test-a11y-browser.R` (axe with the switch on, **no** accepted rules; switch off keeps
+    `SV_AXE_ACCEPTED`; each panel state is asserted as reached before axe runs),
     `test-theme.R` (7:1 and 4.5:1 for the access tokens). Manual pass: `plans/2026-11-15-access-manual-script.md`.
 - **Navigation:** `zoomToCard()` (title double-click, minimap click, Ctrl+K result), the minimap (`renderMinimap()`,
   redrawn from `scheduleConnectorUpdate()`) and the search dialog live in `sideview.js`. Chrome z-order: minimap 105 <

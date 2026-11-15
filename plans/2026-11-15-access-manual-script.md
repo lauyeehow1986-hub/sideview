@@ -23,8 +23,9 @@ sideview(DM = fx$DM, AE = fx$AE, SUPPAE = fx$SUPPAE, labs = fx$labs, viewer = "b
   `localStorage.removeItem('sideview.access'); localStorage.removeItem('sideview.shortcuts')`.
   In RStudio there is no console for the page: restart the gadget with a new session instead, or open the `?` dialog and
   turn the switch off.
-- To start with the switch on from R, add `access = TRUE` (or `options(sideview.access = TRUE)`). A stored browser
-  choice wins over this.
+- To start with the switch on from R, add `access = TRUE` to `sideview()` (or set `options(sideview.access = TRUE)`).
+  A widget has no `access` argument: use `sideview_widget(..., options = list(access = TRUE))` or the option. A stored
+  browser choice wins over this.
 
 ## Checks (every pass)
 
@@ -34,7 +35,7 @@ sideview(DM = fx$DM, AE = fx$AE, SUPPAE = fx$SUPPAE, labs = fx$labs, viewer = "b
 | 2 | Continue | Press Tab through the page | Tab reaches toolbar buttons and card header buttons as before (cards are not stops) |
 | 3 | Continue | Open `?`, turn "Accessible canvas" on (Space on the switch) | "Accessible canvas on." is announced, focus stays on the switch, the keys list appears, text and buttons grow |
 | 4 | Continue | Close the dialog; press `0` and `-` several times | The zoom never goes below 100% |
-| 5 | Continue | Tab to a card | One Tab stop per card, in reading order (top to bottom, then left to right). A 3 px focus ring shows. The card is fully visible, clear of the drawer, AI bar and minimap |
+| 5 | Continue | Tab to a card, then keep pressing Tab | Each card is a stop, in reading order (top to bottom, then left to right). Inside it Tab reaches the card's buttons, one column header and the table body ("patients rows"), then the next card. A 3 px focus ring shows. The card is fully visible, clear of the drawer, AI bar and minimap |
 | 6 | Card focused | Arrow keys, then Shift+Arrow | The card moves 20 px, then 100 px. After a pause "AE moved." is announced |
 | 7 | Card focused | Alt+Arrow toward another card | Focus goes to the nearest card in that direction and its name sentence is announced. **The page does not navigate back or forward** (see "Alt+Left check") |
 | 8 | Card focused | Enter | Focus goes to the first column header |
