@@ -222,6 +222,7 @@ test_that("forced colours and more contrast keep splines, ports and the focus ri
   for (access in c(TRUE, FALSE)) {
     b <- sv_acc_open("gadget", access = access)
     sv_js(b, sv_six_joins_js(sv_acc_eng))
+    sv_js(b, sprintf("%s.renderSuggestedSplines([{from_table: 'patients', from_col: 'sex', to_table: 'labs', to_col: 'test', confidence: 0.9}]); true", sv_acc_eng))
     sv_key(b, "Tab")  # keyboard focus, so :focus-visible applies and persists across the reads
     base <- sv_js(b, sv_a11y_visuals_js)
     base_dash <- vapply(sv_js(b, sv_conn_style_js), function(x) x$dash, "")
@@ -237,6 +238,12 @@ test_that("forced colours and more contrast keep splines, ports and the focus ri
       if (feat[1] == "forced-colors") {
         d <- vapply(sv_js(b, sv_conn_style_js), function(x) x$dash, "")
         expect_equal(length(unique(d)), 6, info = info)
+        sg <- sv_js(b, "(() => { const p = document.querySelector('.sideview-spline-suggested'); const s = getComputedStyle(p);
+          const h = document.querySelector('.sideview-marker-hollow');
+          return { dash: s.strokeDasharray, marker: s.markerEnd, hollow: getComputedStyle(h).display }; })()")
+        expect_false(sg$dash == "none", info = info)
+        expect_match(sg$marker, "-hollow", info = info)
+        expect_equal(sg$hollow, "inline", info = info)
       }
     }
     sv_emulate(b, "forced-colors", "none")
@@ -246,4 +253,43 @@ test_that("forced colours and more contrast keep splines, ports and the focus ri
     expect_equal(after[c("stroke", "port", "outline")], base[c("stroke", "port", "outline")])
     expect_equal(vapply(sv_js(b, sv_conn_style_js), function(x) x$dash, ""), base_dash)
   }
+})
+
+sv_live_pats_js <- "Array.from(document.querySelectorAll('.sideview-connector-svg .sideview-connector-path:not(.sideview-spline-suggested)')).map(p => p.getAttribute('data-sv-pat'))"
+
+test_that("no two live joins share a pattern while six or fewer are live, even after remove and re-add", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_js(b, sv_six_joins_js(sv_acc_eng))
+  expect_equal(unlist(sv_js(b, sv_live_pats_js)), as.character(0:5))
+  ids <- unlist(sv_js(b, sprintf("%s.connections.map(c => c.id)", sv_acc_eng)))
+  for (id in ids[1:5]) sv_js(b, sprintf("%s.removeConnection('%s'); true", sv_acc_eng, id))
+  expect_equal(unlist(sv_js(b, sv_live_pats_js)), "5")
+  sv_js(b, sprintf("%s.addConnections([{fromTable: 'patients', fromCol: 'patient_id', toTable: 'visits', toCol: 'pid', type: 'left_join'}]); true", sv_acc_eng))
+  p <- unlist(sv_js(b, sv_live_pats_js))
+  expect_length(p, 2)
+  expect_equal(length(unique(p)), 2)
+  # a key set added in one call shares one pattern
+  sv_js(b, sprintf("%s.addConnections([{fromTable: 'patients', fromCol: 'age', toTable: 'labs', toCol: 'value', type: 'left_join'},
+    {fromTable: 'patients', fromCol: 'site', toTable: 'labs', toCol: 'test', type: 'left_join'}]); true", sv_acc_eng))
+  p <- unlist(sv_js(b, sv_live_pats_js))
+  expect_length(p, 4)
+  expect_equal(p[3], p[4])
+  expect_equal(length(unique(p)), 3)
+})
+
+test_that("saved state restores the same dash patterns in the same order", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_js(b, sprintf("%s.addConnections([{fromTable: 'patients', fromCol: 'patient_id', toTable: 'visits', toCol: 'pid', type: 'left_join'}]); true", sv_acc_eng))
+  sv_js(b, sprintf("%s.addConnections([{fromTable: 'patients', fromCol: 'age', toTable: 'labs', toCol: 'value', type: 'left_join'},
+    {fromTable: 'patients', fromCol: 'site', toTable: 'labs', toCol: 'test', type: 'left_join'}]); true", sv_acc_eng))
+  sv_js(b, sprintf("%s.addConnections([{fromTable: 'visits', fromCol: 'sbp', toTable: 'labs', toCol: 'value', type: 'left_join'}]); true", sv_acc_eng))
+  before <- unlist(sv_js(b, sv_live_pats_js))
+  expect_equal(before, c("0", "1", "1", "2"))
+  state <- sv_js(b, sprintf("JSON.stringify(%s.getState())", sv_acc_eng))
+  sv_js(b, sprintf("%s.clearOperations(true); true", sv_acc_eng))
+  expect_length(unlist(sv_js(b, sv_live_pats_js)), 0)
+  sv_js(b, sprintf("%s.openState(JSON.parse(%s)); true", sv_acc_eng, jsonlite::toJSON(state, auto_unbox = TRUE)))
+  expect_equal(unlist(sv_js(b, sv_live_pats_js)), before)
 })

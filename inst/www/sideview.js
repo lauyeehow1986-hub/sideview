@@ -3984,11 +3984,17 @@ function sendToShiny(name, value) {
     this.svg.insertBefore(defs, this.svg.firstChild);
   };
 
-  /** Join order (mod 6) picks the dash pattern; a key set added together shares one. */
+  /** The dash pattern of a new join: the lowest of 0..5 that no live join uses. With nothing removed that
+   *  is join order; state restore re-adds joins in saved order, so it reproduces the saved patterns. More
+   *  than six live joins wrap by the number of live connections. */
   SideviewEngine.prototype.nextJoinPattern = function () {
-    var n = this._patSeq || 0;
-    this._patSeq = n + 1;
-    return n % 6;
+    var used = {}, live = this.connections || [];
+    for (var i = 0; i < live.length; i++) {
+      var pv = live[i].path && live[i].path.dataset ? live[i].path.dataset.svPat : null;
+      if (pv !== null && pv !== undefined) used[pv] = true;
+    }
+    for (var n = 0; n < 6; n++) if (!used[n]) return n;
+    return live.length % 6;
   };
 
   SideviewEngine.prototype.decorateAccepted = function (path, pat) {
@@ -4001,7 +4007,7 @@ function sendToShiny(name, value) {
   SideviewEngine.prototype.addConnections = function (list) {
     var self = this;
     if (!list || !list.length) return;
-    var pat = this.nextJoinPattern();
+    var pat = this.nextJoinPattern();  // one pattern for the whole key set
     list.forEach(function (connData) {
       self._connSeq = (self._connSeq || 0) + 1;
       var connId = 'conn_' + Date.now() + '_' + self._connSeq;
@@ -6381,6 +6387,7 @@ function sendToShiny(name, value) {
       out.restored.push(card.name);
     });
 
+    var prevRestored = null;
     asArray(state.connections).forEach(function (c) {
       if (!c) return;
       var from = self.findPortElement(c.from_table, c.from_col);
@@ -6392,6 +6399,12 @@ function sendToShiny(name, value) {
         toCard: toCard.dataset.cardId, toTable: c.to_table, toCol: c.to_col, toElement: to,
         type: c.join_type || 'left_join'
       });
+      // consecutive keys of one table pair were one key set: they share its pattern
+      var made = self.connections[self.connections.length - 1];
+      if (prevRestored && prevRestored.fromTable === c.from_table && prevRestored.toTable === c.to_table) {
+        made.path.dataset.svPat = prevRestored.path.dataset.svPat;
+      }
+      prevRestored = made;
     });
 
     var p = state.pipeline || {};
