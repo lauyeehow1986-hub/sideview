@@ -1465,57 +1465,94 @@ test_that("the ? list shows the access keys only with the switch on", {
 })
 
 # Puts the open page in each state and runs axe in it; returns a named list of violation frames.
-sv_axe_states <- function(b) {
+# Each state is checked as reached before axe runs (`info` labels the expectation). `ai = FALSE`
+# for a page without the AI bar (a module without llm_fn): the step then checks that it is hidden.
+sv_axe_states <- function(b, ai = TRUE, info = "") {
   out <- list()
   run <- function(name) out[[name]] <<- sv_axe_run(b)
   settle <- function(ms = 300) sv_js(b, sprintf("new Promise(r => setTimeout(() => r(true), %d))", ms))
+  reached <- function(name, js) expect_true(sv_wait_js(b, js, timeout = 5), info = paste(info, name, "reached"))
+  shown <- "(e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden')"
   run("canvas")
   tabs <- unlist(sv_js(b, "[...document.querySelectorAll('.sideview-drawer-tabs [data-tab]')].map(t => t.dataset.tab)"))
+  expect_gt(length(tabs), 0)
   for (t in tabs) {
     sv_js(b, sprintf("(() => { const d = document.querySelector('.sideview-drawer');
       if (d.classList.contains('collapsed')) document.querySelector('[data-action=\"toggle-drawer\"]').click();
       document.querySelector('.sideview-drawer-tabs [data-tab=\"%s\"]').click(); return true; })()", t))
     settle()
+    reached(paste("drawer", t), sprintf("(() => { const d = document.querySelector('.sideview-drawer');
+      const tab = document.querySelector('.sideview-drawer-tabs [data-tab=\"%s\"]');
+      return !d.classList.contains('collapsed') && %s(d) && tab.getAttribute('aria-selected') === 'true'; })()", t, shown))
     run(paste("drawer", t))
   }
   sv_js(b, "(() => { const d = document.querySelector('.sideview-drawer');
     if (!d.classList.contains('collapsed')) document.querySelector('[data-action=\"toggle-drawer\"]').click();
     const i = document.querySelector('.sideview-ai-input'); if (i) i.focus(); return true; })()")
   settle()
+  reached("AI bar", if (ai) {
+    sprintf("(() => { const i = document.querySelector('.sideview-ai-input');
+      return document.querySelector('.sideview-drawer').classList.contains('collapsed') && %s(i) &&
+        document.activeElement === i; })()", shown)
+  } else {
+    sprintf("!%s(document.querySelector('.sideview-ai-input'))", shown)
+  })
   run("AI bar")
   sv_js(b, "(() => { const c = document.querySelector('.sideview-card [data-action=\"filter-col\"]'); if (c) c.click(); return true; })()")
   settle()
+  reached("filter popover", sprintf("%s(document.querySelector('.sideview-filter-popover'))", shown))
   run("filter popover")
   eng <- "document.querySelector('.sideview-container')._sideviewInstance"
   sv_js(b, sprintf("(() => { const e = %s; if (e._activePopover && e._activePopover._closePopover) e._activePopover._closePopover();
     const p = document.querySelector('.sideview-filter-popover'); if (p) p.remove(); e.toggleShortcuts(true); return true; })()", eng))
   settle(200)
+  reached("? dialog", sprintf("!document.querySelector('.sideview-filter-popover') &&
+    %s(document.querySelector('.sideview-shortcuts-scrim'))", shown))
   run("? dialog")
   sv_js(b, sprintf("(() => { const e = %s; e.toggleShortcuts(false); e.toggleSearch(true);
     const i = document.querySelector('.sideview-search-scrim input');
     if (i) { i.value = 'pat'; i.dispatchEvent(new Event('input', {bubbles: true})); } return true; })()", eng))
   settle()
+  reached("search dialog", sprintf("!document.querySelector('.sideview-shortcuts-scrim') &&
+    %s(document.querySelector('.sideview-search-scrim input'))", shown))
   run("search dialog")
   out
 }
 
-test_that("axe-core: no violation with the switch on (modes x themes x sizes x panels)", {
-  skip_if_no_browser()
-  skip_if_no_axe()
+sv_axe_states_check <- function(access, sizes) {
   for (mode in c("gadget", "widget", "module")) {
     for (theme in c("light", "dark")) {
-      for (size in list(c(1360, 820), c(1024, 700), c(375, 812))) {
-        b <- sv_a11y_pages()[[mode]]$open(theme = theme, width = size[1], height = size[2], access = TRUE)
+      for (size in sizes) {
+        b <- sv_a11y_pages()[[mode]]$open(theme = theme, width = size[1], height = size[2], access = access)
         app <- attr(b, "sv_app")
-        res <- tryCatch(sv_axe_states(b), finally = {
+        tag <- paste(mode, theme, size[1], if (access) "on" else "off")
+        res <- tryCatch({
+          expect_identical(sv_js(b, "document.querySelector('.sideview-container').classList.contains('sv-access')"),
+                           access, info = tag)
+          sv_axe_states(b, ai = mode != "module", info = tag)
+        }, finally = {
           try(b$close(), silent = TRUE)
           if (!is.null(app)) try(app$proc$kill(), silent = TRUE)
         })
         for (st in names(res)) {
           v <- res[[st]]
-          expect_equal(nrow(v), 0, info = paste(mode, theme, size[1], st, paste(v$id, v$targets, collapse = "; ")))
+          # switch off: the default canvas keeps its accepted rules (target-size), as in the matrix above
+          if (!access) v <- v[!v$id %in% names(SV_AXE_ACCEPTED), , drop = FALSE]
+          expect_equal(nrow(v), 0, info = paste(tag, st, paste(v$id, v$targets, collapse = "; ")))
         }
       }
     }
   }
+}
+
+test_that("axe-core: no violation with the switch on (modes x themes x sizes x panels)", {
+  skip_if_no_browser()
+  skip_if_no_axe()
+  sv_axe_states_check(TRUE, list(c(1360, 820), c(1024, 700), c(375, 812)))
+})
+
+test_that("axe-core: no violation with the switch off in the same panels (modes x themes)", {
+  skip_if_no_browser()
+  skip_if_no_axe()
+  sv_axe_states_check(FALSE, list(c(1360, 820)))
 })
