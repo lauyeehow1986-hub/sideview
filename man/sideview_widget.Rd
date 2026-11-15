@@ -13,7 +13,8 @@ sideview_widget(
   theme = "auto",
   state = NULL,
   cdisc = "auto",
-  max_rows = 5000
+  max_rows = 5000,
+  view = getOption("sideview.view", "canvas")
 )
 }
 \arguments{
@@ -46,6 +47,11 @@ card says "First N of M rows", and one message names the tables cut. The
 widget has no R session behind it, so every row would travel in the HTML.
 Use \code{Inf} to embed everything. Lazy (arrow / duckdb) tables already carry
 only a preview and are not affected.}
+
+\item{view}{Starting view: \code{"canvas"} (default) or \code{"list"}, a text-first list
+of the tables. Default \code{getOption("sideview.view", "canvas")}. A saved
+workspace (\code{options = list(state = )}) that records a view wins over this
+argument; a state without one leaves it as it is.}
 }
 \value{
 An S3 object of class \code{c("sideview", "htmlwidget")}.

@@ -25,6 +25,8 @@ sv_normalize() (R/normalize.R)  ->  sideview_card objects
 codegen: R/codegen.R (sv_code_* generators)    engine: SideviewEngine + VirtualTable (sideview.js)
 pipeline: inst/www/sv-pipeline.js (SideviewPipeline: typed steps -> composed R code, undo/redo;
           pure JS, no DOM — the single source of generated code in both gadget and widget)
+list view: inst/www/sv-listview.js (`SideviewListView`, owned by the engine), with `setView`, `movePanes`
+          and `openBuilder` on the engine
 llm/copilot: R/llm.R, R/copilot.R              pan/zoom: inst/www/sv-panzoom.js (small in-house impl)
 state: R/state.R (sv_save_state/sv_load_state) styles: inst/www/sideview.css (--sv-* tokens)
 rstudio bridge: R/rstudio.R
@@ -44,7 +46,7 @@ rstudio bridge: R/rstudio.R
   `sideview_join_diagnostics`, `sideview_column_profile`, `sideview_supp_check` (`{id, ...check}` from `sv_supp_check()`, or `{id, error}`; carries `ns` in module mode), `sideview_codebook_saved` (module: carries `csv`, the file text, plus `filename`; the browser downloads it),
   `sideview_state_saved`, `sideview_state_loaded`,
   `sideview_cdisc_update` (module: `{tags: {<card_id>: tag | null}}`, the badges only; an unknown card id is ignored quietly),
-  `sideview_card_add`, `sideview_card_replace`, `sideview_card_remove`, `sideview_state_set`, `sideview_highlight`,
+  `sideview_card_add` (the first population on `sideview_ready` carries `initial: true`), `sideview_card_replace`, `sideview_card_remove`, `sideview_state_set`, `sideview_highlight`,
   `sideview_llm` (module without `llm_fn`: hide the AI bar and Copilot tab),
   `sideview_toast` (`{text, type, id?, card?}`: a notice from R, e.g. the lazy-to-preview fallback; a toast with the same `id` is updated in place, as for codebook progress; `card` is the id of the card the notice is about: the browser then sets that card's `data-rows-basis` to `preview`, as for a lost link).
 - `sideview_code_update` carries `source`: `event` (echo of a client step; ignored), `auto_clean`
@@ -139,6 +141,33 @@ rstudio bridge: R/rstudio.R
 - **Mode-aware overrides:** a custom colour that must differ by mode uses `-light`/`-dark` variables:
   the base block has `--sv-primary-text: var(--sv-primary-text-light, #...)`, the dark blocks use
   `var(--sv-primary-text-dark, #...)`. Use `--sv-primary-text` (not `--sv-primary`) for primary-coloured *text*.
+- **`view =` (0.8.0):** `sideview()`, `sideview_widget()`, `save_sideview()`, `sideview_ui()`, `sideviewUI()` take
+  `view = getOption("sideview.view", "canvas")`, validated with `match.arg(view, c("canvas", "list"))`. Gadget and module
+  containers carry `data-sv-view`, the widget `options$view`. `view.mode` (`"canvas"`/`"list"`) in workspace state is kept
+  only when valid (`sv_state_scrub()` drops anything else, also on load) and never required.
+- **List view shell (0.8.0):** `inst/www/sv-listview.js` defines `SideviewListView` (loaded after `sv-pipeline.js`, before
+  `sideview.js`; in `sv_asset_version()` and the dependency). `engine.setView('canvas'|'list')` (sideview.js) sets `hidden` +
+  `aria-hidden` on the viewport, minimap and the two connector SVGs (the canvas `transform` is untouched), flips every
+  `[data-sv-view-toggle]` (`aria-pressed`; the name stays "List view"), announces "List view"/"Canvas view", and moves focus to
+  the list's first `<h2>` (or the container). The list (`<section class="sideview-listview" role="region">`) is built the
+  first time and appended to the container; its text is DOM/`textContent` only (never `innerHTML` for a name). Sections, in
+  order: Summary, Tables, Join, Merge SUPP, Transform, Pipeline, Code, Copilot (only when `engine.llmAvailable()`: not `sv-no-llm`,
+  and a module, or `data-sv-llm="true"`). Result hooks `onJoinDiag` / `onSuppCheck` / `onColumnProfile` go through
+  `engine.listHook()` (a failing hook never breaks the reply). A hidden card measures 0, so `setView('list')` keeps card sizes in
+  `_hiddenGeom` for `getState()` and `setView('canvas')` re-renders the virtual tables. No new Shiny input or message.
+- **List view tables (0.8.0):** one `<div data-sv-table="<name>">` per card (`h3#<ns>sv-lv-t-<i>`, a `<ul>` of columns, or
+  `<details>` closed above 30 columns, then a captioned `<table>` with Ruling 2 counts, 25 rows a page). The rows come from
+  `VirtualTable.cellText(i, col)` (the string the card cell shows, `null` while a remote block is missing; the card render
+  shares `cellDisplay()`) and refill through `VirtualTable.onBlock(fn)` (returns an unsubscribe, called in `destroy()`).
+  List-view updates are narrow: `refresh()` (list shown), `updateSections()` (the Copilot section comes and goes; used by
+  `sideview_llm`), `syncTables()` (cards came, went or were replaced; called from `syncTableMeta()`) never rebuild the shell,
+  so focus, scroll, the rows page and an open Columns list survive; only `render()` rebuilds everything. Sort goes through
+  `engine.sortColumn`; Filter calls `engine.openBuilder('filter', {table, column})` when it exists (Task 15). Lazy cards are
+  paged through `sideview_rows_request` windows only; the list never collects a table.
+- **View precedence:** the `view` argument (`data-sv-view` / `options.view`) is the default; a restored workspace state's valid
+  `view.mode` wins over it (at start, `applyState` records it and the constructor applies it after the first layout; on Open,
+  `setView` at once). A state without `view.mode`, or with an invalid one, leaves the view as it is. The starting view is
+  silent (no announcement, no focus move). `getState().view.mode` is `engine.view`.
 - **Shortcuts switch (WCAG 2.1.4):** `engine.shortcutsOn()` reads `localStorage['sideview.shortcuts']` (`on`/`off`, in
   try/catch; a throw is no value), then the in-memory choice `setShortcuts()` made, then the R default
   (`data-sv-shortcuts="false"` from `options(sideview.shortcuts = FALSE)` in `sv_ui_build()`, or
@@ -181,6 +210,9 @@ rstudio bridge: R/rstudio.R
 - Try it: `devtools::load_all(); sideview(mtcars, iris, viewer = "browser")` (also `"dialog"`, `"pane"`)
 
 ## Conventions
+- **Card messages announce** "Table <name> added." / "replaced." / "removed." (not the `initial` population); the list view re-renders only that table's section, and reads "No tables yet." when empty.
+- **Standing rule:** Every new feature (0.9.0 D, 0.10.0 E and later) must work in the list view
+  (`inst/www/sv-listview.js`) and print as sentences in the console.
 - Exported R functions use the `sv_` prefix (except `sideview*` entry points), `snake_case`, roxygen docs.
 - Heavy/optional packages (`arrow`, `duckdb`, `gt`, `flextable`, `bslib`) stay in `Suggests:` behind
   `requireNamespace()` guards.
@@ -202,3 +234,5 @@ Every UI change must also be checked in a **real browser** (shinytest2/chromote 
 - `MEMORY.md` — running change log, decisions, open issues, backlog. Update it with every change.
 - `plans/` — design specs; `plans/2026-10-24-ui-qa-checklist.md` — the feature QA checklist.
 - `NEWS.md` — user-facing release notes.
+
+- **List view counts (0.8.0):** `sparkStats` (sv-listview.js) reads header badges only for full in-memory cards; lazy, truncated and `rowsBasis="preview"` cards, `~N distinct` and unexpected titles give no count. Task 15 must call `refreshTable`/`renderTable` after canvas-side filter changes.

@@ -27,7 +27,7 @@ read_asset <- function(filename) {
 }
 
 test_that("all required web asset files exist and are non-empty", {
-  required_files <- c("sv-panzoom.js", "sv-pipeline.js", "sideview.css", "sideview.js")
+  required_files <- c("sv-panzoom.js", "sv-pipeline.js", "sv-listview.js", "sideview.css", "sideview.js")
   for (f in required_files) {
     path <- find_asset(f)
     expect_true(file.exists(path), info = paste("Asset missing:", f, "at", path))
@@ -420,3 +420,17 @@ test_that("sideview.js and sideview.css implement opaque filter popover and edge
   expect_match(js, "closePopover", info = "sideview.js must support dismissing filter popover")
 })
 
+
+test_that("sv_asset_version covers sv-listview.js and the script loads before sideview.js", {
+  expect_true("sv-listview.js" %in% eval(formals(sv_asset_version)$files))
+  dir <- tempfile("svassets")
+  dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  writeLines("var a = 1;", file.path(dir, "sv-listview.js"))
+  v1 <- sv_asset_version(dir)
+  writeLines("var a = 2;", file.path(dir, "sv-listview.js"))
+  expect_false(identical(v1, sv_asset_version(dir)))
+  scripts <- sideview_html_dependency()$script
+  expect_true(match("sv-listview.js", scripts) < match("sideview.js", scripts))
+  expect_true(match("sv-pipeline.js", scripts) < match("sv-listview.js", scripts))
+})

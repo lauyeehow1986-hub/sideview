@@ -11,6 +11,7 @@ sideview(
   theme = "auto",
   state = NULL,
   cdisc = "auto",
+  view = getOption("sideview.view", "canvas"),
   env = parent.frame(),
   run = interactive()
 )
@@ -41,6 +42,12 @@ to tables by name.}
 SDTM, SEND or ADaM datasets; \code{FALSE} turns it off; a named character vector
 such as \code{c(my_ae = "AE")} sets a table's domain by name (other tables are
 still detected).}
+
+\item{view}{Starting view: \code{"canvas"} (default, the pan/zoom canvas) or \code{"list"}
+(a text-first list of the tables, for keyboard and screen-reader use). The
+default is \code{getOption("sideview.view", "canvas")}. A saved workspace
+(\code{state}) that records a view wins over this argument; a state without
+one leaves it as it is.}
 
 \item{env}{Environment where \strong{Run in R} evaluates the generated code and
 stores its result (as \code{sv_result} unless you name it). Defaults to the
@@ -132,6 +139,11 @@ to that card.
 shortcuts off (default \code{TRUE}). It is the default only: the "Keyboard
 shortcuts" switch in the \verb{?} list is remembered in the browser and wins.
 \code{Ctrl+K} and \code{Ctrl+Enter} always work. \code{\link[=sideview_widget]{sideview_widget()}} reads it too.}
+\item{\code{sideview.view}}{\code{"list"} starts the text-first list view in \code{\link[=sideview]{sideview()}},
+\code{\link[=sideview_ui]{sideview_ui()}}, \code{\link[=sideviewUI]{sideviewUI()}}, \code{\link[=sideview_widget]{sideview_widget()}} and \code{\link[=save_sideview]{save_sideview()}}
+(default \code{"canvas"}). The \code{view} argument wins, and so does
+\code{options = list(view = )} in \code{\link[=sideview_widget]{sideview_widget()}}. A restored workspace
+state that records a view (\code{view.mode}) wins over both.}
 \item{\code{sideview.session_grace}}{Seconds the gadget waits after its last
 browser session closes before stopping (default \code{5}), so reloading the
 page does not end the app.}
