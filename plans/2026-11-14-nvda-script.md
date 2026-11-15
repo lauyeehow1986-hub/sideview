@@ -123,6 +123,7 @@ Escape; Enter on the AE entry to move there.
   - `Filter`, `Arrange`, `Mutate`, `Recode`, `Summarise`
 - `Pipeline`
 - `Code`
+- A `Copilot` heading is also in the list (the AI panel); it is expected.
 - `Copilot` only when an LLM is configured; the plain launch above has none, so it is absent.
 
 Filtering on `AE` keeps the AE heading (and SUPPAE, whose text also contains "AE"). After Enter, NVDA reads
@@ -130,7 +131,7 @@ Filtering on `AE` keeps the AE heading (and SUPPAE, whose text also contains "AE
 
 ## 3. Jump to Tables with the skip link
 
-**Setup.** Go back to the top of the list view (Ctrl+Home in browse mode, or Shift+H to the Summary heading).
+**Setup.** Go back to the top of the list view (H or Shift+H to the `Summary` heading; Ctrl+Home lands on the toolbar group, not the Summary, because the list view is last in the page order).
 
 **Keys.** K (next link) lands on `Skip to tables`; Enter.
 
@@ -168,10 +169,10 @@ for this fixture). The number of rows comes from the heading; "1 values" is the 
 **Expected speech.**
 - Announcer after Enter: `Rows 30 to 40 of 40.`
 - The table is named `labs rows`; NVDA reports 41 rows (header plus 40) and 6 columns. The first body row is
-  row 30, since the table shows rows 30 to 40.
+  data row 30 (the table shows rows 30 to 40); NVDA counts the header as row 1, so it speaks "row 31" for it.
 - Across the first body row, with the column header spoken before each cell:
   `STUDYID SV-001`, `USUBJID SV-001-010`, `LBSEQ 30`, `LBTESTCD BILI`, `LBORRES 55`, `LBORRESU U/L`.
-- Ctrl+Alt+Down Arrow reads row 31 (`SV-001`, `SV-001-001`, `31`, `CREAT`, ...).
+- Ctrl+Alt+Down Arrow reads data row 31, spoken as row 32 (`SV-001`, `SV-001-001`, `31`, `CREAT`, ...).
 
 ## 6. Next page
 
@@ -246,7 +247,7 @@ are on.)
 **Setup.** Continue (pipeline empty).
 
 **Keys.** H to the `SUPPAE into AE, 1 QNAM` heading under Merge SUPP. Tab to `Check SUPPAE`; Enter. Then Tab to
-`Merge SUPPAE`; Enter.
+`Merge SUPPAE`; Enter. The result block sits below the Merge button, so go back to it with Shift+Tab.
 
 **Expected speech.**
 - Check: announcer `Merging SUPPAE into AE adds 1 column: AETRTEM.`; the result block reads
@@ -289,13 +290,13 @@ context: `localhost` or `127.0.0.1` is fine in the browser pass.)
 **Setup.** Continue. The list view starts with shortcuts off (the default for the list view unless a stored choice
 exists), so first turn them on, then off.
 
-**Keys.** `Skip to tables` back to the top (Ctrl+Home), B/Tab to the `Keyboard shortcuts` switch (it is in the
+**Keys.** Shift+H back to the `Summary` heading (not Ctrl+Home, which lands on the toolbar group), B/Tab to the `Keyboard shortcuts` switch (it is in the
 Summary section). Press Space.
 
 **Expected speech.**
-- On the switch: `Keyboard shortcuts, switch, not checked` (or `checked` when on).
-- Space once: announcer `Keyboard shortcuts on.` and `checked`.
-- Space again: announcer `Keyboard shortcuts off.` and `not checked`.
+- On the switch: `Keyboard shortcuts, switch, off` (or `on`; NVDA reads a switch as on/off, not checked/not checked).
+- Space once: announcer `Keyboard shortcuts on.` and `on`.
+- Space again: announcer `Keyboard shortcuts off.` and `off`.
 - Then, in browse mode with focus not in a field, press F. NVDA must move to the next form field
   (`<field name>, edit` or `combo box`); there must be no `Fit` effect on the canvas and no change of speech
   beyond NVDA's own. Record whether the canvas zoom changed after returning to canvas view in task 15 (it
@@ -353,8 +354,8 @@ Surface: Microsoft Edge at http://127.0.0.1:3845/. RStudio dialog and Viewer pan
 | 14 | pass | Control is a switch reading on/off, not a checkbox checked/not checked. `Keyboard shortcuts on.` / `off.` heard. F moved to the next form control, zoom stayed 90% |
 | 15 | pass | `Canvas view` heard, cards back on screen |
 
-Script corrections still to apply: NVDA row numbers count the header; Ctrl+Home reaches the toolbar, so use H or Shift+H
-for the Summary; the heading list has a Copilot heading; the shortcuts control is a switch (on/off).
+Script corrections: applied in the task text above (header counts as row 1; H or Shift+H, not Ctrl+Home, for the Summary;
+Copilot heading in the list; the shortcuts control is a switch reading on/off; Shift+Tab to the Merge result block).
 
 Not covered by any pass: the RStudio dialog, the Viewer pane tasks 2 to 15, and users who are blind. No claim of a full
 NVDA pass.
