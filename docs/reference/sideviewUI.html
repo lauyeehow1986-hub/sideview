@@ -61,7 +61,8 @@ read back with the reactives of the returned proxy.</p>
 <span>  height <span class="op">=</span> <span class="st">"600px"</span>,</span>
 <span>  title <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  theme <span class="op">=</span> <span class="st">"auto"</span>,</span>
-<span>  view <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/options.html" class="external-link">getOption</a></span><span class="op">(</span><span class="st">"sideview.view"</span>, <span class="st">"canvas"</span><span class="op">)</span></span>
+<span>  view <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/options.html" class="external-link">getOption</a></span><span class="op">(</span><span class="st">"sideview.view"</span>, <span class="st">"canvas"</span><span class="op">)</span>,</span>
+<span>  access <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/options.html" class="external-link">getOption</a></span><span class="op">(</span><span class="st">"sideview.access"</span>, <span class="cn">FALSE</span><span class="op">)</span></span>
 <span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu">sideviewServer</span><span class="op">(</span><span class="va">id</span>, cards <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>, state <span class="op">=</span> <span class="cn">NULL</span>, llm_fn <span class="op">=</span> <span class="cn">NULL</span>, cdisc <span class="op">=</span> <span class="st">"auto"</span><span class="op">)</span></span></code></pre></div>
@@ -92,6 +93,12 @@ read back with the reactives of the returned proxy.</p>
 <code>"list"</code> (a text-first list of the tables, for keyboard and screen-reader
 use). The default is <code>getOption("sideview.view", "canvas")</code>. A workspace
 restored later (Open) that records a view switches to it.</p></dd>
+
+
+<dt id="arg-access">access<a class="anchor" aria-label="anchor" href="#arg-access"></a></dt>
+<dd><p><code>TRUE</code> starts with the Accessible canvas switch on (default
+<code>getOption("sideview.access", FALSE)</code>); the switch in the <code>?</code> list is remembered in
+the browser and wins.</p></dd>
 
 
 <dt id="arg-cards">cards<a class="anchor" aria-label="anchor" href="#arg-cards"></a></dt>

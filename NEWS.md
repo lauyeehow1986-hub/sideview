@@ -1,3 +1,44 @@
+# sideview 0.9.0 (development)
+
+Accessible canvas: one switch that makes the canvas itself usable by keyboard and at low vision. Off by default; with it
+off the canvas is unchanged. Checked with automated WCAG tests (axe, switch on and off) and real-browser keyboard tests;
+the manual script in `plans/2026-11-15-access-manual-script.md` (Windows Magnifier, High Contrast, Edge, RStudio dialog
+and Viewer) has not been run yet, and Alt+Arrows is not yet verified in RStudio or Edge. The release number is decided at
+merge time.
+
+## Accessible canvas switch
+
+* `sideview()`, `sideview_widget()`, `save_sideview()`, `sideview_ui()` and `sideviewUI()` take `access = FALSE`, set for a
+  session by `options(sideview.access = TRUE)`. It sets the starting state only: the `?` dialog has an "Accessible canvas"
+  switch beside the shortcuts switch, and the browser remembers the choice (`localStorage` key `sideview.access`), which
+  wins over R. The container carries `data-sv-access` and the class `sv-access` while on; the widget takes
+  `options$access`. The choice is not part of workspace state.
+
+## Low vision
+
+* With the switch on the zoom never goes below 100% (wheel, `-`, `0`, Fit all and a restored view are all clamped). Turning
+  it on below 100% zooms to 100% around the focused card. Text is at least 16 px, every control is at least 24 by 24 px on
+  screen, the focus ring is 3 px, and a high-contrast colour set (text 7:1, lines and ports 4.5:1) replaces the theme
+  colours. Splines are 3 px wide with one of six dash patterns and an arrowhead, so crossing joins can be told apart
+  without colour; suggested joins end in a hollow marker. Badges that used only colour (CDISC, key-check state,
+  discrepancies) carry text.
+* Windows High Contrast (`forced-colors: active`) and `prefers-contrast: more` are followed even with the switch off: system
+  colours for splines, ports, borders and the focus ring, stronger borders under more contrast.
+* The axe matrix now also runs with the switch on (light and dark, three sizes, canvas, drawer tabs, AI bar, filter popover,
+  `?` and search dialogs) with no accepted rules, so `target-size` passes there. The default (switch off) canvas keeps its
+  `target-size` exemption: its buttons are 24 px in CSS but the fit zoom shrinks them on screen.
+
+## Keyboard on the canvas
+
+* With the switch on, each card is one Tab stop (reading order), a column header is a roving stop inside the focused card,
+  and the view follows focus so the item is never under the drawer, AI bar or minimap. On a card: Arrows move it 20 px,
+  Shift+Arrows 100 px (one `sideview_card_moved` per pause, announced "AE moved."), Alt+Arrows focus the nearest card,
+  Enter goes to the first header, PageUp/PageDown/Home/End scroll the table. On a column header: Left/Right, Esc, `C` to
+  start connecting (Enter completes the join as a click does: one `column_mapped`, one undoable step), Delete to remove a
+  join (a menu when there are several), `J` to jump to the joined column. These keys work with the shortcuts switch off and
+  never fire while typing. They are listed in the `?` dialog while the switch is on.
+* If Alt+Left navigates away in a host, the jump moves to Ctrl+Alt+Arrows (`JUMP_MODS` in `sv-access.js`).
+
 # sideview 0.8.0
 
 Text-first accessibility: a list view that reads top to bottom, results printed as plain sentences, live announcements and

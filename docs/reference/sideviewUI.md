@@ -20,7 +20,8 @@ sideviewUI(
   height = "600px",
   title = NULL,
   theme = "auto",
-  view = getOption("sideview.view", "canvas")
+  view = getOption("sideview.view", "canvas"),
+  access = getOption("sideview.access", FALSE)
 )
 
 sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto")
@@ -53,6 +54,12 @@ sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto")
   (a text-first list of the tables, for keyboard and screen-reader use).
   The default is `getOption("sideview.view", "canvas")`. A workspace
   restored later (Open) that records a view switches to it.
+
+- access:
+
+  `TRUE` starts with the Accessible canvas switch on (default
+  `getOption("sideview.access", FALSE)`); the switch in the `?` list is
+  remembered in the browser and wins.
 
 - cards:
 

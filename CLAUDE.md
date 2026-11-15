@@ -27,6 +27,9 @@ pipeline: inst/www/sv-pipeline.js (SideviewPipeline: typed steps -> composed R c
           pure JS, no DOM — the single source of generated code in both gadget and widget)
 list view: inst/www/sv-listview.js (`SideviewListView`, owned by the engine), with `setView`, `movePanes`
           and `openBuilder` on the engine
+accessible canvas: inst/www/sv-access.js (`SideviewAccess`, owned by the engine as `engine.access`; loaded before
+          `sideview.js`): keyboard on cards and column headers, reading order, focus following. Switch, zoom floor
+          and the `?` rows live in sideview.js; low-vision rules in sideview.css under `.sv-access`
 llm/copilot: R/llm.R, R/copilot.R              pan/zoom: inst/www/sv-panzoom.js (small in-house impl)
 state: R/state.R (sv_save_state/sv_load_state) styles: inst/www/sideview.css (--sv-* tokens)
 rstudio bridge: R/rstudio.R
@@ -186,6 +189,42 @@ rstudio bridge: R/rstudio.R
 - **Keyboard:** single-key shortcuts (F, 0, +/-, T, D, M, L, /, ?) and Ctrl+K (card search) only fire when the
   canvas owns the keyboard (`ownsKeyboard()`: standalone, or focus inside an embedded widget) and never while
   typing. Ctrl+Enter submits a drawer builder. Add new shortcuts to the `?` dialog list too.
+- **Accessible canvas (0.9.0):** one switch, opt-in. `engine.accessOn()` reads `localStorage['sideview.access']`
+  (`on`/`off`, try/catch), then the R default (`data-sv-access="true"` from `access =` / `options(sideview.access)` via
+  `sv_ui_build()`, or `options.access` from `sideview_widget()`), else off; `setAccess(on)` stores it, toggles the class
+  `sv-access` on the container, updates every `[data-sv-access-switch]` (a `role="switch"` in the `?` dialog beside the
+  shortcuts switch), redraws the `?` key list and announces `Accessible canvas on.` / `off.`. Not in workspace state; no
+  new Shiny input or message. Everything below happens only with the switch on.
+  - **Zoom floor:** `minScaleNow()` is 1.0 (`ACCESS_MIN_SCALE`), else `options.minScale`; panzoom's `setMinScale()` clamps
+    wheel, `-`, `0`, `fitAll()` and a restored state (`canvas.zoom`). Switching on below 1.0 zooms to 1.0 around the focused
+    card, else the view centre; switching off restores the range without changing the zoom.
+  - **CSS:** `.sideview-container.sv-access` overrides `--sv-*` with `!important` (so tokens beat inline `theme =`; the
+    test-theme.R parser strips `!important`): text 7:1, lines/ports/focus ring 4.5:1, dark and `prefers-color-scheme` blocks
+    kept equal. Text is at least 16 px, controls at least 24 x 24, focus ring 3 px + 2 px offset. Layout is CSS only: no
+    inline geometry writes, user-sized cards (`data-sv-user-sized`) keep their size, saved positions are untouched.
+  - **Splines:** each accepted join gets `data-sv-pat` (join order mod 6) and the six dash patterns apply under `sv-access`
+    and `forced-colors` only; never `6 6` (suggested) or `4 4` (draft). Arrowheads are marker `<path>`s in
+    `defs.sideview-marker-defs` (`ensureMarkerDefs()`), so count connectors as `.sideview-connector-svg path` outside `defs`.
+  - **OS blocks (always on, switch or not):** `@media (forced-colors: active)` (system colours, patterns and markers kept)
+    and `@media (prefers-contrast: more)` (stronger borders and focus ring; layout and zoom range unchanged), both scoped under
+    `.sideview-container`.
+  - **Precedence of colours:** forced-colors system colours, then the `.sv-access` tokens (`!important`), then inline
+    `theme =` overrides, then the `prefers-contrast` tokens, then the default tokens. The R argument or option sets the start
+    state of the switch; the stored browser choice wins over it.
+  - **Keys (focus-scoped, so they work with the shortcuts switch off; never while typing; only when `ownsKeyboard()`):**
+    card: Arrows 20 px, Shift+Arrows 100 px (debounced 500 ms: one `sideview_card_moved`, one announcement), Alt+Arrows jump to
+    the nearest card, Enter focus the first header, PageUp/PageDown/Home/End scroll the body. Header (roving Tab stop): Left/Right,
+    Esc back to the card, `C` connect (Enter completes through `addConnection`, as a click does), Delete removes the join
+    (menu `div.sideview-kb-menu[role=menu]` when several), `J` jumps to the joined column. The jump modifier is the one
+    constant `JUMP_MODS = 'alt'` in sv-access.js: Alt+Left is the browser's Back key. If any host (Edge, RStudio dialog or
+    Viewer) navigates away, change it to `'ctrl+alt'` and update the `?` rows (`ACCESS_SHORTCUTS`), tests and docs.
+    Add new access keys to `ACCESS_SHORTCUTS` too.
+  - **Focus following:** `ensureVisible()` pans only (never zooms) so the item plus 24 px sits clear of the drawer, AI bar
+    and minimap. Cards get `tabindex="0"`, `role="group"`, `aria-label`; every attribute change goes through one record so
+    `disable()` restores the original exactly. Reading order re-orders card nodes by position and restores them on disable.
+  - **Tests:** `test-access-browser.R` (keys, Tab order, floor, switch precedence, forced-colors with
+    `Emulation.setEmulatedMedia`), `test-a11y-browser.R` (axe with the switch on and off, **empty** `SV_AXE_ACCEPTED`),
+    `test-theme.R` (7:1 and 4.5:1 for the access tokens). Manual pass: `plans/2026-11-15-access-manual-script.md`.
 - **Navigation:** `zoomToCard()` (title double-click, minimap click, Ctrl+K result), the minimap (`renderMinimap()`,
   redrawn from `scheduleConnectorUpdate()`) and the search dialog live in `sideview.js`. Chrome z-order: minimap 105 <
   overlay 110 < drawer 120 < AI bar 130 < search/shortcut scrims 140. The container gets `sv-narrow` (< 720px) and

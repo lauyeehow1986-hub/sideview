@@ -43,8 +43,10 @@ Or install the development version from GitHub:
   column, and double-click a card title to zoom to it.
 - **Screen Reader Ready**: a list view (`view = "list"`) and
   plain-sentence results; checked with automated WCAG tests (axe) and
-  real-browser keyboard tests; an NVDA script is written but has not yet
-  been run; not yet tested by blind users. See the [screen reader
+  real-browser keyboard tests; the NVDA script was run once in Edge with
+  NVDA 2026.2 (all 15 tasks as written; the RStudio dialog and Viewer
+  pane were not covered); not yet tested by blind users. See the [screen
+  reader
   article](https://lauyeehow1986-hub.github.io/sideview/articles/screen-reader.html).
 - **Visual Joins**:
   - Draw a spline between two columns to generate `dplyr` joins,

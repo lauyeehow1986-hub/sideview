@@ -77,8 +77,10 @@ both.</p>
 <h2 id="how-well-is-this-tested">How well is this tested<a class="anchor" aria-label="anchor" href="#how-well-is-this-tested"></a>
 </h2>
 <p>sideview 0.8.0 is <strong>checked with automated WCAG tests (axe) and
-real-browser keyboard tests; the NVDA script was run once in Edge with NVDA 2026.2 (all 15 tasks as written; the RStudio dialog and Viewer pane were not covered); not yet tested by blind users.</strong> Please treat it as a
-first step and tell us where it fails (see “Report a problem”
+real-browser keyboard tests; the NVDA script was run once in Edge with
+NVDA 2026.2 (all 15 tasks as written; the RStudio dialog and Viewer pane
+were not covered); not yet tested by blind users.</strong> Please treat
+it as a first step and tell us where it fails (see “Report a problem”
 below).</p>
 </div>
 <div class="section level2">
@@ -128,12 +130,14 @@ the join check as sentences, and add the join.</li>
 <strong>Merge SUPP</strong>: for a SUPP– table, check and add the
 merge into its parent.</li>
 <li>
-<strong>Transform</strong>: the step builders: Filter, Arrange, Mutate, Recode and Summarise.</li>
+<strong>Transform</strong>: the step builders: Filter, Arrange,
+Mutate, Recode and Summarise.</li>
 <li>
 <strong>Pipeline</strong>: the steps so far, each of which you can
 switch off, move or delete.</li>
 <li>
-<strong>Code</strong>: the generated R code, with Copy (and Insert, in the gadget; a Shiny module has no Insert).</li>
+<strong>Code</strong>: the generated R code, with Copy (and Insert,
+in the gadget; a Shiny module has no Insert).</li>
 <li>
 <strong>Copilot</strong>: present only when a language model is set
 up.</li>
@@ -169,10 +173,52 @@ line for each column. It is the text twin of looking at the cards:</p>
 never loaded into memory.</p>
 </div>
 <div class="section level2">
+<h2 id="keyboard-and-low-vision">Keyboard and low vision<a class="anchor" aria-label="anchor" href="#keyboard-and-low-vision"></a>
+</h2>
+<p>If you can see the screen, at least in part, or cannot use a mouse,
+you can use the canvas itself. Turn on the <strong>Accessible
+canvas</strong> switch: press <code>?</code> and use the switch in the
+dialog, or start with it on.</p>
+<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="co"># for one call</span></span>
+<span><span class="fu"><a href="../reference/sideview.html">sideview</a></span><span class="op">(</span><span class="va">patients</span>, <span class="va">visits</span>, access <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># for the whole session</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/options.html" class="external-link">options</a></span><span class="op">(</span>sideview.access <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span></code></pre></div>
+<p>The argument or option only sets the starting state. The switch in
+the <code>?</code> dialog changes it, and the browser remembers that
+choice, which wins over R. With the switch off the canvas is
+unchanged.</p>
+<p>With the switch on:</p>
+<ul>
+<li>The zoom never goes below 100%. Text is at least 16 px, every
+control is at least 24 by 24 px, the focus ring is 3 px, and a
+high-contrast colour set replaces the theme colours. Joins are 3 px wide
+with a dash pattern and an arrowhead each, so crossing joins can be told
+apart without colour.</li>
+<li>Each card is one Tab stop, in reading order. On a card, Arrows move
+it 20 px (Shift+Arrows 100 px), Alt+Arrows focus the nearest card, Enter
+goes to its first column header, and PageUp, PageDown, Home and End
+scroll its table. The view follows focus.</li>
+<li>On a column header, Left and Right move along the columns and Esc
+goes back to the card. <code>C</code> starts a join and Enter completes
+it on the column you have moved to (Esc cancels), Delete removes a join
+(a small menu if there are several), and <code>J</code> jumps to the
+joined column. Moves and joins are announced. The keys work with the
+single-key shortcuts off and never fire while you type.</li>
+<li>Windows High Contrast and “increase contrast” are followed even with
+the switch off.</li>
+</ul>
+<p>Alt+Left is also the browser’s Back key. sideview cancels it for the
+jump, but this has not yet been checked in Edge or in RStudio. If it
+takes you back in your setup, the list view still gives you every join
+and filter by keyboard, and please report it.</p>
+</div>
+<div class="section level2">
 <h2 id="use-a-browser-not-the-rstudio-pane">Use a browser, not the RStudio pane<a class="anchor" aria-label="anchor" href="#use-a-browser-not-the-rstudio-pane"></a>
 </h2>
 <p>For a screen reader we recommend the gadget in a real browser:</p>
-<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="../reference/sideview.html">sideview</a></span><span class="op">(</span><span class="va">patients</span>, <span class="va">visits</span>, viewer <span class="op">=</span> <span class="st">"browser"</span>, view <span class="op">=</span> <span class="st">"list"</span><span class="op">)</span></span></code></pre></div>
 <p>The reason is what the tests can and cannot show. The keyboard and
 axe tests run in a real browser, where the page has full keyboard and

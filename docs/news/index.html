@@ -35,6 +35,26 @@
     </div>
 
     <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.9.0" id="sideview-090-development">sideview 0.9.0 (development)<a class="anchor" aria-label="anchor" href="#sideview-090-development"></a></h2>
+<p>Accessible canvas: one switch that makes the canvas itself usable by keyboard and at low vision. Off by default; with it off the canvas is unchanged. Checked with automated WCAG tests (axe, switch on and off) and real-browser keyboard tests; the manual script in <code>plans/2026-11-15-access-manual-script.md</code> (Windows Magnifier, High Contrast, Edge, RStudio dialog and Viewer) has not been run yet, and Alt+Arrows is not yet verified in RStudio or Edge. The release number is decided at merge time.</p>
+<div class="section level3">
+<h3 id="accessible-canvas-switch-0-9-0">Accessible canvas switch<a class="anchor" aria-label="anchor" href="#accessible-canvas-switch-0-9-0"></a></h3>
+<ul><li>
+<code><a href="../reference/sideview.html">sideview()</a></code>, <code><a href="../reference/sideview_widget.html">sideview_widget()</a></code>, <code><a href="../reference/save_sideview.html">save_sideview()</a></code>, <code><a href="../reference/sideview_ui.html">sideview_ui()</a></code> and <code><a href="../reference/sideviewUI.html">sideviewUI()</a></code> take <code>access = FALSE</code>, set for a session by <code>options(sideview.access = TRUE)</code>. It sets the starting state only: the <code>?</code> dialog has an “Accessible canvas” switch beside the shortcuts switch, and the browser remembers the choice (<code>localStorage</code> key <code>sideview.access</code>), which wins over R. The container carries <code>data-sv-access</code> and the class <code>sv-access</code> while on; the widget takes <code>options$access</code>. The choice is not part of workspace state.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="low-vision-0-9-0">Low vision<a class="anchor" aria-label="anchor" href="#low-vision-0-9-0"></a></h3>
+<ul><li>With the switch on the zoom never goes below 100% (wheel, <code>-</code>, <code>0</code>, Fit all and a restored view are all clamped). Turning it on below 100% zooms to 100% around the focused card. Text is at least 16 px, every control is at least 24 by 24 px on screen, the focus ring is 3 px, and a high-contrast colour set (text 7:1, lines and ports 4.5:1) replaces the theme colours. Splines are 3 px wide with one of six dash patterns and an arrowhead, so crossing joins can be told apart without colour; suggested joins end in a hollow marker. Badges that used only colour (CDISC, key-check state, discrepancies) carry text.</li>
+<li>Windows High Contrast (<code>forced-colors: active</code>) and <code>prefers-contrast: more</code> are followed even with the switch off: system colours for splines, ports, borders and the focus ring, stronger borders under more contrast.</li>
+<li>The axe matrix now also runs with the switch on (light and dark, three sizes, canvas, drawer tabs, AI bar, filter popover, <code>?</code> and search dialogs) with no accepted rules, so <code>target-size</code> passes there. The default (switch off) canvas keeps its <code>target-size</code> exemption: its buttons are 24 px in CSS but the fit zoom shrinks them on screen.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="keyboard-on-the-canvas-0-9-0">Keyboard on the canvas<a class="anchor" aria-label="anchor" href="#keyboard-on-the-canvas-0-9-0"></a></h3>
+<ul><li>With the switch on, each card is one Tab stop (reading order), a column header is a roving stop inside the focused card, and the view follows focus so the item is never under the drawer, AI bar or minimap. On a card: Arrows move it 20 px, Shift+Arrows 100 px (one <code>sideview_card_moved</code> per pause, announced “AE moved.”), Alt+Arrows focus the nearest card, Enter goes to the first header, PageUp/PageDown/Home/End scroll the table. On a column header: Left/Right, Esc, <code>C</code> to start connecting (Enter completes the join as a click does: one <code>column_mapped</code>, one undoable step), Delete to remove a join (a menu when there are several), <code>J</code> to jump to the joined column. These keys work with the shortcuts switch off and never fire while typing. They are listed in the <code>?</code> dialog while the switch is on.</li>
+<li>If Alt+Left navigates away in a host, the jump moves to Ctrl+Alt+Arrows (<code>JUMP_MODS</code> in <code>sv-access.js</code>).</li>
+</ul></div>
+</div>
+    <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.8.0" id="sideview-080">sideview 0.8.0<a class="anchor" aria-label="anchor" href="#sideview-080"></a></h2>
 <p>Text-first accessibility: a list view that reads top to bottom, results printed as plain sentences, live announcements and an accessibility test suite. sideview 0.8.0 is checked with automated WCAG tests (axe) and real-browser keyboard tests; the NVDA script was run once in Edge with NVDA 2026.2 (all 15 tasks as written; the RStudio dialog and Viewer pane were not covered); not yet tested by blind users. See the new article “Using sideview with a screen reader” and the accessibility feedback issue template.</p>
 <div class="section level3">
@@ -45,17 +65,17 @@
 <div class="section level3">
 <h3 id="list-view-argument-0-8-0">List view argument<a class="anchor" aria-label="anchor" href="#list-view-argument-0-8-0"></a></h3>
 <ul><li>
-<code><a href="../reference/sideview.html">sideview()</a></code>, <code><a href="../reference/sideview_widget.html">sideview_widget()</a></code>, <code><a href="../reference/save_sideview.html">save_sideview()</a></code>, <code><a href="../reference/sideview_ui.html">sideview_ui()</a></code> and <code><a href="../reference/sideviewUI.html">sideviewUI()</a></code> take <code>view = "canvas"</code> (default) or <code>"list"</code>, set for a session by <code>options(sideview.view = "list")</code>. The container carries <code>data-sv-view</code> and the widget <code>options$view</code>. A saved workspace may now carry <code>view.mode</code>; an invalid value is dropped. The list view itself arrives in the next changes.</li>
+<code><a href="../reference/sideview.html">sideview()</a></code>, <code><a href="../reference/sideview_widget.html">sideview_widget()</a></code>, <code><a href="../reference/save_sideview.html">save_sideview()</a></code>, <code><a href="../reference/sideview_ui.html">sideview_ui()</a></code> and <code><a href="../reference/sideviewUI.html">sideviewUI()</a></code> take <code>view = "canvas"</code> (default) or <code>"list"</code>, set for a session by <code>options(sideview.view = "list")</code>. The container carries <code>data-sv-view</code> and the widget <code>options$view</code>. A saved workspace may now carry <code>view.mode</code>; an invalid value is dropped.</li>
 </ul></div>
 <div class="section level3">
 <h3 id="list-view-0-8-0">List view<a class="anchor" aria-label="anchor" href="#list-view-0-8-0"></a></h3>
 <ul><li>The toolbar has a “List view” toggle (and the Summary section repeats it). The list view shows the tables as text in a normal-flow column that keyboard and screen-reader users can read: a Summary (counts of tables, join steps and pipeline steps, whether code is ready, skip links, Save, Open and the keyboard shortcuts switch) and the headings Tables, Join, Merge SUPP, Transform, Pipeline and Code (and Copilot when a model is set up). The canvas leaves the accessibility tree while the list is shown. Switching is announced (“List view” / “Canvas view”) and moves focus to the list’s first heading. The single-key shortcuts default to off in the list view.</li>
 <li>
-<code>view = "list"</code> starts in it. A saved workspace now records the view (<code>view.mode</code>) and wins over the <code>view</code> argument when it is opened. The section contents arrive in the next changes.</li>
+<code>view = "list"</code> starts in it. A saved workspace now records the view (<code>view.mode</code>) and wins over the <code>view</code> argument when it is opened.</li>
 </ul></div>
 <div class="section level3">
 <h3 id="list-view-tables-0-8-0">List view tables<a class="anchor" aria-label="anchor" href="#list-view-tables-0-8-0"></a></h3>
-<ul><li>The Tables section lists every table: a heading (“labs, 5,000 rows by 3 columns, full table.”, or “preview of the first 50 rows”), one line per column (name, label, kind, and the distinct and missing counts when the card shows them) with Sort, Filter and Inspect buttons, and the rows as a captioned table, 25 a page, with Previous rows, Next rows and Go to row. A page change is announced (“Rows 26 to 50 of 5,000.”) and focus stays on the button. Rows follow the canvas sort and filter; a large (lazy) table is read a window at a time from R. Sort announces its result; Inspect writes the profile as sentences under the column. A table with more than 30 columns starts with its columns closed.</li>
+<ul><li>The Tables section lists every table: a heading (“labs, 5,000 rows by 3 columns, full table.”, or “preview of the first 50 rows”), one line per column (name, label, kind, and the distinct and missing counts when the card shows them) with Sort, Filter and Inspect buttons, and the rows as a captioned table, 25 a page, with Previous rows, Next rows and Go to row. A page change is announced (“Rows 26 to 50 of 5,000.”) and focus stays on the button. Rows follow the canvas sort and filter; a large (lazy) table is read a window at a time from R. Sort announces its result; Inspect writes the profile as sentences under the column. A table with more than 30 columns starts with its columns closed. List view columns no longer state counts taken from the canvas badges on lazy, preview or truncated cards (they come from the 50-row preview); a sampled “~N distinct” is never shown as exact.</li>
 </ul></div>
 <div class="section level3">
 <h3 id="table-aria-0-8-0">Table ARIA<a class="anchor" aria-label="anchor" href="#table-aria-0-8-0"></a></h3>
@@ -434,11 +454,10 @@
 </div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.1.0" id="sideview-010-1">sideview 0.1.0<a class="anchor" aria-label="anchor" href="#sideview-010-1"></a></h2>
-<ul><li><p>Initial release of <strong><code>sideview</code></strong>: Multi-Table 2D Infinite Canvas for interactive data exploration, visual field mapping, and LLM-assisted Tidyverse code generation.</p></li>
-<li><p>Universal S3 normalization engine (<code><a href="../reference/sv_normalize.html">sv_normalize()</a></code>) supporting <code>data.frame</code>, <code>tibble</code>, <code><a href="https://rdrr.io/r/base/table.html" class="external-link">base::table</a></code>, <code>matrix</code>, <code>gt</code>, <code>flextable</code>, and <code>htmlwidgets</code>.</p></li>
-<li><p>Standalone self-contained HTML widget export via <code><a href="../reference/save_sideview.html">save_sideview()</a></code>.</p></li>
-<li><p>Interactive Shiny Gadget and RStudio Addin (<code><a href="../reference/sideview.html">sideview()</a></code>, <code><a href="../reference/sideview_addin.html">sideview_addin()</a></code>).</p></li>
-<li><p>List view columns no longer state counts taken from the canvas badges on lazy, preview or truncated cards (they come from the 50-row preview); a sampled “~N distinct” is never shown as exact. Filter in the list view is <code>aria-disabled</code> until the builder exists.</p></li>
+<ul><li>Initial release of <strong><code>sideview</code></strong>: Multi-Table 2D Infinite Canvas for interactive data exploration, visual field mapping, and LLM-assisted Tidyverse code generation.</li>
+<li>Universal S3 normalization engine (<code><a href="../reference/sv_normalize.html">sv_normalize()</a></code>) supporting <code>data.frame</code>, <code>tibble</code>, <code><a href="https://rdrr.io/r/base/table.html" class="external-link">base::table</a></code>, <code>matrix</code>, <code>gt</code>, <code>flextable</code>, and <code>htmlwidgets</code>.</li>
+<li>Standalone self-contained HTML widget export via <code><a href="../reference/save_sideview.html">save_sideview()</a></code>.</li>
+<li>Interactive Shiny Gadget and RStudio Addin (<code><a href="../reference/sideview.html">sideview()</a></code>, <code><a href="../reference/sideview_addin.html">sideview_addin()</a></code>).</li>
 </ul></div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside></div>
