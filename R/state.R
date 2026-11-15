@@ -16,6 +16,10 @@
 #' @param cards List of card state objects (each specifying `id`, `name`, `x`, `y`,
 #'   `width`, `height`, `minimized`, `sorts` and `filters`; a sort is
 #'   `list(col, dir)` with `dir` `"asc"` or `"desc"`, a filter is `list(col, op, val)`).
+#'   A card may also carry `user_sized = TRUE` (optional, since 0.9.0): the user
+#'   resized it, so it keeps its size with the Accessible canvas on. With the
+#'   switch on, a card the user did not resize is saved at its default (switch
+#'   off) size, not the enlarged one.
 #' @param connections List of join connection objects (each specifying `from_table`, `from_col`, `to_table`, `to_col`, `join_type`).
 #' @param pipeline Named list containing `code` (character), `active_tab`
 #'   (character) and, from version 0.3.0, the pipeline `steps` and `pipe`

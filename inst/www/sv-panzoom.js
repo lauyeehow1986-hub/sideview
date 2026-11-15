@@ -158,7 +158,8 @@
       return scale;
     }
 
-    function setScale(s) {      return zoom(s);
+    function setScale(s) {
+      return zoom(s);
     }
 
     function setPan(px, py) {

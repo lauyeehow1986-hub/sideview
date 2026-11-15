@@ -1034,3 +1034,217 @@ test_that("switching the access flips the row height and keeps the first visible
   expect_equal(back$row, 100, tolerance = 0.01)
   sv_js(b, "localStorage.removeItem('sideview.access')")
 })
+
+# ---- final review fixes (I1, I2, I3, M8) ----
+
+test_that("two canvases on one page: switching one leaves the other as it was until the next load", {
+  skip_if_no_browser()
+  app <- sv_start_app(paste0(
+    "shiny::shinyApp(shiny::fluidPage(sideview::sideviewUI('a', height = '420px'),",
+    " sideview::sideviewUI('b', height = '420px')),",
+    " function(input, output, session) { sideview::sideviewServer('a', cards = list(patients = patients, visits = visits));",
+    " sideview::sideviewServer('b', cards = list(visits = visits, labs = labs)) })"))
+  ready <- "document.querySelectorAll('.sideview-container').length === 2 &&
+    Array.from(document.querySelectorAll('.sideview-container')).every(c => !!c._sideviewInstance &&
+      c.querySelectorAll('.sideview-card').length >= 2)"
+  b <- sv_open_page(app$url, 1360, 1000, wait_for = ready)
+  withr::defer({
+    try(b$close(), silent = TRUE)
+    try(app$proc$kill(), silent = TRUE)
+  })
+  sv_js(b, "localStorage.removeItem('sideview.access'); true")
+  sv_navigate(b, sv_js(b, "location.href"))
+  expect_true(sv_wait_js(b, ready, timeout = 60))
+  eng <- function(i) sprintf("document.querySelectorAll('.sideview-container')[%d]._sideviewInstance", i)
+  look <- function(i) sv_js(b, sprintf("(() => { const e = %s;
+    return { cls: e.container.classList.contains('sv-access'), on: e.accessOn(), row: e.rowHeightNow(),
+             min: e.minScaleNow() }; })()", eng(i)))
+  b0 <- look(1)
+  expect_false(b0$cls)
+  expect_false(b0$on)
+  sv_js(b, paste0(eng(0), ".setAccess(true)"))
+  a1 <- look(0)
+  expect_true(a1$cls)
+  expect_true(a1$on)
+  expect_equal(a1$row, 36)
+  expect_equal(a1$min, 1)
+  # b is unchanged: class, row height, zoom floor, a new card's table, and its ? switch
+  b1 <- look(1)
+  expect_identical(b1, b0)
+  expect_equal(b1$row, 28)
+  expect_equal(b1$min, 0.15)
+  sv_js(b, sprintf("(() => { const e = %s; e.addCardFromR({name: 'extra', data: {n: [1, 2, 3]}}); return true; })()", eng(1)))
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-container')[1].querySelectorAll('.sideview-card').length === 3"))
+  expect_equal(sv_js(b, sprintf("[...%s.cards.values()].find(m => m.name === 'extra').element.querySelector('table')._virtualTable.rowHeight", eng(1))), 28)
+  sv_js(b, sprintf("%s.toggleShortcuts(true)", eng(1)))
+  bsw <- "document.querySelectorAll('.sideview-container')[1].querySelector('[data-sv-access-switch]')"
+  expect_identical(sv_js(b, sprintf("%s.getAttribute('aria-checked')", bsw)), "false")
+  # clicking b's switch turns b on and leaves a on
+  p <- sv_js(b, sprintf("(() => { const r = %s.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()", bsw))
+  for (type in c("mouseMoved", "mousePressed", "mouseReleased")) {
+    b$Input$dispatchMouseEvent(type = type, x = p$x, y = p$y, button = "left", clickCount = if (type == "mouseMoved") 0 else 1)
+  }
+  expect_identical(sv_js(b, sprintf("%s.getAttribute('aria-checked')", bsw)), "true")
+  expect_true(look(1)$cls)
+  expect_true(look(0)$on)
+  expect_true(look(0)$cls)
+  sv_js(b, sprintf("%s.toggleShortcuts(false)", eng(1)))
+  sv_js(b, paste0(eng(1), ".setAccess(false)"))
+  # a still shows on until a reload; after the reload both follow the stored choice
+  expect_true(look(0)$on)
+  sv_js(b, "localStorage.setItem('sideview.access', 'on'); true")
+  sv_navigate(b, sv_js(b, "location.href"))
+  expect_true(sv_wait_js(b, ready, timeout = 60))
+  for (i in 0:1) {
+    r <- look(i)
+    expect_true(r$cls)
+    expect_true(r$on)
+    expect_equal(r$row, 36)
+    expect_equal(r$min, 1)
+  }
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+sv_state_sizes <- function(st) {
+  stats::setNames(lapply(st$cards, function(c) c(c$width, c$height)), vapply(st$cards, function(c) c$name, ""))
+}
+
+sv_card_sizes_js <- "(() => { const o = {}; document.querySelectorAll('.sideview-card').forEach(c => {
+  o[c.getAttribute('data-card-name')] = [c.offsetWidth, c.offsetHeight]; }); return o; })()"
+
+sv_state_arg <- function(st) {
+  jsonlite::toJSON(as.character(jsonlite::toJSON(st, auto_unbox = TRUE, null = "null", digits = NA)), auto_unbox = TRUE)
+}
+
+test_that("state saved with the switch on keeps the default card sizes", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = FALSE)
+  expect_true(sv_wait_js(b, "Array.from(document.querySelectorAll('.sideview-card')).every(c => c.classList.contains('sv-sized'))"))
+  off <- sv_js(b, sprintf("%s.getState()", sv_acc_eng))
+  sv_js(b, paste0(sv_acc_eng, ".setAccess(true)"))
+  Sys.sleep(0.3)
+  grown <- sv_js(b, sv_card_sizes_js)
+  expect_true(any(vapply(names(grown), function(n) !identical(as.numeric(unlist(grown[[n]])),
+                                                              as.numeric(sv_state_sizes(off)[[n]])), TRUE)))
+  on <- sv_js(b, sprintf("%s.getState()", sv_acc_eng))
+  expect_equal(sv_state_sizes(on), sv_state_sizes(off))
+  expect_true(all(vapply(on$cards, function(c) is.null(c$user_sized), TRUE)))
+  # open the switch-on save with the switch off: the old layout
+  sv_js(b, paste0(sv_acc_eng, ".setAccess(false)"))
+  sv_js(b, sprintf("%s.applyState(JSON.parse(%s)); true", sv_acc_eng, sv_state_arg(on)))
+  Sys.sleep(0.2)
+  now <- sv_js(b, sv_card_sizes_js)
+  for (n in names(now)) expect_equal(as.numeric(unlist(now[[n]])), as.numeric(sv_state_sizes(off)[[n]]), label = n)
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+test_that("a card the user sized keeps its size through save and open with the switch on", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  expect_true(sv_wait_js(b, "Array.from(document.querySelectorAll('.sideview-card')).every(c => c.classList.contains('sv-sized'))"))
+  corner <- sv_js(b, sprintf("(() => { const r = %s.getBoundingClientRect(); return { x: r.right - 3, y: r.bottom - 3 }; })()",
+                             sv_card_js("patients")))
+  mouse <- function(type, x, y) b$Input$dispatchMouseEvent(type = type, x = x, y = y, button = "left",
+                                                          clickCount = if (type == "mouseMoved") 0 else 1)
+  mouse("mouseMoved", corner$x, corner$y)
+  mouse("mousePressed", corner$x, corner$y)
+  for (t in seq(0.25, 1, by = 0.25)) mouse("mouseMoved", corner$x + 60 * t, corner$y - 60 * t)
+  mouse("mouseReleased", corner$x + 60, corner$y - 60)
+  Sys.sleep(0.3)
+  expect_identical(sv_js(b, sprintf("%s.getAttribute('data-sv-user-sized')", sv_card_js("patients"))), "true")
+  sized <- sv_js(b, sv_card_sizes_js)$patients
+  st <- sv_js(b, sprintf("%s.getState()", sv_acc_eng))
+  pc <- Filter(function(c) c$name == "patients", st$cards)[[1]]
+  expect_true(isTRUE(pc$user_sized))
+  expect_equal(c(pc$width, pc$height), as.numeric(unlist(sized)))
+  arg <- sv_state_arg(st)
+  # a fresh load (the stored choice keeps the switch on), then Open
+  sv_navigate(b, sv_js(b, "location.href"))
+  expect_true(sv_wait_js(b, sv_acc_ready, timeout = 60))
+  expect_true(sv_acc_class(b))
+  expect_null(sv_js(b, sprintf("%s.getAttribute('data-sv-user-sized')", sv_card_js("patients"))))
+  sv_js(b, sprintf("%s.applyState(JSON.parse(%s)); true", sv_acc_eng, arg))
+  Sys.sleep(0.2)
+  expect_identical(sv_js(b, sprintf("%s.getAttribute('data-sv-user-sized')", sv_card_js("patients"))), "true")
+  expect_equal(as.numeric(unlist(sv_js(b, sv_card_sizes_js)$patients)), as.numeric(unlist(sized)))
+  # the other cards were not sized by the user and are not marked
+  expect_null(sv_js(b, sprintf("%s.getAttribute('data-sv-user-sized')", sv_card_js("visits"))))
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+sv_linecap_js <- "Array.from(document.querySelectorAll('.sideview-connector-svg .sideview-connector-path[data-sv-pat]'))
+  .map(p => getComputedStyle(p).strokeLinecap)"
+
+test_that("dash patterns use butt caps, so their gaps stay open at 3 and 5 px", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_js(b, sv_six_joins_js(sv_acc_eng))
+  expect_equal(unique(unlist(sv_js(b, sv_linecap_js))), "butt")
+  sv_js(b, "document.querySelectorAll('.sideview-connector-svg .sideview-connector-path[data-sv-pat]')[2].classList.add('is-hover', 'active'); true")
+  expect_equal(unique(unlist(sv_js(b, sv_linecap_js))), "butt")
+  # off: the default canvas keeps its round caps; forced colours turn the patterns, and butt caps, on
+  b0 <- sv_acc_open("gadget", access = FALSE)
+  sv_js(b0, sv_six_joins_js(sv_acc_eng))
+  expect_equal(unique(unlist(sv_js(b0, sv_linecap_js))), "round")
+  sv_emulate(b0, "forced-colors", "active")
+  Sys.sleep(0.3)
+  expect_equal(unique(unlist(sv_js(b0, sv_linecap_js))), "butt")
+  sv_emulate(b0, "forced-colors", "none")
+  sv_emulate(b0, "prefers-contrast", "more")
+  Sys.sleep(0.3)
+  expect_equal(unique(unlist(sv_js(b0, sv_linecap_js))), "round")
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+# Focus is on something that can hold it: the container, or an element that is still focusable.
+sv_focus_ok_js <- "(() => { const a = document.activeElement; const c = a && a.closest ? a.closest('.sideview-container') : null;
+  if (!c) return 'outside';
+  const focusable = a === c || a.hasAttribute('tabindex') || a.matches('button:not([disabled]), a[href], input, select, textarea');
+  return focusable ? 'ok' : 'stranded:' + a.tagName; })()"
+
+test_that("switching off never strands focus on a header, its button or a card body", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  # a column header
+  expect_true(sv_focus_th(b, "patients", "age"))
+  sv_js(b, paste0(sv_acc_eng, ".setAccess(false)"))
+  expect_identical(sv_js(b, sv_focus_ok_js), "ok")
+  expect_true(sv_js(b, "document.activeElement === document.querySelector('.sideview-container')"))
+  # a card body
+  sv_js(b, paste0(sv_acc_eng, ".setAccess(true)"))
+  expect_true(sv_js(b, sprintf("(() => { const t = %s.querySelector('.sideview-card-body'); t.focus({preventScroll: true});
+    return document.activeElement === t; })()", sv_card_js("visits"))))
+  sv_js(b, paste0(sv_acc_eng, ".setAccess(false)"))
+  expect_identical(sv_js(b, sv_focus_ok_js), "ok")
+  # a sort button inside a header keeps its focus: it is a button
+  sv_js(b, paste0(sv_acc_eng, ".setAccess(true)"))
+  expect_true(sv_focus_th(b, "patients", "age"))
+  expect_true(sv_js(b, "(() => { const t = document.activeElement.querySelector('.sideview-sort-btn');
+    t.focus({preventScroll: true}); return document.activeElement === t; })()"))
+  sv_js(b, paste0(sv_acc_eng, ".setAccess(false)"))
+  expect_identical(sv_js(b, sv_focus_ok_js), "ok")
+  expect_true(sv_js(b, "document.activeElement.classList.contains('sideview-sort-btn')"))
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+test_that("widget: switching off in the ? dialog from a header returns focus inside the canvas", {
+  skip_if_no_browser()
+  b <- sv_acc_open("widget", access = TRUE)
+  sv_js(b, "localStorage.removeItem('sideview.access'); true")
+  expect_true(sv_acc_class(b))
+  expect_true(sv_focus_th(b, "patients", "age"))
+  sv_key(b, "?", code = "Slash", modifiers = 8L, text = "?")
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-shortcuts-scrim')"))
+  sw <- "document.querySelector('[data-sv-access-switch]')"
+  p <- sv_js(b, sprintf("(() => { const r = %s.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()", sw))
+  for (type in c("mouseMoved", "mousePressed", "mouseReleased")) {
+    b$Input$dispatchMouseEvent(type = type, x = p$x, y = p$y, button = "left", clickCount = if (type == "mouseMoved") 0 else 1)
+  }
+  expect_false(sv_acc_class(b))
+  sv_key(b, "Escape")
+  expect_false(sv_js(b, "!!document.querySelector('.sideview-shortcuts-scrim')"))
+  Sys.sleep(0.2)
+  expect_identical(sv_js(b, sv_focus_ok_js), "ok")
+  expect_true(sv_js(b, paste0(sv_acc_eng, ".ownsKeyboard()")))
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})

@@ -290,7 +290,7 @@
   --sv-th-bg: #f1f5f9 !important;
   --sv-row-hover: #e2e8f0 !important;
   --sv-border: #475569 !important;
-  --sv-border-light: #64748b !important;
+  --sv-border-light: #526075 !important;
   --sv-border-focus: #1d4ed8 !important;
   --sv-focus-ring: #1d4ed8 !important;
   --sv-text: #0b1220 !important;
@@ -375,7 +375,7 @@
   --sv-th-bg: #172033 !important;
   --sv-row-hover: #1e293b !important;
   --sv-border: #94a3b8 !important;
-  --sv-border-light: #64748b !important;
+  --sv-border-light: #8796ab !important;
   --sv-border-focus: #93c5fd !important;
   --sv-focus-ring: #fde047 !important;
   --sv-text: #ffffff !important;
@@ -461,7 +461,7 @@
     --sv-th-bg: #172033 !important;
     --sv-row-hover: #1e293b !important;
     --sv-border: #94a3b8 !important;
-    --sv-border-light: #64748b !important;
+    --sv-border-light: #8796ab !important;
     --sv-border-focus: #93c5fd !important;
     --sv-focus-ring: #fde047 !important;
     --sv-text: #ffffff !important;
@@ -3758,10 +3758,12 @@ html.sv-standalone body {
 }
 
 /* ---- Spline patterns and end markers --------------------------------------
-   Every accepted join carries data-sv-pat (join order mod 6). The patterns and the arrowheads
+   Every accepted join carries data-sv-pat: the lowest of 0-5 no live join uses (a key set added
+   in one call shares one), else the live join count mod 6. The patterns and the arrowheads
    apply under sv-access and forced-colors only; the default canvas keeps its solid splines.
    Never 6 6 (suggested joins) or 4 4 (the draft line), so the three kinds stay apart.
-   Hover and active change width (5px) and keep the pattern. */
+   Hover and active change width (5px) and keep the pattern. Patterned paths use butt caps:
+   round caps add half the stroke width at each dash end and close the 4px gaps. */
 .sideview-container .sideview-marker-shape {
   display: none;
 }
@@ -3783,6 +3785,7 @@ html.sv-standalone body {
   display: inline;
 }
 
+.sideview-container.sv-access .sideview-connector-path[data-sv-pat] { stroke-linecap: butt; }
 .sideview-container.sv-access .sideview-connector-path[data-sv-pat="0"] { stroke-dasharray: none; }
 .sideview-container.sv-access .sideview-connector-path[data-sv-pat="1"] { stroke-dasharray: 12 4; }
 .sideview-container.sv-access .sideview-connector-path[data-sv-pat="2"] { stroke-dasharray: 12 4 2 4; }
@@ -3831,6 +3834,7 @@ html.sv-standalone body {
     animation: none;
   }
 
+  .sideview-container .sideview-connector-path[data-sv-pat] { stroke-linecap: butt; }
   .sideview-container .sideview-connector-path[data-sv-pat="0"] { stroke-dasharray: none; }
   .sideview-container .sideview-connector-path[data-sv-pat="1"] { stroke-dasharray: 12 4; }
   .sideview-container .sideview-connector-path[data-sv-pat="2"] { stroke-dasharray: 12 4 2 4; }

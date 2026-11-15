@@ -52,6 +52,17 @@
     return !!(el && el.classList && el.classList.contains('sideview-card'));
   }
 
+  // True when el can still take focus by itself: any tabindex, or a native control.
+  function focusable(el) {
+    if (!el || !el.getAttribute) return false;
+    if (el.getAttribute('tabindex') !== null) return true;
+    if (el.disabled) return false;
+    var tag = (el.tagName || '').toLowerCase();
+    if (tag === 'a') return el.hasAttribute('href');
+    return tag === 'button' || tag === 'input' || tag === 'select' || tag === 'textarea' ||
+      el.isContentEditable === true;
+  }
+
   function num(v) {
     var n = parseFloat(v);
     return isFinite(n) ? n : 0;
@@ -357,12 +368,17 @@
     if (this._observer) { this._observer.disconnect(); this._observer = null; }
     if (this._orderTimer) { clearTimeout(this._orderTimer); this._orderTimer = null; }
     var active = global.document ? global.document.activeElement : null;
-    if (isCard(active) && this.container.contains(active)) {
+    var inside = !!(active && active !== this.container && this.container.contains(active));
+    if (isCard(active) && inside) {
       try { this.container.focus({ preventScroll: true }); } catch (e) { this.container.focus(); }
     }
     this.restoreOrder();
     this._restoreAll();
     this.cardEls().forEach(function (c) { c._svAccTh = null; });
+    // A header or a card body loses its tab stop here: never leave focus on it.
+    if (inside && !isCard(active) && !focusable(active)) {
+      try { this.container.focus({ preventScroll: true }); } catch (e) { this.container.focus(); }
+    }
   };
 
   SideviewAccess.prototype.destroy = function () {

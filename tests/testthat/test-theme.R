@@ -151,14 +151,18 @@ test_that("access tokens override existing tokens only, and auto mirrors dark", 
 
 test_that("access text meets 7:1 and non-text 4.5:1, light and dark", {
   th <- sv_access_themes()
-  non_text <- c("--sv-connector-color", "--sv-connector-hover", "--sv-port", "--sv-border", "--sv-focus-ring")
+  non_text <- c("--sv-connector-color", "--sv-connector-hover", "--sv-port", "--sv-border", "--sv-border-light",
+                "--sv-focus-ring")
+  # every background a line, port, border or focus ring sits on (cards, headers, hovered rows, panels)
+  non_text_bg <- c("--sv-surface", "--sv-canvas-bg", "--sv-card-bg", "--sv-th-bg", "--sv-surface-secondary",
+                   "--sv-surface-tertiary", "--sv-row-hover")
   for (theme in names(th)) {
     t <- th[[theme]]
     for (p in sv_text_pairs) {
       ratio <- sv_contrast(t[[p[1]]], t[[p[2]]], under = t[["--sv-surface"]])
       expect_true(ratio >= 7, label = sprintf("access %s: %s on %s = %.2f", theme, p[1], p[2], ratio))
     }
-    for (fg in non_text) for (bg in c("--sv-surface", "--sv-canvas-bg")) {
+    for (fg in non_text) for (bg in non_text_bg) {
       ratio <- sv_contrast(t[[fg]], t[[bg]], under = t[["--sv-surface"]])
       expect_true(ratio >= 4.5, label = sprintf("access %s: %s on %s = %.2f", theme, fg, bg, ratio))
     }

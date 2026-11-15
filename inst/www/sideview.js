@@ -760,6 +760,8 @@ function sendToShiny(name, value) {
     // Live-region announcements (see announce()); the last 50 messages are kept for tests.
     this.announceLog = [];
     this._accessSubs = [];
+    // The Accessible canvas state, resolved once here (see accessOn()); only setAccess() changes it.
+    this._access = resolveAccess(this);
     // 'canvas' | 'list' (see setView); the list view is built the first time it is shown.
     this.view = 'canvas';
     this.listView = null;
@@ -912,6 +914,17 @@ function sendToShiny(name, value) {
   }
 
   // ---- small shared helpers -------------------------------------------------
+
+  // True when el can take focus by itself: any tabindex, or an enabled native control.
+  function canTakeFocus(el) {
+    if (!el || !el.getAttribute) return false;
+    if (el.getAttribute('tabindex') !== null) return true;
+    if (el.disabled) return false;
+    var tag = (el.tagName || '').toLowerCase();
+    if (tag === 'a') return el.hasAttribute('href');
+    return tag === 'button' || tag === 'input' || tag === 'select' || tag === 'textarea' ||
+      el.isContentEditable === true;
+  }
 
   function escapeHtml(value) {
     return String(value == null ? '' : value)
@@ -1595,8 +1608,7 @@ function sendToShiny(name, value) {
         existing.parentNode.removeChild(existing);
         var back = this._searchReturnFocus;
         this._searchReturnFocus = null;
-        if (back && back.focus && this.container.contains(back)) back.focus();
-        else { try { this.container.focus({ preventScroll: true }); } catch (e) {} }
+        this.returnFocus(back);
       }
       return false;
     }
@@ -1901,24 +1913,32 @@ function sendToShiny(name, value) {
     return on;
   };
 
-  // The Accessible canvas switch. Order: the stored choice, then this session's memory (a blocked
-  // localStorage), then the R default (data-sv-access="true" / options.access === true), else off.
-  // There is no view fallback.
+  // The Accessible canvas switch. Resolved once, when the engine is built (resolveAccess): the stored
+  // choice, then this engine's memory (a blocked localStorage), then the R default
+  // (data-sv-access="true" / options.access === true), else off. There is no view fallback.
+  // Only setAccess() changes it afterwards, so another canvas on the page that changes the stored
+  // choice changes this one on its next load, never half-way (class, zoom floor and keys stay together).
   var ACCESS_KEY = 'sideview.access';
 
-  SideviewEngine.prototype.accessOn = function () {
+  function resolveAccess(engine) {
     var stored = null;
     try { stored = global.localStorage.getItem(ACCESS_KEY); } catch (e) { stored = null; }
     if (stored === 'on') return true;
     if (stored === 'off') return false;
-    if (this._accessMem === true || this._accessMem === false) return this._accessMem;
-    var attr = this.container.getAttribute ? this.container.getAttribute('data-sv-access') : null;
-    return attr === 'true' || this.options.access === true;
+    if (engine._accessMem === true || engine._accessMem === false) return engine._accessMem;
+    var attr = engine.container.getAttribute ? engine.container.getAttribute('data-sv-access') : null;
+    return attr === 'true' || engine.options.access === true;
+  }
+
+  SideviewEngine.prototype.accessOn = function () {
+    if (this._access !== true && this._access !== false) this._access = resolveAccess(this);
+    return this._access;
   };
 
   SideviewEngine.prototype.setAccess = function (on) {
     on = !!on;
     this._accessMem = on;
+    this._access = on;
     try { global.localStorage.setItem(ACCESS_KEY, on ? 'on' : 'off'); } catch (e) {}
     // The focused card's centre before the larger text resizes it: the zoom floor keeps it there.
     var fc0 = on ? this.focusedCard() : null;
@@ -1978,6 +1998,17 @@ function sendToShiny(name, value) {
     }
   };
 
+  // Focus goes back to `back` after a dialog closes, unless it has left the canvas or lost its tab
+  // stop while the dialog was open (switch turned off): then, or if focus does not land, the canvas.
+  SideviewEngine.prototype.returnFocus = function (back) {
+    var c = this.container;
+    if (back && back !== c && back.focus && c.contains(back) && canTakeFocus(back)) {
+      back.focus();
+      if (document.activeElement === back) return;
+    }
+    try { c.focus({ preventScroll: true }); } catch (e) {}
+  };
+
   SideviewEngine.prototype.toggleShortcuts = function (show) {
     var self = this;
     var existing = this.container.querySelector('.sideview-shortcuts-scrim');
@@ -1987,8 +2018,7 @@ function sendToShiny(name, value) {
         existing.parentNode.removeChild(existing);
         var back = this._shortcutsReturnFocus;
         this._shortcutsReturnFocus = null;
-        if (back && back.focus && this.container.contains(back)) back.focus();
-        else { try { this.container.focus({ preventScroll: true }); } catch (e) {} }
+        this.returnFocus(back);
       }
       return false;
     }
@@ -6337,6 +6367,7 @@ function sendToShiny(name, value) {
     var pz = this.panzoom;
     var pan = pz && pz.getPan ? pz.getPan() : { x: 0, y: 0 };
     var cards = [];
+    var access = this.accessOn();
     this.cards.forEach(function (card) {
       var el = card.element;
       if (!el) return;
@@ -6345,7 +6376,15 @@ function sendToShiny(name, value) {
       var hg = self._hiddenGeom && self._hiddenGeom[card.id];
       if (!w && hg) w = hg.w;
       if (!h && hg) h = hg.h;
-      if (el.classList.contains('is-maximized') && el._svRestore) {
+      var userSized = el.getAttribute('data-sv-user-sized') === 'true';
+      // With the Accessible canvas on an auto card shows larger than its frozen size: the state keeps
+      // the default canvas's size (the inline one), so a save opened with the switch off is the old layout.
+      var accessAuto = access && !userSized && el.classList.contains('sv-sized') &&
+        !el.classList.contains('is-maximized') && !el.classList.contains('is-minimized');
+      if (accessAuto) {
+        w = parseFloat(el.style.width) || w;
+        h = parseFloat(el.style.height) || h;
+      } else if (el.classList.contains('is-maximized') && el._svRestore) {
         w = parseFloat(el._svRestore.style.width) || null;
         h = parseFloat(el._svRestore.style.height) || null;
       } else if (el.classList.contains('is-minimized')) {
@@ -6353,7 +6392,7 @@ function sendToShiny(name, value) {
       }
       var view = cardViewOf(el);
       var sorts = view.sorts, filters = view.filters;
-      cards.push({
+      var entry = {
         id: card.id,
         name: card.name,
         x: parseFloat(el.style.left) || 0,
@@ -6363,7 +6402,10 @@ function sendToShiny(name, value) {
         minimized: el.classList.contains('is-minimized'),
         sorts: sorts,
         filters: filters
-      });
+      };
+      // optional (no schema bump): a card sized by hand keeps its size with the Accessible canvas on
+      if (userSized) entry.user_sized = true;
+      cards.push(entry);
     });
     return {
       version: STATE_VERSION,
@@ -6431,7 +6473,12 @@ function sendToShiny(name, value) {
       if (el.classList.contains('is-minimized')) self.toggleMinimizeCard(el, el.querySelector('[data-action="minimize-card"]'));
       if (w > 0) el.style.width = w + 'px';
       if (h > 0) el.style.height = h + 'px';
-      if (w > 0 && h > 0) el.classList.add('sv-sized');
+      if (w > 0 && h > 0) {
+        el.classList.add('sv-sized');
+        // the saved size is the user's own (user_sized) or the default canvas's
+        if (s.user_sized === true) el.setAttribute('data-sv-user-sized', 'true');
+        else el.removeAttribute('data-sv-user-sized');
+      }
       delete el.dataset.autoPlace;
       if (s.minimized === true) self.toggleMinimizeCard(el, el.querySelector('[data-action="minimize-card"]'));
       self.applyCardView(el, asArray(s.sorts)[0], asArray(s.filters)[0]);
