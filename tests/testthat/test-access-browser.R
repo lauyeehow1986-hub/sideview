@@ -293,3 +293,300 @@ test_that("saved state restores the same dash patterns in the same order", {
   sv_js(b, sprintf("%s.openState(JSON.parse(%s)); true", sv_acc_eng, jsonlite::toJSON(state, auto_unbox = TRUE)))
   expect_equal(unlist(sv_js(b, sv_live_pats_js)), before)
 })
+
+# ---- keyboard on cards (spec section 5) ----
+
+# Put the cards at fixed canvas positions (name -> c(x, y)) at zoom 1, no pan.
+sv_place_cards <- function(b, pos) {
+  sv_js(b, sprintf("(() => { const e = %s; const pos = %s;
+    e.panzoom.zoomToPoint(1, {clientX: 0, clientY: 0}); e.panzoom.pan(0, 0);
+    e.cards.forEach(m => { const p = pos[m.name]; if (!p) return;
+      m.element.style.left = p[0] + 'px'; m.element.style.top = p[1] + 'px'; m.x = p[0]; m.y = p[1];
+      delete m.element.dataset.autoPlace; });
+    e.updateConnectors(); return true; })()", sv_acc_eng, jsonlite::toJSON(pos, auto_unbox = FALSE)))
+}
+
+sv_card_pos <- function(b, name) {
+  sv_js(b, sprintf("(() => { const c = %s; return { left: parseFloat(c.style.left), top: parseFloat(c.style.top) }; })()",
+                   sv_card_js(name)))
+}
+
+sv_focus_card <- function(b, name) {
+  sv_js(b, sprintf("(() => { const c = %s; c.focus({preventScroll: true}); return document.activeElement === c; })()",
+                   sv_card_js(name)))
+}
+
+# '' outside the cards, the card name on a card, '~name' inside a card.
+sv_focus_where_js <- "(() => { const a = document.activeElement; if (!a || !a.closest) return '';
+  if (a.classList.contains('sideview-card')) return a.getAttribute('data-card-name');
+  const c = a.closest('.sideview-card'); return c ? '~' + c.getAttribute('data-card-name') : ''; })()"
+
+sv_focus_sig_js <- "(() => { const a = document.activeElement || {}; const c = a.closest ? a.closest('.sideview-card') : null;
+  return [(a.tagName || '').toLowerCase(), (a.getAttribute && (a.getAttribute('aria-label') || a.getAttribute('data-action'))) || '',
+          typeof a.className === 'string' ? a.className : '', c ? c.getAttribute('data-card-name') : '',
+          a.classList && a.classList.contains('sideview-card') ? 'CARD' : ''].join('|'); })()"
+
+sv_last_ann <- function(b) sv_js(b, sprintf("(() => { const l = %s.announceLog; return l[l.length - 1]; })()", sv_acc_eng))
+
+ALT <- 1L
+SHIFT <- 8L
+
+test_that("cards are Tab stops in reading order only with the switch on", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  # DOM order is patients, visits, labs; reading order differs
+  pos <- list(labs = c(40, 120), patients = c(760, 120), visits = c(40, 900))
+  sv_place_cards(b, pos)
+  sv_js(b, sprintf("%s.container.focus(); true", sv_acc_eng))
+  seen <- character(); entered <- FALSE
+  for (i in 1:150) {
+    sv_tab(b)
+    w <- sv_js(b, sv_focus_where_js)
+    if (nzchar(w)) entered <- TRUE
+    if (entered && !nzchar(w)) break
+    if (nzchar(w) && !startsWith(w, "~")) seen <- c(seen, w)
+  }
+  expect_true(entered)
+  expect_equal(seen, c("labs", "patients", "visits"))
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-card[tabindex=\"0\"][role=\"group\"]').length"), 3)
+  expect_equal(sv_js(b, sprintf("%s.getAttribute('aria-label')", sv_card_js("labs"))), "labs")
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+
+  b0 <- sv_acc_open("gadget", access = FALSE)
+  read_order <- function() {
+    sv_js(b0, sprintf("%s.container.focus(); true", sv_acc_eng))
+    vapply(1:60, function(i) { sv_tab(b0); sv_js(b0, sv_focus_sig_js) }, "")
+  }
+  base <- read_order()
+  expect_false(any(grepl("\\|CARD$", base)))
+  sv_js(b0, paste0(sv_acc_eng, ".setAccess(true)"))
+  sv_js(b0, paste0(sv_acc_eng, ".setAccess(false)"))
+  sv_js(b0, "localStorage.removeItem('sideview.access')")
+  again <- read_order()
+  expect_equal(again, base)
+})
+
+test_that("inside a card Tab reaches its actions, then leaves to the next card", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_place_cards(b, list(patients = c(40, 120), visits = c(760, 120), labs = c(40, 900)))
+  expect_true(sv_focus_card(b, "patients"))
+  stops <- list()
+  for (i in 1:40) {
+    sv_tab(b)
+    w <- sv_js(b, sv_focus_where_js)
+    if (w != "~patients") break
+    stops[[length(stops) + 1]] <- sv_focus_info(b)
+    stops[[length(stops)]]$action <- sv_js(b, "document.activeElement.getAttribute('data-action') || ''")
+    stops[[length(stops)]]$th <- sv_js(b, "!!document.activeElement.closest('th')")
+  }
+  actions <- vapply(stops, function(s) s$action, "")
+  expect_true(all(c("maximize-card", "sync-scroll", "minimize-card") %in% actions))
+  expect_lte(sum(vapply(stops, function(s) isTRUE(s$th), TRUE)), 1)
+  expect_identical(w, "visits")
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+test_that("Arrows move 20px, Shift+Arrows 100px; one card_moved and one announcement per pause", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_place_cards(b, list(patients = c(40, 120), visits = c(760, 120), labs = c(40, 900)))
+  sv_js(b, sprintf("(() => { const e = %s; e._sent = []; const orig = e.send;
+    e.send = function (n, v) { e._sent.push([n, v]); return orig.apply(e, arguments); }; return true; })()", sv_acc_eng))
+  expect_true(sv_focus_card(b, "patients"))
+  for (i in 1:3) sv_key(b, "ArrowRight")
+  sv_key(b, "ArrowDown", modifiers = SHIFT)
+  p <- sv_card_pos(b, "patients")
+  expect_equal(p$left, 100)
+  expect_equal(p$top, 220)
+  expect_true(sv_js(b, sv_focus_where_js) == "patients")
+  Sys.sleep(1.2)
+  expect_identical(sv_last_ann(b), "patients moved.")
+  expect_equal(sv_js(b, sprintf("%s.announceLog.filter(t => t === 'patients moved.').length", sv_acc_eng)), 1)
+  moved <- sv_js(b, sprintf("%s._sent.filter(x => x[0] === 'sideview_card_moved').map(x => x[1])", sv_acc_eng))
+  expect_length(moved, 1)
+  expect_equal(moved[[1]]$x, 100)
+  expect_equal(moved[[1]]$y, 220)
+  m <- sv_js(b, sprintf("(() => { const m = [...%s.cards.values()].find(c => c.name === 'patients'); return {x: m.x, y: m.y}; })()", sv_acc_eng))
+  expect_equal(c(m$x, m$y), c(100, 220))
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+test_that("Alt+Arrows focus the nearest card and the browser does not go Back", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_place_cards(b, list(patients = c(40, 120), visits = c(760, 120), labs = c(40, 900)))
+  sv_js(b, "history.pushState({}, '', '#x'); true")
+  expect_true(sv_focus_card(b, "patients"))
+  sv_key(b, "ArrowRight", modifiers = ALT)
+  expect_identical(sv_js(b, sv_focus_where_js), "visits")
+  expect_match(sv_last_ann(b), "^visits, [0-9,]+ rows, [0-9]+ columns\\.$")
+  expect_identical(sv_last_ann(b), sv_js(b, sprintf("%s.access.cardSentence(%s)", sv_acc_eng, sv_card_js("visits"))))
+  sv_key(b, "ArrowLeft", modifiers = ALT)
+  expect_identical(sv_js(b, sv_focus_where_js), "patients")
+  sv_key(b, "ArrowDown", modifiers = ALT)
+  expect_identical(sv_js(b, sv_focus_where_js), "labs")
+  # nothing further down: focus stays
+  sv_key(b, "ArrowDown", modifiers = ALT)
+  expect_identical(sv_js(b, sv_focus_where_js), "labs")
+  Sys.sleep(0.3)
+  expect_identical(sv_js(b, "location.hash"), "#x")
+  # a jump moves no card
+  expect_equal(unlist(sv_card_pos(b, "patients")), c(left = 40, top = 120))
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+test_that("PageDown/End scroll the card body", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_place_cards(b, list(patients = c(40, 120), visits = c(760, 120), labs = c(40, 900)))
+  body <- sprintf("%s.querySelector('.sideview-card-body')", sv_card_js("patients"))
+  expect_true(sv_focus_card(b, "patients"))
+  expect_equal(sv_js(b, sprintf("%s.scrollTop", body)), 0)
+  sv_key(b, "PageDown")
+  Sys.sleep(0.2)
+  t1 <- sv_js(b, sprintf("%s.scrollTop", body))
+  expect_gt(t1, 0)
+  sv_key(b, "PageDown")
+  Sys.sleep(0.2)
+  expect_gt(sv_js(b, sprintf("%s.scrollTop", body)), t1)
+  sv_key(b, "End")
+  Sys.sleep(0.2)
+  r <- sv_js(b, sprintf("(() => { const x = %s; return { t: x.scrollTop, max: x.scrollHeight - x.clientHeight }; })()", body))
+  expect_gt(r$max, 0)
+  expect_lte(abs(r$t - r$max), 1)
+  sv_key(b, "PageUp")
+  Sys.sleep(0.2)
+  expect_lt(sv_js(b, sprintf("%s.scrollTop", body)), r$t)
+  sv_key(b, "Home")
+  Sys.sleep(0.2)
+  expect_equal(sv_js(b, sprintf("%s.scrollTop", body)), 0)
+  expect_identical(sv_js(b, sv_focus_where_js), "patients")
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+test_that("focus follows: a focused card is fully visible, outside drawer, AI bar and minimap", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_place_cards(b, list(patients = c(40, 120), visits = c(760, 120), labs = c(2200, 1400)))
+  sv_js(b, "(() => { const d = document.querySelector('.sideview-drawer'); if (d) d.classList.remove('collapsed'); return true; })()")
+  sv_js(b, sprintf("(() => { const e = %s; if (!document.querySelector('.sideview-minimap') || getComputedStyle(document.querySelector('.sideview-minimap')).display === 'none') e.toggleMinimap(); return true; })()", sv_acc_eng))
+  Sys.sleep(0.5)  # the drawer's slide-in
+  off <- sv_js(b, sprintf("(() => { const r = %s.getBoundingClientRect(); const c = document.querySelector('.sideview-container').getBoundingClientRect();
+    return r.left > c.right || r.top > c.bottom; })()", sv_card_js("labs")))
+  expect_true(off)
+  expect_true(sv_focus_card(b, "visits"))
+  # labs' centre is 1440 px right and 1280 px down of visits': inside the Right cone
+  sv_key(b, "ArrowRight", modifiers = ALT)
+  expect_identical(sv_js(b, sv_focus_where_js), "labs")
+  Sys.sleep(0.2)
+  chk <- sv_js(b, sprintf("(() => { const e = %s; const c = e.container.getBoundingClientRect();
+    const r = %s.getBoundingClientRect(); const m = 24;
+    const box = { l: r.left - m, t: r.top - m, r: r.right + m, b: r.bottom + m };
+    const top = c.top + e.chromeTop();
+    const ai = document.querySelector('.sideview-ai-bar');
+    const bottom = ai && ai.offsetHeight ? ai.getBoundingClientRect().top : c.bottom;
+    const hit = (sel) => { const el = document.querySelector(sel); if (!el || !el.offsetWidth) return false;
+      const o = el.getBoundingClientRect(); return !(box.r <= o.left || box.l >= o.right || box.b <= o.top || box.t >= o.bottom); };
+    return { inside: box.l >= c.left && box.r <= c.right && box.t >= top && box.b <= bottom,
+             drawer: hit('.sideview-drawer:not(.collapsed)'), minimap: hit('.sideview-minimap'),
+             scale: e.panzoom.getScale(), mm: !!document.querySelector('.sideview-minimap') }; })()",
+    sv_acc_eng, sv_card_js("labs")))
+  expect_true(chk$inside)
+  expect_false(chk$drawer)
+  expect_false(chk$minimap)
+  expect_gte(chk$scale, 1 - 1e-9)
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+test_that("keys are silent while typing and outside an embedded widget", {
+  skip_if_no_browser()
+  b <- sv_acc_open("widget", access = TRUE)
+  sv_place_cards(b, list(patients = c(40, 120), visits = c(760, 120), labs = c(40, 900)))
+  sv_js(b, "(() => { const i = document.createElement('input'); i.id = 'outside'; document.body.insertBefore(i, document.body.firstChild);
+    i.focus(); return document.activeElement === i; })()")
+  before <- sv_card_pos(b, "patients")
+  for (k in c("ArrowRight", "ArrowDown")) {
+    sv_key(b, k)
+    sv_key(b, k, modifiers = ALT)
+    sv_key(b, k, modifiers = SHIFT)
+  }
+  expect_equal(sv_card_pos(b, "patients"), before)
+  expect_true(sv_js(b, "document.activeElement.id === 'outside'"))
+  # a text field inside the container
+  sv_js(b, "document.querySelector('.sideview-ai-input').focus(); true")
+  sv_key(b, "ArrowRight")
+  sv_key(b, "ArrowRight", modifiers = ALT)
+  expect_equal(sv_card_pos(b, "patients"), before)
+  expect_true(sv_js(b, "document.activeElement.classList.contains('sideview-ai-input')"))
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+test_that("with shortcuts off, card keys still work", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_place_cards(b, list(patients = c(40, 120), visits = c(760, 120), labs = c(40, 900)))
+  sv_js(b, paste0(sv_acc_eng, ".setShortcuts(false)"))
+  expect_true(sv_focus_card(b, "patients"))
+  sv_key(b, "ArrowRight")
+  expect_equal(sv_card_pos(b, "patients")$left, 60)
+  sv_key(b, "ArrowRight", modifiers = ALT)
+  expect_identical(sv_js(b, sv_focus_where_js), "visits")
+  sv_js(b, "localStorage.removeItem('sideview.access'); localStorage.removeItem('sideview.shortcuts')")
+})
+
+test_that("switching off mid-connect or on a focused card", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = FALSE)
+  marked_js <- "document.querySelectorAll('.sideview-card[tabindex], .sideview-card[role], .sideview-card[aria-label], .sideview-card [tabindex]').length"
+  base <- sv_js(b, marked_js)
+  sv_js(b, paste0(sv_acc_eng, ".setAccess(true)"))
+  expect_gt(sv_js(b, marked_js), base)
+  expect_true(sv_focus_card(b, "visits"))
+  sv_js(b, paste0(sv_acc_eng, ".setAccess(false)"))
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-card[tabindex]').length"), 0)
+  expect_equal(sv_js(b, marked_js), base)
+  expect_true(sv_js(b, "document.activeElement === document.querySelector('.sideview-container')"))
+  # off: arrows on the container do nothing to the cards
+  before <- sv_card_pos(b, "visits")
+  sv_key(b, "ArrowRight")
+  expect_equal(sv_card_pos(b, "visits"), before)
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+test_that("a maximized card does not move; a minimized one does and keeps its splines on ports", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_place_cards(b, list(patients = c(40, 120), visits = c(760, 120), labs = c(40, 900)))
+  card <- sv_card_js("patients")
+  sv_js(b, sprintf("(() => { const c = %s; %s.toggleMaximizeCard(c, c.querySelector('[data-action=\"maximize-card\"]')); return true; })()",
+                   card, sv_acc_eng))
+  expect_true(sv_focus_card(b, "patients"))
+  sv_key(b, "ArrowRight")
+  sv_key(b, "ArrowDown", modifiers = SHIFT)
+  expect_equal(sv_card_pos(b, "patients"), list(left = 40, top = 120))
+  sv_js(b, sprintf("(() => { const c = %s; %s.toggleMaximizeCard(c, c.querySelector('[data-action=\"maximize-card\"]')); return true; })()",
+                   card, sv_acc_eng))
+
+  sv_js(b, sprintf("(() => { const e = %s; const p = %s, v = %s;
+    const port = (c, col) => c.querySelector('th[data-col-name=\"' + col + '\"] .sideview-col-port');
+    e.addConnections([{fromCard: p.dataset.cardId, fromTable: 'patients', fromCol: 'patient_id', fromElement: port(p, 'patient_id'),
+      toCard: v.dataset.cardId, toTable: 'visits', toCol: 'pid', toElement: port(v, 'pid'), type: 'left_join'}]); return true; })()",
+    sv_acc_eng, card, sv_card_js("visits")))
+  sv_js(b, sprintf("(() => { const c = %s; %s.toggleMinimizeCard(c, c.querySelector('[data-action=\"minimize-card\"]')); return true; })()",
+                   card, sv_acc_eng))
+  expect_true(sv_focus_card(b, "patients"))
+  sv_key(b, "ArrowRight")
+  sv_key(b, "ArrowDown", modifiers = SHIFT)
+  expect_equal(sv_card_pos(b, "patients"), list(left = 60, top = 220))
+  Sys.sleep(0.3)
+  d <- sv_js(b, sprintf("(() => { const e = %s; const conn = e.connections[0];
+    const h = %s.querySelector('.sideview-card-header').getBoundingClientRect();
+    const v = e.viewport.getBoundingClientRect(); const s = e.panzoom.getScale();
+    const n = conn.path.getAttribute('d').match(/-?[0-9.]+/g).map(Number);
+    return { x: n[0], y: n[1], ex: (h.left + h.width / 2 - v.left) / s, ey: (h.top + h.height / 2 - v.top) / s }; })()",
+    sv_acc_eng, card))
+  expect_lt(abs(d$x - d$ex), 1.5)
+  expect_lt(abs(d$y - d$ey), 1.5)
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})

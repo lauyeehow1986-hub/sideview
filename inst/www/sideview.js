@@ -817,6 +817,8 @@ function sendToShiny(name, value) {
 
     // The Accessible canvas class, from the stored choice / R default (no announcement at start).
     if (this.container.classList) this.container.classList.toggle('sv-access', this.accessOn());
+    // The keyboard model of the Accessible canvas (sv-access.js), when that script is loaded.
+    if (typeof global.SideviewAccess === 'function') this.access = new global.SideviewAccess(this);
     this.registerShinyHandlers();
     this.initMinimap();
     this.initLayoutObserver();
@@ -1714,6 +1716,7 @@ function sendToShiny(name, value) {
       try { l[0].removeEventListener(l[1], l[2], l[3]); } catch (e) {}
     });
     this._globalListeners = [];
+    if (this.access) { try { this.access.destroy(); } catch (e) {} this.access = null; }
     this._accessSubs = [];
     if (this.svg) {
       var mdefs = this.svg.querySelector('defs.sideview-marker-defs');
@@ -2002,6 +2005,9 @@ function sendToShiny(name, value) {
     var type = String(el.type || 'text').toLowerCase();
     return ['button', 'checkbox', 'radio', 'range', 'color', 'submit', 'reset'].indexOf(type) < 0;
   }
+
+  // For sv-access.js: whether keys typed at `el` are text, not commands.
+  SideviewEngine.prototype.isTypingTarget = function (el) { return isTypingTarget(el); };
 
   // ---- card window controls -------------------------------------------------
 

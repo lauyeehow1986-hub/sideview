@@ -47,7 +47,8 @@ sv_key <- function(b, key, code = key, modifiers = 0L, text = NULL) {
                modifiers = as.integer(modifiers))
   if (!is.null(text)) down$text <- text
   vk <- c(Tab = 9L, Enter = 13L, Escape = 27L, " " = 32L, ArrowLeft = 37L, ArrowUp = 38L,
-          ArrowRight = 39L, ArrowDown = 40L, Home = 36L, End = 35L)
+          ArrowRight = 39L, ArrowDown = 40L, Home = 36L, End = 35L, PageUp = 33L, PageDown = 34L,
+          Delete = 46L)
   if (key %in% names(vk)) down$windowsVirtualKeyCode <- unname(vk[key])
   do.call(b$Input$dispatchKeyEvent, down)
   up <- down

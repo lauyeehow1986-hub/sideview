@@ -27,7 +27,7 @@ read_asset <- function(filename) {
 }
 
 test_that("all required web asset files exist and are non-empty", {
-  required_files <- c("sv-panzoom.js", "sv-pipeline.js", "sv-listview.js", "sideview.css", "sideview.js")
+  required_files <- c("sv-panzoom.js", "sv-pipeline.js", "sv-listview.js", "sv-access.js", "sideview.css", "sideview.js")
   for (f in required_files) {
     path <- find_asset(f)
     expect_true(file.exists(path), info = paste("Asset missing:", f, "at", path))
@@ -433,4 +433,6 @@ test_that("sv_asset_version covers sv-listview.js and the script loads before si
   scripts <- sideview_html_dependency()$script
   expect_true(match("sv-listview.js", scripts) < match("sideview.js", scripts))
   expect_true(match("sv-pipeline.js", scripts) < match("sv-listview.js", scripts))
+  expect_true("sv-access.js" %in% eval(formals(sv_asset_version)$files))
+  expect_true(match("sv-access.js", scripts) < match("sideview.js", scripts))
 })
