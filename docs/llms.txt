@@ -19,7 +19,12 @@ card](reference/figures/cdisc-canvas.png)
 
 ## Installation
 
-Install from r-universe (binaries for Windows and macOS):
+Install from CRAN:
+
+[`install.packages`](https://rdrr.io/r/utils/install.packages.html)`(``"sideview"``)`
+
+Or get the newest version from r-universe (binaries for Windows and
+macOS):
 
 [`install.packages`](https://rdrr.io/r/utils/install.packages.html)`(``"sideview"``, repos ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``"https://lauyeehow1986-hub.r-universe.dev"``, ``"https://cloud.r-project.org"``)``)`
 
