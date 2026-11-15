@@ -68,11 +68,14 @@
 <div class="section level2">
 <h2 id="installation">Installation<a class="anchor" aria-label="anchor" href="#installation"></a>
 </h2>
-<p>Install from r-universe (binaries for Windows and macOS):</p>
+<p>Install from CRAN:</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span><span class="st">"sideview"</span><span class="op">)</span></span></code></pre></div>
+<p>Or get the newest version from r-universe (binaries for Windows and macOS):</p>
+<div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span><span class="st">"sideview"</span>, repos <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"https://lauyeehow1986-hub.r-universe.dev"</span>, <span class="st">"https://cloud.r-project.org"</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
 <p>Or install the development version from GitHub:</p>
-<div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># install.packages("remotes")</span></span>
 <span><span class="fu">remotes</span><span class="fu">::</span><span class="fu"><a href="https://remotes.r-lib.org/reference/install_github.html" class="external-link">install_github</a></span><span class="op">(</span><span class="st">"lauyeehow1986-hub/sideview"</span><span class="op">)</span></span></code></pre></div>
 </div>
@@ -122,7 +125,7 @@
 <div class="section level2">
 <h2 id="quick-start">Quick Start<a class="anchor" aria-label="anchor" href="#quick-start"></a>
 </h2>
-<div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://lauyeehow1986-hub.github.io/sideview/">sideview</a></span><span class="op">)</span></span>
 <span></span>
 <span><span class="va">patients</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span></span>
@@ -155,7 +158,7 @@
 <h2 id="in-your-own-shiny-app">In your own Shiny app<a class="anchor" aria-label="anchor" href="#in-your-own-shiny-app"></a>
 </h2>
 <p><code><a href="reference/sideviewUI.html">sideviewUI()</a></code> and <code><a href="reference/sideviewUI.html">sideviewServer()</a></code> put an R-backed canvas into any Shiny app, several per page. Sorting, filtering, lazy arrow/duckdb tables, the join check and the column inspector run in R, as in the gadget. The server adds, replaces and removes tables through a proxy and reads back what the user built:</p>
-<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://shiny.posit.co/" class="external-link">shiny</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://lauyeehow1986-hub.github.io/sideview/">sideview</a></span><span class="op">)</span></span>
 <span></span>
@@ -181,6 +184,7 @@
   </main><aside class="col-md-3"><div class="links">
 <h2 data-toc-skip>Links</h2>
 <ul class="list-unstyled">
+<li><a href="https://cloud.r-project.org/package=sideview" class="external-link">View on CRAN</a></li>
 <li><a href="https://github.com/lauyeehow1986-hub/sideview/" class="external-link">Browse source code</a></li>
 <li><a href="https://github.com/lauyeehow1986-hub/sideview/issues" class="external-link">Report a bug</a></li>
 </ul>
@@ -214,6 +218,7 @@
 <h2 data-toc-skip>Dev status</h2>
 <ul class="list-unstyled">
 <li><a href="https://github.com/lauyeehow1986-hub/sideview/actions/workflows/R-CMD-check.yaml" class="external-link"><img src="https://github.com/lauyeehow1986-hub/sideview/actions/workflows/R-CMD-check.yaml/badge.svg" alt="R-CMD-check"></a></li>
+<li><a href="https://cran.r-project.org/package=sideview" class="external-link"><img src="https://www.r-pkg.org/badges/version/sideview" alt="CRAN status"></a></li>
 <li><a href="https://lauyeehow1986-hub.r-universe.dev/sideview" class="external-link"><img src="https://lauyeehow1986-hub.r-universe.dev/badges/sideview" alt="r-universe"></a></li>
 <li><a href="https://opensource.org/licenses/MIT" class="external-link"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a></li>
 <li><a href="https://lifecycle.r-lib.org/articles/stages.html#experimental" class="external-link"><img src="https://img.shields.io/badge/lifecycle-experimental-orange.svg" alt="Lifecycle: experimental"></a></li>
