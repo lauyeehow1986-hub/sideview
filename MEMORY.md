@@ -1126,7 +1126,7 @@ Each sub-project gets its own spec, plan and build, in this order:
 ## NVDA pass, Edge browser (2026-11-15)
 - Drove tasks 1 to 15 in Edge (`viewer = "browser"`) with NVDA 2026.2; the user pressed the keys, I read the Speech Viewer by screenshot. All 15 passed on the flow. Details in `plans/2026-11-14-nvda-script.md` ("Second pass").
 - Findings, none a confirmed code bug: the list view is last in DOM order, so Ctrl+Home lands on the toolbar (script wording to fix); NVDA counts the table header as row 1; the shortcuts control is a switch (on/off).
-- Task 12 announced `Filter step added. 1 step.` with 2 steps in the pipeline. A clean page gives 1 then 2 steps, so the count logic is right; a reload is the likely cause. Unproven.
+- Task 12 announced `Filter step added. 1 step.` with 2 steps in the pipeline. A clean page gives 1 then 2 steps, so the count logic is right. The user confirmed a page reload caused it.
 - Several announcer lines scrolled out of the viewer and are unconfirmed (`Rows 30 to 40 of 40.`, `Code copied.`, `SUPP merge step added. 1 step.`).
 - Not run: RStudio dialog, RStudio Viewer tasks 2 to 15, blind users. The public label stays as is; no full-pass claim.
 
