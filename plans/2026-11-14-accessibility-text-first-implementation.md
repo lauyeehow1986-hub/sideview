@@ -54,6 +54,8 @@ stacked PRs:
 - **Options:** `getOption("sideview.view", "canvas")` (validated with `match.arg(c("canvas", "list"))`) and
   `getOption("sideview.shortcuts", TRUE)`.
 - **State:** `view.mode` is optional and has no schema bump (as `view.labels_row`). It is never required on load.
+> **Superseded (2026-11-15):** the label "checked with NVDA and automated WCAG tests" below is false. The shipped label says "checked with automated WCAG tests (axe) and real-browser keyboard tests; the NVDA script was run once in Edge with NVDA 2026.2 (...); not yet tested by blind users". Do not copy this line.
+
 - **Honest label:** use this text verbatim: "checked with NVDA and automated WCAG tests; not yet tested by blind
   users".
 - **Tests:** run test files singly: `Rscript -e "devtools::test(filter = '<name>')"`. Browser tests need

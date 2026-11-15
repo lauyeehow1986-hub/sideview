@@ -347,7 +347,7 @@ Each sub-project gets its own spec, plan and build, in this order:
   - E: ARD / TLG cards (analysis results datasets and tables as cards);
   - F: spec / define.xml checks (conformance, which 0.5.0 deliberately does not do).
 - **Sub-project B (keyboard and low vision) backlog:**
-  - axe `target-size` (WCAG 2.5.8) is accepted in `SV_AXE_ACCEPTED` (test-a11y-browser.R): card and column-header icon buttons are 24 px in CSS (since 0.8.0) but the canvas fit-to-view zoom shrinks them on screen (about 17 px). Needs a minimum zoom, or zoom-independent chrome. Remove `target-size` from `SV_AXE_ACCEPTED` and re-run the matrix in Task 16.
+  - axe `target-size` (WCAG 2.5.8) is accepted in `SV_AXE_ACCEPTED` (test-a11y-browser.R): card and column-header icon buttons are 24 px in CSS (since 0.8.0) but the canvas fit-to-view zoom shrinks them on screen (about 17 px). Needs a minimum zoom, or zoom-independent chrome. Sub-project B item: once the zoom floor or zoom-independent chrome is in, remove `target-size` from `SV_AXE_ACCEPTED` and re-run the matrix (the Task 16 ruling keeps it for 0.8.0).
 - Table version diff by key (data-lock comparisons between dataset versions).
 - Validation rules (ranges, allowed values, ID uniqueness) exporting `pointblank`-style checks.
 - PHI/PII column tagging that excludes tagged columns from the LLM schema context.
@@ -372,6 +372,15 @@ Each sub-project gets its own spec, plan and build, in this order:
 
 
 ## Log
+
+### 2026-11-14 - Task 17: NVDA script written, pass not run (2026-11-14)
+- `plans/2026-11-14-nvda-script.md` (15 tasks) and `tests/testthat/helper-nvda.R` (synthetic DM/AE/SUPPAE/labs fixture) are committed. The launch snippet builds a shiny.appobj.
+- **The NVDA pass itself was NOT run:** access to NVDA was declined, so no speech was read. No results are claimed. Unverified script assumptions: filter step text `AE filter AESEV == "SEVERE"`, join step text `DM left join AE on USUBJID`, header badges "N values"/"N missing".
+- Honest label until a pass is done: "automated WCAG tests (axe) and real-browser keyboard tests; NVDA script not yet run; not yet tested by blind users".
+
+### 2026-11-14 - Task 13 fix round 1
+- sparkStats no longer scrapes preview-based badge counts (lazy/preview/truncated) or treats ~N distinct as exact; Filter button aria-disabled until openBuilder. Verified: a11y/lazy/layout browser tests, assets, computer-use-gui, node --check, gui-test-runner parity with BASE.
+
 
 ### 2026-11-02 - CDISC join keys: sideview 0.6.0 (Tasks 1-8)
 - **What shipped:** `sv_cdisc_join_keys(cards)` (R/cdisc_keys.R, exported): ADaM-to-SDTM trace (`STUDYID`, `USUBJID`, `<D>SEQ`), subject level
@@ -1103,14 +1112,6 @@ Each sub-project gets its own spec, plan and build, in this order:
 - **Change:** `tools/cdisc-screenshots.R` (chromote, real mouse clicks, synthetic fixture) makes `vignettes/articles/cdisc/{canvas,automap,merge}.png`; wired into the CDISC article and README; docs/ rebuilt and scrubbed of CLAUDE/MEMORY pages and their sitemap and search entries.
 - **Gotcha:** the fixture must call `sv_cdisc_finalize()` on its cards, or SUPP cards get no merge targets and the Merge button is disabled (the first Merge shot showed 0 steps for that reason).
 - **Verified:** merge.png shows 1 step, 16 of 16 SUPP rows matched; `check_pkgdown()` clean; build_site ran; search.json has no CLAUDE/MEMORY paths. Not yet checked: live site after merge.
-
-## Task 13 fix round 1
-- sparkStats no longer scrapes preview-based badge counts (lazy/preview/truncated) or treats ~N distinct as exact; Filter button aria-disabled until openBuilder. Verified: a11y/lazy/layout browser tests, assets, computer-use-gui, node --check, gui-test-runner parity with BASE.
-
-## Task 17: NVDA script written, pass not run (2026-11-14)
-- `plans/2026-11-14-nvda-script.md` (15 tasks) and `tests/testthat/helper-nvda.R` (synthetic DM/AE/SUPPAE/labs fixture) are committed. The launch snippet builds a shiny.appobj.
-- **The NVDA pass itself was NOT run:** access to NVDA was declined, so no speech was read. No results are claimed. Unverified script assumptions: filter step text `AE filter AESEV == "SEVERE"`, join step text `DM left join AE on USUBJID`, header badges "N values"/"N missing".
-- Honest label until a pass is done: "automated WCAG tests (axe) and real-browser keyboard tests; NVDA script not yet run; not yet tested by blind users".
 
 ## Final review fixes I1-I3 (2026-11-14)
 - **I1:** the a11y CI job installs `any::devtools`, gets `CHROMOTE_CHROME` from setup-chrome's `chrome-path`, and runs `.github/scripts/run-a11y-tests.R`, which fails on a failed expectation, on 0 passed expectations, or on a skip for a missing Chrome / axe-core. YAML parsed with `yaml::read_yaml`. Script checked locally with `NOT_CRAN=false`: exits non-zero (0 passed). The job itself cannot run here.

@@ -5,8 +5,7 @@
 Text-first accessibility: a list view that reads top to bottom, results
 printed as plain sentences, live announcements and an accessibility test
 suite. sideview 0.8.0 is checked with automated WCAG tests (axe) and
-real-browser keyboard tests; an NVDA script is written but has not yet
-been run; not yet tested by blind users. See the new article “Using
+real-browser keyboard tests; the NVDA script was run once in Edge with NVDA 2026.2 (all 15 tasks as written; the RStudio dialog and Viewer pane were not covered); not yet tested by blind users. See the new article “Using
 sideview with a screen reader” and the accessibility feedback issue
 template.
 

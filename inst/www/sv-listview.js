@@ -5,7 +5,8 @@
  * The engine (sideview.js) creates it the first time the list view is shown (engine.setView('list'))
  * and calls its result hooks from the reply handlers. This file builds the shell: the Summary and the
  * h2 sections in order (Summary, Tables, Join, Merge SUPP, Transform, Pipeline, Code, Copilot).
- * The section bodies are filled by later tasks through the same render()/renderTable() entry points.
+ * The section bodies are filled through the same render()/renderTable() entry points (Tables, Join, Merge SUPP,
+ * Transform, Pipeline and Code each have their own render and result hooks below).
  *
  * Everything is built with DOM calls and textContent: a table, column or file name is never parsed
  * as HTML.

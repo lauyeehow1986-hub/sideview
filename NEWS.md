@@ -1,8 +1,7 @@
 # sideview 0.8.0
 
 Text-first accessibility: a list view that reads top to bottom, results printed as plain sentences, live announcements and
-an accessibility test suite. sideview 0.8.0 is checked with automated WCAG tests (axe) and real-browser keyboard tests; an
-NVDA script is written but has not yet been run; not yet tested by blind users. See the new article "Using sideview with a
+an accessibility test suite. sideview 0.8.0 is checked with automated WCAG tests (axe) and real-browser keyboard tests; the NVDA script was run once in Edge with NVDA 2026.2 (all 15 tasks as written; the RStudio dialog and Viewer pane were not covered); not yet tested by blind users. See the new article "Using sideview with a
 screen reader" and the accessibility feedback issue template.
 
 
@@ -17,10 +16,10 @@ screen reader" and the accessibility feedback issue template.
   accepted because the fit zoom shrinks the 24 px icon buttons (to be fixed in sub-project B).
 
 ## List view argument
-- `sideview()`, `sideview_widget()`, `save_sideview()`, `sideview_ui()` and `sideviewUI()` take `view = "canvas"` (default) or
+
+* `sideview()`, `sideview_widget()`, `save_sideview()`, `sideview_ui()` and `sideviewUI()` take `view = "canvas"` (default) or
   `"list"`, set for a session by `options(sideview.view = "list")`. The container carries `data-sv-view` and the widget
-  `options$view`. A saved workspace may now carry `view.mode`; an invalid value is dropped. The list view itself arrives in
-  the next changes.
+  `options$view`. A saved workspace may now carry `view.mode`; an invalid value is dropped.
 
 ## List view
 
@@ -31,7 +30,7 @@ screen reader" and the accessibility feedback issue template.
   tree while the list is shown. Switching is announced ("List view" / "Canvas view") and moves focus to the list's first
   heading. The single-key shortcuts default to off in the list view.
 * `view = "list"` starts in it. A saved workspace now records the view (`view.mode`) and wins over the `view` argument when
-  it is opened. The section contents arrive in the next changes.
+  it is opened.
 
 ## List view tables
 
@@ -41,6 +40,8 @@ screen reader" and the accessibility feedback issue template.
   A page change is announced ("Rows 26 to 50 of 5,000.") and focus stays on the button. Rows follow the canvas sort and
   filter; a large (lazy) table is read a window at a time from R. Sort announces its result; Inspect writes the profile as
   sentences under the column. A table with more than 30 columns starts with its columns closed.
+  List view columns no longer state counts taken from the canvas badges on lazy, preview or truncated cards (they come from
+  the 50-row preview); a sampled "~N distinct" is never shown as exact.
 
 ## Table ARIA
 
@@ -551,4 +552,4 @@ Quarto page), plus new features for clinical data work.
 * Standalone self-contained HTML widget export via `save_sideview()`.
 * Interactive Shiny Gadget and RStudio Addin (`sideview()`, `sideview_addin()`).
 
-- List view columns no longer state counts taken from the canvas badges on lazy, preview or truncated cards (they come from the 50-row preview); a sampled "~N distinct" is never shown as exact. Filter in the list view is `aria-disabled` until the builder exists.
+
