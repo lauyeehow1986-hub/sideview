@@ -46,7 +46,8 @@ sideview_widget_dependencies <- function() {
 #' @param elementId Optional HTML element identifier.
 #' @param options Named list of canvas options (e.g. \code{shortcuts = FALSE} to start with
 #'   the single-key shortcuts off, default \code{getOption("sideview.shortcuts", TRUE)}, \code{snapToEdge},
-#'   \code{snapThreshold}, \code{minScale}, \code{maxScale}).
+#'   \code{access = TRUE} to start with the Accessible canvas switch on (default
+#'   \code{getOption("sideview.access", FALSE)}), \code{snapThreshold}, \code{minScale}, \code{maxScale}).
 #' @param theme Canvas theme: `"auto"` (default; follows the reader's
 #'   `prefers-color-scheme`), `"light"`, `"dark"`, an [sv_theme()] or a
 #'   `bslib::bs_theme()`.
@@ -143,6 +144,11 @@ sideview_widget <- function(...,
     options$view <- view
   } else {
     options$view <- sv_check_view(options$view)
+  }
+  options$access <- if (is.null(options$access)) {
+    sv_check_access(getOption("sideview.access", FALSE))
+  } else {
+    sv_check_access(options$access)
   }
   if (is.null(options$shortcuts)) options$shortcuts <- getOption("sideview.shortcuts", TRUE)
   if (length(theme$vars)) {

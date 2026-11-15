@@ -390,20 +390,28 @@ render_card_tag <- function(card, index = 1L) {
 #' @param state Optional saved workspace to restore on load (see [sideview()]).
 #'
 #' @param view Starting view: `"canvas"` (default) or `"list"` (see [sideview()]).
+#' @param access `TRUE` starts with the Accessible canvas switch on (default
+#'   `getOption("sideview.access", FALSE)`); the switch in the `?` list is remembered in
+#'   the browser and wins.
 #'
 #' @return A `shiny.tag.list` UI definition.
 #' @export
 sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALSE, theme = "auto",
-                        state = NULL, view = getOption("sideview.view", "canvas")) {
+                        state = NULL, view = getOption("sideview.view", "canvas"),
+                        access = getOption("sideview.access", FALSE)) {
   view <- sv_check_view(view)
-  sv_ui_build(cards = cards, title = title, gadget = gadget, theme = theme, state = state, view = view)
+  access <- sv_check_access(access)
+  sv_ui_build(cards = cards, title = title, gadget = gadget, theme = theme, state = state, view = view,
+              access = access)
 }
 
 # The chrome (toolbar, canvas, drawer, AI bar) behind sideview_ui() and sideviewUI().
 # `ns` (a module's full input prefix, e.g. "review-") switches to embedded mode: no cards,
 # no page-level rules, no buttons that run code, `data-sv-ns` and a per-container init script.
 sv_ui_build <- function(cards = list(), title = "Sideview Canvas", gadget = FALSE, theme = "auto",
-                        state = NULL, ns = NULL, height = NULL, view = "canvas") {
+                        state = NULL, ns = NULL, height = NULL, view = "canvas",
+                        access = getOption("sideview.access", FALSE)) {
+  access <- sv_check_access(access)
   module <- !is.null(ns)
   normalized_cards <- if (module) list() else sv_normalize_cards(cards)
   
@@ -623,6 +631,8 @@ sv_ui_build <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
     `data-sv-ns` = ns,
     `data-sv-view` = view,
     # option(sideview.shortcuts = FALSE): single-key shortcuts start off (a stored choice wins)
+    # access = TRUE (or option sideview.access): the Accessible canvas switch starts on
+    `data-sv-access` = if (access) "true" else NULL,
     `data-sv-shortcuts` = if (isFALSE(getOption("sideview.shortcuts", TRUE))) "false" else NULL,
     # Save/Open use RStudio's file dialog through R when there is one.
     `data-sv-file-dialog` = if (isTRUE(gadget) && sv_has_file_dialog()) "r" else NULL,
@@ -669,6 +679,11 @@ sv_drawer_tabs <- c(
 
 # Validates a `view` argument: one of "canvas" / "list" (match.arg would let a length-2
 # vector equal to the choices through as "canvas").
+sv_check_access <- function(x) {
+  if (!is.logical(x) || length(x) != 1L || is.na(x)) stop("`access` must be TRUE or FALSE.", call. = FALSE)
+  x
+}
+
 sv_check_view <- function(view) {
   if (length(view) != 1L) stop("'view' must be of length 1", call. = FALSE)
   match.arg(view, c("canvas", "list"))

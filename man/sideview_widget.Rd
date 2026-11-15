@@ -29,7 +29,8 @@ sideview_widget(
 
 \item{options}{Named list of canvas options (e.g. \code{shortcuts = FALSE} to start with
 the single-key shortcuts off, default \code{getOption("sideview.shortcuts", TRUE)}, \code{snapToEdge},
-\code{snapThreshold}, \code{minScale}, \code{maxScale}).}
+\code{access = TRUE} to start with the Accessible canvas switch on (default
+\code{getOption("sideview.access", FALSE)}), \code{snapThreshold}, \code{minScale}, \code{maxScale}).}
 
 \item{theme}{Canvas theme: \code{"auto"} (default; follows the reader's
 \code{prefers-color-scheme}), \code{"light"}, \code{"dark"}, an \code{\link[=sv_theme]{sv_theme()}} or a

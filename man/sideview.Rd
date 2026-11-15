@@ -12,6 +12,7 @@ sideview(
   state = NULL,
   cdisc = "auto",
   view = getOption("sideview.view", "canvas"),
+  access = getOption("sideview.access", FALSE),
   env = parent.frame(),
   run = interactive()
 )
@@ -48,6 +49,10 @@ still detected).}
 default is \code{getOption("sideview.view", "canvas")}. A saved workspace
 (\code{state}) that records a view wins over this argument; a state without
 one leaves it as it is.}
+
+\item{access}{\code{TRUE} starts with the Accessible canvas switch on. The default is
+\code{getOption("sideview.access", FALSE)}; the switch in the \verb{?} list is remembered in
+the browser and wins.}
 
 \item{env}{Environment where \strong{Run in R} evaluates the generated code and
 stores its result (as \code{sv_result} unless you name it). Defaults to the
@@ -135,6 +140,9 @@ to that card.
 \section{Options}{
 
 \describe{
+\item{\code{sideview.access}}{\code{TRUE} starts with the Accessible canvas switch on
+(default \code{FALSE}). It is the default only: the switch in the \verb{?} list is remembered
+in the browser and wins.}
 \item{\code{sideview.shortcuts}}{\code{FALSE} starts the canvas with the single-key
 shortcuts off (default \code{TRUE}). It is the default only: the "Keyboard
 shortcuts" switch in the \verb{?} list is remembered in the browser and wins.
