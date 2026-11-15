@@ -280,6 +280,14 @@ function sendToShiny(name, value) {
     };
   };
 
+  // Row height in px (the CSS row height must match); re-renders the rendered window.
+  VirtualTable.prototype.setRowHeight = function (px) {
+    px = Number(px);
+    if (!(px > 0) || px === this.rowHeight) return;
+    this.rowHeight = px;
+    this.render();
+  };
+
   VirtualTable.prototype.render = function () {
     var totalCount = this.getRowCount();
     // Table ARIA: the rendered window is a slice, so say how big the whole table is. Header = row 1.
@@ -782,6 +790,7 @@ function sendToShiny(name, value) {
     hydrateIcons(this.container);
     this.initPanzoom();
     this.onAccessChange(function (on) { self.applyZoomFloor(on); });
+    this.onAccessChange(function (on) { self.applyAccessLayout(on); });
     this.initEventListeners();
     this.initExistingCards();
 
@@ -1864,6 +1873,10 @@ function sendToShiny(name, value) {
     on = !!on;
     this._accessMem = on;
     try { global.localStorage.setItem(ACCESS_KEY, on ? 'on' : 'off'); } catch (e) {}
+    // The focused card's centre before the larger text resizes it: the zoom floor keeps it there.
+    var fc0 = on ? this.focusedCard() : null;
+    var r0 = fc0 ? fc0.getBoundingClientRect() : null;
+    this._accessAnchor = r0 ? { card: fc0, x: r0.left + r0.width / 2, y: r0.top + r0.height / 2 } : null;
     if (this.container.classList) this.container.classList.toggle('sv-access', on);
     var sw = this.container.querySelectorAll('[data-sv-access-switch]');
     for (var i = 0; i < sw.length; i++) sw[i].setAttribute('aria-checked', on ? 'true' : 'false');
@@ -1906,7 +1919,15 @@ function sendToShiny(name, value) {
     if (!on) { pz.setMinScale(this.options.minScale); return; }
     var fc = this.focusedCard();
     var r = (fc || this.container).getBoundingClientRect();
+    var s0 = pz.getScale ? pz.getScale() : null;
     pz.setMinScale(this.minScaleNow(), { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 });
+    // The card grew with the switch (CSS): put its centre back where it was before the switch.
+    var a = this._accessAnchor;
+    this._accessAnchor = null;
+    if (fc && a && a.card === fc && s0 !== null && pz.getScale() !== s0 && pz.getPan && pz.pan) {
+      var r1 = fc.getBoundingClientRect(), p = pz.getPan();
+      pz.pan(p.x + a.x - (r1.left + r1.width / 2), p.y + a.y - (r1.top + r1.height / 2));
+    }
   };
 
   SideviewEngine.prototype.toggleShortcuts = function (show) {
@@ -1990,9 +2011,81 @@ function sendToShiny(name, value) {
     card.classList.add('sv-sized');
   };
 
+  // The frozen size is always the default canvas's size: with the Accessible canvas on, cards are
+  // measured without it (one reflow), so switching it off gives back the default layout.
   SideviewEngine.prototype.freezeAllCardSizes = function () {
     var self = this;
+    var pending = false;
+    this.cards.forEach(function (meta) {
+      var c = meta.element;
+      if (c && !c.classList.contains('sv-sized') && !c.classList.contains('is-maximized') &&
+          !c.classList.contains('is-minimized')) pending = true;
+    });
+    if (!pending) return;
+    var cl = this.container.classList;
+    var access = !!(cl && cl.contains('sv-access'));
+    if (access) cl.remove('sv-access');
     this.cards.forEach(function (meta) { self.freezeCardSize(meta.element); });
+    if (access) cl.add('sv-access');
+  };
+
+  // The bottom-right corner (16 CSS px, scaled with the canvas) is the CSS resize handle.
+  var RESIZE_CORNER = 16;
+
+  SideviewEngine.prototype.beginCardResize = function (card, e) {
+    var r = card.getBoundingClientRect();
+    var zone = RESIZE_CORNER * (this.panzoom && this.panzoom.getScale ? this.panzoom.getScale() : 1);
+    if (e.clientX < r.right - zone || e.clientY < r.bottom - zone || e.clientX > r.right || e.clientY > r.bottom) return;
+    var start = {
+      card: card, w: card.offsetWidth, h: card.offsetHeight,
+      styleW: card.style.width, styleH: card.style.height, sized: card.classList.contains('sv-sized')
+    };
+    // With the switch on an auto-sized card is width/height: auto; the drag starts from the size shown.
+    if (this.accessOn()) {
+      card.style.width = start.w + 'px';
+      card.style.height = start.h + 'px';
+      card.classList.add('sv-sized');
+      card.setAttribute('data-sv-user-sized', 'pending');
+    }
+    this._cardResize = start;
+  };
+
+  SideviewEngine.prototype.endCardResize = function () {
+    var s = this._cardResize;
+    if (!s) return;
+    this._cardResize = null;
+    var card = s.card;
+    if (card.offsetWidth !== s.w || card.offsetHeight !== s.h) {
+      card.setAttribute('data-sv-user-sized', 'true');
+      card.classList.add('sv-sized');
+      this.scheduleConnectorUpdate();
+      return;
+    }
+    if (card.getAttribute('data-sv-user-sized') === 'pending') {
+      card.style.width = s.styleW;
+      card.style.height = s.styleH;
+      if (!s.sized) card.classList.remove('sv-sized');
+      card.removeAttribute('data-sv-user-sized');
+    }
+  };
+
+  // Row height of the card tables: taller rows for the 16 px text of the Accessible canvas.
+  var ROW_HEIGHT = 28;
+  var ACCESS_ROW_HEIGHT = 36;
+  SideviewEngine.prototype.rowHeightNow = function () {
+    return this.accessOn() ? ACCESS_ROW_HEIGHT : ROW_HEIGHT;
+  };
+
+  // The switch flipped: the CSS has already changed; re-render the tables at the new row
+  // height and move the splines to the ports' new places.
+  SideviewEngine.prototype.applyAccessLayout = function (on) {
+    var h = on ? ACCESS_ROW_HEIGHT : ROW_HEIGHT;
+    var tables = this.container.querySelectorAll('table');
+    for (var i = 0; i < tables.length; i++) {
+      var vt = tables[i]._virtualTable;
+      if (vt && vt.setRowHeight) vt.setRowHeight(h);
+    }
+    this.scheduleConnectorUpdate();
   };
 
   SideviewEngine.prototype.toggleMinimizeCard = function (card, btn) {
@@ -2911,6 +3004,18 @@ function sendToShiny(name, value) {
       document.addEventListener('mouseup', onColResizeUp);
     });
 
+    // A card sized by hand (the CSS resize corner) is marked data-sv-user-sized, so the
+    // Accessible canvas keeps its size while auto-sized cards grow with the larger text.
+    this.container.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0) return;
+      var card = e.target && e.target.closest ? e.target.closest('.sideview-card') : null;
+      if (!card || !self.container.contains(card) || card.classList.contains('is-maximized') ||
+          card.classList.contains('is-minimized') || card.getAttribute('data-sv-user-sized') === 'true') return;
+      self.beginCardResize(card, e);
+    });
+    this.listenGlobal(document, 'pointerup', function () { self.endCardResize(); });
+    this.listenGlobal(document, 'pointercancel', function () { self.endCardResize(); });
+
     // Pressing Escape cancels a draft connection, closes the filter popover,
     // or restores a maximized card (in that order).
     this.listenGlobal(document, 'keydown', function (e) {
@@ -3169,7 +3274,7 @@ function sendToShiny(name, value) {
 
       // Initialize VirtualTable for high-performance DOM viewport
       var vTable = new VirtualTable(table, {
-        rowHeight: 28,
+        rowHeight: self.rowHeightNow(),
         buffer: 10,
         data: cardData.data,
         colNames: colNames,
@@ -3380,7 +3485,7 @@ function sendToShiny(name, value) {
       if (table) ensureTableCaption(table, cardName);
       if (table && !table._virtualTable) {
         vTable = new VirtualTable(table, {
-          rowHeight: 28,
+          rowHeight: self.rowHeightNow(),
           buffer: 10
         });
         cardEl._virtualTable = table._virtualTable = vTable;
@@ -4012,6 +4117,7 @@ function sendToShiny(name, value) {
       width: el.style.width || '',
       height: minimized ? (el._svRestoreHeight || '') : (el.style.height || ''),
       sized: el.classList.contains('sv-sized'),
+      userSized: el.dataset.svUserSized === 'true',
       auto: el.dataset.autoPlace
     };
     var oldVt = el._virtualTable;
@@ -4037,6 +4143,7 @@ function sendToShiny(name, value) {
     if (geo.width) nel.style.width = geo.width;
     if (geo.height) nel.style.height = geo.height;
     if (geo.sized) nel.classList.add('sv-sized');
+    if (geo.userSized) nel.dataset.svUserSized = 'true';
     if (geo.auto === undefined) delete nel.dataset.autoPlace;
     if (minimized) this.toggleMinimizeCard(nel, nel.querySelector('[data-action="minimize-card"]'));
 
