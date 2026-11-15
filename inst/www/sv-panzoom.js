@@ -145,8 +145,20 @@
       return { x: x, y: y };
     }
 
-    function setScale(s) {
-      return zoom(s);
+    // Change the lower scale limit at run time. A current scale below it is raised to it, keeping the
+    // point `keep` ({clientX, clientY}) fixed on screen (the viewport centre when it is omitted).
+    function setMinScale(n, keep) {
+      if (typeof n !== 'number' || !isFinite(n) || n <= 0) return scale;
+      opts.minScale = n;
+      if (scale < n) {
+        var r = parent.getBoundingClientRect();
+        var pt = keep || { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+        zoomToPoint(n, pt);
+      }
+      return scale;
+    }
+
+    function setScale(s) {      return zoom(s);
     }
 
     function setPan(px, py) {
@@ -231,6 +243,7 @@
       getScale: getScale,
       getPan: getPan,
       setScale: setScale,
+      setMinScale: setMinScale,
       setPan: setPan,
       bindPointerDown: onPointerDown,
       destroy: function () {

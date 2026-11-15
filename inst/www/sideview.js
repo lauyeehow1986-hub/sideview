@@ -781,6 +781,7 @@ function sendToShiny(name, value) {
     this.ensureDrawer();
     hydrateIcons(this.container);
     this.initPanzoom();
+    this.onAccessChange(function (on) { self.applyZoomFloor(on); });
     this.initEventListeners();
     this.initExistingCards();
 
@@ -1190,7 +1191,7 @@ function sendToShiny(name, value) {
       // setView('canvas') runs the deferred layout instead.
       if (self._needsInitialLayout && self.view !== 'list' && self.container.clientWidth > 0) {
         self._needsInitialLayout = false;
-        if (self.arrangeCards(true) && !self._restoredView) self.fitAll({ maxScale: 1, minScale: READABLE_SCALE });
+        if (self.arrangeCards(true) && !self._restoredView) self.fitAll({ maxScale: 1, minScale: Math.max(READABLE_SCALE, self.minScaleNow()) });
         self.scheduleSnapshot();
       }
       self.scheduleConnectorUpdate();
@@ -1321,9 +1322,21 @@ function sendToShiny(name, value) {
     var availH = this.container.clientHeight - top - this.chromeBottom();
     if (availW <= 0 || availH <= 0) return;
     var s = Math.min(availW / Math.max(maxX - minX, 1), availH / Math.max(maxY - minY, 1));
-    var lo = Math.max(opts.minScale || 0, this.options.minScale);
+    var lo = Math.max(opts.minScale || 0, this.minScaleNow());
     var hi = Math.min(opts.maxScale || this.options.maxScale, this.options.maxScale);
     s = Math.min(Math.max(s, lo), hi);
+    var fc = this.accessOn() ? this.focusedCard() : null;
+    if (fc && !fc.classList.contains('is-maximized')) {
+      // keep the focused card where it is on screen while the zoom changes
+      var cr = fc.getBoundingClientRect();
+      var kr = this.container.getBoundingClientRect();
+      pz.zoomToPoint(s, { clientX: cr.left + cr.width / 2, clientY: cr.top + cr.height / 2 });
+      var pn = pz.getPan();
+      var dx = (kr.left + kr.width / 2) - (cr.left + cr.width / 2);
+      var dy = (kr.top + kr.height / 2) - (cr.top + cr.height / 2);
+      pz.pan(pn.x + dx, pn.y + dy);
+      return;
+    }
     pz.zoom(s);
     pz.pan(margin - minX * s, top - minY * s);
   };
@@ -1345,7 +1358,7 @@ function sendToShiny(name, value) {
     var availH = this.container.clientHeight - top - this.chromeBottom();
     if (availW <= 0 || availH <= 0) return false;
     var s = Math.min(availW / w, availH / h);
-    var lo = Math.max(READABLE_SCALE, this.options.minScale);
+    var lo = Math.max(READABLE_SCALE, this.minScaleNow());
     var hi = Math.min(1.5, this.options.maxScale);
     s = Math.min(Math.max(s, lo), hi);
     pz.zoom(s);
@@ -1872,6 +1885,30 @@ function sendToShiny(name, value) {
     };
   };
 
+  // The zoom floor: 1.0 with the Accessible canvas on, else the normal option.
+  var ACCESS_MIN_SCALE = 1;
+  SideviewEngine.prototype.minScaleNow = function () {
+    return this.accessOn() ? Math.max(ACCESS_MIN_SCALE, this.options.minScale) : this.options.minScale;
+  };
+
+  // The card holding keyboard focus, else null.
+  SideviewEngine.prototype.focusedCard = function () {
+    var a = global.document && global.document.activeElement;
+    var c = a && a.closest ? a.closest('.sideview-card') : null;
+    return c && this.container.contains(c) ? c : null;
+  };
+
+  // Apply the zoom floor to the live panzoom (on: raise the scale around the focused card or the view
+  // centre; off: only lower the limit, the zoom stays).
+  SideviewEngine.prototype.applyZoomFloor = function (on) {
+    var pz = this.panzoom;
+    if (!pz || typeof pz.setMinScale !== 'function') return;
+    if (!on) { pz.setMinScale(this.options.minScale); return; }
+    var fc = this.focusedCard();
+    var r = (fc || this.container).getBoundingClientRect();
+    pz.setMinScale(this.minScaleNow(), { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 });
+  };
+
   SideviewEngine.prototype.toggleShortcuts = function (show) {
     var self = this;
     var existing = this.container.querySelector('.sideview-shortcuts-scrim');
@@ -2249,7 +2286,7 @@ function sendToShiny(name, value) {
 
     this.panzoom = global.Panzoom(this.viewport, {
       canvas: true,
-      minScale: this.options.minScale,
+      minScale: this.minScaleNow(),
       maxScale: this.options.maxScale,
       excludeClass: 'sideview-card',
       wheelRequiresModifier: this.options.mode === 'embedded'
@@ -2308,7 +2345,7 @@ function sendToShiny(name, value) {
         self.fitAll();
       } else if (action === 'arrange-cards') {
         self.arrangeCards(false);
-        self.fitAll({ maxScale: 1, minScale: READABLE_SCALE });
+        self.fitAll({ maxScale: 1, minScale: Math.max(READABLE_SCALE, self.minScaleNow()) });
       } else if (action === 'minimize-card') {
         var minCard = btn.closest('.sideview-card');
         if (minCard) self.toggleMinimizeCard(minCard, btn);
@@ -6220,7 +6257,7 @@ function sendToShiny(name, value) {
     var cv = state.canvas || {};
     var pz = this.panzoom;
     if (pz && typeof pz.zoom === 'function' && typeof pz.pan === 'function') {
-      var zoom = Math.min(Math.max(finiteOr(cv.zoom, 1), this.options.minScale), this.options.maxScale);
+      var zoom = Math.min(Math.max(finiteOr(cv.zoom, 1), this.minScaleNow()), this.options.maxScale);
       pz.zoom(zoom);
       pz.pan(finiteOr(cv.pan_x, 0), finiteOr(cv.pan_y, 0));
     }
@@ -7279,7 +7316,7 @@ function sendToShiny(name, value) {
       // the first layout was deferred because the list view was showing: do it now the canvas is visible
       if (this._needsInitialLayout && this.container.clientWidth > 0) {
         this._needsInitialLayout = false;
-        if (this.arrangeCards(true) && !this._restoredView) this.fitAll({ maxScale: 1, minScale: READABLE_SCALE });
+        if (this.arrangeCards(true) && !this._restoredView) this.fitAll({ maxScale: 1, minScale: Math.max(READABLE_SCALE, this.minScaleNow()) });
         this.scheduleSnapshot();
       }
       // the tables were hidden while their rows may have changed: measure and draw them again
