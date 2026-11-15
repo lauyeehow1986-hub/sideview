@@ -333,6 +333,32 @@ is hard to steer with synthetic keys, so tasks 2, 3 and 5 to 15 were **not run**
 | 4 (sample) | RStudio Viewer | pass (read from the page, not by arrowing) | on screen: `DOMAIN, text, 1 values, 0 missing`; `USUBJID, Unique Subject Identifier, text, 10 values, 0 missing`; each followed by Sort, Filter, Inspect buttons | DM column list; the speech was not captured item by item |
 | other | any | not run | | |
 
+### Second pass (2026-11-15): Edge browser, `viewer = "browser"`, NVDA 2026.2, user pressed keys, Speech Viewer read by screenshot
+
+Surface: Microsoft Edge at http://127.0.0.1:3845/. RStudio dialog and Viewer pane were not run in this pass.
+
+| task | result | note |
+|------|--------|------|
+| 1 | pass (focus and heading); announcer unconfirmed | |
+| 2, 3 | pass | |
+| 4 | pass (earlier, read from the page) | |
+| 5 | pass | NVDA says "row 31" for data row 30: it counts the header as row 1. `Rows 30 to 40 of 40.` scrolled out of the viewer |
+| 6 | pass | `Rows 26 to 40 of 40.`, focus on `Previous rows` |
+| 7, 8 | pass | |
+| 9 | pass | Ctrl+Home lands on the toolbar group "Sideview Canvas", not the Summary (the list view is last in DOM order). Use H, Shift+H or the skip links |
+| 10 | pass | `Undone. 0 steps.` |
+| 11 | pass | Result block sits below Merge: use Shift+Tab. Labels `Check SUPPAE` / `Merge SUPPAE`. `SUPP merge step added. 1 step.` scrolled out |
+| 12 | pass on the flow | Announcer said `Filter step added. 1 step.` where 2 were expected. Reproduced in a clean page: counts are correct (1 step, then 2 steps). Most likely a page reload between merge and filter (the Join dropdowns had reset). Not shown to be a bug; unproven |
+| 13 | pass on the paste | Paste held the SUPP merge, the join and the `AESEV == "SEVERE"` filter. `Code copied.` and `Copied!` scrolled out, unconfirmed |
+| 14 | pass | Control is a switch reading on/off, not a checkbox checked/not checked. `Keyboard shortcuts on.` / `off.` heard. F moved to the next form control, zoom stayed 90% |
+| 15 | pass | `Canvas view` heard, cards back on screen |
+
+Script corrections still to apply: NVDA row numbers count the header; Ctrl+Home reaches the toolbar, so use H or Shift+H
+for the Summary; the heading list has a Copilot heading; the shortcuts control is a switch (on/off).
+
+Not covered by any pass: the RStudio dialog, the Viewer pane tasks 2 to 15, and users who are blind. No claim of a full
+NVDA pass.
+
 Also seen in the canvas (NVDA read the whole page): buttons have names and the toolbar toggle reports its pressed
 state. The page DOM puts the toolbar after the cards, so browse-mode `B` from the top reaches card buttons first.
 
