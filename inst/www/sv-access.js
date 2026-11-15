@@ -241,9 +241,14 @@
       self._set(card, 'tabindex', '0');
       self._set(card, 'role', 'group');
       self._set(card, 'aria-label', self.cardName(card));
-      // the table body is not a Tab stop (Chrome makes a scroller without focusable children one)
+      // the table body scrolls, so it is a named Tab stop of its own (axe: scrollable-region-focusable);
+      // its keys are the browser's own, the card keys above act on the card only
       var body = card.querySelector('.sideview-card-body');
-      if (body) self._set(body, 'tabindex', '-1');
+      if (body) {
+        self._set(body, 'tabindex', '0');
+        self._set(body, 'role', 'region');
+        self._set(body, 'aria-label', self.cardName(card) + ' rows');
+      }
       self.setActive(card, !!(active && card.contains(active)));
     });
     // a re-rendered card (replaced from R) takes the connect source with it
@@ -830,7 +835,10 @@
   SideviewAccess.prototype.jump = function (cardEl, dir) {
     if (cardEl.classList.contains('is-maximized')) return;
     var next = this.nearest(cardEl, dir);
-    if (!next) return;
+    if (!next) {
+      this.engine.announce('No card ' + (dir.x < 0 ? 'to the left' : dir.x > 0 ? 'to the right' : dir.y < 0 ? 'above' : 'below') + '.');
+      return;
+    }
     this.focusCard(next);
     this.engine.announce(this.cardSentence(next));
   };

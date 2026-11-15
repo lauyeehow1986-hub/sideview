@@ -2882,6 +2882,17 @@ html.sv-standalone body {
   color: var(--sv-text-muted);
 }
 
+.sideview-container .sideview-shortcuts-sub {
+  margin: 14px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-shortcuts [data-sv-access-keys] dt {
+  white-space: normal;
+}
+
 .sideview-container .sideview-shortcuts kbd {
   display: inline-block;
   min-width: 20px;
@@ -3094,6 +3105,7 @@ html.sv-standalone body {
   padding: 0 4px;
   font-family: var(--sv-font-mono);
   font-size: 10px;
+  color: var(--sv-text);
   background: var(--sv-surface-secondary);
   border: 1px solid var(--sv-border);
   border-radius: var(--sv-radius-sm);
@@ -3728,9 +3740,9 @@ html.sv-standalone body {
   font-weight: 700;
   margin-right: 4px;
 }
-.sideview-container.sv-access .sideview-discrepancy-exact::before { content: "=" / ""; color: var(--sv-success-text); }
-.sideview-container.sv-access .sideview-discrepancy-fuzzy::before { content: "~" / ""; color: var(--sv-warning-text); }
-.sideview-container.sv-access .sideview-discrepancy-diff::before { content: "!=" / ""; color: var(--sv-danger-text); }
+.sideview-container.sv-access .sideview-discrepancy-exact::before { content: "="; content: "=" / ""; color: var(--sv-success-text); }
+.sideview-container.sv-access .sideview-discrepancy-fuzzy::before { content: "~"; content: "~" / ""; color: var(--sv-warning-text); }
+.sideview-container.sv-access .sideview-discrepancy-diff::before { content: "!="; content: "!=" / ""; color: var(--sv-danger-text); }
 .sideview-container.sv-access .sideview-discrepancy-diff { border-left-style: double !important; border-left-width: 4px !important; }
 .sideview-container.sv-access .sideview-discrepancy-fuzzy { border-left-style: dashed !important; }
 

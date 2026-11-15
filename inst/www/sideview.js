@@ -284,8 +284,16 @@ function sendToShiny(name, value) {
   VirtualTable.prototype.setRowHeight = function (px) {
     px = Number(px);
     if (!(px > 0) || px === this.rowHeight) return;
+    // Keep the first visible row: rescale the scroll position by the new row height.
+    var sc = this.scrollContainer;
+    var firstRow = sc ? sc.scrollTop / this.rowHeight : 0;
     this.rowHeight = px;
     this.render();
+    if (sc && firstRow > 0) {
+      // after the render, so the spacers already have the new total height
+      sc.scrollTop = firstRow * px;
+      this.render();
+    }
   };
 
   VirtualTable.prototype.render = function () {
@@ -1836,6 +1844,34 @@ function sendToShiny(name, value) {
     [['?'], 'Show or hide this list']
   ];
 
+  // Keys of the Accessible canvas, listed only while the switch is on. Kept in sync with sv-access.js.
+  var ACCESS_SHORTCUTS = [
+    [['Arrows'], 'On a card: move it 20 px'],
+    [['Shift+Arrows'], 'On a card: move it 100 px'],
+    [['Alt+Arrows'], 'On a card or column: focus the nearest card in that direction'],
+    [['Enter'], 'On a card: focus its first column header. While connecting: join to the focused column'],
+    [['Left', 'Right'], 'On a column header: previous / next column'],
+    [['Esc'], 'On a column header: back to the card, or cancel connecting'],
+    [['C'], 'On a column header: start connecting from it'],
+    [['Delete'], 'On a column header: remove its join (several: choose from a menu)'],
+    [['J'], 'On a column header: focus the column it is joined to'],
+    [['PageUp', 'PageDown', 'Home', 'End'], 'On a card: scroll its table']
+  ];
+
+  function accessKeysHtml() {
+    return '<h3 class="sideview-shortcuts-sub" data-sv-access-keys-head>Accessible canvas keys</h3><dl data-sv-access-keys>' +
+      ACCESS_SHORTCUTS.map(function (row) {
+        return '<dt>' + row[0].map(function (k) { return '<kbd>' + escapeHtml(k) + '</kbd>'; }).join(' / ') +
+          '</dt><dd>' + escapeHtml(row[1]) + '</dd>';
+      }).join('') + '</dl>';
+  }
+
+  // Show the access key list in an open ? dialog only while the switch is on.
+  SideviewEngine.prototype.renderAccessKeys = function () {
+    var slot = this.container.querySelector('[data-sv-access-keys-slot]');
+    if (slot) slot.innerHTML = this.accessOn() ? accessKeysHtml() : '';
+  };
+
   var shortcutsSeq = 0;
 
   // WCAG 2.1.4: single-key shortcuts can be turned off. Order: the stored choice, then the
@@ -1892,6 +1928,7 @@ function sendToShiny(name, value) {
     var sw = this.container.querySelectorAll('[data-sv-access-switch]');
     for (var i = 0; i < sw.length; i++) sw[i].setAttribute('aria-checked', on ? 'true' : 'false');
     this.announce(on ? 'Accessible canvas on.' : 'Accessible canvas off.');
+    this.renderAccessKeys();
     var subs = this._accessSubs.slice();
     for (var j = 0; j < subs.length; j++) {
       try { subs[j](on); } catch (e) {}
@@ -1976,7 +2013,7 @@ function sendToShiny(name, value) {
       '<button type="button" class="sideview-shortcuts-switch" role="switch" data-sv-access-switch aria-checked="' +
       (this.accessOn() ? 'true' : 'false') + '"><span class="sideview-shortcuts-switch-track" aria-hidden="true"></span>' +
       '<span>Accessible canvas</span></button>' +
-      '<dl>' + rows + '</dl></div>';
+      '<dl>' + rows + '</dl><div data-sv-access-keys-slot></div></div>';
     var sw = scrim.querySelector('[data-sv-shortcuts-switch]');
     sw.addEventListener('click', function () { self.setShortcuts(!self.shortcutsOn()); });
     var asw = scrim.querySelector('[data-sv-access-switch]');
@@ -1985,6 +2022,7 @@ function sendToShiny(name, value) {
       if (e.target === scrim) self.toggleShortcuts(false);
     });
     this.container.appendChild(scrim);
+    this.renderAccessKeys();
     var dialog = scrim.querySelector('.sideview-shortcuts');
     try { dialog.focus({ preventScroll: true }); } catch (e) { dialog.focus(); }
     return true;

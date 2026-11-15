@@ -46,11 +46,11 @@ test_that("Tab reaches the toolbar, then the drawer tabs, in DOM order", {
   expect_true(which(grepl("^Fit", seen))[1] < which(seen == "Pipeline")[1])
 })
 
-# Rules accepted on the CANVAS view only (rule id -> reason). The list view has none: it passes axe outright.
-# The canvas keeps one: card and column-header buttons are 24 px in CSS but the canvas scales cards
-# (fit-to-view scale 0.5 to 0.71 here), so they are 12 to 17 px on screen. Making them pass means
-# zoom-independent chrome (counter-scaled controls or a minimum zoom), which is a canvas redesign.
-# Tracking: remove this entry once sub-project B (counter-scaled chrome or a minimum zoom) lands.
+# Rules accepted on the default CANVAS view only (rule id -> reason). The list view has none: it passes axe outright,
+# and so does the canvas with the Accessible canvas switch on (the next axe test below accepts nothing).
+# The default canvas keeps one: card and column-header buttons are 24 px in CSS but the canvas scales cards
+# (fit-to-view scale 0.5 to 0.71 here), so they are 12 to 17 px on screen. The switch-on canvas fixes this with a
+# zoom floor of 1.0 (sub-project B); the default canvas stays as it is.
 SV_AXE_ACCEPTED <- c(
   "target-size" = "Canvas controls scale with the canvas zoom (12 to 17 px on screen); the list view is the accessible path."
 )
@@ -1437,4 +1437,85 @@ test_that("the list profile box hears the give-up of an unanswered profile reque
     %s.requestColumnProfile({ id: 'p-test', card: 'patients', column: 'age' }, 99); return true; })()", sv_eng, sv_eng, sv_eng))
   expect_true(sv_wait_js(b, "!!window.__prof", timeout = 30))
   expect_identical(sv_js(b, "window.__prof.error"), "The R session did not answer.")
+})
+
+# ---- the ? list and axe with the Accessible canvas on (Task 8) ----
+
+test_that("the ? list shows the access keys only with the switch on", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_wait_ready_for_keys(b)
+  eng <- "document.querySelector('.sideview-container')._sideviewInstance"
+  heads <- function() unlist(sv_js(b, "[...document.querySelectorAll('.sideview-shortcuts h3')].map(h => h.textContent)"))
+  keys <- function() unlist(sv_js(b, "[...document.querySelectorAll('[data-sv-access-keys] kbd')].map(k => k.textContent)"))
+  sv_js(b, paste0(eng, ".setAccess(false); ", eng, ".toggleShortcuts(true)"))
+  expect_length(heads(), 0)
+  expect_length(keys(), 0)
+  # flipping the switch with the dialog open redraws the list
+  sv_js(b, paste0(eng, ".setAccess(true)"))
+  expect_identical(heads(), "Accessible canvas keys")
+  expect_true(all(c("Arrows", "Shift+Arrows", "Alt+Arrows", "Enter", "Left", "Right", "Esc", "C", "Delete", "J",
+                    "PageUp", "PageDown", "Home", "End") %in% keys()))
+  sv_js(b, paste0(eng, ".setAccess(false)"))
+  expect_length(heads(), 0)
+  # opened with the switch on
+  sv_js(b, paste0(eng, ".toggleShortcuts(false); ", eng, ".setAccess(true); ", eng, ".toggleShortcuts(true)"))
+  expect_identical(heads(), "Accessible canvas keys")
+  sv_js(b, paste0(eng, ".toggleShortcuts(false); ", eng, ".setAccess(false); localStorage.removeItem('sideview.access')"))
+})
+
+# Puts the open page in each state and runs axe in it; returns a named list of violation frames.
+sv_axe_states <- function(b) {
+  out <- list()
+  run <- function(name) out[[name]] <<- sv_axe_run(b)
+  settle <- function(ms = 300) sv_js(b, sprintf("new Promise(r => setTimeout(() => r(true), %d))", ms))
+  run("canvas")
+  tabs <- unlist(sv_js(b, "[...document.querySelectorAll('.sideview-drawer-tabs [data-tab]')].map(t => t.dataset.tab)"))
+  for (t in tabs) {
+    sv_js(b, sprintf("(() => { const d = document.querySelector('.sideview-drawer');
+      if (d.classList.contains('collapsed')) document.querySelector('[data-action=\"toggle-drawer\"]').click();
+      document.querySelector('.sideview-drawer-tabs [data-tab=\"%s\"]').click(); return true; })()", t))
+    settle()
+    run(paste("drawer", t))
+  }
+  sv_js(b, "(() => { const d = document.querySelector('.sideview-drawer');
+    if (!d.classList.contains('collapsed')) document.querySelector('[data-action=\"toggle-drawer\"]').click();
+    const i = document.querySelector('.sideview-ai-input'); if (i) i.focus(); return true; })()")
+  settle()
+  run("AI bar")
+  sv_js(b, "(() => { const c = document.querySelector('.sideview-card [data-action=\"filter-col\"]'); if (c) c.click(); return true; })()")
+  settle()
+  run("filter popover")
+  eng <- "document.querySelector('.sideview-container')._sideviewInstance"
+  sv_js(b, sprintf("(() => { const e = %s; if (e._activePopover && e._activePopover._closePopover) e._activePopover._closePopover();
+    const p = document.querySelector('.sideview-filter-popover'); if (p) p.remove(); e.toggleShortcuts(true); return true; })()", eng))
+  settle(200)
+  run("? dialog")
+  sv_js(b, sprintf("(() => { const e = %s; e.toggleShortcuts(false); e.toggleSearch(true);
+    const i = document.querySelector('.sideview-search-scrim input');
+    if (i) { i.value = 'pat'; i.dispatchEvent(new Event('input', {bubbles: true})); } return true; })()", eng))
+  settle()
+  run("search dialog")
+  out
+}
+
+test_that("axe-core: no violation with the switch on (modes x themes x sizes x panels)", {
+  skip_if_no_browser()
+  skip_if_no_axe()
+  for (mode in c("gadget", "widget", "module")) {
+    for (theme in c("light", "dark")) {
+      for (size in list(c(1360, 820), c(1024, 700), c(375, 812))) {
+        b <- sv_a11y_pages()[[mode]]$open(theme = theme, width = size[1], height = size[2], access = TRUE)
+        app <- attr(b, "sv_app")
+        res <- tryCatch(sv_axe_states(b), finally = {
+          try(b$close(), silent = TRUE)
+          if (!is.null(app)) try(app$proc$kill(), silent = TRUE)
+        })
+        for (st in names(res)) {
+          v <- res[[st]]
+          expect_equal(nrow(v), 0, info = paste(mode, theme, size[1], st, paste(v$id, v$targets, collapse = "; ")))
+        }
+      }
+    }
+  }
 })

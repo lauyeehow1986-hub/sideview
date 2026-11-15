@@ -18,3 +18,15 @@ test_that("access must be TRUE or FALSE", {
     expect_error(sideview_ui(list(a = mtcars), access = bad), "`access` must be TRUE or FALSE.", fixed = TRUE)
   }
 })
+
+test_that("an alt-text content declaration is preceded by a plain one (older Chromium drops the alt syntax)", {
+  css_path <- system.file("www/sideview.css", package = "sideview")
+  if (!nzchar(css_path)) css_path <- test_path("..", "..", "inst", "www", "sideview.css")
+  skip_if_not(file.exists(css_path))
+  css <- readLines(css_path, warn = FALSE)
+  alt <- grep('content:[^;]*" */ *"', css)
+  expect_gt(length(alt), 0)
+  for (i in alt) {
+    expect_match(css[i], 'content: *"[^"]*"; *content:', info = css[i])
+  }
+})

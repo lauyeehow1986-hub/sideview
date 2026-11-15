@@ -3020,7 +3020,10 @@ test_that("access: colour-only badges carry text or a shape", {
     const before = el => el ? getComputedStyle(el, '::before').content : 'none';
     const badge = document.querySelector('.sideview-badge-cdisc');
     const diag = document.querySelector('.sideview-step-diag');
-    const out = { cdisc: own(badge), cdiscBefore: before(badge), diag: own(diag), disc: before(td) };
+    const jc = document.querySelector('.sideview-joincheck');
+    const jcBefore = cls => { jc.classList.add(cls); const v = getComputedStyle(jc, '::before').content; jc.classList.remove(cls); return v; };
+    const out = { cdisc: own(badge), cdiscBefore: before(badge), diag: own(diag), disc: before(td),
+                  warn: jcBefore('is-warn'), error: jcBefore('is-error') };
     td.classList.remove('sideview-discrepancy-fuzzy');
     e.setCdiscTags({ [ids.labs]: null });
     return out;
@@ -3031,6 +3034,9 @@ test_that("access: colour-only badges carry text or a shape", {
   expect_match(r$cdiscBefore, "SDTM", fixed = TRUE)
   # The key-check state carries its text.
   expect_true(nzchar(r$diag))
+  # The join check box names its severity in text, not by colour alone.
+  expect_identical(r$warn, "\"Warning\"")
+  expect_identical(r$error, "\"Error\"")
   # A discrepancy mark gets a shape (a ::before mark) as well as its tint.
   expect_false(r$disc %in% c("none", "normal", ""))
 })
