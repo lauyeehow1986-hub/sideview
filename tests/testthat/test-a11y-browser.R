@@ -1526,9 +1526,16 @@ sv_axe_states_check <- function(access, sizes) {
         b <- sv_a11y_pages()[[mode]]$open(theme = theme, width = size[1], height = size[2], access = access)
         app <- attr(b, "sv_app")
         tag <- paste(mode, theme, size[1], if (access) "on" else "off")
+        cls <- "document.querySelector('.sideview-container').classList.contains('sv-access')"
         res <- tryCatch({
-          expect_identical(sv_js(b, "document.querySelector('.sideview-container').classList.contains('sv-access')"),
-                           access, info = tag)
+          # A choice an earlier test stored for this origin (a reused port) wins over R: clear it and reload,
+          # so the run checks the state the page starts in.
+          if (!identical(sv_js(b, cls), access)) {
+            sv_js(b, "localStorage.removeItem('sideview.access'); window.__svStale = true; setTimeout(() => location.reload(), 0); true")
+            expect_true(sv_wait_js(b, "!window.__svStale && document.querySelectorAll('.sideview-card').length >= 2 &&
+              !!document.querySelector('.sideview-container')._sideviewInstance"), info = tag)
+          }
+          expect_identical(sv_js(b, cls), access, info = tag)
           sv_axe_states(b, ai = mode != "module", info = tag)
         }, finally = {
           try(b$close(), silent = TRUE)
