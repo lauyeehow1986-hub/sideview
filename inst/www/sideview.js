@@ -688,8 +688,11 @@ function sendToShiny(name, value) {
     this._blockListeners = [];
   };
 
+  var engineSeqCounter = 0;
+
   function SideviewEngine(containerElement, options) {
     var self = this;
+    this._engSeq = ++engineSeqCounter;
     this.container = typeof containerElement === 'string'
       ? document.querySelector(containerElement)
       : containerElement;
@@ -1712,6 +1715,10 @@ function sendToShiny(name, value) {
     });
     this._globalListeners = [];
     this._accessSubs = [];
+    if (this.svg) {
+      var mdefs = this.svg.querySelector('defs.sideview-marker-defs');
+      if (mdefs && mdefs.parentNode) mdefs.parentNode.removeChild(mdefs);
+    }
     if (this._resizeObserver) { this._resizeObserver.disconnect(); this._resizeObserver = null; }
     if (this.panzoom && this.panzoom.destroy) this.panzoom.destroy();
     this.cards.forEach(function (card) {
@@ -2235,6 +2242,7 @@ function sendToShiny(name, value) {
       this.svg.setAttribute('height', '100%');
       this.viewport.appendChild(this.svg);
     }
+    this.ensureMarkerDefs();
     // Invisible, wider copies of the splines sit below the cards so a spline
     // crossing a card never steals clicks from the card's own controls.
     this.hitSvg = this.viewport.querySelector('.sideview-connector-hitlayer');
@@ -3738,6 +3746,7 @@ function sendToShiny(name, value) {
       var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('class', 'sideview-connector-path sideview-spline-suggested dashMove');
       path.dataset.suggested = 'true';
+      path.setAttribute('marker-end', 'url(#' + self.markerId('hollow') + ')');
       path.dataset.fromTable = fromTable;
       path.dataset.fromCol = fromCol;
       path.dataset.toTable = toTable;
@@ -3914,6 +3923,7 @@ function sendToShiny(name, value) {
       path.setAttribute('class',
         'sideview-connector-path sideview-spline-suggested sideview-spline-suggested-cdisc dashMove');
       path.dataset.suggested = 'true';
+      path.setAttribute('marker-end', 'url(#' + self.markerId('hollow') + ')');
       path.dataset.group = groupId;
       if (kind) path.dataset.kind = kind;
       path.dataset.fromTable = r.pair.fromTable;
@@ -3943,17 +3953,62 @@ function sendToShiny(name, value) {
     });
   };
 
+  /** Marker ids are per engine so two canvases on one page never share a <marker>. */
+  SideviewEngine.prototype.markerId = function (kind) {
+    return 'sv-mk-' + this._engSeq + '-' + kind;
+  };
+
+  /** One solid (accepted) and one hollow (suggested) arrowhead in the connector svg. Their shapes are
+   *  hidden by CSS and shown only under .sv-access and forced-colors, so the default canvas is unchanged. */
+  SideviewEngine.prototype.ensureMarkerDefs = function () {
+    if (!this.svg || this.svg.querySelector('defs.sideview-marker-defs')) return;
+    var NS = 'http://www.w3.org/2000/svg';
+    var defs = document.createElementNS(NS, 'defs');
+    defs.setAttribute('class', 'sideview-marker-defs');
+    ['solid', 'hollow'].forEach(function (kind) {
+      var m = document.createElementNS(NS, 'marker');
+      m.setAttribute('id', this.markerId(kind));
+      m.setAttribute('viewBox', '0 0 14 14');
+      m.setAttribute('refX', '12');
+      m.setAttribute('refY', '7');
+      m.setAttribute('markerWidth', '14');
+      m.setAttribute('markerHeight', '14');
+      m.setAttribute('markerUnits', 'userSpaceOnUse');
+      m.setAttribute('orient', 'auto');
+      var shape = document.createElementNS(NS, 'path');
+      shape.setAttribute('d', 'M1,1 L13,7 L1,13 Z');
+      shape.setAttribute('class', 'sideview-marker-shape sideview-marker-' + kind);
+      m.appendChild(shape);
+      defs.appendChild(m);
+    }, this);
+    this.svg.insertBefore(defs, this.svg.firstChild);
+  };
+
+  /** Join order (mod 6) picks the dash pattern; a key set added together shares one. */
+  SideviewEngine.prototype.nextJoinPattern = function () {
+    var n = this._patSeq || 0;
+    this._patSeq = n + 1;
+    return n % 6;
+  };
+
+  SideviewEngine.prototype.decorateAccepted = function (path, pat) {
+    path.dataset.svPat = String(pat);
+    path.setAttribute('marker-end', 'url(#' + this.markerId('solid') + ')');
+  };
+
   /** Several connections that belong together (a CDISC key set): one undo step, one
    *  `column_mapped` per key. Each item is shaped like addConnection's connData. */
   SideviewEngine.prototype.addConnections = function (list) {
     var self = this;
     if (!list || !list.length) return;
+    var pat = this.nextJoinPattern();
     list.forEach(function (connData) {
       self._connSeq = (self._connSeq || 0) + 1;
       var connId = 'conn_' + Date.now() + '_' + self._connSeq;
       var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('class', 'sideview-connector-path');
       path.dataset.connId = connId;
+      self.decorateAccepted(path, pat);
       var titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
       titleEl.textContent = 'Click to disconnect ' + connData.fromCol + ' ↔ ' + connData.toCol;
       path.appendChild(titleEl);
@@ -3989,6 +4044,7 @@ function sendToShiny(name, value) {
     var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('class', 'sideview-connector-path');
     path.dataset.connId = connId;
+    this.decorateAccepted(path, this.nextJoinPattern());
 
     var titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
     titleEl.textContent = 'Click to disconnect ' + connData.fromCol + ' ↔ ' + connData.toCol;

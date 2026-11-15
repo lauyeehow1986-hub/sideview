@@ -3744,3 +3744,147 @@ html.sv-standalone body {
   width: 72px;
   height: 20px;
 }
+
+/* ---- Spline patterns and end markers --------------------------------------
+   Every accepted join carries data-sv-pat (join order mod 6). The patterns and the arrowheads
+   apply under sv-access and forced-colors only; the default canvas keeps its solid splines.
+   Never 6 6 (suggested joins) or 4 4 (the draft line), so the three kinds stay apart.
+   Hover and active change width (5px) and keep the pattern. */
+.sideview-container .sideview-marker-shape {
+  display: none;
+}
+
+.sideview-container .sideview-marker-solid {
+  fill: var(--sv-connector-color);
+  fill: context-stroke;
+  stroke: none;
+}
+
+.sideview-container .sideview-marker-hollow {
+  fill: var(--sv-canvas-bg);
+  stroke: var(--sv-suggested);
+  stroke: context-stroke;
+  stroke-width: 2px;
+}
+
+.sideview-container.sv-access .sideview-marker-shape {
+  display: inline;
+}
+
+.sideview-container.sv-access .sideview-connector-path[data-sv-pat="0"] { stroke-dasharray: none; }
+.sideview-container.sv-access .sideview-connector-path[data-sv-pat="1"] { stroke-dasharray: 12 4; }
+.sideview-container.sv-access .sideview-connector-path[data-sv-pat="2"] { stroke-dasharray: 12 4 2 4; }
+.sideview-container.sv-access .sideview-connector-path[data-sv-pat="3"] { stroke-dasharray: 2 4; }
+.sideview-container.sv-access .sideview-connector-path[data-sv-pat="4"] { stroke-dasharray: 12 4 2 4 2 4; }
+.sideview-container.sv-access .sideview-connector-path[data-sv-pat="5"] { stroke-dasharray: 20 4 6 4; }
+
+/* The active (selected) spline keeps its pattern: no 6 4 dash, no marching. */
+.sideview-container.sv-access .sideview-connector-path.active {
+  animation: none;
+  stroke-width: 5px;
+}
+
+/* ---- Windows High Contrast / forced colours --------------------------------
+   System colours only; the dash patterns and markers apply here too, so joins stay
+   distinguishable when every colour is replaced. */
+@media (forced-colors: active) {
+  .sideview-container .sideview-marker-shape {
+    display: inline;
+  }
+
+  .sideview-container .sideview-marker-solid {
+    fill: CanvasText;
+    fill: context-stroke;
+  }
+
+  .sideview-container .sideview-marker-hollow {
+    fill: Canvas;
+    stroke: CanvasText;
+    stroke: context-stroke;
+  }
+
+  .sideview-container .sideview-connector-path {
+    stroke: CanvasText;
+    stroke-width: 3px;
+  }
+
+  .sideview-container .sideview-connector-path.is-hover,
+  .sideview-container .sideview-connector-path.active {
+    stroke: Highlight;
+    stroke-width: 5px;
+    filter: none;
+  }
+
+  .sideview-container .sideview-connector-path.active {
+    animation: none;
+  }
+
+  .sideview-container .sideview-connector-path[data-sv-pat="0"] { stroke-dasharray: none; }
+  .sideview-container .sideview-connector-path[data-sv-pat="1"] { stroke-dasharray: 12 4; }
+  .sideview-container .sideview-connector-path[data-sv-pat="2"] { stroke-dasharray: 12 4 2 4; }
+  .sideview-container .sideview-connector-path[data-sv-pat="3"] { stroke-dasharray: 2 4; }
+  .sideview-container .sideview-connector-path[data-sv-pat="4"] { stroke-dasharray: 12 4 2 4 2 4; }
+  .sideview-container .sideview-connector-path[data-sv-pat="5"] { stroke-dasharray: 20 4 6 4; }
+
+  .sideview-container .sideview-col-port {
+    background: ButtonFace;
+    border: 2px solid ButtonText;
+    box-shadow: none;
+  }
+
+  .sideview-container .sideview-col-port:hover,
+  .sideview-container .sideview-col-port.connecting {
+    background: Highlight;
+    border-color: ButtonText;
+    box-shadow: none;
+  }
+
+  .sideview-container .sideview-card {
+    border: 1px solid CanvasText;
+  }
+
+  .sideview-container :focus-visible {
+    outline: 3px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+
+/* ---- prefers-contrast: more -------------------------------------------------
+   Borders, ports, splines and the focus ring take the stronger values of the access tokens.
+   No layout, text size or zoom change. The dark and auto blocks are kept equal. */
+@media (prefers-contrast: more) {
+  .sideview-container {
+    --sv-border: #475569;
+    --sv-border-focus: #1d4ed8;
+    --sv-focus-ring: #1d4ed8;
+    --sv-port: #475569;
+    --sv-connector-color: #1d4ed8;
+  }
+
+  .sideview-container.sv-theme-dark {
+    --sv-border: #94a3b8;
+    --sv-border-focus: #93c5fd;
+    --sv-focus-ring: #fde047;
+    --sv-port: #94a3b8;
+    --sv-connector-color: #93c5fd;
+  }
+
+  .sideview-container .sideview-col-port {
+    border-color: var(--sv-border);
+  }
+
+  .sideview-container :focus-visible {
+    outline: 3px solid var(--sv-focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  .sideview-container.sv-theme-auto {
+    --sv-border: #94a3b8;
+    --sv-border-focus: #93c5fd;
+    --sv-focus-ring: #fde047;
+    --sv-port: #94a3b8;
+    --sv-connector-color: #93c5fd;
+  }
+}

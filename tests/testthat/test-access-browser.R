@@ -154,3 +154,96 @@ test_that("switching on below 1.0 zooms to 1 around the focused card; switching 
   sv_js(b, sprintf("%s.panzoom.zoomToPoint(0.2, {clientX: 680, clientY: 400}); true", sv_acc_eng))
   expect_equal(sv_js(b, paste0(sv_acc_eng, ".panzoom.getScale()")), 0.2, tolerance = 1e-6)
 })
+
+sv_six_joins_js <- function(eng) {
+  sprintf("(() => { const e = %s;
+    const j = [['patients','patient_id','visits','pid'], ['patients','patient_id','labs','patient_id'],
+      ['patients','age','visits','sbp'], ['patients','age','labs','value'],
+      ['visits','visit_id','labs','value'], ['visits','sbp','labs','value']];
+    j.forEach(x => e.addConnections([{fromTable: x[0], fromCol: x[1], toTable: x[2], toCol: x[3], type: 'left_join'}]));
+    return true; })()", eng)
+}
+
+sv_conn_style_js <- "(() => Array.from(document.querySelectorAll('.sideview-connector-svg .sideview-connector-path:not(.sideview-spline-suggested)'))
+  .map(p => { const s = getComputedStyle(p);
+    return { dash: s.strokeDasharray, width: s.strokeWidth, marker: s.markerEnd, pat: p.getAttribute('data-sv-pat'),
+             stroke: s.stroke }; }))()"
+
+test_that("access: six joins get six distinct dash patterns and an end marker", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_js(b, sv_six_joins_js(sv_acc_eng))
+  st <- sv_js(b, sv_conn_style_js)
+  dash <- vapply(st, function(x) x$dash, "")
+  expect_length(st, 6)
+  expect_equal(length(unique(dash)), 6)
+  expect_false(any(dash %in% c("6px, 6px", "4px, 4px")))
+  expect_equal(vapply(st, function(x) x$pat, ""), as.character(0:5))
+  expect_true(all(vapply(st, function(x) x$width, "") == "3px"))
+  expect_true(all(grepl("url.*#sv-mk-[0-9]+-solid", vapply(st, function(x) x$marker, ""))))
+  # hover: wider, same pattern, still a marker
+  sv_js(b, "document.querySelectorAll('.sideview-connector-svg .sideview-connector-path')[1].classList.add('is-hover', 'active'); true")
+  Sys.sleep(0.5)  # the 150 ms stroke transition
+  h <- sv_js(b, "(() => { const s = getComputedStyle(document.querySelectorAll('.sideview-connector-svg .sideview-connector-path')[1]);
+    return { dash: s.strokeDasharray, width: s.strokeWidth, marker: s.markerEnd }; })()")
+  expect_equal(h$width, "5px")
+  expect_equal(h$dash, dash[2])
+  expect_match(h$marker, "sv-mk-")
+  # the marker defs live in the engine's svg and go away on destroy
+  expect_equal(sv_js(b, "document.querySelectorAll('marker[id^=\"sv-mk-\"]').length"), 2)
+  sv_js(b, paste0(sv_acc_eng, ".destroy(); true"))
+  expect_equal(sv_js(b, "document.querySelectorAll('marker[id^=\"sv-mk-\"]').length"), 0)
+
+  b0 <- sv_acc_open("gadget", access = FALSE)
+  sv_js(b0, sv_six_joins_js(sv_acc_eng))
+  st0 <- sv_js(b0, sv_conn_style_js)
+  expect_true(all(vapply(st0, function(x) x$dash, "") == "none"))
+  # the marker is referenced but its shapes are hidden: nothing is drawn with access off
+  expect_true(all(sv_js(b0, "Array.from(document.querySelectorAll('.sideview-marker-shape')).map(s => getComputedStyle(s).display === 'none')") == TRUE))
+  expect_equal(vapply(st0, function(x) x$pat, ""), as.character(0:5))
+})
+
+sv_emulate <- function(b, name, value) {
+  b$Emulation$setEmulatedMedia(features = list(list(name = name, value = value)))
+}
+
+sv_a11y_visuals_js <- "(() => {
+  const c = document.querySelector('.sideview-container');
+  const canvas = getComputedStyle(document.querySelector('.sideview-canvas') || c).backgroundColor;
+  const path = document.querySelector('.sideview-connector-svg .sideview-connector-path');
+  const port = document.querySelector('.sideview-col-port');
+  const btn = document.activeElement;
+  const ps = getComputedStyle(path), pt = getComputedStyle(port), bs = getComputedStyle(btn);
+  return { canvas: canvas, stroke: ps.stroke, port: pt.borderTopColor, portBg: pt.backgroundColor,
+           outline: bs.outlineColor, outlineStyle: bs.outlineStyle, outlineW: bs.outlineWidth }; })()"
+
+test_that("forced colours and more contrast keep splines, ports and the focus ring visible", {
+  skip_if_no_browser()
+  for (access in c(TRUE, FALSE)) {
+    b <- sv_acc_open("gadget", access = access)
+    sv_js(b, sv_six_joins_js(sv_acc_eng))
+    sv_key(b, "Tab")  # keyboard focus, so :focus-visible applies and persists across the reads
+    base <- sv_js(b, sv_a11y_visuals_js)
+    base_dash <- vapply(sv_js(b, sv_conn_style_js), function(x) x$dash, "")
+    for (feat in list(c("forced-colors", "active"), c("prefers-contrast", "more"))) {
+      sv_emulate(b, feat[1], feat[2])
+      Sys.sleep(0.4)
+      v <- sv_js(b, sv_a11y_visuals_js)
+      info <- paste(feat[1], "access", access)
+      expect_false(identical(v$stroke, v$canvas), info = info)
+      expect_false(identical(v$port, v$canvas), info = info)
+      expect_false(identical(v$outline, v$canvas), info = info)
+      expect_false(v$outlineStyle == "none", info = info)
+      if (feat[1] == "forced-colors") {
+        d <- vapply(sv_js(b, sv_conn_style_js), function(x) x$dash, "")
+        expect_equal(length(unique(d)), 6, info = info)
+      }
+    }
+    sv_emulate(b, "forced-colors", "none")
+    sv_emulate(b, "prefers-contrast", "no-preference")
+    Sys.sleep(0.4)
+    after <- sv_js(b, sv_a11y_visuals_js)
+    expect_equal(after[c("stroke", "port", "outline")], base[c("stroke", "port", "outline")])
+    expect_equal(vapply(sv_js(b, sv_conn_style_js), function(x) x$dash, ""), base_dash)
+  }
+})
