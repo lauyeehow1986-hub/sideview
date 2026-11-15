@@ -152,6 +152,8 @@ rstudio bridge: R/rstudio.R
 - R: `& "C:\Program Files\R\R-4.5.2\bin\Rscript.exe"`
 - Tests: `Rscript -e "devtools::test()"`; full check: `Rscript -e "devtools::check()"`.
   Real-browser tests are skipped "on CRAN": set `NOT_CRAN=true` to run them.
+- Accessibility tests: `test-a11y-browser.R` (AX tree, keys, axe-core). Install `npm install --no-save axe-core@4.10.3`
+  or set `SV_AXE_PATH`. An accepted axe rule goes in `SV_AXE_ACCEPTED` with its reason.
 - Prefer real input (`b$Input$dispatchMouseEvent` via chromote) over `dispatchEvent` in browser tests —
   synthetic events skip hit-testing, which is how overlay bugs slipped through.
 - JS syntax: `node --check inst/www/sideview.js`

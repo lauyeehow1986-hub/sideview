@@ -1,3 +1,13 @@
+# sideview (development version)
+
+## Accessibility test harness
+
+* New real-browser accessibility tests (`test-a11y-browser.R`): every canvas control has an accessible name in the
+  gadget, widget and module; Tab reaches the toolbar before the drawer; axe-core (WCAG 2.2 A/AA) finds no
+  violation across the three modes, two themes and two sizes (the on-screen `target-size` rule is accepted for now);
+  and today's single-key shortcut and typing rules are pinned (typing in the AI bar never fires a shortcut).
+* Contrast and control-size fixes found by the matrix. A new `a11y` CI job runs these tests with axe-core 4.10.3 pinned.
+
 # sideview 0.7.0
 
 ## Merging SUPP-- tables

@@ -12,3 +12,6 @@
 # Test artifacts
 artifacts/
 tests/testthat/artifacts/
+
+# Node (axe-core for the a11y tests)
+node_modules/
