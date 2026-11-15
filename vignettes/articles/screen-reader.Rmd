@@ -14,8 +14,7 @@ checks print as plain sentences in the console. This page says how to use both.
 
 ## How well is this tested
 
-sideview 0.8.0 is **checked with automated WCAG tests (axe) and real-browser keyboard tests; an NVDA script is written
-but has not yet been run; not yet tested by blind users.** Please treat it as a first step and tell us where it fails
+sideview 0.8.0 is **checked with automated WCAG tests (axe) and real-browser keyboard tests; the NVDA script was run once in Edge with NVDA 2026.2 (all 15 tasks as written; the RStudio dialog and Viewer pane were not covered); not yet tested by blind users.** Please treat it as a first step and tell us where it fails
 (see "Report a problem" below).
 
 ## Start in the list view
@@ -54,9 +53,9 @@ In the list view, move by headings (H in NVDA and JAWS, or the rotor in VoiceOve
    ("Rows 26 to 50 of 5,000.") and focus stays on the button.
 3. **Join**: pick two tables and their key columns, read the join check as sentences, and add the join.
 4. **Merge SUPP**: for a SUPP-- table, check and add the merge into its parent.
-5. **Transform**: sort, filter, rename and the other steps.
+5. **Transform**: the step builders: Filter, Arrange, Mutate, Recode and Summarise.
 6. **Pipeline**: the steps so far, each of which you can switch off, move or delete.
-7. **Code**: the generated R code, with Copy and Insert.
+7. **Code**: the generated R code, with Copy (and Insert, in the gadget; a Shiny module has no Insert).
 8. **Copilot**: present only when a language model is set up.
 
 What you do in the list view makes the same code as the canvas does, and a join made on the canvas shows in the list

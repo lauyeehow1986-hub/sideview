@@ -5714,6 +5714,7 @@ function sendToShiny(name, value) {
       delete this.colProfilePending[req.id];
       this.colProfiles[req.id] = { error: 'The R session did not answer.' };
       this.renderInspector();
+      this.listHook('onColumnProfile', { id: req.id, error: 'The R session did not answer.' });
       return;
     }
     setTimeout(function () { self.requestColumnProfile(req, attempt + 1); }, 250);
@@ -6104,7 +6105,7 @@ function sendToShiny(name, value) {
    * Restore a saved workspace: card geometry, preview sorts/filters, joins,
    * pipeline steps and the view. Returns { restored, missing } card names.
    */
-  SideviewEngine.prototype.applyState = function (state) {
+  SideviewEngine.prototype.applyState = function (state, opts) {
     var self = this;
     var out = { restored: [], missing: [] };
     if (!state || typeof state !== 'object') return out;
@@ -6181,7 +6182,8 @@ function sendToShiny(name, value) {
     // done (the constructor), later (Open) at once; a missing or unknown mode changes nothing.
     var vm = state.view && typeof state.view === 'object' ? state.view.mode : null;
     if (vm === 'canvas' || vm === 'list') {
-      if (this._constructed) this.setView(vm); else this._pendingView = vm;
+      // a state pushed from R must not move the user's focus or announce; the user's own Open does
+      if (this._constructed) this.setView(vm, opts && opts.silent ? { silent: true } : undefined); else this._pendingView = vm;
     }
     // Keep the saved view: the first layout only places cards the state lacks.
     if (out.restored.length) this._restoredView = true;
@@ -7608,7 +7610,7 @@ function sendToShiny(name, value) {
         return;
       }
       self.clearOperations(true);
-      var out = self.applyState(state);
+      var out = self.applyState(state, { silent: true });
       self.pipeline.undoStack = [];
       self.pipeline.redoStack = [];
       if (out.missing.length) self.showToast(stateSummary(out), 'warning');

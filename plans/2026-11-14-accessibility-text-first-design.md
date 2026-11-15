@@ -213,6 +213,8 @@ it with computer use and NVDA's Speech Viewer, in Chrome or Edge in browser mode
 dialog and Viewer pane. The spoken text and any mismatches go into `MEMORY.md`. Weaknesses in RStudio's panes are
 documented, and the docs recommend browser mode to screen-reader users.
 
+> **Superseded (2026-11-15):** the label "checked with NVDA and automated WCAG tests" below is false. The shipped label says "checked with automated WCAG tests (axe) and real-browser keyboard tests; the NVDA script was run once in Edge with NVDA 2026.2 (...); not yet tested by blind users". Do not copy this line.
+
 **Honesty:** NEWS, the README and the new article say "checked with NVDA and automated WCAG tests; not yet
 tested by blind users". A GitHub issue template, "Accessibility feedback", asks for the screen reader and
 browser used.

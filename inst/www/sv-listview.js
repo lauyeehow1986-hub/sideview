@@ -5,7 +5,8 @@
  * The engine (sideview.js) creates it the first time the list view is shown (engine.setView('list'))
  * and calls its result hooks from the reply handlers. This file builds the shell: the Summary and the
  * h2 sections in order (Summary, Tables, Join, Merge SUPP, Transform, Pipeline, Code, Copilot).
- * The section bodies are filled by later tasks through the same render()/renderTable() entry points.
+ * The section bodies are filled through the same render()/renderTable() entry points (Tables, Join, Merge SUPP,
+ * Transform, Pipeline and Code each have their own render and result hooks below).
  *
  * Everything is built with DOM calls and textContent: a table, column or file name is never parsed
  * as HTML.
@@ -1019,6 +1020,8 @@
     eng.addConnections(this.connectionsFor(f.table, f.right, f.by, f.type));
     var step = this.joinStepFor(f.table, f.right);
     if (step && f.rule) eng.pipeline.setJoinRule(step.id, f.rule);
+    // "No rule" clears a rule an earlier add left on the same pair, so the code matches the form
+    else if (step && step.rule) eng.pipeline.setJoinRule(step.id, null);
     j.add.disabled = true;
     if (step) this.focusPipelineItem(step.id);
   };
@@ -1119,6 +1122,8 @@
     return {
       label: label,
       add: function () { return self.addSuggestedGroup(from, to, pairs, isSupp); },
+      isSupp: isSupp,
+      suppKey: isSupp ? JSON.stringify(['supp', to, from]) : null,
       match: function (s) { return s.group === groupId; }
     };
   };
@@ -1149,9 +1154,22 @@
   };
 
   ListView.prototype.acceptSuggestion = function (li, it) {
-    var j = this.join;
     var eng = this.engine;
     var sentence = it.add();
+    // a SUPP merge is only checked now: keep the item until the merge step exists, so a failed check
+    // (clash, no parent row) does not make the suggestion vanish
+    if (it.isSupp) {
+      (this._suppSuggested = this._suppSuggested || {})[it.suppKey] = { li: li, it: it };
+      eng.announce(sentence);
+      return;
+    }
+    this.removeSuggestion(li, it);
+    eng.announce(sentence);
+  };
+
+  ListView.prototype.removeSuggestion = function (li, it) {
+    var j = this.join;
+    var eng = this.engine;
     // the canvas drew a dashed path for it: an accepted pair must not leave its twin behind
     var keep = [];
     (eng.suggestedConnections || []).forEach(function (s) {
@@ -1165,7 +1183,6 @@
     var left = j.suggestList.children.length;
     j.suggestStatus.textContent = left ? plural(left, 'suggested join.', 'suggested joins.') : 'No more suggested joins.';
     if (held) (next ? next.querySelector('button') : j.suggestBtn).focus();
-    eng.announce(sentence);
   };
 
   // ---- merge SUPP -------------------------------------------------------------------
@@ -1295,6 +1312,12 @@
   /** The engine's merge-check reply: written to the section of that SUPP card, wherever focus is. */
   ListView.prototype.onSuppCheck = function (d, key, fromList) {
     if (this._destroyed || !d || !this.supp) return;
+    // an accepted SUPP suggestion goes away once its merge step exists
+    var sug = this._suppSuggested && this._suppSuggested[key];
+    if (sug && this.engine.pipeline.steps.some(function (st) { return st.kind === 'supp' && (st.key || '') === key; })) {
+      delete this._suppSuggested[key];
+      this.removeSuggestion(sug.li, sug.it);
+    }
     var found = null;
     this.supp.forEach(function (st) { if (st.keys[key]) found = st; });
     if (!found || !found.result) return;

@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thank you. sideview is checked with automated WCAG tests (axe) and real-browser keyboard tests; an NVDA script is written but has not yet been run; not yet tested by blind users. Your report matters. Please use synthetic data only, never real patient data.
+        Thank you. sideview is checked with automated WCAG tests (axe) and real-browser keyboard tests; the NVDA script was run once in Edge with NVDA 2026.2 (all 15 tasks as written; the RStudio dialog and Viewer pane were not covered); not yet tested by blind users. Your report matters. Please use synthetic data only, never real patient data.
   - type: input
     id: screen-reader
     attributes:
