@@ -119,7 +119,7 @@ default would match \code{NA} to \code{NA}).
 Single-key shortcuts work when the canvas has the keyboard and you are not
 typing: \code{F} fit all cards, \code{0} reset zoom, \code{+}/\code{-} zoom, \code{M} show or hide
 the minimap, \code{D} the drawer, \code{T} light/dark, \code{/} the AI prompt and \verb{?} the
-full list. \code{Ctrl+K} finds a card or column, \code{Ctrl+Z}/\code{Ctrl+Y} undo and
+full list (the list also has a switch that turns the single keys off). \code{Ctrl+K} finds a card or column, \code{Ctrl+Z}/\code{Ctrl+Y} undo and
 redo a pipeline step, and \code{Esc} cancels a connection or closes a popover.
 Double-click a card title, a minimap rectangle or a search result to zoom
 to that card.
@@ -128,6 +128,10 @@ to that card.
 \section{Options}{
 
 \describe{
+\item{\code{sideview.shortcuts}}{\code{FALSE} starts the canvas with the single-key
+shortcuts off (default \code{TRUE}). It is the default only: the "Keyboard
+shortcuts" switch in the \verb{?} list is remembered in the browser and wins.
+\code{Ctrl+K} and \code{Ctrl+Enter} always work. \code{\link[=sideview_widget]{sideview_widget()}} reads it too.}
 \item{\code{sideview.session_grace}}{Seconds the gadget waits after its last
 browser session closes before stopping (default \code{5}), so reloading the
 page does not end the app.}

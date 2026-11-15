@@ -1222,3 +1222,9 @@ test_that("sideview_server refuses a bad cdisc argument", {
   expect_error(sideview_server(list(), cdisc = c(a = "AE", a = "LB")), "duplicate")
   expect_no_error(sideview_server(list(), cdisc = c(a = "AE")))
 })
+
+test_that("the container tag carries data-sv-shortcuts only when the option is FALSE", {
+  expect_false(grepl("data-sv-shortcuts", as.character(sideview_ui(mtcars)), fixed = TRUE))
+  withr::with_options(list(sideview.shortcuts = FALSE),
+    expect_match(as.character(sideview_ui(mtcars)), "data-sv-shortcuts=\"false\"", fixed = TRUE))
+})

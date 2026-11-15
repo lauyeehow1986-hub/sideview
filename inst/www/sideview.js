@@ -98,6 +98,17 @@ function sendToShiny(name, value) {
     }
   }
 
+  // A screen-reader-only <caption> with the card name (a text node, so no escaping is needed).
+  function ensureTableCaption(table, name) {
+    var cap = table.querySelector(':scope > caption');
+    if (!cap) {
+      cap = document.createElement('caption');
+      table.insertBefore(cap, table.firstChild);
+    }
+    cap.className = 'sv-sr-only';
+    cap.textContent = String(name);
+  }
+
   VirtualTable.prototype.initDOM = function () {
     this.tbody = this.table.querySelector('tbody');
     if (!this.tbody) {
@@ -235,6 +246,13 @@ function sendToShiny(name, value) {
 
   VirtualTable.prototype.render = function () {
     var totalCount = this.getRowCount();
+    // Table ARIA: the rendered window is a slice, so say how big the whole table is. Header = row 1.
+    var numColsAria = this.colNames.length || this.table.querySelectorAll('thead th').length || 1;
+    if (isFinite(totalCount)) this.table.setAttribute('aria-rowcount', String(totalCount + 1));
+    else this.table.removeAttribute('aria-rowcount');
+    this.table.setAttribute('aria-colcount', String(numColsAria));
+    var headTr = this.table.querySelector('thead tr');
+    if (headTr) headTr.setAttribute('aria-rowindex', '1');
     var totalVirtualHeight = totalCount * this.rowHeight;
     var scrollTop = this.scrollContainer ? this.scrollContainer.scrollTop : 0;
     var viewportHeight = this.scrollContainer ? (this.scrollContainer.clientHeight || 380) : 380;
@@ -270,6 +288,7 @@ function sendToShiny(name, value) {
       var tr = document.createElement('tr');
       tr.dataset.rowIndex = rawRowIndex;
       tr.dataset.virtualIndex = i;
+      tr.setAttribute('aria-rowindex', String(i + 2));
       if (remoteOn && !remoteRow) tr.className = 'sideview-row-loading';
 
       for (var c = 0; c < numCols; c++) {
@@ -679,6 +698,16 @@ function sendToShiny(name, value) {
     this.colProfiles = {};
     this.colProfilePending = {};
     this.joinCheckStepId = null;
+    // Live-region announcements (see announce()); the last 50 messages are kept for tests.
+    this.announceLog = [];
+    this._annQueue = [];
+    this._annTimer = null;
+    this._annNextAt = 0;
+    this._annPrev = null;
+    this._annSteps = [];
+    this._annRepTimer = null;
+    this._annDestroyed = false;
+    this._annWatch = {};
 
     // The composable pipeline is the single source of the generated code.
     if (!global.SideviewPipeline) {
@@ -689,6 +718,7 @@ function sendToShiny(name, value) {
       pipe: this.options.pipe,
       onChange: function (_p, label) {
         if (label === 'undo' || label === 'redo') self.forgetSuppChecks(null);
+        self.announceStepChange(label);
         self.renderPipeline();
         // a join check result is not a change of the work; everything else is
         if (label !== 'checks') self.scheduleSnapshot();
@@ -696,6 +726,7 @@ function sendToShiny(name, value) {
     });
 
     this.initDOM();
+    this.ensureAnnouncer();
     // Focusable (not in the tab order) so clicks give it keyboard focus.
     if (!this.container.hasAttribute('tabindex')) this.container.setAttribute('tabindex', '-1');
     this.ensureToolbarExtras();
@@ -1589,6 +1620,11 @@ function sendToShiny(name, value) {
 
   SideviewEngine.prototype.destroy = function () {
     this.unregisterEngine();
+    this._annDestroyed = true;
+    if (this._annTimer) { clearTimeout(this._annTimer); this._annTimer = null; }
+    if (this._annRepTimer) { clearTimeout(this._annRepTimer); this._annRepTimer = null; }
+    this._annQueue = [];
+    this.container.querySelectorAll('.sideview-announcer, .sideview-announcer-alert').forEach(function (n) { n.remove(); });
     if (this._snapshotTimer) { clearTimeout(this._snapshotTimer); this._snapshotTimer = null; }
     if (this._cardResizeObserver) { this._cardResizeObserver.disconnect(); this._cardResizeObserver = null; }
     this._globalListeners.forEach(function (l) {
@@ -1703,6 +1739,33 @@ function sendToShiny(name, value) {
 
   var shortcutsSeq = 0;
 
+  // WCAG 2.1.4: single-key shortcuts can be turned off. Order: the stored choice, then the
+  // R default (data-sv-shortcuts="false" / options.shortcuts === false), then the view
+  // (off in the list view, on otherwise). A blocked localStorage counts as no stored value;
+  // the choice is then kept for the session in memory.
+  var SHORTCUTS_KEY = 'sideview.shortcuts';
+
+  SideviewEngine.prototype.shortcutsOn = function () {
+    var stored = null;
+    try { stored = global.localStorage.getItem(SHORTCUTS_KEY); } catch (e) { stored = null; }
+    if (stored === 'on') return true;
+    if (stored === 'off') return false;
+    if (this._shortcutsMem === true || this._shortcutsMem === false) return this._shortcutsMem;
+    var attr = this.container.getAttribute ? this.container.getAttribute('data-sv-shortcuts') : null;
+    if (attr === 'false' || this.options.shortcuts === false) return false;
+    return this.view !== 'list';
+  };
+
+  SideviewEngine.prototype.setShortcuts = function (on) {
+    on = !!on;
+    this._shortcutsMem = on;
+    try { global.localStorage.setItem(SHORTCUTS_KEY, on ? 'on' : 'off'); } catch (e) {}
+    var sw = this.container.querySelectorAll('[data-sv-shortcuts-switch]');
+    for (var i = 0; i < sw.length; i++) sw[i].setAttribute('aria-checked', on ? 'true' : 'false');
+    this.announce(on ? 'Keyboard shortcuts on.' : 'Keyboard shortcuts off.');
+    return on;
+  };
+
   SideviewEngine.prototype.toggleShortcuts = function (show) {
     var self = this;
     var existing = this.container.querySelector('.sideview-shortcuts-scrim');
@@ -1730,7 +1793,13 @@ function sendToShiny(name, value) {
       '<div class="sideview-shortcuts" role="dialog" aria-modal="true" aria-labelledby="' + id + '" tabindex="-1">' +
       '<div class="sideview-shortcuts-head"><span id="' + id + '">Keyboard shortcuts</span>' +
       '<button type="button" class="sideview-icon-btn" data-action="close-shortcuts" aria-label="Close shortcuts">' +
-      icon('close') + '</button></div><dl>' + rows + '</dl></div>';
+      icon('close') + '</button></div>' +
+      '<button type="button" class="sideview-shortcuts-switch" role="switch" data-sv-shortcuts-switch aria-checked="' +
+      (this.shortcutsOn() ? 'true' : 'false') + '"><span class="sideview-shortcuts-switch-track" aria-hidden="true"></span>' +
+      '<span>Keyboard shortcuts</span></button>' +
+      '<dl>' + rows + '</dl></div>';
+    var sw = scrim.querySelector('[data-sv-shortcuts-switch]');
+    sw.addEventListener('click', function () { self.setShortcuts(!self.shortcutsOn()); });
     scrim.addEventListener('click', function (e) {
       if (e.target === scrim) self.toggleShortcuts(false);
     });
@@ -2171,11 +2240,12 @@ function sendToShiny(name, value) {
         self.toggleShortcuts(false);
       } else if (action === 'inject-script') {
         if (!self.sendToR('inject_script', { code: self.generatedCode }, 'Insert Script')) return;
+        self.announce('Code inserted.');
         if (self.shouldAutoClear()) {
           self.clearOperations(true);
-          self.showToast('Code inserted into script and operations cleared!', 'success');
+          self.showToast('Code inserted into script and operations cleared!', 'success', null, { silent: true });
         } else {
-          self.showToast('Code inserted into script! (Click Clear to reset)', 'success');
+          self.showToast('Code inserted into script! (Click Clear to reset)', 'success', null, { silent: true });
         }
       } else if (action === 'send-console') {
         if (!self.sendToR('send_console', { code: self.generatedCode }, 'Run Console')) return;
@@ -2194,13 +2264,14 @@ function sendToShiny(name, value) {
       } else if (action === 'copy-code') {
         if (navigator.clipboard && self.generatedCode) {
           navigator.clipboard.writeText(self.generatedCode);
+          self.announce('Code copied.');
           btn.textContent = 'Copied!';
           setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
           if (self.shouldAutoClear()) {
             self.clearOperations(true);
-            self.showToast('Code copied to clipboard and operations cleared!', 'success');
+            self.showToast('Code copied to clipboard and operations cleared!', 'success', null, { silent: true });
           } else {
-            self.showToast('Code copied to clipboard! (Click Clear to reset)', 'info');
+            self.showToast('Code copied to clipboard! (Click Clear to reset)', 'info', null, { silent: true });
           }
         }
       } else if (action === 'pipeline-undo') {
@@ -2339,6 +2410,7 @@ function sendToShiny(name, value) {
         var codeBlock = bubble ? bubble.querySelector('.sideview-chat-code') : null;
         if (codeBlock && codeBlock.textContent) {
           self.send('inject_script', { code: codeBlock.textContent.trim() });
+          self.announce('Code inserted.');
         }
       }
     });
@@ -2733,6 +2805,7 @@ function sendToShiny(name, value) {
     this.listenGlobal(document, 'keydown', function (e) {
       if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
       if (isTypingTarget(e.target) || !self.ownsKeyboard()) return;
+      if (!self.shortcutsOn()) return;
       var k = e.key;
       var open = !!self.container.querySelector('.sideview-shortcuts-scrim');
       var rect = self.container.getBoundingClientRect();
@@ -2906,6 +2979,7 @@ function sendToShiny(name, value) {
     if (cardData.type === 'grid' && cardData.data) {
       var table = document.createElement('table');
       table.className = 'sideview-table sideview-table-virtual';
+      ensureTableCaption(table, cardName);
 
       // Header row
       var thead = document.createElement('thead');
@@ -3152,6 +3226,7 @@ function sendToShiny(name, value) {
       var body = cardEl.querySelector('.sideview-card-body');
       var table = cardEl.querySelector('.sideview-table');
       var vTable = null;
+      if (table) ensureTableCaption(table, cardName);
       if (table && !table._virtualTable) {
         vTable = new VirtualTable(table, {
           rowHeight: 28,
@@ -4267,11 +4342,11 @@ function sendToShiny(name, value) {
   };
 
   SideviewEngine.prototype.undoPipeline = function () {
-    if (this.pipeline.undo()) this.showToast('Undid last pipeline change', 'info');
+    if (this.pipeline.undo()) this.showToast('Undid last pipeline change', 'info', null, { silent: true });
   };
 
   SideviewEngine.prototype.redoPipeline = function () {
-    if (this.pipeline.redo()) this.showToast('Redid pipeline change', 'info');
+    if (this.pipeline.redo()) this.showToast('Redid pipeline change', 'info', null, { silent: true });
   };
 
   // ---- the date-rule row and Strict on a join step ----------------------------------
@@ -4724,11 +4799,21 @@ function sendToShiny(name, value) {
 
   // A toast for a risky join, once per set of keys.
   SideviewEngine.prototype.announceJoinDiag = function (d, step) {
+    // The first sentence is spoken only for a check the user is waiting for: the join just added or the
+    // one shown in the Discrepancy tab, and only once; the toast then stays quiet (one event, one voice).
+    var speak = !!(d && step && !this._annDestroyed &&
+      (this._annWatch[step.id] || this.joinCheckStepId === step.id));
+    if (speak) {
+      delete this._annWatch[step.id];
+      try {
+        this.announce(global.SideviewPipeline.sayJoin(d, step.table, step.right)[0]);
+      } catch (e) { speak = false; }
+    }
     if (!d || d.error || d.status === 'ok') return;
     var msg = (d.type_issues && d.type_issues[0]) || (d.warnings && d.warnings[0]);
     if (!msg) return;
     var pair = step ? step.table + ' → ' + step.right + ': ' : '';
-    this.showToast(pair + msg, d.status === 'error' ? 'danger' : 'warning');
+    this.showToast(pair + msg, d.status === 'error' ? 'danger' : 'warning', null, { silent: speak });
   };
 
   SideviewEngine.prototype.cardElByName = function (name) {
@@ -5211,8 +5296,9 @@ function sendToShiny(name, value) {
         // stored first: adding the step renders the pipeline, which reads it
         this.suppChecks[ctx.key] = d;
         this.reportFocus = { kind: 'supp', id: ctx.key };
+        this.announceSupp(ctx, d);
         this.pipeline.add(P.suppStep(ctx.parent, ctx.supp, ctx.rdomain, d.plan), 'supp');
-        if (d.status === 'error') this.showToast('Merge ' + ctx.supp + ' into ' + ctx.parent + ': ' + this.suppStops(d, ctx.parent), 'warning');
+        if (d.status === 'error') this.showToast('Merge ' + ctx.supp + ' into ' + ctx.parent + ': ' + this.suppStops(d, ctx.parent), 'warning', null, { silent: !ctx.quiet });
         this.renderJoinCheck();
         return;
       }
@@ -5221,11 +5307,19 @@ function sendToShiny(name, value) {
       this.widenSuppClashes(d, ctx.parent, ctx.key, false);
       this.suppChecks[ctx.key] = d;
     }
+    this.announceSupp(ctx, this.suppChecks[ctx.key]);
     // a quiet check answered synchronously is drawn by the render that asked; a reply from R comes
     // later and is drawn now (the stored check stops the render from asking again)
     if (ctx.quiet && this._suppSync) return;
     this.renderPipeline();
     this.renderJoinCheck();
+  };
+
+  SideviewEngine.prototype.announceSupp = function (ctx, chk) {
+    if (!chk || ctx.quiet) return;
+    try {
+      this.announce(global.SideviewPipeline.saySupp(chk, ctx.parent, ctx.supp)[0], { assertive: !!chk.error });
+    } catch (e) { /* silent */ }
   };
 
   /** The stored check of a supp step; asks for one (with the step's plan) when there is none. */
@@ -5552,6 +5646,12 @@ function sendToShiny(name, value) {
     }
     this.colProfiles[data.id] = data;
     var t = this.inspectTarget;
+    // spoken only for the column now being inspected, never for a stray or earlier reply
+    if (t && !data.error && JSON.stringify([t.table, t.column]) === data.id) {
+      try {
+        this.announce(global.SideviewPipeline.sayProfile(data, t.column)[0]);
+      } catch (e) { /* silent */ }
+    }
     if (t && JSON.stringify([t.table, t.column]) === data.id) this.renderInspector();
   };
 
@@ -6781,15 +6881,129 @@ function sendToShiny(name, value) {
     }
   };
 
+  // ---- live-region announcements ----------------------------------------------------
+
+  SideviewEngine.prototype.ensureAnnouncer = function () {
+    var el = this.container.querySelector('.sideview-announcer');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'sideview-announcer sv-sr-only';
+      el.setAttribute('aria-live', 'polite');
+      el.setAttribute('role', 'status');
+      el.setAttribute('aria-atomic', 'true');
+      this.container.appendChild(el);
+    }
+    return el;
+  };
+
+  // Queue text for the polite live region. Messages are at least 500 ms apart; text equal to the
+  // previous message is cleared and set again 50 ms later so a screen reader speaks it again.
+  // The queue keeps the latest 3 messages, and a message with opts.coalesce replaces a queued one with
+  // the same tag, so a burst never reads stale text. opts.assertive speaks at once through a
+  // role="alert" region (used for errors). Every call is logged (announceLog, the last 50).
+  SideviewEngine.prototype.announce = function (text, opts) {
+    if (this._annDestroyed) return;
+    if (text === undefined || text === null || text === '') return;
+    text = String(text);
+    this.announceLog.push(text);
+    if (this.announceLog.length > 50) this.announceLog.shift();
+    if (opts && opts.assertive) { this.speakAlert(text); return; }
+    var tag = opts && opts.coalesce ? opts.coalesce : null;
+    if (tag) this._annQueue = this._annQueue.filter(function (m) { return m.tag !== tag; });
+    this._annQueue.push({ text: text, tag: tag });
+    while (this._annQueue.length > 3) this._annQueue.shift();
+    this.pumpAnnouncements();
+  };
+
+  SideviewEngine.prototype.speakAlert = function (text) {
+    var el = this.container.querySelector('.sideview-announcer-alert');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'sideview-announcer-alert sv-sr-only';
+      el.setAttribute('role', 'alert');
+      this.container.appendChild(el);
+    }
+    el.textContent = '';
+    setTimeout(function () { el.textContent = text; }, 50);
+  };
+
+  SideviewEngine.prototype.pumpAnnouncements = function () {
+    var self = this;
+    if (this._annTimer || !this._annQueue.length || this._annDestroyed) return;
+    var wait = Math.max(0, this._annNextAt - Date.now());
+    this._annTimer = setTimeout(function () {
+      self._annTimer = null;
+      if (self._annDestroyed) return;
+      var item = self._annQueue.shift();
+      if (item === undefined) return;
+      var msg = item.text;
+      var el = self.ensureAnnouncer();
+      var repeat = msg === self._annPrev;
+      self._annPrev = msg;
+      self._annNextAt = Date.now() + 500 + (repeat ? 50 : 0);
+      if (repeat) {
+        el.textContent = '';
+        if (self._annRepTimer) clearTimeout(self._annRepTimer);
+        self._annRepTimer = setTimeout(function () {
+          self._annRepTimer = null;
+          if (!self._annDestroyed) el.textContent = msg;
+        }, 50);
+      } else {
+        el.textContent = msg;
+      }
+      self.pumpAnnouncements();
+    }, wait);
+  };
+
+  var STEP_KIND_WORDS = {
+    join: 'Join', filter: 'Filter', arrange: 'Sort', mutate: 'Mutate', recode: 'Recode',
+    summarise: 'Summarise', pivot: 'Reshape', supp: 'SUPP merge', custom: 'Custom'
+  };
+
+  // "Join step added. 3 steps." / "Undone. 2 steps." / "Redone. 3 steps."
+  SideviewEngine.prototype.stepAnnouncement = function (kind, verb, count) {
+    var n = count + (count === 1 ? ' step.' : ' steps.');
+    if (verb === 'undone') return 'Undone. ' + n;
+    if (verb === 'redone') return 'Redone. ' + n;
+    var word = Object.prototype.hasOwnProperty.call(STEP_KIND_WORDS, kind) ? STEP_KIND_WORDS[kind] : 'Pipeline';
+    return word + ' step ' + verb + '. ' + n;
+  };
+
+  // Called from the pipeline's change emit: say what changed, by diffing the step list.
+  SideviewEngine.prototype.announceStepChange = function (label) {
+    var steps = (this.pipeline && this.pipeline.steps) || [];
+    var now = steps.map(function (s) { return { id: s.id, kind: s.kind }; });
+    var prev = this._annSteps;
+    this._annSteps = now;
+    if (label === 'checks' || label === 'pipe' || label === 'tables' || label === 'load' || label === 'refresh') return;
+    var n = now.length;
+    var co = { coalesce: 'step' };
+    if (label === 'undo') { this.announce(this.stepAnnouncement(null, 'undone', n), co); return; }
+    if (label === 'redo') { this.announce(this.stepAnnouncement(null, 'redone', n), co); return; }
+    var ids = function (a) { return a.map(function (x) { return x.id; }); };
+    var added = now.filter(function (x) { return ids(prev).indexOf(x.id) < 0; });
+    var removed = prev.filter(function (x) { return ids(now).indexOf(x.id) < 0; });
+    if (added.length && !removed.length) {
+      var self = this;
+      added.forEach(function (x) { if (x.kind === 'join') self._annWatch[x.id] = true; });
+      this.announce(this.stepAnnouncement(added.length === 1 ? added[0].kind : null, 'added', n), co);
+    } else if (removed.length && !added.length) {
+      if (removed.length > 1 || label === 'clear') this.announce('Steps cleared.', co);
+      else this.announce(this.stepAnnouncement(removed[0].kind, 'removed', n), co);
+    }
+  };
+
   // `key` (optional) names a toast that is updated in place instead of stacked, e.g. progress.
-  SideviewEngine.prototype.showToast = function (message, type, key) {
+  SideviewEngine.prototype.showToast = function (message, type, key, opts) {
     var stack = this.container.querySelector('.sideview-toast-stack');
     if (!stack) {
       stack = document.createElement('div');
       stack.className = 'sideview-toast-stack';
-      stack.setAttribute('aria-live', 'polite');
       this.container.appendChild(stack);
     }
+    // Errors are alerts (spoken at once); every other toast is spoken through the polite announcer.
+    var isError = type === 'danger' || type === 'error';
+    var silent = opts && opts.silent;
     var toast = null;
     if (key) {
       var live = stack.querySelectorAll('.sideview-toast');
@@ -6797,24 +7011,37 @@ function sendToShiny(name, value) {
         if (live[i].getAttribute('data-toast-key') === String(key)) toast = live[i];
       }
     }
+    if (toast && isError && toast.getAttribute('data-toast-type') !== String(type || '')) {
+      // a new alert element, so role="alert" is announced
+      clearTimeout(toast._hideTimer);
+      clearTimeout(toast._removeTimer);
+      toast.remove();
+      toast = null;
+    }
     if (toast) {
       clearTimeout(toast._hideTimer);
       clearTimeout(toast._removeTimer);
+      var typeChanged = toast.getAttribute('data-toast-type') !== String(type || '');
       toast.className = 'sideview-toast visible ' + (type ? 'sideview-toast-' + type : '');
       toast.textContent = message;
+      toast.setAttribute('data-toast-type', type || '');
+      if (isError) toast.setAttribute('role', 'alert'); else toast.removeAttribute('role');
+      if (!isError && !silent && typeChanged) this.announce(message);
     } else {
       toast = document.createElement('div');
       toast.className = 'sideview-toast ' + (type ? 'sideview-toast-' + type : '');
       toast.textContent = message;
-      toast.setAttribute('role', 'status');
+      toast.setAttribute('data-toast-type', type || '');
+      if (isError) toast.setAttribute('role', 'alert');
       if (key) toast.setAttribute('data-toast-key', String(key));
       stack.appendChild(toast);
       setTimeout(function () {
         toast.classList.add('visible');
       }, 10);
+      if (!isError && !silent) this.announce(message);
     }
     // Errors carry a fix hint, so they stay up longer.
-    var ttl = (type === 'danger' || type === 'warning') ? 9000 : 4500;
+    var ttl = (isError || type === 'warning') ? 9000 : 4500;
     toast._hideTimer = setTimeout(function () {
       toast.classList.remove('visible');
       toast._removeTimer = setTimeout(function () { toast.remove(); }, 300);
@@ -6929,6 +7156,12 @@ function sendToShiny(name, value) {
 
       chatMessages.appendChild(assistantBubble);
       chatMessages.scrollTop = chatMessages.scrollHeight;
+      if (hasCode) {
+        var nLines = data.code.trim().split(/\r?\n/).length;
+        self.announce('Copilot replied, ' + nLines + (nLines === 1 ? ' line' : ' lines') + ' of code.');
+      } else {
+        self.announce('Copilot replied.');
+      }
     });
 
     // Row window for a large card (reply to sideview_rows_request)

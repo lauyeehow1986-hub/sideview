@@ -1,5 +1,27 @@
 # sideview (development version)
 
+## Table ARIA
+
+* Each table on the canvas has a (screen-reader-only) caption with the card name and announces its full size:
+  `aria-rowcount` (rows plus the header), `aria-colcount`, and a row index on every rendered row, so a screen reader says
+  "row 2002 of 5001" while the table shows only a window of it. The counts follow sort and filter.
+
+## Keyboard shortcuts switch
+
+* The `?` list has a "Keyboard shortcuts" switch that turns the single-key shortcuts off (WCAG 2.1.4). The choice is
+  remembered in the browser; if the browser blocks storage it holds for the session. `Ctrl+K` and `Ctrl+Enter` always work.
+* New option `sideview.shortcuts` (default `TRUE`): `FALSE` starts the gadget, widget and module with the shortcuts off.
+  `sideview_widget(options = list(shortcuts = FALSE))` does the same for one widget.
+
+## Live announcements
+
+* The canvas has a polite live region (`.sideview-announcer`, `role="status"`) that says what happened: a finished
+  join, SUPP or column check reads its first sentence, a step added, removed, undone or redone reads
+  "Join step added. 3 steps.", Copy and Insert read "Code copied." / "Code inserted.", and a Copilot reply reads
+  "Copilot replied, 4 lines of code." It works in the gadget, the widget and a module.
+* Toasts are no longer a live region of their own. Error toasts are `role="alert"`; the other toasts are spoken through
+  the announcer.
+
 ## Accessibility test harness
 
 * New real-browser accessibility tests (`test-a11y-browser.R`): every canvas control has an accessible name in the

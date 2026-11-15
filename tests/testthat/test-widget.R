@@ -280,3 +280,12 @@ test_that("save_sideview writes the tag for auto and not for FALSE", {
   expect_true(grepl("\"cdisc\":{", read_html("auto"), fixed = TRUE))
   expect_false(grepl("\"cdisc\":{", read_html(FALSE), fixed = TRUE))
 })
+
+test_that("sideview_widget carries the sideview.shortcuts option", {
+  expect_true(sideview_widget(mtcars)$x$options$shortcuts)
+  withr::with_options(list(sideview.shortcuts = FALSE),
+    expect_false(sideview_widget(mtcars)$x$options$shortcuts))
+  expect_false(sideview_widget(mtcars, options = list(shortcuts = FALSE))$x$options$shortcuts)
+  withr::with_options(list(sideview.shortcuts = FALSE),
+    expect_true(sideview_widget(mtcars, options = list(shortcuts = TRUE))$x$options$shortcuts))
+})

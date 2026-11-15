@@ -26,7 +26,8 @@ sideview_widget(
 
 \item{elementId}{Optional HTML element identifier.}
 
-\item{options}{Named list of canvas options (e.g. \code{snapToEdge},
+\item{options}{Named list of canvas options (e.g. \code{shortcuts = FALSE} to start with
+the single-key shortcuts off, default \code{getOption("sideview.shortcuts", TRUE)}, \code{snapToEdge},
 \code{snapThreshold}, \code{minScale}, \code{maxScale}).}
 
 \item{theme}{Canvas theme: \code{"auto"} (default; follows the reader's
