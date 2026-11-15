@@ -54,10 +54,27 @@ sv_supp_check <- function(parent, supp, parent_name = "parent", supp_name = "sup
     rdomain <- if (is.character(card_domain) && length(card_domain) == 1L && !is.na(card_domain) &&
                    nzchar(card_domain)) card_domain else from_name
   }
-  sv_supp_check_df(as.data.frame(parent, stringsAsFactors = FALSE),
-                   as.data.frame(supp, stringsAsFactors = FALSE),
-                   parent_name, supp_name, rdomain, plan, as.integer(sample_n),
-                   from_name == rdomain)
+  sv_supp_classify(
+    sv_supp_check_df(as.data.frame(parent, stringsAsFactors = FALSE),
+                     as.data.frame(supp, stringsAsFactors = FALSE),
+                     parent_name, supp_name, rdomain, plan, as.integer(sample_n),
+                     from_name == rdomain),
+    parent_name, supp_name)
+}
+
+# The class of a check, with the two names the sentences need. sv_supp_check_json() drops the
+# names and the class, so the browser payload is the same as before.
+sv_supp_classify <- function(chk, parent_name, supp_name) {
+  chk$parent_name <- parent_name
+  chk$supp_name <- supp_name
+  structure(chk, class = "sv_supp_check")
+}
+
+#' @export
+print.sv_supp_check <- function(x, ...) {
+  cat(sv_say_supp(x), sep = "
+")
+  invisible(x)
 }
 
 #' @rdname sv_supp_check
@@ -335,6 +352,9 @@ sv_supp_check_df <- function(parent, supp, parent_name, supp_name, rdomain, plan
 #' @rdname sv_supp_check
 #' @export
 sv_supp_check_json <- function(chk) {
+  chk <- unclass(chk)
+  chk$parent_name <- NULL
+  chk$supp_name <- NULL
   if (!is.null(chk$error)) {
     return(as.character(jsonlite::toJSON(list(error = chk$error), auto_unbox = TRUE, null = "null")))
   }

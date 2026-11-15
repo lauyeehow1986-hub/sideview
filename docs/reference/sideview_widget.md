@@ -18,7 +18,8 @@ sideview_widget(
   theme = "auto",
   state = NULL,
   cdisc = "auto",
-  max_rows = 5000
+  max_rows = 5000,
+  view = getOption("sideview.view", "canvas")
 )
 ```
 
@@ -44,8 +45,10 @@ sideview_widget(
 
 - options:
 
-  Named list of canvas options (e.g. `snapToEdge`, `snapThreshold`,
-  `minScale`, `maxScale`).
+  Named list of canvas options (e.g. `shortcuts = FALSE` to start with
+  the single-key shortcuts off, default
+  `getOption("sideview.shortcuts", TRUE)`, `snapToEdge`,
+  `snapThreshold`, `minScale`, `maxScale`).
 
 - theme:
 
@@ -76,6 +79,13 @@ sideview_widget(
   widget has no R session behind it, so every row would travel in the
   HTML. Use `Inf` to embed everything. Lazy (arrow / duckdb) tables
   already carry only a preview and are not affected.
+
+- view:
+
+  Starting view: `"canvas"` (default) or `"list"`, a text-first list of
+  the tables. Default `getOption("sideview.view", "canvas")`. A saved
+  workspace (`options = list(state = )`) that records a view wins over
+  this argument; a state without one leaves it as it is.
 
 ## Value
 

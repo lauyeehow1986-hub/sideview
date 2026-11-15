@@ -1999,6 +1999,19 @@ html.sv-standalone body {
 }
 
 
+/* Visually hidden, still read by screen readers (live-region announcer). */
+.sideview-container .sv-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* Toast Notifications */
 .sideview-toast-stack {
   position: absolute;
@@ -2051,7 +2064,8 @@ html.sv-standalone body {
   border-left: 4px solid var(--sv-warning);
 }
 
-.sideview-toast-danger {
+.sideview-toast-danger,
+.sideview-toast-error {
   border-left: 4px solid var(--sv-danger);
 }
 
@@ -2546,6 +2560,51 @@ html.sv-standalone body {
   font-weight: 600;
 }
 
+.sideview-container .sideview-shortcuts-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 6px 4px;
+  background: transparent;
+  color: var(--sv-text);
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.sideview-container .sideview-shortcuts-switch-track {
+  position: relative;
+  flex: none;
+  width: 32px;
+  height: 18px;
+  background: var(--sv-surface-tertiary);
+  border: 1px solid var(--sv-border);
+  border-radius: 9px;
+}
+
+.sideview-container .sideview-shortcuts-switch-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  background: var(--sv-text-muted);
+  border-radius: 50%;
+}
+
+.sideview-container .sideview-shortcuts-switch[aria-checked="true"] .sideview-shortcuts-switch-track {
+  background: var(--sv-primary-subtle);
+  border-color: var(--sv-primary);
+}
+
+.sideview-container .sideview-shortcuts-switch[aria-checked="true"] .sideview-shortcuts-switch-track::after {
+  left: 16px;
+  background: var(--sv-primary);
+}
+
 .sideview-container .sideview-shortcuts dl {
   display: grid;
   grid-template-columns: max-content 1fr;
@@ -3033,4 +3092,261 @@ html.sv-standalone body {
   min-width: 24px;
   min-height: 24px;
   box-sizing: border-box;
+}
+
+/* ---- List view (text-first alternative to the canvas) ----
+   A normal-flow, scrolling column under the top bar. The canvas parts it replaces carry `hidden`. */
+.sideview-container [hidden] {
+  display: none !important;
+}
+
+.sideview-container .sideview-listview {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  overflow-y: auto;
+  padding: calc(var(--sv-topbar-h, 56px) + 24px) 24px 96px;
+  background: var(--sv-canvas-bg);
+  color: var(--sv-text);
+  user-select: text;
+}
+
+.sideview-container .sideview-listview > * {
+  max-width: 72ch;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.sideview-container .sideview-lv-section {
+  margin: 0 auto 24px;
+}
+
+.sideview-container .sideview-lv-heading {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-lv-heading:focus {
+  outline: 2px solid var(--sv-focus-ring);
+  outline-offset: 2px;
+}
+
+.sideview-container .sideview-lv-skips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0 0 8px;
+}
+
+.sideview-container .sideview-listview .sideview-skip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 4px;
+  color: var(--sv-primary-text, var(--sv-primary));
+  text-decoration: underline;
+}
+
+.sideview-container .sideview-lv-summary-text {
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+.sideview-container .sideview-lv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.sideview-container .sideview-lv-actions .sideview-btn,
+.sideview-container .sideview-lv-actions .sideview-shortcuts-switch {
+  min-height: 32px;
+  min-width: 24px;
+  width: auto;
+  margin: 0;
+}
+
+.sideview-container .sideview-lv-actions .sideview-btn[aria-pressed="true"] {
+  background: var(--sv-primary-subtle);
+  border-color: var(--sv-primary);
+}
+
+/* ---- List view: tables, columns, paged rows ---- */
+.sideview-container .sideview-lv-table {
+  margin: 0 0 24px;
+}
+
+.sideview-container .sideview-lv-table-heading {
+  margin: 16px 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-lv-table-heading:focus {
+  outline: 2px solid var(--sv-focus-ring);
+  outline-offset: 2px;
+}
+
+.sideview-container .sideview-lv-cols {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.sideview-container .sideview-lv-cols > li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--sv-border-light);
+}
+
+.sideview-container .sideview-lv-col-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.sideview-container .sideview-lv-col-actions .sideview-btn,
+.sideview-container .sideview-lv-pager .sideview-btn {
+  min-height: 28px;
+  min-width: 24px;
+  width: auto;
+  margin: 0;
+}
+
+.sideview-container .sideview-lv-profile p {
+  margin: 4px 0;
+  line-height: 1.5;
+}
+
+.sideview-container .sideview-lv-rows-wrap {
+  overflow-x: auto;
+}
+
+.sideview-container .sideview-lv-rows-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.sideview-container .sideview-lv-rows-table th,
+.sideview-container .sideview-lv-rows-table td {
+  padding: 4px 8px;
+  border: 1px solid var(--sv-border-light);
+  text-align: left;
+}
+
+.sideview-container .sideview-lv-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.sideview-container .sideview-lv-pager input[type="number"] {
+  width: 8ch;
+  min-height: 28px;
+  padding: 0 6px;
+  color: var(--sv-text);
+  background: var(--sv-card-bg);
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-sm);
+}
+
+/* list view: join form, suggestions, Merge SUPP */
+.sideview-container .sideview-lv-row,
+.sideview-container .sideview-lv-pair,
+.sideview-container .sideview-lv-rulebox {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+  margin: 8px 0;
+}
+
+.sideview-container .sideview-lv-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-lv-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-lv-select,
+.sideview-container .sideview-lv-field input[type="number"] {
+  min-height: 28px;
+  padding: 0 6px;
+  color: var(--sv-text);
+  background: var(--sv-card-bg);
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-sm);
+}
+
+.sideview-container .sideview-lv-suggestions {
+  margin: 8px 0;
+  padding-left: 18px;
+}
+
+.sideview-container .sideview-lv-suggestion {
+  margin: 4px 0;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-lv-suggestion .sideview-btn {
+  margin-left: 8px;
+}
+
+.sideview-container .sideview-lv-join-result p,
+.sideview-container .sideview-lv-supp-result p,
+.sideview-container .sideview-lv-suggest-status {
+  margin: 4px 0;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-lv-supp {
+  margin: 12px 0;
+}
+
+.sideview-container .sideview-lv-supp-heading {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: var(--sv-text);
+}
+
+/* List view: the drawer's panes moved into the Transform, Pipeline, Code and Copilot sections */
+.sideview-container .sideview-lv-subheading {
+  margin: 16px 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-lv-subheading:focus {
+  outline: 2px solid var(--sv-focus-ring);
+  outline-offset: 2px;
+}
+
+.sideview-container .sideview-listview .sideview-tab-pane {
+  display: block;
+}
+
+.sideview-container .sideview-listview .sideview-chat-pane {
+  display: flex;
+  height: auto;
+}
+
+.sideview-container .sideview-listview .sideview-drawer-actions {
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius);
 }

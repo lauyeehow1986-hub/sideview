@@ -4,7 +4,7 @@ template:
 
 navbar:
   structure:
-    left: [intro, tour, cdisc, reference, news]
+    left: [intro, tour, cdisc, screenreader, reference, news]
   components:
     tour:
       text: Visual tour
@@ -12,6 +12,9 @@ navbar:
     cdisc:
       text: CDISC
       href: articles/cdisc.html
+    screenreader:
+      text: Screen reader
+      href: articles/screen-reader.html
 
 reference:
   - title: "Interactive Canvas & Gadget"
@@ -66,6 +69,7 @@ reference:
     contents:
       - sv_column_profile
       - sv_codebook
+      - sv_describe
 
   - title: "Canvas State Persistence & Cloud Sharing"
     desc: "Serialize complete canvas topologies, card positions, splines, and pipelines to JSON or RDS."

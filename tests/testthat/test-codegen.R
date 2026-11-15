@@ -761,3 +761,24 @@ test_that("sv_auto_clean_rules(lazy = TRUE) writes one collect() and runs on arr
   # a bare name or no name still works
   expect_match(sv_auto_clean_rules(disc, df_name = NULL, col = "sex", lazy = TRUE), "dplyr::collect()", fixed = TRUE)
 })
+
+test_that("sv_detect_discrepancies returns an sv_discrepancies list that prints as sentences", {
+  d <- sv_detect_discrepancies(c("Male", "Female", "Mle", "Unknown", NA), c("Male", "Female", "Other", NA))
+  expect_s3_class(d, "sv_discrepancies")
+  expect_true(is.list(unclass(d)))
+  expect_output(print(d), "values match exactly.")
+  expect_identical(capture.output(print(d)),
+                   c("2 values match exactly.",
+                     "1 value nearly matches.",
+                     "2 values are only in x, for example Mle and Unknown.",
+                     "1 value is only in y, for example Other.",
+                     "Match rate 50.0 percent."))
+  one <- sv_detect_discrepancies(c("a", "b"), c("a", "b"))
+  expect_identical(capture.output(print(one))[1:3],
+                   c("2 values match exactly.", "0 values nearly match.", "0 values are only in x."))
+  many <- sv_detect_discrepancies(paste0("v", 1:6), "zzzzzzzz", max_distance = 0)
+  expect_identical(capture.output(print(many))[3], "6 values are only in x, for example v1, v2, v3, and 3 more.")
+  expect_identical(capture.output(print(sv_detect_discrepancies(character(0), character(0)))),
+                   c("0 values match exactly.", "0 values nearly match.", "0 values are only in x.",
+                     "0 values are only in y."))
+})

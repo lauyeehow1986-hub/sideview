@@ -98,6 +98,17 @@ function sendToShiny(name, value) {
     }
   }
 
+  // A screen-reader-only <caption> with the card name (a text node, so no escaping is needed).
+  function ensureTableCaption(table, name) {
+    var cap = table.querySelector(':scope > caption');
+    if (!cap) {
+      cap = document.createElement('caption');
+      table.insertBefore(cap, table.firstChild);
+    }
+    cap.className = 'sv-sr-only';
+    cap.textContent = String(name);
+  }
+
   VirtualTable.prototype.initDOM = function () {
     this.tbody = this.table.querySelector('tbody');
     if (!this.tbody) {
@@ -233,8 +244,51 @@ function sendToShiny(name, value) {
     return '';
   };
 
+  // What a cell shows for a value: "NA" for a missing one. The card render and cellText share it.
+  function cellDisplay(val) {
+    return (val === null || val === undefined) ? 'NA' : val;
+  }
+
+  /**
+   * The text the card cell at virtual row i (sorted, filtered order) and column col (a name or a
+   * position) shows: "NA" when missing. null while the row's block has not landed yet (the request
+   * is made; onBlock tells when it is in), or when i is outside the table.
+   */
+  VirtualTable.prototype.cellText = function (i, col) {
+    var c = typeof col === 'number' ? col : this.colNames.indexOf(col);
+    if (c < 0 || c >= this.colNames.length || i < 0 || i >= this.getRowCount()) return null;
+    var val;
+    if (this.remote && this.remote.active) {
+      var row = this.remoteRowAt(i);
+      if (!row) return null;
+      val = row.get(c);
+    } else {
+      var active = this.getActiveIndices();
+      val = this.getCellValue(active !== null ? active[i] : i, this.colNames[c], c);
+    }
+    return String(cellDisplay(val));
+  };
+
+  /** Call fn(blockIndex) after a remote row block lands; returns the function that unsubscribes. */
+  VirtualTable.prototype.onBlock = function (fn) {
+    var self = this;
+    if (!this._blockListeners) this._blockListeners = [];
+    this._blockListeners.push(fn);
+    return function () {
+      var k = self._blockListeners ? self._blockListeners.indexOf(fn) : -1;
+      if (k >= 0) self._blockListeners.splice(k, 1);
+    };
+  };
+
   VirtualTable.prototype.render = function () {
     var totalCount = this.getRowCount();
+    // Table ARIA: the rendered window is a slice, so say how big the whole table is. Header = row 1.
+    var numColsAria = this.colNames.length || this.table.querySelectorAll('thead th').length || 1;
+    if (isFinite(totalCount)) this.table.setAttribute('aria-rowcount', String(totalCount + 1));
+    else this.table.removeAttribute('aria-rowcount');
+    this.table.setAttribute('aria-colcount', String(numColsAria));
+    var headTr = this.table.querySelector('thead tr');
+    if (headTr) headTr.setAttribute('aria-rowindex', '1');
     var totalVirtualHeight = totalCount * this.rowHeight;
     var scrollTop = this.scrollContainer ? this.scrollContainer.scrollTop : 0;
     var viewportHeight = this.scrollContainer ? (this.scrollContainer.clientHeight || 380) : 380;
@@ -270,6 +324,7 @@ function sendToShiny(name, value) {
       var tr = document.createElement('tr');
       tr.dataset.rowIndex = rawRowIndex;
       tr.dataset.virtualIndex = i;
+      tr.setAttribute('aria-rowindex', String(i + 2));
       if (remoteOn && !remoteRow) tr.className = 'sideview-row-loading';
 
       for (var c = 0; c < numCols; c++) {
@@ -278,7 +333,7 @@ function sendToShiny(name, value) {
         var val = remoteOn
           ? (remoteRow ? remoteRow.get(c) : '…')
           : this.getCellValue(rawRowIndex, colName, c);
-        td.textContent = (val === null || val === undefined) ? 'NA' : val;
+        td.textContent = cellDisplay(val);
 
         var knownType = this.colTypes ? this.colTypes[colName] : null;
         var isNum = (knownType === 'numeric' || knownType === 'integer' || knownType === 'double') ||
@@ -613,12 +668,16 @@ function sendToShiny(name, value) {
     r.count = msg.total;
     this.render();
     if (countChanged && typeof this.onRemoteCount === 'function') this.onRemoteCount(msg.total, r.total);
+    (this._blockListeners || []).slice().forEach(function (fn) {
+      try { fn(b); } catch (e) { /* a listener never breaks the table */ }
+    });
   };
 
   VirtualTable.prototype.destroy = function () {
     if (this.scrollContainer && typeof this.scrollContainer.removeEventListener === 'function' && this._scrollHandler) {
       this.scrollContainer.removeEventListener('scroll', this._scrollHandler);
     }
+    this._blockListeners = [];
   };
 
   function SideviewEngine(containerElement, options) {
@@ -679,6 +738,21 @@ function sendToShiny(name, value) {
     this.colProfiles = {};
     this.colProfilePending = {};
     this.joinCheckStepId = null;
+    // Live-region announcements (see announce()); the last 50 messages are kept for tests.
+    this.announceLog = [];
+    // 'canvas' | 'list' (see setView); the list view is built the first time it is shown.
+    this.view = 'canvas';
+    this.listView = null;
+    this._hiddenGeom = null;
+    this._pendingView = null;
+    this._annQueue = [];
+    this._annTimer = null;
+    this._annNextAt = 0;
+    this._annPrev = null;
+    this._annSteps = [];
+    this._annRepTimer = null;
+    this._annDestroyed = false;
+    this._annWatch = {};
 
     // The composable pipeline is the single source of the generated code.
     if (!global.SideviewPipeline) {
@@ -689,6 +763,7 @@ function sendToShiny(name, value) {
       pipe: this.options.pipe,
       onChange: function (_p, label) {
         if (label === 'undo' || label === 'redo') self.forgetSuppChecks(null);
+        self.announceStepChange(label);
         self.renderPipeline();
         // a join check result is not a change of the work; everything else is
         if (label !== 'checks') self.scheduleSnapshot();
@@ -696,6 +771,7 @@ function sendToShiny(name, value) {
     });
 
     this.initDOM();
+    this.ensureAnnouncer();
     // Focusable (not in the tab order) so clicks give it keyboard focus.
     if (!this.container.hasAttribute('tabindex')) this.container.setAttribute('tabindex', '-1');
     this.ensureToolbarExtras();
@@ -728,6 +804,13 @@ function sendToShiny(name, value) {
     this.registerShinyHandlers();
     this.initMinimap();
     this.initLayoutObserver();
+    // The starting view. A restored state's view.mode (applyState) wins over the `view` argument.
+    // Applied after the first layout, so the cards are measured while visible; silent: nothing is
+    // announced and focus stays where it is.
+    var startView = this._pendingView || this.options.view ||
+      (this.container.getAttribute ? this.container.getAttribute('data-sv-view') : null);
+    this._pendingView = null;
+    if (startView === 'list') this.setView('list', { silent: true });
 
     // Registered last: an engine whose setup threw never replaces a working one for this ns.
     this.registerEngine();
@@ -769,6 +852,7 @@ function sendToShiny(name, value) {
     inspect: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
     download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
     alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    list: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
     save: '<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>',
     folderOpen: '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
     search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
@@ -1098,8 +1182,10 @@ function sendToShiny(name, value) {
       // the minimap moves up above it.
       self.container.classList.toggle('sv-compact', self.container.clientWidth < 1040);
       if (self.cards) self.freezeAllCardSizes();
-      // First layout with a real size (a widget can start hidden in a tab).
-      if (self._needsInitialLayout && self.container.clientWidth > 0) {
+      // First layout with a real size (a widget can start hidden in a tab). Not while the list
+      // view is showing: the canvas is hidden then and every card would measure 0 x 0, so
+      // setView('canvas') runs the deferred layout instead.
+      if (self._needsInitialLayout && self.view !== 'list' && self.container.clientWidth > 0) {
         self._needsInitialLayout = false;
         if (self.arrangeCards(true) && !self._restoredView) self.fitAll({ maxScale: 1, minScale: READABLE_SCALE });
         self.scheduleSnapshot();
@@ -1589,6 +1675,11 @@ function sendToShiny(name, value) {
 
   SideviewEngine.prototype.destroy = function () {
     this.unregisterEngine();
+    this._annDestroyed = true;
+    if (this._annTimer) { clearTimeout(this._annTimer); this._annTimer = null; }
+    if (this._annRepTimer) { clearTimeout(this._annRepTimer); this._annRepTimer = null; }
+    this._annQueue = [];
+    this.container.querySelectorAll('.sideview-announcer, .sideview-announcer-alert').forEach(function (n) { n.remove(); });
     if (this._snapshotTimer) { clearTimeout(this._snapshotTimer); this._snapshotTimer = null; }
     if (this._cardResizeObserver) { this._cardResizeObserver.disconnect(); this._cardResizeObserver = null; }
     this._globalListeners.forEach(function (l) {
@@ -1601,6 +1692,7 @@ function sendToShiny(name, value) {
       if (card.virtualTable && card.virtualTable.destroy) card.virtualTable.destroy();
     });
     this.closeActivePopover();
+    if (this.listView) { try { this.listView.destroy(); } catch (e) {} this.listView = null; }
     var dialogs = this.container.querySelectorAll('.sideview-shortcuts-scrim, .sideview-search-scrim');
     for (var di = 0; di < dialogs.length; di++) {
       if (dialogs[di].parentNode) dialogs[di].parentNode.removeChild(dialogs[di]);
@@ -1675,12 +1767,18 @@ function sendToShiny(name, value) {
         else tb.appendChild(b);
       }
       after = b;
+      return b;
     };
     add('open-search', 'search', 'Find a card or column (Ctrl+K)');
     add('save-workspace', 'save', 'Save workspace (cards, joins, pipeline)');
     add('open-workspace', 'folderOpen', 'Open a saved workspace');
     add('toggle-theme', 'moon', 'Switch to dark theme (T)');
     add('show-shortcuts', 'keyboard', 'Keyboard shortcuts (?)');
+    // The view toggle keeps one name; aria-pressed says whether the list is showing.
+    var vt = add('toggle-view', 'list', 'List view');
+    vt.setAttribute('data-sv-view-toggle', '');
+    vt.setAttribute('aria-pressed', this.view === 'list' ? 'true' : 'false');
+    vt.title = 'List view: the tables as text, for keyboard and screen-reader use';
   };
 
   // Keys in the shortcut list. Kept in sync with the keydown handlers.
@@ -1702,6 +1800,33 @@ function sendToShiny(name, value) {
   ];
 
   var shortcutsSeq = 0;
+
+  // WCAG 2.1.4: single-key shortcuts can be turned off. Order: the stored choice, then the
+  // R default (data-sv-shortcuts="false" / options.shortcuts === false), then the view
+  // (off in the list view, on otherwise). A blocked localStorage counts as no stored value;
+  // the choice is then kept for the session in memory.
+  var SHORTCUTS_KEY = 'sideview.shortcuts';
+
+  SideviewEngine.prototype.shortcutsOn = function () {
+    var stored = null;
+    try { stored = global.localStorage.getItem(SHORTCUTS_KEY); } catch (e) { stored = null; }
+    if (stored === 'on') return true;
+    if (stored === 'off') return false;
+    if (this._shortcutsMem === true || this._shortcutsMem === false) return this._shortcutsMem;
+    var attr = this.container.getAttribute ? this.container.getAttribute('data-sv-shortcuts') : null;
+    if (attr === 'false' || this.options.shortcuts === false) return false;
+    return this.view !== 'list';
+  };
+
+  SideviewEngine.prototype.setShortcuts = function (on) {
+    on = !!on;
+    this._shortcutsMem = on;
+    try { global.localStorage.setItem(SHORTCUTS_KEY, on ? 'on' : 'off'); } catch (e) {}
+    var sw = this.container.querySelectorAll('[data-sv-shortcuts-switch]');
+    for (var i = 0; i < sw.length; i++) sw[i].setAttribute('aria-checked', on ? 'true' : 'false');
+    this.announce(on ? 'Keyboard shortcuts on.' : 'Keyboard shortcuts off.');
+    return on;
+  };
 
   SideviewEngine.prototype.toggleShortcuts = function (show) {
     var self = this;
@@ -1730,7 +1855,13 @@ function sendToShiny(name, value) {
       '<div class="sideview-shortcuts" role="dialog" aria-modal="true" aria-labelledby="' + id + '" tabindex="-1">' +
       '<div class="sideview-shortcuts-head"><span id="' + id + '">Keyboard shortcuts</span>' +
       '<button type="button" class="sideview-icon-btn" data-action="close-shortcuts" aria-label="Close shortcuts">' +
-      icon('close') + '</button></div><dl>' + rows + '</dl></div>';
+      icon('close') + '</button></div>' +
+      '<button type="button" class="sideview-shortcuts-switch" role="switch" data-sv-shortcuts-switch aria-checked="' +
+      (this.shortcutsOn() ? 'true' : 'false') + '"><span class="sideview-shortcuts-switch-track" aria-hidden="true"></span>' +
+      '<span>Keyboard shortcuts</span></button>' +
+      '<dl>' + rows + '</dl></div>';
+    var sw = scrim.querySelector('[data-sv-shortcuts-switch]');
+    sw.addEventListener('click', function () { self.setShortcuts(!self.shortcutsOn()); });
     scrim.addEventListener('click', function (e) {
       if (e.target === scrim) self.toggleShortcuts(false);
     });
@@ -2165,17 +2296,20 @@ function sendToShiny(name, value) {
         self.toggleFullscreen(btn);
       } else if (action === 'toggle-theme') {
         self.toggleTheme();
+      } else if (action === 'toggle-view') {
+        self.setView(self.view === 'list' ? 'canvas' : 'list');
       } else if (action === 'show-shortcuts') {
         self.toggleShortcuts(true);
       } else if (action === 'close-shortcuts') {
         self.toggleShortcuts(false);
       } else if (action === 'inject-script') {
         if (!self.sendToR('inject_script', { code: self.generatedCode }, 'Insert Script')) return;
+        self.announce('Code inserted.');
         if (self.shouldAutoClear()) {
           self.clearOperations(true);
-          self.showToast('Code inserted into script and operations cleared!', 'success');
+          self.showToast('Code inserted into script and operations cleared!', 'success', null, { silent: true });
         } else {
-          self.showToast('Code inserted into script! (Click Clear to reset)', 'success');
+          self.showToast('Code inserted into script! (Click Clear to reset)', 'success', null, { silent: true });
         }
       } else if (action === 'send-console') {
         if (!self.sendToR('send_console', { code: self.generatedCode }, 'Run Console')) return;
@@ -2194,13 +2328,14 @@ function sendToShiny(name, value) {
       } else if (action === 'copy-code') {
         if (navigator.clipboard && self.generatedCode) {
           navigator.clipboard.writeText(self.generatedCode);
+          self.announce('Code copied.');
           btn.textContent = 'Copied!';
           setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
           if (self.shouldAutoClear()) {
             self.clearOperations(true);
-            self.showToast('Code copied to clipboard and operations cleared!', 'success');
+            self.showToast('Code copied to clipboard and operations cleared!', 'success', null, { silent: true });
           } else {
-            self.showToast('Code copied to clipboard! (Click Clear to reset)', 'info');
+            self.showToast('Code copied to clipboard! (Click Clear to reset)', 'info', null, { silent: true });
           }
         }
       } else if (action === 'pipeline-undo') {
@@ -2339,6 +2474,7 @@ function sendToShiny(name, value) {
         var codeBlock = bubble ? bubble.querySelector('.sideview-chat-code') : null;
         if (codeBlock && codeBlock.textContent) {
           self.send('inject_script', { code: codeBlock.textContent.trim() });
+          self.announce('Code inserted.');
         }
       }
     });
@@ -2733,6 +2869,7 @@ function sendToShiny(name, value) {
     this.listenGlobal(document, 'keydown', function (e) {
       if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
       if (isTypingTarget(e.target) || !self.ownsKeyboard()) return;
+      if (!self.shortcutsOn()) return;
       var k = e.key;
       var open = !!self.container.querySelector('.sideview-shortcuts-scrim');
       var rect = self.container.getBoundingClientRect();
@@ -2906,6 +3043,7 @@ function sendToShiny(name, value) {
     if (cardData.type === 'grid' && cardData.data) {
       var table = document.createElement('table');
       table.className = 'sideview-table sideview-table-virtual';
+      ensureTableCaption(table, cardName);
 
       // Header row
       var thead = document.createElement('thead');
@@ -3009,6 +3147,7 @@ function sendToShiny(name, value) {
     this.pipeline.setTables(meta);
     // a card came or went: the Merge into buttons name their targets on the canvas
     this.refreshSuppButtons();
+    if (this.listView) this.listView.syncTables();
   };
 
   /** 'arrow' | 'duckdb' when the table is lazy, else null. */
@@ -3152,6 +3291,7 @@ function sendToShiny(name, value) {
       var body = cardEl.querySelector('.sideview-card-body');
       var table = cardEl.querySelector('.sideview-table');
       var vTable = null;
+      if (table) ensureTableCaption(table, cardName);
       if (table && !table._virtualTable) {
         vTable = new VirtualTable(table, {
           rowHeight: 28,
@@ -3205,6 +3345,8 @@ function sendToShiny(name, value) {
     this.renderPipeline();
     this.renderJoinCheck();
     this.renderInspector();
+    // the list view's heading names the basis
+    if (this.listView && el.dataset.cardName !== undefined) this.listView.renderTable(meta.name);
   };
 
   /**
@@ -4168,6 +4310,7 @@ function sendToShiny(name, value) {
 
     // 4. Reset generated code and drawer UI
     this.resetDrawerCode();
+    this.listHook('refresh');
 
     // 5. Notify user if not silent
     if (!silent) {
@@ -4267,11 +4410,11 @@ function sendToShiny(name, value) {
   };
 
   SideviewEngine.prototype.undoPipeline = function () {
-    if (this.pipeline.undo()) this.showToast('Undid last pipeline change', 'info');
+    if (this.pipeline.undo()) this.showToast('Undid last pipeline change', 'info', null, { silent: true });
   };
 
   SideviewEngine.prototype.redoPipeline = function () {
-    if (this.pipeline.redo()) this.showToast('Redid pipeline change', 'info');
+    if (this.pipeline.redo()) this.showToast('Redid pipeline change', 'info', null, { silent: true });
   };
 
   // ---- the date-rule row and Strict on a join step ----------------------------------
@@ -4541,6 +4684,7 @@ function sendToShiny(name, value) {
     var p = this.pipeline;
     var code = p.compose();
     this.generatedCode = code;
+    if (this.listView) this.listView.renderSummary();
     var codeText = this.container.querySelector('.sideview-code-text');
     if (codeText) codeText.textContent = code || CODE_PLACEHOLDER;
 
@@ -4571,7 +4715,7 @@ function sendToShiny(name, value) {
           }
           return '<li class="sideview-step' + (on ? '' : ' is-disabled') + (diag ? ' has-diag' : '') +
             (s.kind === 'join' ? ' is-join' : '') + (ruleRow ? ' has-rule-row' : '') +
-            '" data-step-id="' + escapeHtml(s.id) + '">' +
+            '" data-step-id="' + escapeHtml(s.id) + '" id="' + escapeHtml(self.stepElId(s)) + '" tabindex="-1">' +
             '<input type="checkbox" class="sideview-step-toggle"' + (on ? ' checked' : '') +
             ' aria-label="Include step ' + (i + 1) + '" />' +
             '<span class="sideview-step-text" title="' + escapeHtml(title) + '">' +
@@ -4708,6 +4852,7 @@ function sendToShiny(name, value) {
       this.pipeline.setJoinCheck(data.id, null);
       this.renderPipeline();
       this.renderJoinCheck();
+      this.listHook('onJoinDiag', data.id, this.joinDiag[data.id]);
       return;
     }
     ['by', 'unmatched_x', 'unmatched_y', 'type_issues', 'warnings', 'hints'].forEach(function (k) {
@@ -4720,15 +4865,26 @@ function sendToShiny(name, value) {
     this.announceJoinDiag(data, step);
     this.renderPipeline();
     this.renderJoinCheck();
+    this.listHook('onJoinDiag', data.id, data);
   };
 
   // A toast for a risky join, once per set of keys.
   SideviewEngine.prototype.announceJoinDiag = function (d, step) {
+    // The first sentence is spoken only for a check the user is waiting for: the join just added or the
+    // one shown in the Discrepancy tab, and only once; the toast then stays quiet (one event, one voice).
+    var speak = !!(d && step && !this._annDestroyed &&
+      (this._annWatch[step.id] || this.joinCheckStepId === step.id));
+    if (speak) {
+      delete this._annWatch[step.id];
+      try {
+        this.announce(global.SideviewPipeline.sayJoin(d, step.table, step.right)[0]);
+      } catch (e) { speak = false; }
+    }
     if (!d || d.error || d.status === 'ok') return;
     var msg = (d.type_issues && d.type_issues[0]) || (d.warnings && d.warnings[0]);
     if (!msg) return;
     var pair = step ? step.table + ' → ' + step.right + ': ' : '';
-    this.showToast(pair + msg, d.status === 'error' ? 'danger' : 'warning');
+    this.showToast(pair + msg, d.status === 'error' ? 'danger' : 'warning', null, { silent: speak });
   };
 
   SideviewEngine.prototype.cardElByName = function (name) {
@@ -4887,6 +5043,8 @@ function sendToShiny(name, value) {
     var d = String(tag.domain).toUpperCase();
     return /^SUPP[A-Z]{2}$/.test(d) || d === 'SUPPQUAL';
   }
+
+  SideviewEngine.prototype.suppIsTag = function (tag) { return suppIsTag(tag); };
 
   function suppCount(n, one, many) {
     var v = Number(n) || 0;
@@ -5099,11 +5257,13 @@ function sendToShiny(name, value) {
   SideviewEngine.prototype.requestSuppCheck = function (parentName, suppName, plan, opts) {
     opts = opts || {};
     var key = suppKeyOf(parentName, suppName);
+    // 'peek': a check for the list view with no step to keep it on: nothing is stored
     var mode = opts.mode || (plan ? 'check' : 'add');
     var rdomain = opts.rdomain || this.suppRdomain(suppName, parentName);
     var id = 'supp' + (++this._suppSeq);
     this.suppReq[key] = id;
-    this.suppPending[id] = { key: key, parent: parentName, supp: suppName, rdomain: rdomain, mode: mode, quiet: !!opts.quiet };
+    this.suppPending[id] = { key: key, parent: parentName, supp: suppName, rdomain: rdomain, mode: mode, quiet: !!opts.quiet,
+      list: !!opts.list };
     if (this.hasR()) {
       var req = { id: id, parent: parentName, supp: suppName };
       // a named object as JSON text: R reads it with jsonlite (an unnamed plan would be dropped)
@@ -5197,8 +5357,9 @@ function sendToShiny(name, value) {
     var P = global.SideviewPipeline;
     if (data.error) {
       var msg = String(data.error);
-      if (ctx.mode === 'add') {
-        this.showToast('Merge ' + ctx.supp + ' into ' + ctx.parent + ': ' + msg, 'danger');
+      if (ctx.mode === 'add' || ctx.mode === 'peek') {
+        if (ctx.mode === 'add') this.showToast('Merge ' + ctx.supp + ' into ' + ctx.parent + ': ' + msg, 'danger');
+        this.listHook('onSuppCheck', { error: msg }, ctx.key, !!ctx.list);
         return;
       }
       this.suppChecks[ctx.key] = { error: msg };
@@ -5206,14 +5367,21 @@ function sendToShiny(name, value) {
       var d = suppNormalize(data);
       delete d.id;
       delete d.ns;
+      if (ctx.mode === 'peek') {
+        this.widenSuppClashes(d, ctx.parent, ctx.key, true);
+        this.listHook('onSuppCheck', d, ctx.key, !!ctx.list);
+        return;
+      }
       if (ctx.mode === 'add') {
         this.widenSuppClashes(d, ctx.parent, ctx.key, true);
         // stored first: adding the step renders the pipeline, which reads it
         this.suppChecks[ctx.key] = d;
         this.reportFocus = { kind: 'supp', id: ctx.key };
+        this.announceSupp(ctx, d);
         this.pipeline.add(P.suppStep(ctx.parent, ctx.supp, ctx.rdomain, d.plan), 'supp');
-        if (d.status === 'error') this.showToast('Merge ' + ctx.supp + ' into ' + ctx.parent + ': ' + this.suppStops(d, ctx.parent), 'warning');
+        if (d.status === 'error') this.showToast('Merge ' + ctx.supp + ' into ' + ctx.parent + ': ' + this.suppStops(d, ctx.parent), 'warning', null, { silent: !ctx.quiet });
         this.renderJoinCheck();
+        this.listHook('onSuppCheck', d, ctx.key, !!ctx.list);
         return;
       }
       var step = this.pipeline.steps.filter(function (s) { return s.key === ctx.key; })[0];
@@ -5221,11 +5389,21 @@ function sendToShiny(name, value) {
       this.widenSuppClashes(d, ctx.parent, ctx.key, false);
       this.suppChecks[ctx.key] = d;
     }
+    this.announceSupp(ctx, this.suppChecks[ctx.key]);
     // a quiet check answered synchronously is drawn by the render that asked; a reply from R comes
     // later and is drawn now (the stored check stops the render from asking again)
     if (ctx.quiet && this._suppSync) return;
     this.renderPipeline();
     this.renderJoinCheck();
+    this.listHook('onSuppCheck', this.suppChecks[ctx.key], ctx.key, !!ctx.list);
+  };
+
+  SideviewEngine.prototype.announceSupp = function (ctx, chk) {
+    // the list view speaks for its own checks
+    if (!chk || ctx.quiet || ctx.list) return;
+    try {
+      this.announce(global.SideviewPipeline.saySupp(chk, ctx.parent, ctx.supp)[0], { assertive: !!chk.error });
+    } catch (e) { /* silent */ }
   };
 
   /** The stored check of a supp step; asks for one (with the step's plan) when there is none. */
@@ -5552,7 +5730,14 @@ function sendToShiny(name, value) {
     }
     this.colProfiles[data.id] = data;
     var t = this.inspectTarget;
+    // spoken only for the column now being inspected, never for a stray or earlier reply
+    if (t && !data.error && JSON.stringify([t.table, t.column]) === data.id) {
+      try {
+        this.announce(global.SideviewPipeline.sayProfile(data, t.column)[0]);
+      } catch (e) { /* silent */ }
+    }
     if (t && JSON.stringify([t.table, t.column]) === data.id) this.renderInspector();
+    this.listHook('onColumnProfile', data);
   };
 
   // Variable label from R (haven/labelled `label` attribute), sent with widget cards.
@@ -5841,6 +6026,7 @@ function sendToShiny(name, value) {
   }
 
   SideviewEngine.prototype.getState = function () {
+    var self = this;
     var pz = this.panzoom;
     var pan = pz && pz.getPan ? pz.getPan() : { x: 0, y: 0 };
     var cards = [];
@@ -5848,6 +6034,10 @@ function sendToShiny(name, value) {
       var el = card.element;
       if (!el) return;
       var w = el.offsetWidth, h = el.offsetHeight;
+      // the list view hides the canvas: the size the card had is kept in _hiddenGeom
+      var hg = self._hiddenGeom && self._hiddenGeom[card.id];
+      if (!w && hg) w = hg.w;
+      if (!h && hg) h = hg.h;
       if (el.classList.contains('is-maximized') && el._svRestore) {
         w = parseFloat(el._svRestore.style.width) || null;
         h = parseFloat(el._svRestore.style.height) || null;
@@ -5882,7 +6072,7 @@ function sendToShiny(name, value) {
         steps: this.pipeline.toJSON().steps,
         pipe: this.pipeline.pipe
       },
-      view: { labels_row: !!this.labelsRow }
+      view: { labels_row: !!this.labelsRow, mode: this.view }
     };
   };
 
@@ -5986,6 +6176,12 @@ function sendToShiny(name, value) {
     }
     if (state.view && typeof state.view === 'object' && typeof state.view.labels_row === 'boolean') {
       this.toggleLabelsRow(state.view.labels_row);
+    }
+    // A saved view.mode wins over the `view` argument. At start it is applied once the first layout is
+    // done (the constructor), later (Open) at once; a missing or unknown mode changes nothing.
+    var vm = state.view && typeof state.view === 'object' ? state.view.mode : null;
+    if (vm === 'canvas' || vm === 'list') {
+      if (this._constructed) this.setView(vm); else this._pendingView = vm;
     }
     // Keep the saved view: the first layout only places cards the state lacks.
     if (out.restored.length) this._restoredView = true;
@@ -6112,9 +6308,157 @@ function sendToShiny(name, value) {
     input.click();
   };
 
-  SideviewEngine.prototype.renderBuilder = function (kind, keepTable) {
-    var pane = this.container.querySelector('.sideview-drawer-content > [data-pane="' + kind + '"]');
+  /** The id of a pipeline step's list item: one per step, safe for any table name. */
+  SideviewEngine.prototype.stepElId = function (s) {
+    var raw = String(s.id);
+    var safe = raw.replace(/[^A-Za-z0-9_-]/g, '_');
+    if (safe !== raw) {
+      // two different ids must not collapse into one: add a hash of the original
+      var h = 0;
+      for (var i = 0; i < raw.length; i++) h = (Math.imul(h, 31) + raw.charCodeAt(i)) | 0;
+      safe += '-' + (h >>> 0).toString(36);
+    }
+    return (typeof this.options.ns === 'string' ? this.options.ns : '') + 'sv-step-' + safe;
+  };
+
+  /** A drawer pane node, wherever it is now (the drawer, or the list view after movePanes('list')). */
+  SideviewEngine.prototype.paneNode = function (id) {
+    return this.container.querySelector('[data-pane="' + id + '"]');
+  };
+
+  /** Does a builder show other tables than the cards now on the canvas? */
+  SideviewEngine.prototype.builderStale = function (pane) {
+    var sel = pane.querySelector('select[data-field="table"]');
+    var names = this.tableSchemas().map(function (t) { return t.name; });
+    if (!names.length) return !!sel;
+    if (!sel) return true;
+    var have = Array.prototype.map.call(sel.options, function (o) { return o.value; });
+    return have.join('\u0001') !== names.join('\u0001');
+  };
+
+  /** List mode: builders follow the cards. Only a builder that shows other tables is drawn again. */
+  SideviewEngine.prototype.refreshBuilders = function () {
+    if (this.view !== 'list' || !this._movedPanes || !this._movedPanes.length) return;
+    var self = this;
+    Object.keys(BUILDER_TABS).forEach(function (kind) {
+      var pane = self.paneNode(kind);
+      if (pane && self.builderStale(pane)) self.renderBuilder(kind, undefined, true);
+    });
+  };
+
+  /** Put one moved pane node back where it came from (used when its list section goes away). */
+  SideviewEngine.prototype.unmovePane = function (node) {
+    var moved = this._movedPanes || [];
+    for (var i = moved.length - 1; i >= 0; i--) {
+      if (moved[i].node !== node) continue;
+      var r = moved.splice(i, 1)[0];
+      if (r.parent) r.parent.insertBefore(r.node, r.next && r.next.parentNode === r.parent ? r.next : null);
+      r.node.style.display = r.display;
+      return true;
+    }
+    return false;
+  };
+
+  /**
+   * Move the drawer's own pane nodes (never clones, so typed text, handlers and focus stay) into the list
+   * view's sections ('list') or back to the exact place they came from ('drawer'). The drawer shell is
+   * hidden while its panes are away. Idempotent: a node already moved is left where it is.
+   */
+  SideviewEngine.prototype.movePanes = function (target) {
+    var self = this;
+    var moved = this._movedPanes || (this._movedPanes = []);
+    var drawer = this.container.querySelector('.sideview-drawer');
+    if (target === 'drawer') {
+      // a stack: the last node moved is the first put back, so every next sibling is in place again
+      while (moved.length) {
+        var r = moved.pop();
+        if (r.parent) r.parent.insertBefore(r.node, r.next && r.next.parentNode === r.parent ? r.next : null);
+        r.node.style.display = r.display;
+      }
+      if (drawer) drawer.removeAttribute('hidden');
+      return;
+    }
+    var lv = this.listView;
+    if (target !== 'list' || !lv || lv._destroyed) return;
+    var put = function (node, host) {
+      if (!node || !host) return;
+      for (var i = 0; i < moved.length; i++) if (moved[i].node === node) return;
+      moved.push({ node: node, parent: node.parentNode, next: node.nextSibling, display: node.style.display });
+      node.style.display = '';
+      host.appendChild(node);
+    };
+    Object.keys(BUILDER_TABS).forEach(function (kind) {
+      var pane = self.paneNode(kind);
+      if (!pane) return;
+      if (!pane.querySelector('.sideview-builder') || self.builderStale(pane)) self.renderBuilder(kind);
+      put(pane, lv.builderHost(kind));
+    });
+    put(this.paneNode('pipeline'), lv.bodyFor('pipeline'));
+    // the code area and its buttons leave the drawer too
+    put(this.container.querySelector('.sideview-code-block'), lv.bodyFor('code'));
+    put(this.container.querySelector('.sideview-drawer-actions'), lv.bodyFor('code'));
+    if (lv.bodyFor('copilot')) put(this.paneNode('chat'), lv.bodyFor('copilot'));
+    if (drawer) drawer.hidden = true;
+  };
+
+  /**
+   * Open a builder (filter, arrange, mutate, recode, summarise) with an optional preset
+   * ({ table, column }). In the list view: focus its heading, fill the selects and focus the first
+   * empty field. On the canvas: open the drawer on its tab (the same preset applies).
+   */
+  SideviewEngine.prototype.openBuilder = function (kind, preset) {
+    if (!BUILDER_TABS[kind]) return false;
+    preset = preset || {};
+    var listMode = this.view === 'list';
+    var heading = null;
+    if (listMode) {
+      this.movePanes('list');
+      heading = this.listView && this.listView.builderHeading(kind);
+    } else {
+      var drawer = this.container.querySelector('.sideview-drawer');
+      if (drawer) drawer.classList.remove('collapsed');
+      this.activateDrawerTab(kind);
+    }
+    var pane = this.paneNode(kind);
+    if (!pane) return false;
+    var tableSel = pane.querySelector('select[data-field="table"]');
+    if (preset.table && tableSel && tableSel.value !== preset.table &&
+        Array.prototype.some.call(tableSel.options, function (o) { return o.value === preset.table; })) {
+      this.renderBuilder(kind, preset.table);
+    }
+    var builder = pane.querySelector('.sideview-builder');
+    if (builder && preset.column) {
+      var colSel = builder.querySelector('[data-field="col"]');
+      if (colSel && Array.prototype.some.call(colSel.options, function (o) { return o.value === preset.column; })) {
+        colSel.value = preset.column;
+      }
+    }
+    if (listMode && heading) { try { heading.focus({ preventScroll: false }); } catch (e) { heading.focus(); } }
+    var fields = builder ? Array.prototype.slice.call(builder.querySelectorAll('input[data-field], textarea[data-field]')) : [];
+    var empty = fields.filter(function (f) { return !f.value; })[0] || fields[0] || null;
+    if (empty) { try { empty.focus({ preventScroll: false }); } catch (e2) { empty.focus(); } }
+    return true;
+  };
+
+  /**
+   * Draw a builder. With preserve, what was typed or picked in the old one comes back (by field name and
+   * position; a choice that no longer exists is dropped), and so does focus.
+   */
+  SideviewEngine.prototype.renderBuilder = function (kind, keepTable, preserve) {
+    var pane = this.paneNode(kind);
     if (!pane) return;
+    var saved = null, focusAt = null;
+    if (preserve) {
+      saved = [];
+      var seen = {};
+      var act = document.activeElement;
+      pane.querySelectorAll('[data-field]').forEach(function (f) {
+        var n = seen[f.dataset.field] = (seen[f.dataset.field] || 0) + 1;
+        saved.push({ f: f.dataset.field, n: n, v: f.value });
+        if (f === act) focusAt = { f: f.dataset.field, n: n };
+      });
+      saved.rows = pane.querySelectorAll('.sideview-builder-row').length;
+    }
     var schemas = this.tableSchemas();
     if (!schemas.length) {
       pane.innerHTML = '<p class="sideview-drawer-desc">Add a table to the canvas to build steps.</p>';
@@ -6162,6 +6506,30 @@ function sendToShiny(name, value) {
     pane.innerHTML = '<div class="sideview-builder" data-builder="' + kind + '">' + head + body +
       '<div class="sideview-builder-actions"><button type="button" class="sideview-btn sideview-btn-primary" data-builder-action="submit">' +
       submit + '</button></div></div>';
+    if (saved) {
+      var b = pane.querySelector('.sideview-builder');
+      var rowsEl = b && b.querySelector('.sideview-builder-rows');
+      while (rowsEl && b.querySelectorAll('.sideview-builder-row').length < saved.rows) {
+        rowsEl.insertAdjacentHTML('beforeend', this.builderRow(kind, cols));
+      }
+      var cnt = {};
+      var byKey = {};
+      b.querySelectorAll('[data-field]').forEach(function (f) {
+        var n = cnt[f.dataset.field] = (cnt[f.dataset.field] || 0) + 1;
+        byKey[f.dataset.field + '#' + n] = f;
+      });
+      saved.forEach(function (sv) {
+        var f = byKey[sv.f + '#' + sv.n];
+        if (!f || sv.f === 'table') return;
+        if (f.tagName === 'SELECT' && !f.multiple) {
+          if (Array.prototype.some.call(f.options, function (o) { return o.value === sv.v; })) f.value = sv.v;
+        } else if (f.tagName !== 'SELECT') {
+          f.value = sv.v;
+        }
+      });
+      var back = focusAt && byKey[focusAt.f + '#' + focusAt.n];
+      if (back) { try { back.focus({ preventScroll: true }); } catch (e) { back.focus(); } }
+    }
   };
 
   function fieldValue(root, name) {
@@ -6423,6 +6791,7 @@ function sendToShiny(name, value) {
           code: arrangeCode
         });
       }
+      self.listHook('renderTable', cardEl.dataset.cardName || 'df');
     } else {
       // Fallback for non-virtualized table
       var rows = Array.from(tbody.querySelectorAll('tr'));
@@ -6654,6 +7023,7 @@ function sendToShiny(name, value) {
       }
       btn.classList.remove('active');
       self.pipeline.removeKey(headerFilterKey(cardName), 'filter');
+      self.listHook('renderTable', cardName);
       closePopover();
       self.updateConnectors();
       self.showToast('Cleared filter on ' + colName, 'info');
@@ -6741,6 +7111,7 @@ function sendToShiny(name, value) {
         condition: condExpr,
         code: filterCode
       });
+      self.listHook('renderTable', cardName);
 
       closePopover();
       self.updateConnectors();
@@ -6781,15 +7152,229 @@ function sendToShiny(name, value) {
     }
   };
 
+  // ---- list view (text-first alternative to the canvas) ---------------------------------
+
+  SideviewEngine.prototype.noCode = function () { return isNoCode(this.generatedCode); };
+
+  SideviewEngine.prototype.iconHtml = function (name) { return icon(name); };
+
+  // Is there an LLM behind the Copilot? A module without llm_fn hides it (sv-no-llm); a module
+  // with one shows it; otherwise R must say so with data-sv-llm="true".
+  SideviewEngine.prototype.llmAvailable = function () {
+    var c = this.container;
+    if (c.classList.contains('sv-no-llm')) return false;
+    if (c.getAttribute && c.getAttribute('data-sv-llm') === 'true') return true;
+    return typeof this.options.ns === 'string';
+  };
+
+  // A reply hook for the list view; a failing hook never breaks the reply handler.
+  SideviewEngine.prototype.listHook = function (name) {
+    var lv = this.listView;
+    if (!lv || typeof lv[name] !== 'function') return;
+    try { lv[name].apply(lv, Array.prototype.slice.call(arguments, 1)); } catch (e) {
+      if (typeof console !== 'undefined' && console.warn) console.warn('[Sideview] list view ' + name + ':', e);
+    }
+  };
+
+  /**
+   * Switch between the canvas and the list view. The hidden side leaves the accessibility tree
+   * (hidden + aria-hidden), the toggles follow, the switch is announced and focus moves to the list's
+   * first heading (or back to the container). opts.silent (the starting view): none of the last two.
+   */
+  SideviewEngine.prototype.setView = function (mode, opts) {
+    if (mode !== 'canvas' && mode !== 'list') return this.view;
+    if (mode === this.view || this._destroyed) return this.view;
+    var self = this;
+    var silent = !!(opts && opts.silent);
+    var list = mode === 'list';
+    if (list) {
+      if (!this.listView) {
+        if (typeof global.SideviewListView !== 'function') {
+          if (typeof console !== 'undefined' && console.warn) console.warn('[Sideview] sv-listview.js is not loaded');
+          return this.view;
+        }
+        this.listView = new global.SideviewListView(this);
+      }
+      // a maximized card and an open popover belong to the canvas
+      this.closeActivePopover();
+      this.cards.forEach(function (card) {
+        var el = card.element;
+        if (el && el.classList.contains('is-maximized')) {
+          self.toggleMaximizeCard(el, el.querySelector('[data-action="maximize-card"]'));
+        }
+      });
+      // a hidden card measures 0: remember the sizes so a saved state keeps them
+      var geom = {};
+      this.cards.forEach(function (card) {
+        var el = card.element;
+        if (el && el.offsetWidth) geom[card.id] = { w: el.offsetWidth, h: el.offsetHeight };
+      });
+      this._hiddenGeom = geom;
+    }
+    this.view = mode;
+    [this.viewport, this.minimap, this.svg, this.hitSvg].forEach(function (el) {
+      if (!el) return;
+      el.hidden = list;
+      if (list) el.setAttribute('aria-hidden', 'true'); else el.removeAttribute('aria-hidden');
+    });
+    if (this.listView) {
+      this.listView.el.hidden = !list;
+      if (list) { this.listView.refresh(); this.movePanes('list'); } else this.movePanes('drawer');
+    }
+    var toggles = this.container.querySelectorAll('[data-sv-view-toggle]');
+    for (var i = 0; i < toggles.length; i++) toggles[i].setAttribute('aria-pressed', list ? 'true' : 'false');
+    if (!list) {
+      this._hiddenGeom = null;
+      // the first layout was deferred because the list view was showing: do it now the canvas is visible
+      if (this._needsInitialLayout && this.container.clientWidth > 0) {
+        this._needsInitialLayout = false;
+        if (this.arrangeCards(true) && !this._restoredView) this.fitAll({ maxScale: 1, minScale: READABLE_SCALE });
+        this.scheduleSnapshot();
+      }
+      // the tables were hidden while their rows may have changed: measure and draw them again
+      this.cards.forEach(function (card) {
+        var vt = card.element && card.element._virtualTable;
+        if (vt && vt.render) vt.render();
+      });
+      this.scheduleConnectorUpdate();
+    }
+    this.container.classList.toggle('sv-view-list', list);
+    if (!silent) {
+      this.announce(list ? 'List view' : 'Canvas view');
+      if (list) {
+        var h = this.listView && this.listView.el.querySelector('h2');
+        if (h) { try { h.focus({ preventScroll: false }); } catch (e) { h.focus(); } }
+      } else {
+        try { this.container.focus({ preventScroll: true }); } catch (e) { this.container.focus(); }
+      }
+      this.scheduleSnapshot();
+    }
+    return this.view;
+  };
+
+  // ---- live-region announcements ----------------------------------------------------
+
+  SideviewEngine.prototype.ensureAnnouncer = function () {
+    var el = this.container.querySelector('.sideview-announcer');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'sideview-announcer sv-sr-only';
+      el.setAttribute('aria-live', 'polite');
+      el.setAttribute('role', 'status');
+      el.setAttribute('aria-atomic', 'true');
+      this.container.appendChild(el);
+    }
+    return el;
+  };
+
+  // Queue text for the polite live region. Messages are at least 500 ms apart; text equal to the
+  // previous message is cleared and set again 50 ms later so a screen reader speaks it again.
+  // The queue keeps the latest 3 messages, and a message with opts.coalesce replaces a queued one with
+  // the same tag, so a burst never reads stale text. opts.assertive speaks at once through a
+  // role="alert" region (used for errors). Every call is logged (announceLog, the last 50).
+  SideviewEngine.prototype.announce = function (text, opts) {
+    if (this._annDestroyed) return;
+    if (text === undefined || text === null || text === '') return;
+    text = String(text);
+    this.announceLog.push(text);
+    if (this.announceLog.length > 50) this.announceLog.shift();
+    if (opts && opts.assertive) { this.speakAlert(text); return; }
+    var tag = opts && opts.coalesce ? opts.coalesce : null;
+    if (tag) this._annQueue = this._annQueue.filter(function (m) { return m.tag !== tag; });
+    this._annQueue.push({ text: text, tag: tag });
+    while (this._annQueue.length > 3) this._annQueue.shift();
+    this.pumpAnnouncements();
+  };
+
+  SideviewEngine.prototype.speakAlert = function (text) {
+    var el = this.container.querySelector('.sideview-announcer-alert');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'sideview-announcer-alert sv-sr-only';
+      el.setAttribute('role', 'alert');
+      this.container.appendChild(el);
+    }
+    el.textContent = '';
+    setTimeout(function () { el.textContent = text; }, 50);
+  };
+
+  SideviewEngine.prototype.pumpAnnouncements = function () {
+    var self = this;
+    if (this._annTimer || !this._annQueue.length || this._annDestroyed) return;
+    var wait = Math.max(0, this._annNextAt - Date.now());
+    this._annTimer = setTimeout(function () {
+      self._annTimer = null;
+      if (self._annDestroyed) return;
+      var item = self._annQueue.shift();
+      if (item === undefined) return;
+      var msg = item.text;
+      var el = self.ensureAnnouncer();
+      var repeat = msg === self._annPrev;
+      self._annPrev = msg;
+      self._annNextAt = Date.now() + 500 + (repeat ? 50 : 0);
+      if (repeat) {
+        el.textContent = '';
+        if (self._annRepTimer) clearTimeout(self._annRepTimer);
+        self._annRepTimer = setTimeout(function () {
+          self._annRepTimer = null;
+          if (!self._annDestroyed) el.textContent = msg;
+        }, 50);
+      } else {
+        el.textContent = msg;
+      }
+      self.pumpAnnouncements();
+    }, wait);
+  };
+
+  var STEP_KIND_WORDS = {
+    join: 'Join', filter: 'Filter', arrange: 'Sort', mutate: 'Mutate', recode: 'Recode',
+    summarise: 'Summarise', pivot: 'Reshape', supp: 'SUPP merge', custom: 'Custom'
+  };
+
+  // "Join step added. 3 steps." / "Undone. 2 steps." / "Redone. 3 steps."
+  SideviewEngine.prototype.stepAnnouncement = function (kind, verb, count) {
+    var n = count + (count === 1 ? ' step.' : ' steps.');
+    if (verb === 'undone') return 'Undone. ' + n;
+    if (verb === 'redone') return 'Redone. ' + n;
+    var word = Object.prototype.hasOwnProperty.call(STEP_KIND_WORDS, kind) ? STEP_KIND_WORDS[kind] : 'Pipeline';
+    return word + ' step ' + verb + '. ' + n;
+  };
+
+  // Called from the pipeline's change emit: say what changed, by diffing the step list.
+  SideviewEngine.prototype.announceStepChange = function (label) {
+    var steps = (this.pipeline && this.pipeline.steps) || [];
+    var now = steps.map(function (s) { return { id: s.id, kind: s.kind }; });
+    var prev = this._annSteps;
+    this._annSteps = now;
+    if (label === 'checks' || label === 'pipe' || label === 'tables' || label === 'load' || label === 'refresh') return;
+    var n = now.length;
+    var co = { coalesce: 'step' };
+    if (label === 'undo') { this.announce(this.stepAnnouncement(null, 'undone', n), co); return; }
+    if (label === 'redo') { this.announce(this.stepAnnouncement(null, 'redone', n), co); return; }
+    var ids = function (a) { return a.map(function (x) { return x.id; }); };
+    var added = now.filter(function (x) { return ids(prev).indexOf(x.id) < 0; });
+    var removed = prev.filter(function (x) { return ids(now).indexOf(x.id) < 0; });
+    if (added.length && !removed.length) {
+      var self = this;
+      added.forEach(function (x) { if (x.kind === 'join') self._annWatch[x.id] = true; });
+      this.announce(this.stepAnnouncement(added.length === 1 ? added[0].kind : null, 'added', n), co);
+    } else if (removed.length && !added.length) {
+      if (removed.length > 1 || label === 'clear') this.announce('Steps cleared.', co);
+      else this.announce(this.stepAnnouncement(removed[0].kind, 'removed', n), co);
+    }
+  };
+
   // `key` (optional) names a toast that is updated in place instead of stacked, e.g. progress.
-  SideviewEngine.prototype.showToast = function (message, type, key) {
+  SideviewEngine.prototype.showToast = function (message, type, key, opts) {
     var stack = this.container.querySelector('.sideview-toast-stack');
     if (!stack) {
       stack = document.createElement('div');
       stack.className = 'sideview-toast-stack';
-      stack.setAttribute('aria-live', 'polite');
       this.container.appendChild(stack);
     }
+    // Errors are alerts (spoken at once); every other toast is spoken through the polite announcer.
+    var isError = type === 'danger' || type === 'error';
+    var silent = opts && opts.silent;
     var toast = null;
     if (key) {
       var live = stack.querySelectorAll('.sideview-toast');
@@ -6797,24 +7382,37 @@ function sendToShiny(name, value) {
         if (live[i].getAttribute('data-toast-key') === String(key)) toast = live[i];
       }
     }
+    if (toast && isError && toast.getAttribute('data-toast-type') !== String(type || '')) {
+      // a new alert element, so role="alert" is announced
+      clearTimeout(toast._hideTimer);
+      clearTimeout(toast._removeTimer);
+      toast.remove();
+      toast = null;
+    }
     if (toast) {
       clearTimeout(toast._hideTimer);
       clearTimeout(toast._removeTimer);
+      var typeChanged = toast.getAttribute('data-toast-type') !== String(type || '');
       toast.className = 'sideview-toast visible ' + (type ? 'sideview-toast-' + type : '');
       toast.textContent = message;
+      toast.setAttribute('data-toast-type', type || '');
+      if (isError) toast.setAttribute('role', 'alert'); else toast.removeAttribute('role');
+      if (!isError && !silent && typeChanged) this.announce(message);
     } else {
       toast = document.createElement('div');
       toast.className = 'sideview-toast ' + (type ? 'sideview-toast-' + type : '');
       toast.textContent = message;
-      toast.setAttribute('role', 'status');
+      toast.setAttribute('data-toast-type', type || '');
+      if (isError) toast.setAttribute('role', 'alert');
       if (key) toast.setAttribute('data-toast-key', String(key));
       stack.appendChild(toast);
       setTimeout(function () {
         toast.classList.add('visible');
       }, 10);
+      if (!isError && !silent) this.announce(message);
     }
     // Errors carry a fix hint, so they stay up longer.
-    var ttl = (type === 'danger' || type === 'warning') ? 9000 : 4500;
+    var ttl = (isError || type === 'warning') ? 9000 : 4500;
     toast._hideTimer = setTimeout(function () {
       toast.classList.remove('visible');
       toast._removeTimer = setTimeout(function () { toast.remove(); }, 300);
@@ -6929,6 +7527,12 @@ function sendToShiny(name, value) {
 
       chatMessages.appendChild(assistantBubble);
       chatMessages.scrollTop = chatMessages.scrollHeight;
+      if (hasCode) {
+        var nLines = data.code.trim().split(/\r?\n/).length;
+        self.announce('Copilot replied, ' + nLines + (nLines === 1 ? ' line' : ' lines') + ' of code.');
+      } else {
+        self.announce('Copilot replied.');
+      }
     });
 
     // Row window for a large card (reply to sideview_rows_request)
@@ -6953,6 +7557,7 @@ function sendToShiny(name, value) {
     self.onMessage('sideview_suggested_mappings', function (data) {
       if (data) {
         self.renderSuggestedSplines(data);
+        self.listHook('onSuggested', data);
       }
     });
 
@@ -6980,13 +7585,20 @@ function sendToShiny(name, value) {
     // Cards, state and highlights driven from R (a module's sideview_proxy)
     self.onMessage('sideview_card_add', function (data) {
       if (!data || !data.card) return;
+      var known = !!(data.card.name && self.cardMetaByName(data.card.name));
       self.addCardFromR(data.card);
+      // the first population (initial) and a name already on the canvas are not announced
+      if (!data.initial && !known && data.card.name && self.cardMetaByName(data.card.name)) {
+        self.announce('Table ' + data.card.name + ' added.');
+      }
     });
     self.onMessage('sideview_card_replace', function (data) {
-      if (data && data.card) self.replaceCard(data.card);
+      if (data && data.card) {
+        if (self.replaceCard(data.card)) self.announce('Table ' + data.card.name + ' replaced.');
+      }
     });
     self.onMessage('sideview_card_remove', function (data) {
-      if (data) self.removeCard(data.name);
+      if (data && self.removeCard(data.name)) self.announce('Table ' + data.name + ' removed.');
     });
     self.onMessage('sideview_state_set', function (data) {
       if (!data || data.state === undefined || data.state === null) return;
@@ -7004,6 +7616,7 @@ function sendToShiny(name, value) {
     // A module started without llm_fn: hide the AI bar and the Copilot tab.
     self.onMessage('sideview_llm', function (data) {
       self.container.classList.toggle('sv-no-llm', !!data && data.enabled === false);
+      if (self.listView) self.listView.updateSections();
     });
     self.onMessage('sideview_highlight', function (data) {
       if (data) self.highlightColumns(data.name, data.cols);

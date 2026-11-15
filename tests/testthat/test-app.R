@@ -54,7 +54,7 @@ test_that("sideview_ui returns shiny.tag.list with proper dependencies and struc
   
   sv_dep <- deps[[which(dep_names == "sideview-core")[1]]]
   expect_equal(sv_dep$stylesheet, "sideview.css")
-  expect_equal(sv_dep$script, c("sv-panzoom.js", "sv-pipeline.js", "sideview.js"))
+  expect_equal(sv_dep$script, c("sv-panzoom.js", "sv-pipeline.js", "sv-listview.js", "sideview.js"))
   
   # Render UI to character to verify required DOM elements
   html_rendered <- as.character(ui)
@@ -1221,4 +1221,19 @@ test_that("sideview_server refuses a bad cdisc argument", {
   expect_error(sideview_server(list(), cdisc = TRUE), "cdisc")
   expect_error(sideview_server(list(), cdisc = c(a = "AE", a = "LB")), "duplicate")
   expect_no_error(sideview_server(list(), cdisc = c(a = "AE")))
+})
+
+test_that("the container tag carries data-sv-shortcuts only when the option is FALSE", {
+  expect_false(grepl("data-sv-shortcuts", as.character(sideview_ui(mtcars)), fixed = TRUE))
+  withr::with_options(list(sideview.shortcuts = FALSE),
+    expect_match(as.character(sideview_ui(mtcars)), "data-sv-shortcuts=\"false\"", fixed = TRUE))
+})
+
+test_that("view = sets data-sv-view on the container and is validated", {
+  expect_true(grepl('data-sv-view="canvas"', as.character(sideview_ui(mtcars)), fixed = TRUE))
+  expect_true(grepl('data-sv-view="list"', as.character(sideview_ui(mtcars, view = "list")), fixed = TRUE))
+  withr::with_options(list(sideview.view = "list"),
+    expect_true(grepl('data-sv-view="list"', as.character(sideview_ui(mtcars)), fixed = TRUE)))
+  expect_error(sideview(mtcars, view = "grid", run = FALSE), "should be one of")
+  expect_s3_class(sideview(mtcars, view = "list", run = FALSE), "shiny.appobj")
 })

@@ -102,6 +102,8 @@ values, data-quality flags) and export a data dictionary.
   : Column Profile
 - [`sv_codebook()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_codebook.md)
   : Codebook (Data Dictionary)
+- [`sv_describe()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_describe.md)
+  : Describe tables as plain text
 
 ## Canvas State Persistence & Cloud Sharing
 

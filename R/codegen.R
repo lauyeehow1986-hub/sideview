@@ -344,14 +344,21 @@ sv_detect_discrepancies <- function(x, y, max_distance = 2) {
     match_rate = match_rate
   )
   
-  list(
+  structure(list(
     exact_matches = exact_matches,
     fuzzy_matches = fuzzy_matches,
     only_in_x = only_in_x,
     only_in_y = only_in_y,
     stats = stats,
     match_stats = stats
-  )
+  ), class = "sv_discrepancies")
+}
+
+#' @export
+print.sv_discrepancies <- function(x, ...) {
+  cat(sv_say_discrepancies(x), sep = "
+")
+  invisible(x)
 }
 
 #' Generate tidyverse Code for Categorical Recoding and Discrepancy Crosswalks

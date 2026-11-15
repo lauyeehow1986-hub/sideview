@@ -109,7 +109,7 @@ The rules are also available as a function, and
 [`sv_suggest_mappings()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_suggest_mappings.md)
 returns them first, with `group` and `kind` columns:
 
-[`sv_suggest_mappings`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_suggest_mappings.md)`(`[`list`](https://rdrr.io/r/base/list.html)`(``dm ``=`` ``dm``, ae ``=`` ``ae``, adsl ``=`` ``adsl``)``)``[``, `[`c`](https://rdrr.io/r/base/c.html)`(``"from_table"``, ``"to_table"``, ``"from_col"``, ``"to_col"``, ``"kind"``)``]`` ``#> from_table to_table from_col to_col kind`` ``#> 1 ae dm STUDYID STUDYID subject`` ``#> 2 ae dm USUBJID USUBJID subject`` ``#> 3 adsl dm STUDYID STUDYID subject`` ``#> 4 adsl dm USUBJID USUBJID subject`
+[`sv_suggest_mappings`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_suggest_mappings.md)`(`[`list`](https://rdrr.io/r/base/list.html)`(``dm ``=`` ``dm``, ae ``=`` ``ae``, adsl ``=`` ``adsl``)``)``[``, `[`c`](https://rdrr.io/r/base/c.html)`(``"from_table"``, ``"to_table"``, ``"from_col"``, ``"to_col"``, ``"kind"``)``]`` ``#> 4 suggested joins.`` ``#> ae.STUDYID to dm.STUDYID, confidence : .`` ``#> ae.USUBJID to dm.USUBJID, confidence : .`` ``#> adsl.STUDYID to dm.STUDYID, confidence : .`` ``#> adsl.USUBJID to dm.USUBJID, confidence : .`
 
 ### Key checks
 

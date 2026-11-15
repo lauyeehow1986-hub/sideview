@@ -1304,7 +1304,8 @@ sv_lazy_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_na
     unmatched_x = unmatched_x,
     unmatched_y = unmatched_y,
     type_issues = type_issues,
-    hints = list()
+    hints = list(),
+    x_name = x_name, y_name = y_name
   )
   out$strict_args <- sv_join_strict_args(core, n_x, n_y, rule)
   if (!is.null(rule)) {
@@ -1462,20 +1463,21 @@ sv_lazy_supp_check <- function(parent, supp, parent_name = "parent", supp_name =
   if (is.null(rdomain)) rdomain <- from_name
 
   supp_cols <- sv_lazy_names(supp)
+  classify <- function(chk) sv_supp_classify(chk, parent_name, supp_name)
   err <- sv_supp_cols_error(supp_cols, supp_name)
-  if (!is.null(err)) return(err)
+  if (!is.null(err)) return(classify(err))
   parent_names <- sv_lazy_names(parent)
-  if (!"USUBJID" %in% parent_names) return(list(error = paste0("Not in ", parent_name, ": USUBJID")))
+  if (!"USUBJID" %in% parent_names) return(classify(list(error = paste0("Not in ", parent_name, ": USUBJID"))))
 
   rows <- sv_lazy_supp_rows(supp, rdomain)
   side <- sv_supp_side(rows$data, supp_name, rdomain)
-  if (!is.null(side$error)) return(side)
+  if (!is.null(side$error)) return(classify(side))
   if (!is.null(rows$n_other)) side$n_other <- rows$n_other
 
   levels_ <- side$levels[nzchar(side$levels)]
   keys <- intersect(c("STUDYID", "USUBJID"), intersect(parent_names, supp_cols))
   types <- sv_supp_types(side$levels, sv_lazy_zero(parent, c(levels_, keys)), parent_name)
-  if (is.list(types)) return(types)
+  if (is.list(types)) return(classify(types))
   types <- sv_lazy_supp_wide_int(parent, types)
   conv <- sv_supp_convert_side(side, types, keys)
 
@@ -1491,8 +1493,8 @@ sv_lazy_supp_check <- function(parent, supp, parent_name = "parent", supp_name =
     n_parent <- sv_lazy_count(dplyr::collect(dplyr::summarise(parent, n = dplyr::n()))$n)
     pv <- as.data.frame(dplyr::collect(utils::head(parent, sample_n)), stringsAsFactors = FALSE)
   }
-  sv_supp_finish(side, conv, matched, types, keys, parent_names, n_parent, pv, plan, sample_n,
-                 from_name == rdomain)
+  classify(sv_supp_finish(side, conv, matched, types, keys, parent_names, n_parent, pv, plan, sample_n,
+                          from_name == rdomain))
 }
 
 #' A double as an exact SQL literal
@@ -1778,7 +1780,7 @@ sv_lazy_column_profile <- function(tbl, column, top_n = 10L, bins = 20L, con_env
 
   counts <- sv_lazy_issue_counts(tbl, column, kind, out, base = base)
   out$issues <- sv_format_issues(out, counts)
-  out
+  sv_profile_classify(out, column)
 }
 
 #' The time zone of an Arrow timestamp type, or `NULL` when it has none

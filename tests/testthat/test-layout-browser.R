@@ -208,12 +208,14 @@ test_that("zoom label tracks the canvas scale", {
   b <- sv_shared_page()
   r <- sv_js(b, "(async () => {
     const zin = document.querySelector('[data-action=\"zoom-in\"]');
+    const before = document.querySelector('[data-action=\"zoom-reset\"]').textContent.trim();
     zin.click(); await new Promise(r => setTimeout(r, 300));
     const label = document.querySelector('[data-action=\"zoom-reset\"]').textContent.trim();
     document.querySelector('[data-action=\"zoom-reset\"]').click(); await new Promise(r => setTimeout(r, 300));
-    return { label: label, after: document.querySelector('[data-action=\"zoom-reset\"]').textContent.trim() };
+    return { before: before, label: label, after: document.querySelector('[data-action=\"zoom-reset\"]').textContent.trim() };
   })()")
-  expect_false(identical(r$label, "100%"))
+  # the label follows the scale (the fit scale at start depends on the toolbar's size, so it is not fixed)
+  expect_false(identical(r$label, r$before))
   expect_equal(r$after, "100%")
 })
 
@@ -2685,5 +2687,55 @@ test_that("the saved widget merges a SUPP card in the browser without R", {
   code <- sv_js(b, sprintf("%s.pipeline.compose()", eng))
   expect_no_error(parse(text = code))
   expect_equal(sv_supp_run(code, ae = f$ae, suppae = f$suppae2), sv_supp_want(f), info = code)
+  expect_length(attr(b, "sv_errors")(), 0)
+})
+
+test_that("a widget that starts in the list view inside a hidden container lays out the canvas once it is shown", {
+  skip_if_no_browser()
+  env <- new.env()
+  eval(parse(text = sv_fixture_code), envir = env)
+  dir <- withr::local_tempdir()
+  file <- file.path(dir, "hidden-list.html")
+  w <- local(sideview_widget(patients, visits, view = "list"), envir = env)
+  suppressMessages(save_sideview(w, file, selfcontained = FALSE))
+  # a closed tab or <details>: the page starts with the widget at display:none
+  html <- paste(readLines(file, warn = FALSE), collapse = "\n")
+  html <- sub("</head>", "<style id=\"sv-test-hide\">.html-widget { display: none !important; }</style></head>",
+              html, fixed = TRUE)
+  writeLines(html, file)
+  url <- paste0("file:///", gsub("\\\\", "/", normalizePath(file)))
+  b <- sv_open_page(url, wait_for = "!!document.querySelector('.sideview-container')._sideviewInstance")
+  withr::defer(try(b$close(), silent = TRUE))
+  expect_true(attr(b, "sv_ready"))
+
+  r <- sv_js(b, "(async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const c = document.querySelector('.sideview-container');
+    const eng = c._sideviewInstance;
+    const out = { startView: eng.view, hiddenWidth: c.clientWidth };
+    document.getElementById('sv-test-hide').remove();   // the tab is shown
+    await sleep(400);
+    out.shownView = eng.view;
+    c.querySelector('[data-sv-view-toggle]').click();    // List view -> Canvas
+    await sleep(400);
+    out.view = eng.view;
+    out.rects = [...c.querySelectorAll('.sideview-card')].map(el => {
+      const r = el.getBoundingClientRect();
+      return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, w: r.width, h: r.height };
+    });
+    return out;
+  })()")
+
+  expect_identical(r$startView, "list")
+  expect_equal(r$hiddenWidth, 0)
+  expect_identical(r$view, "canvas")
+  expect_gte(length(r$rects), 2)
+  for (k in seq_along(r$rects)) {
+    expect_gt(r$rects[[k]]$w, 0)
+    expect_gt(r$rects[[k]]$h, 0)
+  }
+  for (i in seq_along(r$rects)) for (j in seq_along(r$rects)) {
+    if (i < j) expect_false(rect_overlap(r$rects[[i]], r$rects[[j]]), info = paste("cards", i, j))
+  }
   expect_length(attr(b, "sv_errors")(), 0)
 })

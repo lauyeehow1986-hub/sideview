@@ -17,7 +17,7 @@ read back with the reactives of the returned proxy."><meta property="og:image" c
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.7.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.8.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -27,6 +27,7 @@ read back with the reactives of the returned proxy."><meta property="og:image" c
     <div id="navbar" class="collapse navbar-collapse ms-3">
       <ul class="navbar-nav me-auto"><li class="nav-item"><a class="nav-link" href="../articles/tour.html">Visual tour</a></li>
 <li class="nav-item"><a class="nav-link" href="../articles/cdisc.html">CDISC</a></li>
+<li class="nav-item"><a class="nav-link" href="../articles/screen-reader.html">Screen reader</a></li>
 <li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
@@ -55,7 +56,13 @@ read back with the reactives of the returned proxy.</p>
 
     <div class="section level2">
     <h2 id="ref-usage">Usage<a class="anchor" aria-label="anchor" href="#ref-usage"></a></h2>
-    <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">sideviewUI</span><span class="op">(</span><span class="va">id</span>, height <span class="op">=</span> <span class="st">"600px"</span>, title <span class="op">=</span> <span class="cn">NULL</span>, theme <span class="op">=</span> <span class="st">"auto"</span><span class="op">)</span></span>
+    <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">sideviewUI</span><span class="op">(</span></span>
+<span>  <span class="va">id</span>,</span>
+<span>  height <span class="op">=</span> <span class="st">"600px"</span>,</span>
+<span>  title <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  theme <span class="op">=</span> <span class="st">"auto"</span>,</span>
+<span>  view <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/options.html" class="external-link">getOption</a></span><span class="op">(</span><span class="st">"sideview.view"</span>, <span class="st">"canvas"</span><span class="op">)</span></span>
+<span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu">sideviewServer</span><span class="op">(</span><span class="va">id</span>, cards <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>, state <span class="op">=</span> <span class="cn">NULL</span>, llm_fn <span class="op">=</span> <span class="cn">NULL</span>, cdisc <span class="op">=</span> <span class="st">"auto"</span><span class="op">)</span></span></code></pre></div>
     </div>
@@ -78,6 +85,13 @@ read back with the reactives of the returned proxy.</p>
 
 <dt id="arg-theme">theme<a class="anchor" aria-label="anchor" href="#arg-theme"></a></dt>
 <dd><p><code>"auto"</code>, <code>"light"</code>, <code>"dark"</code>, an <code><a href="sv_theme.html">sv_theme()</a></code> or a <code><a href="https://rstudio.github.io/bslib/reference/bs_theme.html" class="external-link">bslib::bs_theme()</a></code>.</p></dd>
+
+
+<dt id="arg-view">view<a class="anchor" aria-label="anchor" href="#arg-view"></a></dt>
+<dd><p>Starting view: <code>"canvas"</code> (default, the pan/zoom canvas) or
+<code>"list"</code> (a text-first list of the tables, for keyboard and screen-reader
+use). The default is <code>getOption("sideview.view", "canvas")</code>. A workspace
+restored later (Open) that records a view switches to it.</p></dd>
 
 
 <dt id="arg-cards">cards<a class="anchor" aria-label="anchor" href="#arg-cards"></a></dt>

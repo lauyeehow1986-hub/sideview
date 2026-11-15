@@ -21,6 +21,8 @@ test_that("ready sends every card in store order with ns", {
     expect_equal(vapply(adds, function(m) m$message$card$name, ""), c("visits", "labs"))
     for (m in session$userData$custom_messages) expect_identical(m$message$ns, session$ns(""))
     expect_true(all(vapply(adds, function(m) isTRUE(m$message$card$remote), TRUE)))
+    # the ready-time population is flagged initial, so the browser does not announce it
+    expect_true(all(vapply(adds, function(m) isTRUE(m$message$initial), TRUE)))
     expect_true(all(vapply(adds, function(m) nrow(m$message$card$data) <= 500L, TRUE)))
   })
 })
@@ -107,6 +109,9 @@ test_that("reactive cards are diffed by name", {
       c("sideview_card_replace b", "sideview_card_add c", "sideview_card_remove a")
     )
     expect_equal(px$cards(), c("b", "c"))
+    # a reactive add is not initial: the browser announces it
+    added <- Filter(function(m) m$type == "sideview_card_add", new)
+    expect_null(added[[1]]$message$initial)
 
     n1 <- length(session$userData$custom_messages)
     rv(list(b = labs[1:3, ], c = mtcars))
@@ -635,4 +640,26 @@ test_that("unknown override names warn once at start for static cards only", {
       session$flushReact()
     })
   )
+})
+
+test_that("sideviewUI carries data-sv-view", {
+  expect_true(grepl('data-sv-view="canvas"', as.character(sideviewUI("a")), fixed = TRUE))
+  expect_true(grepl('data-sv-view="list"', as.character(sideviewUI("a", view = "list")), fixed = TRUE))
+  expect_error(sideviewUI("a", view = "grid"), "should be one of")
+})
+
+test_that("sideviewUI with an invalid sideview.view option errors", {
+  withr::with_options(list(sideview.view = "bogus"),
+    expect_error(sideviewUI("a"), "should be one of"))
+})
+
+test_that("the module chrome renders no code-execution buttons and no gadget LLM signal", {
+  html <- as.character(sideviewUI("cv"))
+  for (label in c("Insert Script", "Run &amp; Exit", "Run in R", "Run Console")) {
+    expect_false(grepl(label, html, fixed = TRUE), info = label)
+  }
+  expect_false(grepl("data-sv-llm", html, fixed = TRUE))
+  # the gadget says it has an LLM behind its Copilot
+  expect_true(grepl('data-sv-llm="true"', as.character(sideview_ui(list(a = mtcars), gadget = TRUE)), fixed = TRUE))
+  expect_false(grepl("data-sv-llm", as.character(sideview_ui(list(a = mtcars))), fixed = TRUE))
 })

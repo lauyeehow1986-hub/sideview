@@ -1,12 +1,88 @@
-# sideview (development version)
+# sideview 0.8.0
+
+Text-first accessibility: a list view that reads top to bottom, results printed as plain sentences, live announcements and
+an accessibility test suite. sideview 0.8.0 is checked with automated WCAG tests (axe) and real-browser keyboard tests; an
+NVDA script is written but has not yet been run; not yet tested by blind users. See the new article "Using sideview with a
+screen reader" and the accessibility feedback issue template.
+
+
+## List view: card changes and the keyboard walk
+
+* A table added, replaced or removed from R (`sv_add_card()`, `sv_replace_card()`, `sv_remove_card()`) updates only that
+  table's section of the list view and is announced ("Table labs replaced."). With no tables the Tables section reads
+  "No tables yet." A table that falls back to its preview now says so in its heading.
+* Everything the canvas does for a join, a filter or a SUPP merge can be done from the keyboard in the list view, and the
+  code it composes is the same. The accessibility tests run axe-core over the canvas and the list view in all three modes,
+  both themes and a phone width, with no accepted exceptions in the list view; on the canvas, axe's target-size rule is
+  accepted because the fit zoom shrinks the 24 px icon buttons (to be fixed in sub-project B).
+
+## List view argument
+- `sideview()`, `sideview_widget()`, `save_sideview()`, `sideview_ui()` and `sideviewUI()` take `view = "canvas"` (default) or
+  `"list"`, set for a session by `options(sideview.view = "list")`. The container carries `data-sv-view` and the widget
+  `options$view`. A saved workspace may now carry `view.mode`; an invalid value is dropped. The list view itself arrives in
+  the next changes.
+
+## List view
+
+* The toolbar has a "List view" toggle (and the Summary section repeats it). The list view shows the tables as text in a
+  normal-flow column that keyboard and screen-reader users can read: a Summary (counts of tables, join steps and pipeline
+  steps, whether code is ready, skip links, Save, Open and the keyboard shortcuts switch) and the headings Tables, Join,
+  Merge SUPP, Transform, Pipeline and Code (and Copilot when a model is set up). The canvas leaves the accessibility
+  tree while the list is shown. Switching is announced ("List view" / "Canvas view") and moves focus to the list's first
+  heading. The single-key shortcuts default to off in the list view.
+* `view = "list"` starts in it. A saved workspace now records the view (`view.mode`) and wins over the `view` argument when
+  it is opened. The section contents arrive in the next changes.
+
+## List view tables
+
+* The Tables section lists every table: a heading ("labs, 5,000 rows by 3 columns, full table.", or "preview of the first
+  50 rows"), one line per column (name, label, kind, and the distinct and missing counts when the card shows them) with Sort,
+  Filter and Inspect buttons, and the rows as a captioned table, 25 a page, with Previous rows, Next rows and Go to row.
+  A page change is announced ("Rows 26 to 50 of 5,000.") and focus stays on the button. Rows follow the canvas sort and
+  filter; a large (lazy) table is read a window at a time from R. Sort announces its result; Inspect writes the profile as
+  sentences under the column. A table with more than 30 columns starts with its columns closed.
+
+## Table ARIA
+
+* Each table on the canvas has a (screen-reader-only) caption with the card name and announces its full size:
+  `aria-rowcount` (rows plus the header), `aria-colcount`, and a row index on every rendered row, so a screen reader says
+  "row 2002 of 5001" while the table shows only a window of it. The counts follow sort and filter.
+
+## Keyboard shortcuts switch
+
+* The `?` list has a "Keyboard shortcuts" switch that turns the single-key shortcuts off (WCAG 2.1.4). The choice is
+  remembered in the browser; if the browser blocks storage it holds for the session. `Ctrl+K` and `Ctrl+Enter` always work.
+* New option `sideview.shortcuts` (default `TRUE`): `FALSE` starts the gadget, widget and module with the shortcuts off.
+  `sideview_widget(options = list(shortcuts = FALSE))` does the same for one widget.
+
+## Live announcements
+
+* The canvas has a polite live region (`.sideview-announcer`, `role="status"`) that says what happened: a finished
+  join, SUPP or column check reads its first sentence, a step added, removed, undone or redone reads
+  "Join step added. 3 steps.", Copy and Insert read "Code copied." / "Code inserted.", and a Copilot reply reads
+  "Copilot replied, 4 lines of code." It works in the gadget, the widget and a module.
+* Toasts are no longer a live region of their own. Error toasts are `role="alert"`; the other toasts are spoken through
+  the announcer.
 
 ## Accessibility test harness
 
 * New real-browser accessibility tests (`test-a11y-browser.R`): every canvas control has an accessible name in the
   gadget, widget and module; Tab reaches the toolbar before the drawer; axe-core (WCAG 2.2 A/AA) finds no
-  violation across the three modes, two themes and two sizes (the on-screen `target-size` rule is accepted for now);
+  violation across the three modes, two themes and two sizes (the list view with none; the canvas has one documented `target-size` exception);
   and today's single-key shortcut and typing rules are pinned (typing in the AI bar never fires a shortcut).
 * Contrast and control-size fixes found by the matrix. A new `a11y` CI job runs these tests with axe-core 4.10.3 pinned.
+* Internal sentence helpers (`sv_say_*` in R, `say*` on `SideviewPipeline`) for plain-text output, with R and JS
+  twins held equal by `test-say.R`.
+* `print()` of a join check (`sv_join_diagnostics()`) now reads as plain sentences: "Join of patients and visits by
+  patient_id is one to many.", match counts with percentages, sample unmatched keys, rows by join type, and each hint
+  or warning as its own sentence. The result also carries `x_name` and `y_name`.
+* `print()` of a SUPP merge check (`sv_supp_check()`), a column profile (`sv_column_profile()`), discrepancies
+  (`sv_detect_discrepancies()`) and suggested joins (`sv_suggest_mappings()`) now reads as plain sentences, for
+  example "Merging suppae into ae adds 1 column: AETRTEM." These results have the classes `sv_supp_check`,
+  `sv_column_profile`, `sv_discrepancies` and `sv_mappings`; they are still a list or data frame, and
+  `as.data.frame()` on the mappings gives the plain data frame. The data the browser receives is unchanged.
+* Results print as sentences. Use `as.data.frame()` (mappings) or `unclass()` (discrepancies, checks, profiles) for the raw object.
+* New `sv_describe()` writes a table sentence and one line per column (label, kind, missing, distinct, ranges, top values) as plain text. It reads lazy duckdb and Arrow tables through their summaries and never collects them.
 
 # sideview 0.7.0
 
@@ -474,3 +550,5 @@ Quarto page), plus new features for clinical data work.
 * Universal S3 normalization engine (`sv_normalize()`) supporting `data.frame`, `tibble`, `base::table`, `matrix`, `gt`, `flextable`, and `htmlwidgets`.
 * Standalone self-contained HTML widget export via `save_sideview()`.
 * Interactive Shiny Gadget and RStudio Addin (`sideview()`, `sideview_addin()`).
+
+- List view columns no longer state counts taken from the canvas badges on lazy, preview or truncated cards (they come from the 50-row preview); a sampled "~N distinct" is never shown as exact. Filter in the list view is `aria-disabled` until the builder exists.

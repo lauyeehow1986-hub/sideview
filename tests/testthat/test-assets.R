@@ -27,7 +27,7 @@ read_asset <- function(filename) {
 }
 
 test_that("all required web asset files exist and are non-empty", {
-  required_files <- c("sv-panzoom.js", "sv-pipeline.js", "sideview.css", "sideview.js")
+  required_files <- c("sv-panzoom.js", "sv-pipeline.js", "sv-listview.js", "sideview.css", "sideview.js")
   for (f in required_files) {
     path <- find_asset(f)
     expect_true(file.exists(path), info = paste("Asset missing:", f, "at", path))
@@ -218,7 +218,12 @@ test_that("VirtualTable JavaScript engine executes 100k row virtualization corre
     "    this.clientHeight = 380;",
     "    this.scrollHeight = 380;",
     "    this._listeners = {};",
+    "    this._attrs = {};",
     "  }",
+    "  setAttribute(k, v) { this._attrs[k] = String(v); }",
+    "  getAttribute(k) { return Object.prototype.hasOwnProperty.call(this._attrs, k) ? this._attrs[k] : null; }",
+    "  hasAttribute(k) { return Object.prototype.hasOwnProperty.call(this._attrs, k); }",
+    "  removeAttribute(k) { delete this._attrs[k]; }",
     "  set className(val) {",
     "    this._className = val;",
     "    (val || '').split(/\\s+/).forEach(c => { if (c) this.classList.add(c); });",
@@ -297,6 +302,7 @@ test_that("VirtualTable JavaScript engine executes 100k row virtualization corre
     "const mockTable = new MockElement('TABLE');",
     "const vt = new VT(mockTable, { data: { id: colA, val: colB }, rowHeight: 28, buffer: 10 });",
     "if (vt.getRowCount() !== 100000) throw new Error('Incorrect rowCount');",
+    "if (mockTable.getAttribute('aria-rowcount') !== '100001') throw new Error('aria-rowcount should be 100001, got ' + mockTable.getAttribute('aria-rowcount'));",
     "const rowsInitial = vt.tbody.children.filter(c => c.tagName === 'TR' && !c.classList.contains('sideview-virtual-spacer'));",
     "if (rowsInitial.length < 20 || rowsInitial.length > 40) throw new Error('Initial rendered row buffer count mismatch');",
     "vt.scrollContainer.scrollTop = 1400000;",
@@ -414,3 +420,17 @@ test_that("sideview.js and sideview.css implement opaque filter popover and edge
   expect_match(js, "closePopover", info = "sideview.js must support dismissing filter popover")
 })
 
+
+test_that("sv_asset_version covers sv-listview.js and the script loads before sideview.js", {
+  expect_true("sv-listview.js" %in% eval(formals(sv_asset_version)$files))
+  dir <- tempfile("svassets")
+  dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  writeLines("var a = 1;", file.path(dir, "sv-listview.js"))
+  v1 <- sv_asset_version(dir)
+  writeLines("var a = 2;", file.path(dir, "sv-listview.js"))
+  expect_false(identical(v1, sv_asset_version(dir)))
+  scripts <- sideview_html_dependency()$script
+  expect_true(match("sv-listview.js", scripts) < match("sideview.js", scripts))
+  expect_true(match("sv-pipeline.js", scripts) < match("sv-listview.js", scripts))
+})

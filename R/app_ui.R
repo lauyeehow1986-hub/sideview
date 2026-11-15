@@ -28,7 +28,7 @@ find_sideview_www <- function() {
 #' @param files Asset file names.
 #' @return A version string such as `"0.2.0.1234567"`.
 #' @noRd
-sv_asset_version <- function(www_dir, files = c("sideview.js", "sideview.css", "sv-panzoom.js", "sv-pipeline.js")) {
+sv_asset_version <- function(www_dir, files = c("sideview.js", "sideview.css", "sv-panzoom.js", "sv-pipeline.js", "sv-listview.js")) {
   pkg <- tryCatch(as.character(utils::packageVersion("sideview")), error = function(e) "0.0.0")
   paths <- file.path(www_dir, files)
   paths <- paths[file.exists(paths)]
@@ -52,7 +52,7 @@ sideview_html_dependency <- function(www_dir = find_sideview_www()) {
     version = sv_asset_version(www_dir),
     src = c(file = www_dir),
     stylesheet = "sideview.css",
-    script = c("sv-panzoom.js", "sv-pipeline.js", "sideview.js")
+    script = c("sv-panzoom.js", "sv-pipeline.js", "sv-listview.js", "sideview.js")
   )
 }
 
@@ -389,18 +389,21 @@ render_card_tag <- function(card, index = 1L) {
 #'   `bslib::bs_theme()`. See [sv_theme()].
 #' @param state Optional saved workspace to restore on load (see [sideview()]).
 #'
+#' @param view Starting view: `"canvas"` (default) or `"list"` (see [sideview()]).
+#'
 #' @return A `shiny.tag.list` UI definition.
 #' @export
 sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALSE, theme = "auto",
-                        state = NULL) {
-  sv_ui_build(cards = cards, title = title, gadget = gadget, theme = theme, state = state)
+                        state = NULL, view = getOption("sideview.view", "canvas")) {
+  view <- sv_check_view(view)
+  sv_ui_build(cards = cards, title = title, gadget = gadget, theme = theme, state = state, view = view)
 }
 
 # The chrome (toolbar, canvas, drawer, AI bar) behind sideview_ui() and sideviewUI().
 # `ns` (a module's full input prefix, e.g. "review-") switches to embedded mode: no cards,
 # no page-level rules, no buttons that run code, `data-sv-ns` and a per-container init script.
 sv_ui_build <- function(cards = list(), title = "Sideview Canvas", gadget = FALSE, theme = "auto",
-                        state = NULL, ns = NULL, height = NULL) {
+                        state = NULL, ns = NULL, height = NULL, view = "canvas") {
   module <- !is.null(ns)
   normalized_cards <- if (module) list() else sv_normalize_cards(cards)
   
@@ -618,8 +621,13 @@ sv_ui_build <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
     class = paste0("sideview-container ", if (!module) "sv-standalone ", "sv-theme-", theme$mode),
     `data-sv-theme` = theme$mode,
     `data-sv-ns` = ns,
+    `data-sv-view` = view,
+    # option(sideview.shortcuts = FALSE): single-key shortcuts start off (a stored choice wins)
+    `data-sv-shortcuts` = if (isFALSE(getOption("sideview.shortcuts", TRUE))) "false" else NULL,
     # Save/Open use RStudio's file dialog through R when there is one.
     `data-sv-file-dialog` = if (isTRUE(gadget) && sv_has_file_dialog()) "r" else NULL,
+    # the gadget has an LLM behind its Copilot; a module says so with llm_fn (sideview_llm)
+    `data-sv-llm` = if (isTRUE(gadget)) "true" else NULL,
     style = if (module) {
       paste(c(sv_theme_style(theme), sprintf("height: %s; position: relative", shiny::validateCssUnit(height))), collapse = "; ")
     } else {
@@ -658,3 +666,10 @@ sv_drawer_tabs <- c(
   discrepancy = "Discrepancy",
   chat = "Copilot"
 )
+
+# Validates a `view` argument: one of "canvas" / "list" (match.arg would let a length-2
+# vector equal to the choices through as "canvas").
+sv_check_view <- function(view) {
+  if (length(view) != 1L) stop("'view' must be of length 1", call. = FALSE)
+  match.arg(view, c("canvas", "list"))
+}

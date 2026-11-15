@@ -9,7 +9,8 @@ sideview_ui(
   title = "Sideview Canvas",
   gadget = FALSE,
   theme = "auto",
-  state = NULL
+  state = NULL,
+  view = getOption("sideview.view", "canvas")
 )
 }
 \arguments{
@@ -24,6 +25,8 @@ or tabular objects to be normalized.}
 \code{bslib::bs_theme()}. See \code{\link[=sv_theme]{sv_theme()}}.}
 
 \item{state}{Optional saved workspace to restore on load (see \code{\link[=sideview]{sideview()}}).}
+
+\item{view}{Starting view: \code{"canvas"} (default) or \code{"list"} (see \code{\link[=sideview]{sideview()}}).}
 }
 \value{
 A \code{shiny.tag.list} UI definition.

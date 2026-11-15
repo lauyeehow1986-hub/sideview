@@ -64,14 +64,15 @@ test_that("summary fields, samples and warnings describe the join", {
   expect_match(d$warnings, "na_matches", all = FALSE)
   expect_length(d$type_issues, 0)
 
+  expect_output(print(d), "Join of patients and visits by id is one to many.", fixed = TRUE)
   out <- capture.output(print(d))
-  expect_match(out[1], "<sv_join_diagnostics> by id")
-  expect_match(out, "relationship: one-to-many", all = FALSE)
-  expect_match(out, "left 7 \\| inner 5", all = FALSE)
+  expect_match(out, "Rows by join type: left 7, inner 5", all = FALSE, fixed = TRUE)
   hint <- capture.output(print(sv_join_diagnostics(data.frame(k = "a"), data.frame(k = " a"), "k")))
-  expect_match(hint, "hint: trimming whitespace would match 1 more x rows and 1 more y rows", all = FALSE, fixed = TRUE)
+  expect_match(hint, "Trimming whitespace would match 1 more x rows and 1 more y rows.", all = FALSE, fixed = TRUE)
   hint <- capture.output(print(sv_join_diagnostics(data.frame(k = "a"), data.frame(k = c("a", " a")), "k")))
-  expect_match(hint, "hint: trimming whitespace would match 1 more y rows$", all = FALSE)
+  expect_match(hint, "Trimming whitespace would match 1 more y rows.", all = FALSE, fixed = TRUE)
+  expect_output(print(sv_join_diagnostics(data.frame(id = 1), data.frame(id = 1), "id")),
+                "Join of x and y by id is one to one.", fixed = TRUE)
 
   ok <- sv_join_diagnostics(data.frame(k = 1:3), data.frame(k = 1:3), "k")
   expect_identical(ok$status, "ok")
@@ -306,7 +307,8 @@ test_that("no rule changes nothing but adds strict_args", {
   expect_identical(names(d), c("by", "n_x", "n_y", "distinct_x", "distinct_y", "distinct_matched",
                                "matched_x", "matched_y", "match_rate_x", "match_rate_y", "na_x", "na_y",
                                "dup_keys_x", "dup_keys_y", "relationship", "rows", "unmatched_x",
-                               "unmatched_y", "type_issues", "hints", "strict_args", "warnings", "status"))
+                               "unmatched_y", "type_issues", "hints", "x_name", "y_name", "strict_args", "warnings",
+                               "status"))
   expect_null(d$rule)
   expect_match(d$warnings, "na_matches = \"na\"", fixed = TRUE, all = FALSE)
   expect_identical(d$strict_args$left_join, list(relationship = "one-to-many"))
@@ -321,8 +323,8 @@ test_that("print and json show the rule", {
   d <- sv_join_diagnostics(rule_visits(1:2), data.frame(id = c(1, 1, 2), lab_date = d0 + c(-2, 2, 40)),
                            "id", rule = win7)
   out <- capture.output(print(d))
-  expect_match(out, "  rule: lab_date within -7..+7 days of visit_date", fixed = TRUE, all = FALSE)
-  expect_match(out, "dropped by the rule:", fixed = TRUE, all = FALSE)
+  expect_match(out, "Date rule: lab_date within -7..+7 days of visit_date.", fixed = TRUE, all = FALSE)
+  expect_match(out, "The rule drops", fixed = TRUE, all = FALSE)
 
   b <- sv_join_diagnostics(rule_visits(1:2), data.frame(id = c(1, 2), lab_date = d0 + c(-2, 1)), "id",
                            rule = list(shape = "before", xCol = "visit_date", yCol = "lab_date"))

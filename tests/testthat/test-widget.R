@@ -280,3 +280,37 @@ test_that("save_sideview writes the tag for auto and not for FALSE", {
   expect_true(grepl("\"cdisc\":{", read_html("auto"), fixed = TRUE))
   expect_false(grepl("\"cdisc\":{", read_html(FALSE), fixed = TRUE))
 })
+
+test_that("sideview_widget carries the sideview.shortcuts option", {
+  expect_true(sideview_widget(mtcars)$x$options$shortcuts)
+  withr::with_options(list(sideview.shortcuts = FALSE),
+    expect_false(sideview_widget(mtcars)$x$options$shortcuts))
+  expect_false(sideview_widget(mtcars, options = list(shortcuts = FALSE))$x$options$shortcuts)
+  withr::with_options(list(sideview.shortcuts = FALSE),
+    expect_true(sideview_widget(mtcars, options = list(shortcuts = TRUE))$x$options$shortcuts))
+})
+
+test_that("sideview_widget carries view and the sideview.view option", {
+  expect_equal(sideview_widget(mtcars)$x$options$view, "canvas")
+  expect_equal(sideview_widget(mtcars, view = "list")$x$options$view, "list")
+  expect_equal(withr::with_options(list(sideview.view = "list"), sideview_widget(mtcars))$x$options$view, "list")
+  expect_error(sideview_widget(mtcars, view = "grid"), "should be one of")
+})
+
+test_that("an explicit options$view wins and is validated", {
+  expect_equal(sideview_widget(mtcars, options = list(view = "list"))$x$options$view, "list")
+  expect_equal(withr::with_options(list(sideview.view = "list"),
+                 sideview_widget(mtcars, options = list(view = "canvas"))$x$options$view), "canvas")
+  expect_error(sideview_widget(mtcars, options = list(view = "bogus")), "should be one of")
+  expect_error(sideview_widget(mtcars, view = NA_character_), "must be NULL|should be one of|'arg'")
+  expect_error(sideview_widget(mtcars, view = "List"), "should be one of")
+  expect_error(sideview_widget(mtcars, view = c("canvas", "list")), "must be of length 1")
+  withr::with_options(list(sideview.view = "bogus"),
+    expect_error(sideview_widget(mtcars), "should be one of"))
+})
+
+test_that("save_sideview(view =) reaches the widget options", {
+  tf <- tempfile(fileext = ".html"); on.exit(unlink(tf))
+  save_sideview(mtcars, file = tf, view = "list")
+  expect_true(grepl('"view":"list"', paste(readLines(tf, warn = FALSE), collapse = "\n"), fixed = TRUE))
+})

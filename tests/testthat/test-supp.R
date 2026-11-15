@@ -109,11 +109,11 @@ test_that("bad_idvarval", {
 })
 
 test_that("missing column", {
-  expect_identical(chk(fx$supp_noqnam), list(error = "Not in suppae: QNAM"))
-  expect_identical(chk(fx$suppae_grp), list(error = "Not in ae: AEGRPID"))
+  expect_identical(chk(fx$supp_noqnam)$error, "Not in suppae: QNAM")
+  expect_identical(chk(fx$suppae_grp)$error, "Not in ae: AEGRPID")
   p <- fx$ae
   p$USUBJID <- NULL
-  expect_identical(chk(fx$suppae, parent = p), list(error = "Not in ae: USUBJID"))
+  expect_identical(chk(fx$suppae, parent = p)$error, "Not in ae: USUBJID")
 })
 
 test_that("no STUDYID", {
@@ -135,8 +135,8 @@ test_that("NA IDVAR is subject level", {
 
 test_that("no rows for rdomain", {
   expect_identical(sv_supp_check(fx$ae, fx$suppqual, parent_name = "ae", supp_name = "suppqual",
-                                 rdomain = "LB"),
-                   list(error = "suppqual has no rows for LB"))
+                                 rdomain = "LB")$error,
+                   "suppqual has no rows for LB")
 })
 
 test_that("other RDOMAIN rows warn only in a SUPPxx card", {
@@ -157,8 +157,7 @@ test_that("unsupported type", {
   s <- data.frame(STUDYID = "SV-001", RDOMAIN = "AE", USUBJID = "SV-001-001", IDVAR = "AESTDTC",
                   IDVARVAL = "2024-01-02", QNAM = "X", QLABEL = "x", QVAL = "Y",
                   stringsAsFactors = FALSE)
-  expect_identical(chk(s, parent = ae),
-                   list(error = "Cannot merge on AESTDTC: its type is Date"))
+  expect_identical(chk(s, parent = ae)$error, "Cannot merge on AESTDTC: its type is Date")
 })
 
 test_that("sv_supp_key_type", {
@@ -541,4 +540,26 @@ test_that("supp note replaces summarise", {
   expect_identical(sv_keys_m2m_note(cards[[2]], cards[[1]], "USUBJID"), want)
   diag <- list(relationship = "many-to-many")
   expect_identical(sv_cdisc_key_notes(cards[[2]], cards[[1]], "USUBJID", "USUBJID", diag)[1], want)
+})
+
+# ---- class, print and the unchanged browser JSON (Task 6) ----
+# Snapshots of sv_supp_check_json() taken at the base commit, before the class existed.
+snap_supp_ok <- r"({"status":"ok","plan":{"keys":["STUDYID","USUBJID"],"idvars":[{"idvar":"AESEQ","type":"integer"}],"qnams":[{"qnam":"AETRTEM","label":"Treatment Emergent","idvar":"AESEQ"}],"rdomain_col":true},"n_parent":4,"n_supp":4,"n_matched":4,"n_orphan":0,"orphan_samples":[],"n_other_rdomain":0,"repeats":{"n":0,"samples":[]},"clashes":[],"two_level":[],"bad_idvarval":{"n":0,"samples":[]},"columns":[{"name":"AETRTEM","label":"Treatment Emergent"}],"preview":[{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-001","AESEQ":1,"AETERM":"Headache","AEDECOD":"HEADACHE","AESEV":"MILD","AESTDTC":"2024-01-02","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-002","AESEQ":2,"AETERM":"Nausea","AEDECOD":"NAUSEA","AESEV":"MODERATE","AESTDTC":"2024-01-05","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-003","AESEQ":3,"AETERM":"Rash","AEDECOD":"RASH","AESEV":"MILD","AESTDTC":"2024-02-01","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-004","AESEQ":4,"AETERM":"Cough","AEDECOD":"COUGH","AESEV":"SEVERE","AESTDTC":"2024-02-09","AETRTEM":"Y"}],"drift":{"stale":false,"reasons":[]}})"
+snap_supp_orphan <- r"({"status":"warning","plan":{"keys":["STUDYID","USUBJID"],"idvars":[{"idvar":"AESEQ","type":"integer"}],"qnams":[{"qnam":"AETRTEM","label":"Label AETRTEM","idvar":"AESEQ"}],"rdomain_col":true},"n_parent":4,"n_supp":2,"n_matched":1,"n_orphan":1,"orphan_samples":[{"USUBJID":"SV-001-999","IDVAR":"AESEQ","IDVARVAL":"99","QNAM":"AETRTEM"}],"n_other_rdomain":0,"repeats":{"n":0,"samples":[]},"clashes":[],"two_level":[],"bad_idvarval":{"n":0,"samples":[]},"columns":[{"name":"AETRTEM","label":"Label AETRTEM"}],"preview":[{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-001","AESEQ":1,"AETERM":"Headache","AEDECOD":"HEADACHE","AESEV":"MILD","AESTDTC":"2024-01-02","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-002","AESEQ":2,"AETERM":"Nausea","AEDECOD":"NAUSEA","AESEV":"MODERATE","AESTDTC":"2024-01-05","AETRTEM":null},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-003","AESEQ":3,"AETERM":"Rash","AEDECOD":"RASH","AESEV":"MILD","AESTDTC":"2024-02-01","AETRTEM":null},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-004","AESEQ":4,"AETERM":"Cough","AEDECOD":"COUGH","AESEV":"SEVERE","AESTDTC":"2024-02-09","AETRTEM":null}],"drift":{"stale":false,"reasons":[]}})"
+
+test_that("a SUPP check carries a class, prints as sentences and sends the same JSON", {
+  r <- chk(fx$suppae)
+  expect_s3_class(r, "sv_supp_check")
+  expect_true(is.list(unclass(r)))
+  expect_identical(c(r$parent_name, r$supp_name), c("ae", "suppae"))
+  expect_output(print(r), "Merging suppae into ae adds")
+  expect_identical(capture.output(print(chk(fx$suppae))),
+                   c("Merging suppae into ae adds 1 column: AETRTEM.", "4 of 4 suppae rows match a ae row."))
+  expect_output(print(chk(fx$supp_noqnam)), "SUPP check failed: Not in suppae: QNAM.", fixed = TRUE)
+  expect_s3_class(chk(fx$supp_noqnam), "sv_supp_check")
+  expect_identical(chk(fx$supp_noqnam)$error, "Not in suppae: QNAM")
+  expect_identical(sv_supp_check_json(chk(fx$suppae)), snap_supp_ok)
+  expect_identical(sv_supp_check_json(chk(fx$supp_orphan)), snap_supp_orphan)
+  expect_identical(sv_supp_check_json(chk(fx$supp_noqnam)), "{\"error\":\"Not in suppae: QNAM\"}")
+  expect_false(grepl("parent_name|supp_name", sv_supp_check_json(chk(fx$suppae))))
 })

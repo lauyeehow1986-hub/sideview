@@ -18,6 +18,10 @@
 #' @param height CSS height of the canvas, e.g. `"600px"`.
 #' @param title Text shown in the toolbar; `NULL` (the default) shows none.
 #' @param theme `"auto"`, `"light"`, `"dark"`, an [sv_theme()] or a `bslib::bs_theme()`.
+#' @param view Starting view: `"canvas"` (default, the pan/zoom canvas) or
+#'   `"list"` (a text-first list of the tables, for keyboard and screen-reader
+#'   use). The default is `getOption("sideview.view", "canvas")`. A workspace
+#'   restored later (Open) that records a view switches to it.
 #' @param cards Tables for the canvas: a (named) list as [sideview()] takes, or a
 #'   **reactive** returning one. A reactive is compared with the canvas by name each
 #'   time it fires: new names are added, names that are gone are removed, and names
@@ -52,9 +56,11 @@
 #' second. Give each canvas its own id.
 #' @seealso [sideviewProxy()], [sv_add_card()]
 #' @export
-sideviewUI <- function(id, height = "600px", title = NULL, theme = "auto") {
+sideviewUI <- function(id, height = "600px", title = NULL, theme = "auto",
+                       view = getOption("sideview.view", "canvas")) {
+  view <- sv_check_view(view)
   ns <- shiny::NS(id)("")
-  sv_ui_build(title = title, theme = theme, ns = ns, height = height)
+  sv_ui_build(title = title, theme = theme, ns = ns, height = height, view = view)
 }
 
 #' @rdname sideviewUI
@@ -425,7 +431,8 @@ sv_module_wire <- function(input, session, store, send) {
 
   shiny::observeEvent(input$sideview_ready, {
     for (card in store$all()) {
-      send("sideview_card_add", list(card = sv_card_payload(card, sv_preview_rows)))
+      # `initial`: the first population of the canvas, which the list view does not announce
+      send("sideview_card_add", list(card = sv_card_payload(card, sv_preview_rows), initial = TRUE))
     }
     queued <- ctl$queue
     ctl$queue <- list()

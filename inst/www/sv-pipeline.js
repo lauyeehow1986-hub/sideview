@@ -1357,7 +1357,7 @@
       relationship: core.relationship, rows: core.rows,
       unmatched_x: core.unmatched_x.slice(0, sampleN).map(decodeKey),
       unmatched_y: core.unmatched_y.slice(0, sampleN).map(decodeKey),
-      type_issues: [], hints: []
+      type_issues: [], hints: [], x_name: xName, y_name: yName
     };
     byX.forEach(function (c, i) {
       if (kindsX[i] !== kindsY[i]) {
@@ -2288,8 +2288,196 @@
       L + '[[dplyr::cur_column()]])))';
   }
 
+  // ---- plain-sentence helpers (twins of R/say.R) ----
+  function sayPct(num, den) {
+    if (!den) return null;
+    var tenths = Math.floor((2000 * num + den) / (2 * den));
+    return Math.floor(tenths / 10) + '.' + (tenths % 10) + ' percent';
+  }
+
+  function sayList(x) {
+    var a = (x || []).map(String), n = a.length;
+    if (n === 0) return '';
+    if (n === 1) return a[0];
+    if (n === 2) return a[0] + ' and ' + a[1];
+    return a.slice(0, n - 1).join(', ') + ', and ' + a[n - 1];
+  }
+
+  function sayValue(v) {
+    if (v === null || v === undefined || (typeof v === 'number' && isNaN(v))) return 'missing';
+    if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+    if (typeof v === 'number') {
+      if (!isFinite(v)) return v > 0 ? 'Inf' : '-Inf';
+      return numKey(v);
+    }
+    var s = String(v);
+    if (s.indexOf(', ') >= 0) s = '(' + s + ')';
+    return s;
+  }
+
+  function saySamples(x, total, max) {
+    var m = max === undefined || max === null ? 3 : max;
+    var shown = (x || []).slice(0, m).map(sayValue);
+    if (total !== undefined && total !== null && total > shown.length) {
+      return shown.join(', ') + ', and ' + fmtN(total - shown.length) + ' more';
+    }
+    return sayList(shown);
+  }
+
+  function sayNum(v) {
+    if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+    if (typeof v !== 'number') return v === null || v === undefined ? 'NA' : String(v);
+    if (isNaN(v)) return 'NaN';
+    if (!isFinite(v)) return v > 0 ? 'Inf' : '-Inf';
+    if (v === Math.round(v)) return fmtN(v);
+    return numKey(signif6(v));
+  }
+
+  function sayCheckLines(x) { return (x || []).map(String); }
+
+  // A sentence ends in ".", "!" or "?"; add a "." when it does not (twin of sv_say_sentence).
+  function saySentence(s) { s = String(s); return /[.!?]$/.test(s) ? s : s + '.'; }
+
+  // "1 row of NAME" or "N rows of NAME" (twin of sv_say_rows).
+  function sayRows(n, nm) { return sayNum(n) + (n === 1 ? ' row of ' : ' rows of ') + nm; }
+
+  // A join check as plain sentences (twin of sv_say_join in R/say.R).
+  function sayJoin(d, xName, yName) {
+    var X = xName === undefined || xName === null ? 'x' : xName;
+    var Y = yName === undefined || yName === null ? 'y' : yName;
+    if (d.error !== undefined && d.error !== null) return ['Join check failed: ' + saySentence(d.error)];
+    var key = sayList(d.by.map(function (p) { return p.left === p.right ? p.left : p.left + ' = ' + p.right; }));
+    var out = ['Join of ' + X + ' and ' + Y + ' by ' + key + ' is ' + d.relationship.split('-').join(' ') + '.'];
+    if (d.rule) {
+      out.push('Date rule: ' + ruleLabel(d.rule, d.rule_kind) + '.');
+      if (d.rule_dropped_x + d.rule_dropped_y > 0) {
+        out.push('The rule drops ' + sayNum(d.rule_dropped_x) + ' ' + X + ' rows and ' +
+          sayNum(d.rule_dropped_y) + ' ' + Y + ' rows.');
+      }
+    }
+    var matchLine = function (m, n, nm) {
+      var pct = sayPct(m, n);
+      return sayNum(m) + ' of ' + sayNum(n) + ' ' + nm + ' rows match' + (pct === null ? '' : ', ' + pct) + '.';
+    };
+    out.push(matchLine(d.matched_x, d.n_x, X), matchLine(d.matched_y, d.n_y, Y));
+    var missLine = function (n, matched, dup, samples, nm) {
+      var k = n - matched;
+      if (k <= 0) return;
+      var eg = !samples.length ? '' : dup === 0 ? ', for example ' + saySamples(samples, k) :
+        ', for example keys ' + saySamples(samples);
+      out.push(sayRows(k, nm) + (k === 1 ? ' has' : ' have') + ' no match' + eg + '.');
+    };
+    missLine(d.n_x, d.matched_x, d.dup_keys_x, d.unmatched_x, X);
+    missLine(d.n_y, d.matched_y, d.dup_keys_y, d.unmatched_y, Y);
+    if (d.na_x > 0) out.push(sayRows(d.na_x, X) + (d.na_x === 1 ? ' has' : ' have') + ' a missing key.');
+    if (d.na_y > 0) out.push(sayRows(d.na_y, Y) + (d.na_y === 1 ? ' has' : ' have') + ' a missing key.');
+    var types = [['left', 'left_join'], ['inner', 'inner_join'], ['right', 'right_join'],
+                 ['full', 'full_join'], ['semi', 'semi_join'], ['anti', 'anti_join']];
+    var parts = [];
+    types.forEach(function (t) {
+      var v = d.rows[t[1]];
+      if (v !== undefined && v !== null) parts.push(t[0] + ' ' + sayNum(v));
+    });
+    out.push('Rows by join type: ' + parts.join(', ') + '.');
+    (d.hints || []).forEach(function (h) {
+      var gain = [];
+      if (h.extra_x > 0) gain.push(sayNum(h.extra_x) + ' more ' + X + ' rows');
+      if (h.extra_y > 0) gain.push(sayNum(h.extra_y) + ' more ' + Y + ' rows');
+      out.push(h.label.charAt(0).toUpperCase() + h.label.slice(1) + ' would match ' + gain.join(' and ') + '.');
+    });
+    (d.type_issues || []).concat(d.warnings || []).forEach(function (s) { out.push(saySentence(s)); });
+    return out;
+  }
+
+  // "1 row has" / "N rows have" for a count of NAME's rows (twin of sv_say_n_rows).
+  function sayNRows(n, nm, one, many) { return sayNum(n) + ' ' + nm + (n === 1 ? ' row ' + one : ' rows ' + many); }
+
+  // One "USUBJID IDVAR IDVARVAL" per sample row; an empty or missing part is left out.
+  function saySuppSamples(s) {
+    return (s || []).map(function (r) {
+      return [r.USUBJID, r.IDVAR, r.IDVARVAL].filter(function (v) {
+        return v !== null && v !== undefined && String(v) !== '';
+      }).map(String).join(' ');
+    });
+  }
+
+  // A SUPP merge check as plain sentences (twin of sv_say_supp in R/say.R).
+  function saySupp(chk, parentName, suppName) {
+    var P = parentName === undefined || parentName === null ? 'parent' : parentName;
+    var S = suppName === undefined || suppName === null ? 'supp' : suppName;
+    if (chk.error !== undefined && chk.error !== null) return ['SUPP check failed: ' + saySentence(chk.error)];
+    var cols = (chk.columns || []).map(function (c) { return String(c.name); });
+    var nc = cols.length;
+    var out = ['Merging ' + S + ' into ' + P + ' adds ' + sayNum(nc) + (nc === 1 ? ' column' : ' columns') +
+      (nc > 0 ? ': ' + sayList(cols) : '') + '.'];
+    out.push(sayNum(chk.n_matched) + ' of ' + sayNum(chk.n_supp) + ' ' + S + ' rows match a ' + P + ' row.');
+    var withEg = function (n, samples) {
+      var eg = saySuppSamples(samples);
+      return eg.length ? ', for example ' + saySamples(eg, n) : '';
+    };
+    if (chk.n_orphan > 0) {
+      out.push(sayNRows(chk.n_orphan, S, 'has no ' + P + ' row', 'have no ' + P + ' row') +
+        withEg(chk.n_orphan, chk.orphan_samples) + '.');
+    }
+    if (chk.bad_idvarval.n > 0) {
+      out.push(sayNRows(chk.bad_idvarval.n, S, 'has an IDVARVAL that does not convert',
+        'have an IDVARVAL that does not convert') + withEg(chk.bad_idvarval.n, chk.bad_idvarval.samples) + '.');
+    }
+    if (chk.n_other_rdomain > 0) {
+      out.push(sayNRows(chk.n_other_rdomain, S, 'is for another domain and is left out',
+        'are for another domain and are left out') + '.');
+    }
+    if (chk.repeats.n > 0) {
+      out.push(sayNRows(chk.repeats.n, S, 'repeats a QNAM for the same ' + P + ' row',
+        'repeat a QNAM for the same ' + P + ' row') + '.');
+    }
+    if ((chk.clashes || []).length) out.push('These QNAMs clash with ' + P + ' columns: ' + sayList(chk.clashes) + '.');
+    if ((chk.two_level || []).length) out.push('These QNAMs use more than one IDVAR: ' + sayList(chk.two_level) + '.');
+    if (chk.drift && chk.drift.stale === true) out.push('Merge needs refreshing: ' + sayList(chk.drift.reasons) + '.');
+    return out;
+  }
+
+  // A column profile as plain sentences (twin of sv_say_profile in R/say.R).
+  function sayProfile(p, name) {
+    var N = name === undefined || name === null ? 'Column' : name;
+    var nl = p.label !== null && p.label !== undefined && p.label !== '' ? N + ', ' + p.label : N;
+    var words = { numeric: 'number', character: 'text', logical: 'true or false', date: 'date', datetime: 'date-time' };
+    var word = words[p.kind] || p['class'] || 'other';
+    var out = [nl + ' is a ' + word + ' column.'];
+    out.push(p.n_missing === 0 ? 'No values are missing.' :
+      sayNum(p.n_missing) + ' of ' + sayNum(p.n) + ' values are missing, ' + sayPct(p.n_missing, p.n) + '.');
+    out.push('It has ' + sayNum(p.n_distinct) + (p.n_distinct === 1 ? ' distinct value.' : ' distinct values.'));
+    if (p.unique_key === true) out.push('Every value is unique, so it can be a key.');
+    var st = p.stats;
+    if (p.kind === 'numeric' && st) {
+      out.push('Minimum ' + sayNum(st.min) + ', median ' + sayNum(st.median) + ', maximum ' + sayNum(st.max) + '.');
+      out.push('Mean ' + sayNum(st.mean) + ', standard deviation ' + sayNum(st.sd) + '.');
+    } else if ((p.kind === 'date' || p.kind === 'datetime') && st) {
+      out.push('Earliest ' + st.min + ', latest ' + st.max + '.');
+    }
+    var top = p.top || [];
+    if (p.kind !== 'numeric' && top.length > 0) {
+      var shown = top.slice(0, 5);
+      out.push('Most common values: ' + shown.map(function (t) { return sayValue(t.value) + ' (' + sayNum(t.n) + ')'; })
+        .join(', ') + '.');
+      var left = p.n_other + (top.length - shown.length);
+      if (left > 0) out.push(sayNum(left) + (left === 1 ? ' other value is' : ' other values are') + ' not listed.');
+    }
+    (p.issues || []).forEach(function (s) { out.push(saySentence(s)); });
+    return out;
+  }
+
   var api = {
     Pipeline: Pipeline,
+    sayPct: sayPct,
+    sayList: sayList,
+    saySamples: saySamples,
+    sayValue: sayValue,
+    sayNum: sayNum,
+    sayCheckLines: sayCheckLines,
+    sayJoin: sayJoin,
+    saySupp: saySupp,
+    sayProfile: sayProfile,
     suppStep: suppStep,
     splitReply: splitReply,
     joinDiagnostics: joinDiagnostics,

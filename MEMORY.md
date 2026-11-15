@@ -4,6 +4,86 @@ Running log of what changed, why, and how it was verified. Newest entries first.
 Each entry: **date — change — why — verification**. Keep the "Open issues" table current.
 
 ---
+
+### 2026-11-14 - Screen-reader article, README, NEWS 0.8.0, feedback template, version (A4, Task 18)
+- **Change:** `vignettes/articles/screen-reader.Rmd` (one eval chunk: `sv_describe()` on a synthetic data frame; the rest `eval = FALSE`), navbar entry and `_pkgdown.yml`; `.github/ISSUE_TEMPLATE/accessibility-feedback.yml` (required: screen reader + version, browser or RStudio pane, sideview version, what you did, what you heard or expected; label `accessibility`); README "Screen Reader Ready" bullet; NEWS `# sideview 0.8.0` (existing a11y entries kept); `Version: 0.8.0`; CLAUDE.md standing rule (list view + sentences) made explicit.
+- **RULING (honest label):** the NVDA pass was NOT run (see Task 17). Everywhere the label reads "checked with automated WCAG tests (axe) and real-browser keyboard tests; an NVDA script is written but has not yet been run; not yet tested by blind users". The article's RStudio-pane section says pane/dialog behaviour with a screen reader is unmeasured and recommends `viewer = "browser"`.
+- **Verified:** `pkgdown::check_pkgdown()` clean; site built with `RSTUDIO_PANDOC` set (MEMORY.md has `---` lines pandoc reads as YAML, so CLAUDE.md and MEMORY.md were moved aside for the build), `docs/CLAUDE.*` / `docs/MEMORY.*` and their sitemap/search entries removed; the article renders and the `sv_describe()` chunk ran. `devtools::check()`: 0 errors, 0 warnings, 1 NOTE ("non-standard things in the check directory: NULL", a known Windows/environment artefact), 27 min.
+- **Not checked:** a screen reader (NVDA/JAWS/VoiceOver); RStudio pane/dialog.
+
+---
+
+### 2026-11-14 - List view card updates, keyboard walkthrough, list axe matrix (A3, Task 16)
+- **Change:** `sideview_card_add/replace/remove` announce "Table <name> added./replaced./removed." (`sideview.js` handlers; the first population on `sideview_ready` carries `initial = TRUE` from `R/module.R` and is not announced, or the announcer test saw "Table patients added."). The list view already re-rendered per card through `syncTableMeta()` -> `syncTables()`; added "No tables yet." and `markCardPreview()` now calls `listView.renderTable()` so the lost-link heading says "preview". Docs: NEWS, CLAUDE.md (standing rule, architecture line, `initial`).
+- **Tests (RED/GREEN):** replacing a card re-renders only its section (visits keeps its mark; add/remove announced; "No tables yet."); keyboard-only walkthrough (Tab/Enter/Space/ArrowDown/typing: join, filter `age > 30`, SUPPAE merge) gives code identical to a second session using `addConnections`, `pipeline.add`, `requestSuppCheck`; shortcuts off: f/t/d on a list heading change nothing; list AX facts (`aria-rowcount == rows + 1`, no unnamed controls); toolbar List-view toggle inside the container at 375 px (no overflow); axe matrix is now 2 views x 3 modes x 2 themes x 2 sizes. `sv_wait_ready_for_keys()` (condition wait) added to the two tests that once errored at browser start.
+- **target-size:** the list view passes axe with NO exemption. The canvas view still fails `target-size` (39 nodes at gadget 1360: card header and column-header buttons are 24 px in CSS but 12-17 px at fit scale 0.5-0.71). Not cheap (counter-scaled chrome or a minimum zoom reflows card headers), so `SV_AXE_ACCEPTED` is kept for the canvas view only, stated in the test. Sub-project B.
+- **Not checked:** RStudio dialog / Viewer pane / external browser by hand (not possible in this headless session).
+
+---
+
+### 2026-11-14 - List view tables, columns and paged rows (A3, Task 13)
+- **Change:** `VirtualTable.cellText(i, col)` (shares `cellDisplay()` with the card render; `null` while a remote block is missing) and `onBlock(fn)` (unsubscribe returned; listeners cleared in `destroy()`). `SideviewListView`: a section per card (h3, columns `<ul>` or closed `<details>` over 30, captioned rows table with Ruling 2 counts, 25-row pager, Go to row, Sort/Filter/Inspect). New narrow entry points `refresh()`, `updateSections()`, `syncTables()`; `setView('list')` calls `refresh()` (also re-syncs the shortcuts switch), `sideview_llm` calls `updateSections()`, `syncTableMeta()` calls `syncTables()`. Only `render()` rebuilds everything. CSS tokens only.
+- **Decisions:** page ranges use thousands separators everywhere ("Rows 4,990 to 5,000 of 5,000."); Go to row starts the page at that row (not page-aligned); column counts come from the header badges (`.sideview-na-badge` / `.sideview-cat-profile` titles; numeric columns show missing only, no distinct count exists); Filter does nothing until Task 15 defines `engine.openBuilder`; a pressed pager button that becomes disabled hands focus to its neighbour.
+- **Verified (real Chrome, NOT_CRAN=true, singly):** test-a11y-browser (7 new tests, RED first; incl. hostile names `a<b "c" é`, >30 columns, sort/filter parity vs dplyr, Inspect parity vs `sv_say_profile`, sections survive switches), test-lazy-browser (duckdb Next / Go to row 4000 cause windowed `sideview_rows_request`s only, cells equal the data). Not checked in RStudio.
+
+---
+
+### 2026-11-14 - List view shell, view toggle, state view.mode (A3, Task 12)
+- **Change:** new `inst/www/sv-listview.js` (`SideviewListView`: `render()`, `renderSummary()`, `renderTable()`, `onJoinDiag/onSuppCheck/onColumnProfile`, `destroy()`); `engine.view`, `engine.setView(mode, {silent})`, `llmAvailable()`, `listHook()`, `noCode()`, `iconHtml()`; toolbar `[data-sv-view-toggle]` (action `toggle-view`, new inline `list` icon); `getState().view.mode`; `applyState` view.mode; CSS block under `.sideview-container .sideview-listview` (tokens only, max-width 72ch) plus a scoped `[hidden] { display: none !important }`. R: `sv_asset_version()` and the dependency list `sv-listview.js` (after `sv-pipeline.js`). Roxygen for the precedence, `man/` regenerated, NEWS, CLAUDE.md.
+- **RULING (precedence):** a restored state's `view.mode` wins over the `view` argument; no state or no valid `view.mode` leaves the argument. Start-up applies it after the first layout (the constructor), silently; Open applies at once.
+- **Decisions:** (1) the view is applied after `initLayoutObserver()` so the cards are measured while visible; `setView('list')` stores card sizes (`_hiddenGeom`) because a hidden card measures 0 and `getState()` would lose them; going back re-renders the virtual tables. (2) The toggle keeps one accessible name ("List view") and uses `aria-pressed`; the brief's "label List view or Canvas view" is the announcement text. (3) Summary sentence uses singular forms ("1 table, 1 join step"). (4) Copilot section: no R signal exists for the gadget, so it is present for a module (unless `sv-no-llm`) or with `data-sv-llm="true"`; the gadget has none until Task 15 wires R. (5) Skip links call `focusSection()` instead of following the hash. (6) Adding a toolbar button changed the initial fit scale; test-layout-browser "zoom label tracks the canvas scale" assumed a fit scale that made one zoom-in step differ from 100% and now compares with the label before the click.
+- **Not in this task (no list rows yet):** sort/filter then list rows, lazy paging, moved drawer panes: Tasks 13-15. A hostile-name test exists for what renders here (Summary only; counts).
+- **Verified (real Chrome, NOT_CRAN=true, one file at a time):** test-a11y-browser (all, incl. axe matrix with the target-size exemption untouched; 8 new tests, RED confirmed on base JS), test-assets (2 pre-existing failures, same at base: mock DOM lacks `setAttribute` since Task 10), test-app 50, test-lifecycle, test-theme, test-widget, test-state, test-module 45, test-layout-browser 64 all 0 failed; `node --check` sideview.js and sv-listview.js; gui-test-runner.js: 1 scenario failure (Scenario 3), same at base. Not checked in RStudio.
+
+---
+
+### 2026-11-14 - `view =` argument and `view.mode` state field (A3, Task 11)
+- **Change:** `view = getOption("sideview.view", "canvas")` on `sideview()`, `sideview_widget()`, `save_sideview()` (passed to the widget it builds), `sideview_ui()`, `sideviewUI()`; `match.arg` validation; `data-sv-view` on the container, `options$view` on the widget. `sv_state_scrub()` drops an invalid `view$mode` (JSON save, RDS save and `sv_state_from_json()`). Roxygen `@param view`, `sideview.view` option, `devtools::document()`, NEWS, CLAUDE.md. No JS yet (Task 12 reads the attribute).
+- **Verified:** RED first (app, widget, module, state failed on the missing argument / un-dropped mode). Passing singly: test-app, test-widget, test-module, test-state. R only: no browser or RStudio check.
+
+---
+
+### 2026-11-14 - Table ARIA (A2, Task 10)
+- **Change:** `VirtualTable.render()` sets `aria-rowcount` (rows + 1), `aria-colcount`, header `aria-rowindex=1`, data rows `aria-rowindex = virtual index + 2`; `ensureTableCaption()` adds a `sv-sr-only` caption (textContent) in both the widget/module path and `initExistingCards()` (gadget). CLAUDE.md and NEWS.md updated.
+- **Gotcha:** the gadget's tables are server-rendered and a filter there is remote (async): the count updates when the R reply renders, so the test waits on `getRowCount()`.
+- **Verified (real Chrome, NOT_CRAN=true):** test-a11y-browser.R 109 passed incl. axe matrix (modes x themes x sizes); test-layout-browser.R 750 passed; gui-test-runner.js all true; `node --check` clean. Red first confirmed (4 failures before the caption fix).
+
+### 2026-11-14 - Shortcuts switch (A2, Task 9)
+- **Change:** `engine.shortcutsOn()` (stored `sideview.shortcuts` on/off, then in-memory choice, then `data-sv-shortcuts="false"` / `options.shortcuts === false`, then view: off in `list`) and `engine.setShortcuts(on)` (stores, updates `[data-sv-shortcuts-switch]`, announces "Keyboard shortcuts on./off."). The `?` dialog has a `role="switch"` button above the list. The single-key handler returns early when off; Ctrl+K and Ctrl+Enter are not gated. R: `sv_ui_build()` writes `data-sv-shortcuts="false"` under `options(sideview.shortcuts = FALSE)`; `sideview_widget()` sets `options$shortcuts` unless given. Docs: roxygen option, NEWS, CLAUDE.md.
+- **Decision:** with blocked localStorage the choice is kept in memory (`_shortcutsMem`) so the switch still works; the brief's order has storage first, so a stored value still wins when storage works.
+- **Verified:** RED first (widget, app failures; browser tests failed on missing methods). Real Chrome: test-a11y-browser.R (switch off/on, Ctrl+K still opens search, dialog switch, R option, localStorage throwing via addScriptToEvaluateOnNewDocument, typing test with shortcuts on and off), test-widget, test-app; `node --check`; gui-test-runner. List-view half is Task 12. Not checked in RStudio.
+
+---
+
+### 2026-11-14 - Live region and announcements (A2, Task 8)
+- **Change:** `engine.announce(text)` queues text into `.sideview-announcer` (polite `role="status"`, `sv-sr-only`, created in the constructor, `textContent` only so nothing is parsed as HTML); 500 ms spacing, a repeat is cleared and set again 50 ms later, `announceLog` keeps the last 50. `stepAnnouncement(kind, verb, count)`; `announceStepChange(label)` diffs the step list in the pipeline's `onChange` (add/remove by step ids; load, refresh, checks, pipe, tables stay quiet). Join, SUPP (not quiet re-checks) and profile replies announce the first `say*` sentence; Copy, Insert (toolbar and chat), Copilot reply announce. `showToast(message, type, key, {silent})`: the stack lost `aria-live`; `danger`/`error` toasts are `role="alert"`, the others have no role and are announced (undo/redo/copy/insert toasts are `silent` since they have their own sentence; a keyed toast updated in place is announced only when its type changes). Timers cleared in `destroy()`; no new global listeners. CSS: `.sv-sr-only`, `.sideview-toast-error` shares the danger style.
+- **Decisions:** the brief's join (`visits.patient_id`) does not exist in the fixture (`visits` has `pid`), so tests connect `patient_id` to `pid` and compare with `by = c(patient_id = "pid")`.
+- **Verified:** RED first (base JS: 6 failures). Real Chrome (chromote) in gadget, widget and module: `test-a11y-browser.R` 47 passed, including the Task 2 axe matrix (3 modes x 2 themes x 2 sizes) still green, the announcer's attributes, the 500 ms spacing and repeat clearing with a MutationObserver, `<b>` text kept as text, and error toast `role="alert"` with no `aria-live` ancestor. `node --check` clean; `gui-test-runner.js` all true. Not checked in RStudio itself (no screen reader run).
+
+### 2026-11-14 - sv_describe() and the A1 docs (A1, Task 7)
+- **Change:** exported `sv_describe(x, ..., n_levels = 5)` (`R/describe.R`): a table line (`name, DOMAIN domain, N rows by M columns, k columns have missing values.`) and one indented line per column, returned invisibly as class `sv_description` with a `cat()` print method. Reuses `sv_say_num` / `sv_say_value`, `sv_column_profile()` and, for a lazy table, `sv_lazy_column_profile()` (never `collect()`); row count and domain come from the normalised card. `NEWS.md`, `CLAUDE.md` (sentence twins rule) and `_pkgdown.yml` updated.
+- **Decisions:** only text columns list top values (brief); the signature tolerates a missing `x` so `sv_describe(my = df)` works; a list of tables is accepted as in `sideview()`.
+- **Verified:** RED first (function missing, 6 failures). One file at a time, NOT_CRAN=true: test-describe 17 passed (duckdb and arrow give the same lines as the data frame; the lazy profile is called once per column and the in-memory profile is mocked to fail), test-say 130, test-codebook 278 (1 pre-existing warning), `check_pkgdown()` clean. test-lazy 3742 passed. Console only: no browser or RStudio change.
+
+---
+
+### 2026-11-14 - SUPP, profile, discrepancy and mapping sentences, classes, print methods (A1, Task 6)
+- **Change:** `sv_say_supp(chk, parent_name, supp_name)` / `saySupp` and `sv_say_profile(p, name)` / `sayProfile` (twins, `R/say.R` and `sv-pipeline.js`); R-only `sv_say_discrepancies()` and `sv_say_mappings()`. New classes `sv_supp_check` (also on an `{error}` result and on `sv_lazy_supp_check()`), `sv_column_profile` (in memory and lazy), `sv_discrepancies` (on the list) and `sv_mappings` (prepended to the data frame), each with a `print` S3 method (`as.data.frame.sv_mappings` too), all registered in NAMESPACE. The check stores `parent_name` / `supp_name`; the profile stores `name` only when known (the lazy profile sets it to `column`).
+- **Browser payload unchanged:** `sv_supp_check_json()` and `sv_column_profile_json()` `unclass()` and drop the name fields; the server handlers `unclass()` the discrepancies and `as.data.frame()` the mappings. Tests pin the JSON text taken from the base commit (`snap_supp_ok`, `snap_supp_orphan`, `snap_prof_num`, `snap_prof_txt`).
+- **Decisions:** (1) the profile's last sentence for non-listed values reads "N other values are not listed." (brief said "N rows have other values", but `n_other` counts distinct values, not rows); it counts `n_other` plus any of the top-10 beyond the 5 shown. (2) A sample "USUBJID IDVAR IDVARVAL" leaves out an empty or missing part (subject-level rows have no IDVAR). (3) Singular forms: "1 SUPP row has", "1 value is only in x", "1 suggested join."; the SUPP check lists "These QNAMs" as the brief wrote it even for one. (4) Mapping rows with a non-NA `group` get "Group <group>: "; a line that ends in "." gets no second one. (5) Existing tests that compared a whole `list(error = )` with `expect_identical` now compare `$error`.
+- **Verified:** RED first for each class (missing `sv_say_supp`, no class, extra `name` in the profile JSON, no `sv_mappings`, raw list print). One file at a time, NOT_CRAN=true: test-say 130, test-supp 231, test-codebook 279, test-copilot 62, test-codegen 323, test-module 165, test-app 300, test-e2e 136, test-features-verification 94 expectations, all 0 failed. test-lazy: the 8 affected tests (462 expectations, duckdb and arrow) 0 failed; the whole file exceeds 9 minutes here, so it was not run end to end. test-pipeline not re-run (timed out at 50 s; JS only gained two functions). `node --check` clean, `check_pkgdown()` clean. Report: `.superpowers/sdd/2026-11-14-accessibility-text-first-implementation/task-6-report.md`.
+
+### 2026-11-14 - Join checks as sentences: sv_say_join / sayJoin (A1, Task 5)
+- **Change:** `sv_say_join(d, x_name, y_name)` in `R/say.R` and JS twin `sayJoin(d, xName, yName)` (plus `saySentence`); `print.sv_join_diagnostics()` now prints those sentences. `sv_join_diagnostics()`, `sv_lazy_join_diagnostics()` and `joinDiagnostics()` carry `x_name` / `y_name`.
+- **Fix round 1:** counts read "1 row of X has no match" / "N rows of X have no match" and "has/have a missing key" (`sv_say_rows` / `sayRows`); parity tests with `<`, quotes, spaces and CJK names.
+- **Decisions:** the unmatched sentence is left out when no sample keys exist (for example only NA-key rows are unmatched); a nearest-match rule has no right/full counts, so "Rows by join type" omits them; a hint with `extra_x == 0` drops the "0 more X rows" part; an error ending in `.` gets no second one.
+- **Verified:** test-say.R 51 passed (R and JS sentences identical for one-to-one, one-to-many, multi-key hint, date rule, empty, NA, duplicate and Unicode keys); the ASCII and 100-character checks hold for the four fixtures. test-diagnostics 5123 passed, test-lazy 3724 passed (duckdb and arrow say the same as in memory), test-join-rules 10753 passed. `node --check` clean. No UI change.
+
+### 2026-11-14 - Sentence helpers with R/JS twins (A1, Task 4)
+- **Change:** `R/say.R` (`sv_say_pct`, `sv_say_list`, `sv_say_samples`, `sv_say_value`, `sv_say_num`, `sv_say_check_lines`, all internal) and JS twins `sayPct`, `sayList`, `saySamples`, `sayValue`, `sayNum`, `sayCheckLines` on `SideviewPipeline`. `sv_say_check_lines()` returns lines whole; the 100-character limit is checked by tests, not applied.
+- **Gotcha:** `jsonlite::toJSON()` rounds to 4 digits by default, which made a number twin test fail falsely; pass `digits = NA`.
+- **Verified:** test-say.R 22 passed (RED first: `P.sayPct is not a function`); `node --check` clean. No UI change.
+
 ### 2026-11-14 - Accessibility harness: shortcut/typing rules pinned, a11y CI job (PR C, Task 3)
 - **Change:** two tests in `test-a11y-browser.R`: `typing never fires shortcuts` (AI-bar input focused, F and D typed: zoom and drawer state unchanged, value `"fd"`) and `canvas shortcuts fire when the canvas owns the keyboard` (container focused, D toggles the drawer, twice returns it). New `a11y` job in `R-CMD-check.yaml` (ubuntu, `NOT_CRAN=true`, Chrome, Node 20, `npm install --no-save axe-core@4.10.3`, `SV_AXE_PATH`); it runs each of `a11y-browser` and `say` singly with `stop_on_failure = TRUE` and skips a filter that has no `test-<f>.R` yet (`test-say.R` arrives in PR A1).
 - **Behaviour:** the new tests passed on today's `isTypingTarget` / `ownsKeyboard`; `sideview.js` is unchanged.
@@ -148,6 +228,7 @@ Each entry: **date — change — why — verification**. Keep the "Open issues"
 
 ---
 
+
 ### 2026-10-26 - lazy pipelines: cross-kind joins and one collect() (0.4.0, task 9)
 - **Change:** `sv-pipeline.js` knows which tables are lazy. `Pipeline.setTables({name: {lazy, codeRef}})` (the engine calls it from `syncTableMeta()` when cards are added or found, from `data-lazy` / `data-code-ref`), `lazyKind()`, `refFor()` (a lazy card's `codeRef`, else the name), `hasLazy()`. `compose()` writes a joined pair by the design's section 6 table (duckdb x df adds `copy = TRUE`; duckdb x arrow converts the right side with `arrow::to_duckdb()`; arrow x duckdb converts the left; df x duckdb moves the left side in with `dplyr::copy_to(..., name = "sideview_<table>")`; df x arrow uses `arrow::arrow_table()`; arrow x df and arrow x arrow are plain joins) and ends a lazy chain in exactly one `dplyr::collect()` (a prepared `<t>_prep` chain stays lazy; a data-frame-only pipeline is byte-identical to before, pinned by a test). New step kind `reshape` (`pivot_longer` / `pivot_wider`): duckdb pivots in SQL; arrow has no pivot, so the chain gets `# reshape runs in R` and a `collect()` just before it, and no final collect. `sv_code_recode(lazy =)` and the pipeline's recode end in `TRUE ~ <col>` on arrow (arrow rejects `.default = <col>`). `sv_auto_clean_rules(lazy =)` ends in one `collect()` and accepts an expression such as `dplyr::tbl(con, "t")` as `df_name`; the server passes `card$code_ref` and `lazy = isTRUE(card$is_lazy)`. The R-error toast gets " This step may need data in R: move collect() above it." when the pipeline has a lazy table. `sideview.js` and `sv-pipeline.js` share one `contains` generator for lazy tables.
 - **Decisions (deviations from the brief, both found by running the code):** (1) `contains` on a lazy table is `stringr::str_detect(col, "<escaped regex>")`, not `stringr::fixed()`: dbplyr turns `fixed(".")` into the regex `.` on duckdb, so it matched every row (the same trap as Task 3). An escaped pattern means the same on arrow and duckdb (RE2), and keeps its meaning if a later join moves the step to the other engine. (2) The two `arrow::to_duckdb()` joins are wrapped in `dplyr::compute()`: `to_duckdb()` registers a view that R's garbage collector may drop before the query runs (`Table with name arrow_003 does not exist`; it failed 1 in 32 runs and every run after `gc()`), and `compute()` makes a real table. Cost: that one side is copied into duckdb. Also: `copy_to(overwrite = TRUE)` under the data frame's own name replaces a real table of that name in the user's database, so the copy has its own name. `trimws()` and `tolower()` do not translate on arrow, but the generated code uses neither, so `lazy` in `sv_auto_clean_rules()` only chooses the collect, the reference and the default arm.
@@ -157,6 +238,7 @@ Each entry: **date — change — why — verification**. Keep the "Open issues"
 
 ---
 
+
 ### 2026-10-25 - full-table and preview labels for lazy cards (0.4.0, task 8)
 - **Change:** `sideview.js` labels what a check was based on. Widget lazy cards (`cardData.lazy`) get the badge "First 50 of 5,000 rows" (`previewBadgeText`) and `data-rows-basis="preview"`/`data-table-rows` on the card element. A join check (`renderJoinCheck`) and the column inspector (`profileHtml`) add `<p class="sideview-basis-note">Based on the first N rows</p>` when the reply's `n_x`/`n_y` or `p.n` is below the card's true row count (`tableRows()`). While a reply is pending, a lazy card with basis "full" shows "Checking the whole table…" (join step line, join check, inspector). New helpers: `tableRows`, `rowsBasis`, `isFullLazy`, `basisNoteHtml`, `previewRowCount`. `sideview.css` has `.sideview-container .sideview-basis-note` (`--sv-text-muted`, 12px).
 - **Lost link reaches the browser:** the server's fallback `sideview_toast` now carries `card` (the card id). The `sideview_toast` handler calls `markCardPreview()`: it sets `data-rows-basis="preview"`, rewrites the badge to "First 50 of 200,000 rows", points the card's remote row windows at the preview row count (`remote.total`, `resetRemote()`) and re-renders the pipeline, join check and inspector. CLAUDE.md message list updated.
@@ -165,12 +247,14 @@ Each entry: **date — change — why — verification**. Keep the "Open issues"
 
 ---
 
+
 ### 2026-10-25 - lazy cards in the gadget: whole-table requests, preview fallback, toast (0.4.0, task 7)
 - **Change:** `sideview_server_impl()` keeps one private duckdb connection per session (`con_env`, closed in `onSessionEnded`) and answers `sideview_rows_request`, `join_diagnostics_request`, `column_profile_request` and `codebook_export` from the whole table for lazy cards. `lazy_or_preview()` falls back to the preview rows when a lazy request fails: the card is marked failed, one `sideview_toast` ("Lost the link to <card>; showing the first N rows.") is sent per card, and later requests use the preview with no second toast. `sv_card_is_lazy()` decides; the preview and the table keep separate row-order caches. New custom message `sideview_toast` (`inst/www/sideview.js` calls `showToast`, which uses `textContent`); CLAUDE.md list updated. `render_card_tag()` adds `data-table-rows`, `data-lazy`, `data-code-ref`, `data-rows-basis` and the "First 50 of 1,000 rows" badge (tooltip when duckdb is missing). `sv_build_schema_context()` states the true row count with "(ranges from the first N rows)" for lazy cards.
 - **Decisions:** `sv_lazy_cross_con` and `sv_lazy_not_duckdb` are errors about the request, not a lost link: the join reply carries `error` and the cards stay full. Missing key columns are checked against the preview names first, so they are never mistaken for a lost link. The join gets `card$source` (not the cached tbl) so Arrow and data frames are placed on the right connection and cleaned up; the codebook gets the cached tbls and writes the file after the lazy attempt, so a write error is not read as a lost link. Codebook progress toasts start after 250 ms (none for a quick codebook) and share one toast id (`codebook-progress`), so the browser updates a single toast instead of stacking them; they reach the browser live while the export runs (measured by the reviewer at about 4 per second). **Fix round 1:** a failed lazy request no longer marks a card by itself: each full card in the request is probed with a 0-row query, and only a card that does not answer is marked and toasted (once per card id). If every card answers, the error is about the request (bad filter, missing column) and goes to the reply as `error`; the card stays full. The cards that still answer keep the whole table for the retry of the same request. The join passes the cached tbl for an Arrow card (the raw source only when the other side is the user's own duckdb tbl).
 - **Verified:** `testServer` tests in `test-app.R` (duckdb fixture of 1,000 rows: rows total/true max, join `n_x`, profile `n`, closed connection falls back once, cross-connection error, codebook `n`/`rows_profiled`, badge and attributes) and `test-llm.R` (schema context); `node --check inst/www/sideview.js`; full `devtools::test()` with `NOT_CRAN=true`: 0 failures. Not yet checked in a real browser or RStudio: the badge, the toast and the attributes get that in Task 8/10.
 
 ---
+
 
 ### 2026-10-25 - lazy cards: full-table row windows (0.4.0, task 3)
 - **Change:** `sv_lazy_rows_window()` / `sv_lazy_filter_expr()` in `R/lazy.R` sort, filter and page a whole duckdb/arrow table with the same windows as `sv_rows_window()`.
@@ -179,6 +263,7 @@ Each entry: **date — change — why — verification**. Keep the "Open issues"
 - **Verified:** `test-lazy.R` and the full suite (headless).
 
 ---
+
 
 ## Open issues (from the 2026-10-24 code audit)
 
@@ -284,6 +369,7 @@ Each sub-project gets its own spec, plan and build, in this order:
   - one non-reproducing error in "module: canvases are independent" in a combined browser run; watch it on CI.
 
 ---
+
 
 ## Log
 
@@ -1017,3 +1103,32 @@ Each sub-project gets its own spec, plan and build, in this order:
 - **Change:** `tools/cdisc-screenshots.R` (chromote, real mouse clicks, synthetic fixture) makes `vignettes/articles/cdisc/{canvas,automap,merge}.png`; wired into the CDISC article and README; docs/ rebuilt and scrubbed of CLAUDE/MEMORY pages and their sitemap and search entries.
 - **Gotcha:** the fixture must call `sv_cdisc_finalize()` on its cards, or SUPP cards get no merge targets and the Merge button is disabled (the first Merge shot showed 0 steps for that reason).
 - **Verified:** merge.png shows 1 step, 16 of 16 SUPP rows matched; `check_pkgdown()` clean; build_site ran; search.json has no CLAUDE/MEMORY paths. Not yet checked: live site after merge.
+
+## Task 13 fix round 1
+- sparkStats no longer scrapes preview-based badge counts (lazy/preview/truncated) or treats ~N distinct as exact; Filter button aria-disabled until openBuilder. Verified: a11y/lazy/layout browser tests, assets, computer-use-gui, node --check, gui-test-runner parity with BASE.
+
+## Task 17: NVDA script written, pass not run (2026-11-14)
+- `plans/2026-11-14-nvda-script.md` (15 tasks) and `tests/testthat/helper-nvda.R` (synthetic DM/AE/SUPPAE/labs fixture) are committed. The launch snippet builds a shiny.appobj.
+- **The NVDA pass itself was NOT run:** access to NVDA was declined, so no speech was read. No results are claimed. Unverified script assumptions: filter step text `AE filter AESEV == "SEVERE"`, join step text `DM left join AE on USUBJID`, header badges "N values"/"N missing".
+- Honest label until a pass is done: "automated WCAG tests (axe) and real-browser keyboard tests; NVDA script not yet run; not yet tested by blind users".
+
+## Final review fixes I1-I3 (2026-11-14)
+- **I1:** the a11y CI job installs `any::devtools`, gets `CHROMOTE_CHROME` from setup-chrome's `chrome-path`, and runs `.github/scripts/run-a11y-tests.R`, which fails on a failed expectation, on 0 passed expectations, or on a skip for a missing Chrome / axe-core. YAML parsed with `yaml::read_yaml`. Script checked locally with `NOT_CRAN=false`: exits non-zero (0 passed). The job itself cannot run here.
+- **I2:** a widget that starts in the list view inside a hidden container (tab, `<details>`) no longer lays out its cards at 0 x 0. `publish()` skips the first layout while `view === 'list'`; `setView('canvas')` runs the deferred first layout. New real-browser test in test-layout-browser.R (widget at display:none, shown, switched to canvas: cards have size and do not overlap). It failed (1 failure, cards 1 and 2 overlap) with the JS edit reverted by hand and passes with it.
+- **Verified:** `node --check`, gui-test-runner.js all true, test-layout-browser.R 761 pass 0 fail, test-a11y-browser.R 344 pass 0 fail 0 skip (NOT_CRAN=true, one R process at a time).
+- **I3:** NEWS.md no longer says "no accepted exceptions" for the canvas: the target-size exemption is named.
+
+## NVDA pass, partial (2026-11-14)
+- Drove NVDA 2026.2 (Speech Viewer read by screenshot) against `viewer = "pane"` in RStudio. **Task 1 passed** (`List view toggle button not pressed`; after activation `sideview list view region Summary heading level 2`, `List view`). Task 4's column sentences were seen on screen. Tasks 2, 3, 5-15 NOT run; RStudio dialog and browser NOT run (browsers are read-only for computer use; the pane's focus order was hard to steer).
+- The public label ("NVDA script written but has not yet been run") is left as is: it understates one confirmed task. No claim of a full pass.
+- The earlier "stall" of the console after the launch was slow loading under a concurrent `devtools::check()` plus a console that had not repainted; the gadget did come up ("Listening on http://127.0.0.1:3845").
+
+## NVDA pass, Edge browser (2026-11-15)
+- Drove tasks 1 to 15 in Edge (`viewer = "browser"`) with NVDA 2026.2; the user pressed the keys, I read the Speech Viewer by screenshot. All 15 passed on the flow. Details in `plans/2026-11-14-nvda-script.md` ("Second pass").
+- Findings, none a confirmed code bug: the list view is last in DOM order, so Ctrl+Home lands on the toolbar (script wording to fix); NVDA counts the table header as row 1; the shortcuts control is a switch (on/off).
+- Task 12 announced `Filter step added. 1 step.` with 2 steps in the pipeline. A clean page gives 1 then 2 steps, so the count logic is right. The user confirmed a page reload caused it.
+- Several announcer lines scrolled out of the viewer and are unconfirmed (`Rows 30 to 40 of 40.`, `Code copied.`, `SUPP merge step added. 1 step.`).
+- Not run: RStudio dialog, RStudio Viewer tasks 2 to 15, blind users. The public label stays as is; no full-pass claim.
+
+## devtools::check() on 475b1be (2026-11-14)
+- `devtools::check(args = "--no-manual")`: 0 errors, 0 warnings, 1 NOTE ("non-standard things in the check directory: NULL", environment only). 28m 55s. Run with NOT_CRAN=false, so the real-browser tests were skipped in the check; they were run singly earlier (a11y-browser 344, layout-browser 761, say 130, all passing).

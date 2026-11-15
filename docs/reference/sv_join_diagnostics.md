@@ -108,11 +108,10 @@ adds whole days of 24 hours, as the in-memory check does.
 patients <- data.frame(id = c(1, 2, 3, 4), age = c(40, 51, 62, 33))
 visits <- data.frame(id = c(1, 1, 2, 5), visit = 1:4)
 sv_join_diagnostics(patients, visits, by = "id")
-#> <sv_join_diagnostics> by id
-#>   relationship: one-to-many
-#>   x rows matched: 2 of 4 (50.0%)
-#>   y rows matched: 3 of 4 (75.0%)
-#>   rows after join: left 5 | inner 3 | full 6 | right 4 | semi 2 | anti 2 
-#>   unmatched in x: 3; 4 
-#>   unmatched in y: 5 
+#> Join of x and y by id is one to many.
+#> 2 of 4 x rows match, 50.0 percent.
+#> 3 of 4 y rows match, 75.0 percent.
+#> 2 rows of x have no match, for example 3 and 4.
+#> 1 row of y has no match, for example keys 5.
+#> Rows by join type: left 5, inner 3, right 4, full 6, semi 2, anti 2.
 ```

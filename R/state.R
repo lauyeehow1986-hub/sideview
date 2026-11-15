@@ -146,6 +146,7 @@ sv_load_state <- function(file, tables = NULL, launch = FALSE, format = NULL, ..
   }
 
   class(state) <- c("sideview_state", "list")
+  state <- sv_state_scrub(state)
   state <- sv_migrate_state(state)
 
   if (isTRUE(launch) && sv_interactive()) {
@@ -199,6 +200,12 @@ sv_state_json <- function(state, pretty = FALSE) {
 #' here, and the card is a plain list again.
 #' @noRd
 sv_state_scrub <- function(state) {
+  if (is.list(state) && is.list(state$view) && "mode" %in% names(state$view)) {
+    m <- state$view$mode
+    if (!(is.character(m) && length(m) == 1L && !is.na(m) && m %in% c("canvas", "list"))) {
+      state$view$mode <- NULL # only a valid view mode is kept
+    }
+  }
   if (!is.list(state) || !is.list(state$cards)) return(state)
   state$cards <- lapply(state$cards, function(card) {
     if (!is.list(card)) return(card)
@@ -221,6 +228,7 @@ sv_state_from_json <- function(txt) {
     stop("Invalid state: root object must be a list.", call. = FALSE)
   }
   class(state) <- c("sideview_state", "list")
+  state <- sv_state_scrub(state)
   sv_migrate_state(state)
 }
 

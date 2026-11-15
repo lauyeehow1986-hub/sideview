@@ -5,7 +5,13 @@
 \alias{sideviewServer}
 \title{Sideview canvas as a Shiny module}
 \usage{
-sideviewUI(id, height = "600px", title = NULL, theme = "auto")
+sideviewUI(
+  id,
+  height = "600px",
+  title = NULL,
+  theme = "auto",
+  view = getOption("sideview.view", "canvas")
+)
 
 sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto")
 }
@@ -17,6 +23,11 @@ sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto")
 \item{title}{Text shown in the toolbar; \code{NULL} (the default) shows none.}
 
 \item{theme}{\code{"auto"}, \code{"light"}, \code{"dark"}, an \code{\link[=sv_theme]{sv_theme()}} or a \code{bslib::bs_theme()}.}
+
+\item{view}{Starting view: \code{"canvas"} (default, the pan/zoom canvas) or
+\code{"list"} (a text-first list of the tables, for keyboard and screen-reader
+use). The default is \code{getOption("sideview.view", "canvas")}. A workspace
+restored later (Open) that records a view switches to it.}
 
 \item{cards}{Tables for the canvas: a (named) list as \code{\link[=sideview]{sideview()}} takes, or a
 \strong{reactive} returning one. A reactive is compared with the canvas by name each

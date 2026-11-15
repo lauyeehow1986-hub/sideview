@@ -232,7 +232,7 @@ sv_suggest_mappings <- function(cards, ..., min_confidence = 0.6, cdisc = "auto"
   if (length(candidates) == 0L) {
     return(if (is.null(rule_rows)) .empty_mappings_result() else {
       rownames(rule_rows) <- NULL
-      rule_rows
+      sv_as_mappings(rule_rows)
     })
   }
 
@@ -253,13 +253,33 @@ sv_suggest_mappings <- function(cards, ..., min_confidence = 0.6, cdisc = "auto"
   res$kind <- NA_character_
   if (!is.null(rule_rows)) res <- rbind(rule_rows, res)
   rownames(res) <- NULL
-  res
+  sv_as_mappings(res)
+}
+
+# The class of the suggestions: a data frame that prints as sentences. as.data.frame() gives
+# the plain data frame back, which is what the browser payload is built from.
+sv_as_mappings <- function(df) {
+  class(df) <- c("sv_mappings", setdiff(class(df), "sv_mappings"))
+  df
+}
+
+#' @export
+as.data.frame.sv_mappings <- function(x, ...) {
+  class(x) <- setdiff(class(x), "sv_mappings")
+  x
+}
+
+#' @export
+print.sv_mappings <- function(x, ...) {
+  cat(sv_say_mappings(x), sep = "
+")
+  invisible(x)
 }
 
 #' Internal: Return 0-row data.frame with expected mapping schema
 #' @noRd
 .empty_mappings_result <- function() {
-  data.frame(
+  sv_as_mappings(data.frame(
     from_table = character(0),
     from_col = character(0),
     to_table = character(0),
@@ -269,7 +289,7 @@ sv_suggest_mappings <- function(cards, ..., min_confidence = 0.6, cdisc = "auto"
     group = character(0),
     kind = character(0),
     stringsAsFactors = FALSE
-  )
+  ))
 }
 
 #' Internal: Score a pair of columns based on name similarity, type compatibility, and Jaccard overlap

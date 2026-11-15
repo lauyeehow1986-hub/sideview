@@ -13,7 +13,7 @@ exporting via save_sideview()."><meta property="og:image" content="https://lauye
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.7.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.8.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -23,6 +23,7 @@ exporting via save_sideview()."><meta property="og:image" content="https://lauye
     <div id="navbar" class="collapse navbar-collapse ms-3">
       <ul class="navbar-nav me-auto"><li class="nav-item"><a class="nav-link" href="../articles/tour.html">Visual tour</a></li>
 <li class="nav-item"><a class="nav-link" href="../articles/cdisc.html">CDISC</a></li>
+<li class="nav-item"><a class="nav-link" href="../articles/screen-reader.html">Screen reader</a></li>
 <li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
@@ -58,7 +59,8 @@ exporting via <code><a href="save_sideview.html">save_sideview()</a></code>.</p>
 <span>  theme <span class="op">=</span> <span class="st">"auto"</span>,</span>
 <span>  state <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  cdisc <span class="op">=</span> <span class="st">"auto"</span>,</span>
-<span>  max_rows <span class="op">=</span> <span class="fl">5000</span></span>
+<span>  max_rows <span class="op">=</span> <span class="fl">5000</span>,</span>
+<span>  view <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/options.html" class="external-link">getOption</a></span><span class="op">(</span><span class="st">"sideview.view"</span>, <span class="st">"canvas"</span><span class="op">)</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -84,7 +86,8 @@ exporting via <code><a href="save_sideview.html">save_sideview()</a></code>.</p>
 
 
 <dt id="arg-options">options<a class="anchor" aria-label="anchor" href="#arg-options"></a></dt>
-<dd><p>Named list of canvas options (e.g. <code>snapToEdge</code>,
+<dd><p>Named list of canvas options (e.g. <code>shortcuts = FALSE</code> to start with
+the single-key shortcuts off, default <code>getOption("sideview.shortcuts", TRUE)</code>, <code>snapToEdge</code>,
 <code>snapThreshold</code>, <code>minScale</code>, <code>maxScale</code>).</p></dd>
 
 
@@ -111,6 +114,13 @@ card says "First N of M rows", and one message names the tables cut. The
 widget has no R session behind it, so every row would travel in the HTML.
 Use <code>Inf</code> to embed everything. Lazy (arrow / duckdb) tables already carry
 only a preview and are not affected.</p></dd>
+
+
+<dt id="arg-view">view<a class="anchor" aria-label="anchor" href="#arg-view"></a></dt>
+<dd><p>Starting view: <code>"canvas"</code> (default) or <code>"list"</code>, a text-first list
+of the tables. Default <code>getOption("sideview.view", "canvas")</code>. A saved
+workspace (<code>options = list(state = )</code>) that records a view wins over this
+argument; a state without one leaves it as it is.</p></dd>
 
 </dl></div>
     <div class="section level2">
