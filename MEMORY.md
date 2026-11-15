@@ -1133,3 +1133,12 @@ Each sub-project gets its own spec, plan and build, in this order:
 
 ## devtools::check() on 475b1be (2026-11-14)
 - `devtools::check(args = "--no-manual")`: 0 errors, 0 warnings, 1 NOTE ("non-standard things in the check directory: NULL", environment only). 28m 55s. Run with NOT_CRAN=false, so the real-browser tests were skipped in the check; they were run singly earlier (a11y-browser 344, layout-browser 761, say 130, all passing).
+
+### 2026-11-15: the 13 Minor findings of the final review
+- Docs/plan findings 1-4, 9, 10, 12, 13 fixed in the earlier docs commit.
+- 5: a state pushed from R (`sideview_state_set`) switches the view silently (`applyState(state, {silent:true})`); the user's Open still announces.
+- 6: accepting a SUPP suggestion keeps the item until the merge step exists (`onSuppCheck` removes it).
+- 7: a join added with "No rule" clears a rule an earlier add left on the same pair.
+- 8: the list profile box hears the give-up of an unanswered profile request.
+- 11: fixed `Sys.sleep` before "nothing happened" assertions replaced by positive waits (announcer drained, row count, DOM marker).
+- Verified: `node --check`; `test-a11y-browser.R` all green in a real browser (`NOT_CRAN=true`), including 4 new tests for 5-8.

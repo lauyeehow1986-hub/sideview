@@ -233,7 +233,8 @@ test_that("a risky join is spoken once: the warning toast stays quiet", {
     toCol: 'patient_id', type: 'left_join'}]); true", sv_eng))
   expect_true(sv_wait_js(b, sprintf("%s.announceLog.some(m => m.indexOf('Join of') === 0)", sv_eng)))
   expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-toast-warning, .sideview-toast-danger').length > 0"))
-  Sys.sleep(1)
+  # the queue has drained, so a second spoken copy of the toast would already be in the log
+  expect_true(sv_wait_js(b, sprintf("%s._annQueue.length === 0 && !%s._annTimer", sv_eng, sv_eng), timeout = 30))
   r <- sv_js(b, sprintf("(() => ({ log: %s.announceLog,
     toasts: Array.from(document.querySelectorAll('.sideview-toast')).map(t => t.textContent) }))()", sv_eng))
   log <- unlist(r$log)
@@ -252,7 +253,7 @@ test_that("the queue keeps the latest messages and step messages coalesce", {
     for (let i = 0; i < 4; i++) e.announce('Undone. ' + i + ' steps.', { coalesce: 'step' });
     return true; })()", sv_eng))
   expect_true(sv_wait_js(b, sprintf("%s._annQueue.length === 0 && !%s._annTimer", sv_eng, sv_eng), timeout = 30))
-  Sys.sleep(0.3)
+  expect_true(sv_wait_js(b, "window.__spoken.indexOf('m9') >= 0", timeout = 30))
   spoken <- unlist(sv_js(b, "window.__spoken"))
   expect_lte(length(spoken), 4)
   expect_false("m0" %in% spoken)
@@ -270,7 +271,8 @@ test_that("a profile reply for a column nobody is inspecting stays silent", {
     e.inspectTarget = { table: 'patients', column: 'age' };
     e.onColumnProfile({ id: JSON.stringify(['patients', 'sex']), kind: 'character', n: 3, n_missing: 0, n_distinct: 2 });
     return true; })()", sv_eng))
-  Sys.sleep(1)
+  # announce() logs synchronously: any spoken reply is in the log by now; drain, then compare
+  expect_true(sv_wait_js(b, sprintf("%s._annQueue.length === 0 && !%s._annTimer", sv_eng, sv_eng), timeout = 30))
   expect_equal(sv_js(b, sprintf("%s.announceLog.length", sv_eng)), n0)
   # the inspected column's own reply is spoken
   sv_js(b, sprintf("(() => { %s.columnProfileFor('patients', 'age'); return true; })()", sv_eng))
@@ -281,7 +283,7 @@ test_that("destroy() removes the live regions and a later announce is a no-op", 
   skip_if_no_browser()
   b <- sv_open_gadget()
   sv_js(b, sprintf("(() => { const e = %s; e.announce('a'); e.announce('a'); e.announce('b'); e.destroy(); return true; })()", sv_eng))
-  Sys.sleep(1)
+  expect_true(sv_wait_js(b, "!document.querySelector('.sideview-announcer')"))
   r <- sv_js(b, "(() => { const c = document.querySelector('.sideview-container');
     const e = c._sideviewInstance || window.__e; return { regions: c.querySelectorAll('.sideview-announcer, .sideview-announcer-alert').length }; })()")
   expect_equal(r$regions, 0)
@@ -428,15 +430,16 @@ test_that("card tables carry row counts", {
   expect_identical(sv_js(b, sprintf("%s.querySelector('thead tr').getAttribute('aria-rowindex')", tbl)), "1")
   # scrolled: the first rendered data row's index is its virtual index + 2
   sv_js(b, sprintf("(() => { const s = %s.closest('.sideview-card-body'); s.scrollTop = 2000; s.dispatchEvent(new Event('scroll')); return true; })()", tbl))
-  Sys.sleep(0.5)
+  expect_true(sv_wait_js(b, sprintf("(() => { const tr = %s.querySelector('tbody tr[data-virtual-index]');
+    return !!tr && Number(tr.dataset.virtualIndex) > 10; })()", tbl)))
   r <- sv_js(b, sprintf("(() => { const tr = %s.querySelector('tbody tr[data-virtual-index]');
     return { idx: tr.getAttribute('aria-rowindex'), v: Number(tr.dataset.virtualIndex) }; })()", tbl))
   expect_gt(r$v, 10)
   expect_identical(r$idx, as.character(r$v + 2))
   # a filter leaving few rows: the count follows (rows + header)
   sv_js(b, sprintf("%s._virtualTable.filter(1, 'test', 'equals', 'HbA1c'); true", tbl))
-  expect_true(sv_wait_js(b, sprintf("%s._virtualTable.getRowCount() < 5000", tbl)))
-  Sys.sleep(0.3)
+  expect_true(sv_wait_js(b, sprintf("%s._virtualTable.getRowCount() < 5000 &&
+    %s.getAttribute('aria-rowcount') === String(%s._virtualTable.getRowCount() + 1)", tbl, tbl, tbl)))
   r <- sv_js(b, sprintf("({ n: %s._virtualTable.getRowCount(), rc: %s.getAttribute('aria-rowcount') })", tbl, tbl))
   expect_identical(r$rc, as.character(r$n + 1))
   expect_gt(r$n, 0)
@@ -680,8 +683,8 @@ test_that("list rows follow canvas sort and filter", {
   sv_js(b, sprintf("(() => { const b = %s.querySelector('[data-action=\"sort-col\"][data-col-name=\"value\"]');
     b.click(); b.click(); return true; })()", card))
   sv_js(b, sprintf("%s._virtualTable.filter(2, 'value', 'gt', '10'); true", card))
-  Sys.sleep(1)
   want <- dplyr::arrange(dplyr::filter(fx$labs, value > 10), dplyr::desc(value))
+  expect_true(sv_wait_js(b, sprintf("%s._virtualTable.getRowCount() === %d", card, nrow(want))))
   sv_js(b, paste0(sv_eng, ".setView('list'); true"))
   expect_true(sv_wait_js(b, sprintf("%s.querySelector('table').getAttribute('aria-rowcount') === '%d'",
                                     sv_lv_table("labs"), nrow(want) + 1L)))
@@ -1373,4 +1376,65 @@ test_that("the toolbar List view toggle stays inside the container at the narrow
   expect_gte(r$right, 0)
   expect_gt(r$w, 0)
   expect_lte(r$scroll, 0)
+})
+
+# ---- minor findings 5 to 8 ----
+
+test_that("a state pushed from R switches the view silently, the user's own Open announces", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_js(b, "document.querySelector('.sideview-ai-input').focus(); true")
+  n0 <- sv_js(b, paste0(sv_eng, ".announceLog.length"))
+  sv_js(b, sprintf("%s.applyState({ view: { mode: 'list' } }, { silent: true }); true", sv_eng))
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-listview')"))
+  expect_true(sv_wait_js(b, sprintf("%s._annQueue.length === 0 && !%s._annTimer", sv_eng, sv_eng), timeout = 30))
+  expect_equal(sv_js(b, paste0(sv_eng, ".announceLog.length")), n0)
+  expect_true(sv_js(b, "document.activeElement === document.querySelector('.sideview-ai-input')"))
+  sv_js(b, sprintf("%s.applyState({ view: { mode: 'canvas' } }); true", sv_eng))
+  expect_true(sv_wait_js(b, sprintf("%s.announceLog.length > %d", sv_eng, n0), timeout = 30))
+})
+
+test_that("a join added with No rule clears a rule an earlier add left on the pair", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_lv_join_form(b)
+  add_join <- function() {
+    sv_js(b, paste0(sv_lv_join_btn("Check join"), ".click(); true"))
+    expect_true(sv_wait_js(b, paste0("!", sv_lv_join_btn("Add join step"), ".disabled"), timeout = 30))
+    sv_js(b, paste0(sv_lv_join_btn("Add join step"), ".click(); true"))
+  }
+  add_join()
+  id <- sv_js(b, paste0(sv_eng, ".pipeline.steps.filter(s => s.kind === 'join')[0].id"))
+  sv_js(b, sprintf("%s.pipeline.setJoinRule(%s, { shape: 'between', inclusive: true }); true", sv_eng, sv_js_str(id)))
+  expect_true(sv_js(b, sprintf("!!%s.pipeline.find(%s).rule", sv_eng, sv_js_str(id))))
+  add_join()   # the form still says "No rule"
+  expect_true(sv_js(b, sprintf("!%s.pipeline.find(%s).rule", sv_eng, sv_js_str(id))))
+})
+
+test_that("a SUPP suggestion stays until its merge step exists", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  sv_js(b, sprintf("(() => { const lv = %s.listView, j = lv.join;
+    const li = document.createElement('li'); li.appendChild(document.createElement('button'));
+    j.suggestList.appendChild(li);
+    const it = { isSupp: true, suppKey: 'k-test', add: () => 'Merge checked.' };
+    lv.acceptSuggestion(li, it);
+    window.__kept = li.isConnected; window.__li = li; window.__it = it; return true; })()", sv_eng))
+  expect_true(sv_js(b, "window.__kept"))
+  sv_js(b, sprintf("(() => { %s.pipeline.steps.push({ id: 'x', kind: 'supp', key: 'k-test', enabled: true });
+    %s.listView.onSuppCheck({}, 'k-test'); return true; })()", sv_eng, sv_eng))
+  expect_false(sv_js(b, "window.__li.isConnected"))
+})
+
+test_that("the list profile box hears the give-up of an unanswered profile request", {
+  skip_if_no_browser()
+  b <- sv_open_gadget()
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  sv_js(b, sprintf("(() => { window.__prof = null; const lv = %s.listView; const orig = lv.onColumnProfile;
+    lv.onColumnProfile = function (d) { window.__prof = d; return orig && orig.apply(this, arguments); };
+    %s.send = function () { return false; };
+    %s.requestColumnProfile({ id: 'p-test', card: 'patients', column: 'age' }, 99); return true; })()", sv_eng, sv_eng, sv_eng))
+  expect_true(sv_wait_js(b, "!!window.__prof", timeout = 30))
+  expect_identical(sv_js(b, "window.__prof.error"), "The R session did not answer.")
 })
