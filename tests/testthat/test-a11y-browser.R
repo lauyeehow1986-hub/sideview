@@ -832,7 +832,7 @@ test_that("Add join step adds one step and draws its spline", {
   expect_true(sv_wait_js(b, sprintf("!%s.disabled", sv_lv_join_btn("Add join step")), timeout = 30))
   sv_js(b, paste0(sv_lv_join_btn("Add join step"), ".click(); true"))
   expect_equal(sv_js(b, paste0(sv_eng, ".pipeline.enabledCount()")), 1)
-  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-connector-svg path').length"), 1)
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-connector-svg .sideview-connector-path').length"), 1)
   foc <- sv_js(b, "(() => { const a = document.activeElement;
     return { step: a.getAttribute('data-step-id'), tag: a.tagName, text: a.textContent.slice(0, 40) }; })()")
   want_id <- sv_js(b, paste0(sv_eng, ".pipeline.steps[0].id"))
