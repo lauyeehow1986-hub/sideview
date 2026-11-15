@@ -1599,6 +1599,7 @@ function sendToShiny(name, value) {
     }
     if (this.closeActivePopover) this.closeActivePopover();
     this.toggleShortcuts(false);
+    if (this.access) this.access.cancelConnect();
     this._searchReturnFocus = document.activeElement;
     var n = ++searchSeq;
     var listId = 'sv-search-list-' + n;
@@ -1955,6 +1956,7 @@ function sendToShiny(name, value) {
       return false;
     }
     if (existing) return true;
+    if (this.access) this.access.cancelConnect();
     this._shortcutsReturnFocus = document.activeElement;
     var id = 'sv-shortcuts-title-' + (++shortcutsSeq);
     var rows = SHORTCUTS.map(function (row) {
@@ -2881,7 +2883,7 @@ function sendToShiny(name, value) {
         toTable: toCardName,
         toCol: toColName,
         toElement: targetPort,
-        type: 'left_join'
+        type: self.CLICK_JOIN_TYPE
       });
 
       self.showToast('Linked ' + fromTable + '.' + fromCol + ' ↔ ' + toCardName + '.' + toColName, 'success');
@@ -3646,6 +3648,9 @@ function sendToShiny(name, value) {
   /**
    * Field click-to-connect field mapping with SVG bezier curves
    */
+
+  // The join a click-to-connect creates (sv-access.js joins by keyboard with the same type).
+  SideviewEngine.prototype.CLICK_JOIN_TYPE = 'left_join';
   
   SideviewEngine.prototype.findPortElement = function (tableName, colName) {
     if (!tableName || !colName) return null;
@@ -4271,6 +4276,8 @@ function sendToShiny(name, value) {
       if (c.fromTable === name || c.toTable === name) self.dropConnectionVisually(c);
     });
     var el = meta.element;
+    // keyboard focus and a keyboard connect on this card move on before it goes
+    if (this.access) this.access.cardRemoving(el);
     if (el.classList.contains('is-maximized')) {
       this.toggleMaximizeCard(el, el.querySelector('[data-action="maximize-card"]'));
     }
@@ -7454,6 +7461,7 @@ function sendToShiny(name, value) {
   SideviewEngine.prototype.setView = function (mode, opts) {
     if (mode !== 'canvas' && mode !== 'list') return this.view;
     if (mode === this.view || this._destroyed) return this.view;
+    if (this.access) this.access.cancelConnect();
     var self = this;
     var silent = !!(opts && opts.silent);
     var list = mode === 'list';

@@ -3888,3 +3888,44 @@ html.sv-standalone body {
     --sv-connector-color: #93c5fd;
   }
 }
+
+/* ---- Accessible canvas: keyboard joins (connect source, join menu) ---- */
+.sideview-container.sv-access th.sv-kb-connect-source {
+  outline: 3px dashed var(--sv-focus-ring);
+  outline-offset: -3px;
+  background: var(--sv-primary-subtle);
+}
+.sideview-container.sv-access .sideview-kb-menu {
+  position: absolute;
+  z-index: 125;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  max-width: 360px;
+  padding: 4px;
+  background: var(--sv-surface);
+  color: var(--sv-text);
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-md);
+  box-shadow: var(--sv-shadow-popover);
+  font-family: var(--sv-font);
+}
+.sideview-container.sv-access .sideview-kb-menu [role="menuitem"] {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--sv-text);
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.sideview-container.sv-access .sideview-kb-menu [role="menuitem"]:hover {
+  background: var(--sv-hover-overlay);
+}
+.sideview-container.sv-access .sideview-kb-menu [role="menuitem"]:focus-visible {
+  background: var(--sv-primary-subtle);
+  color: var(--sv-primary-text);
+}

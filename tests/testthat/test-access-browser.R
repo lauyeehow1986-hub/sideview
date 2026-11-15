@@ -153,6 +153,7 @@ test_that("switching on below 1.0 zooms to 1 around the focused card; switching 
   expect_equal(sv_js(b, paste0(sv_acc_eng, ".minScaleNow()")), 0.15)
   sv_js(b, sprintf("%s.panzoom.zoomToPoint(0.2, {clientX: 680, clientY: 400}); true", sv_acc_eng))
   expect_equal(sv_js(b, paste0(sv_acc_eng, ".panzoom.getScale()")), 0.2, tolerance = 1e-6)
+  sv_js(b, "localStorage.removeItem('sideview.access')")
 })
 
 sv_six_joins_js <- function(eng) {
@@ -378,11 +379,15 @@ test_that("inside a card Tab reaches its actions, then leaves to the next card",
     if (w != "~patients") break
     stops[[length(stops) + 1]] <- sv_focus_info(b)
     stops[[length(stops)]]$action <- sv_js(b, "document.activeElement.getAttribute('data-action') || ''")
-    stops[[length(stops)]]$th <- sv_js(b, "!!document.activeElement.closest('th')")
+    stops[[length(stops)]]$th <- sv_js(b, "(() => { const t = document.activeElement.closest('th'); return t ? t.getAttribute('data-col-name') : ''; })()")
+    stops[[length(stops)]]$is_th <- sv_js(b, "document.activeElement.tagName === 'TH'")
   }
   actions <- vapply(stops, function(s) s$action, "")
   expect_true(all(c("maximize-card", "sync-scroll", "minimize-card") %in% actions))
-  expect_lte(sum(vapply(stops, function(s) isTRUE(s$th), TRUE)), 1)
+  # one roving column header (plus its own tool buttons), not every column
+  ths <- vapply(stops, function(s) s$th, "")
+  expect_equal(sum(vapply(stops, function(s) isTRUE(s$is_th), TRUE)), 1)
+  expect_length(unique(ths[nzchar(ths)]), 1)
   expect_identical(w, "visits")
   sv_js(b, "localStorage.removeItem('sideview.access')")
 })
@@ -588,5 +593,385 @@ test_that("a maximized card does not move; a minimized one does and keeps its sp
     sv_acc_eng, card))
   expect_lt(abs(d$x - d$ex), 1.5)
   expect_lt(abs(d$y - d$ey), 1.5)
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+# ---- keyboard on column headers and joins (spec section 5, Task 7) ----
+
+sv_th_js <- function(card, col) {
+  sprintf("[...%s.querySelectorAll('thead th[data-col-name]')].find(t => t.getAttribute('data-col-name') === %s)",
+          sv_card_js(card), jsonlite::toJSON(col, auto_unbox = TRUE))
+}
+
+# 'card.col' when a column header has focus, else ''.
+sv_focus_th_js <- "(() => { const a = document.activeElement; if (!a || a.tagName !== 'TH') return '';
+  return a.closest('.sideview-card').getAttribute('data-card-name') + '.' + a.getAttribute('data-col-name'); })()"
+
+sv_th_tabindex <- function(b, card) {
+  unlist(sv_js(b, sprintf("[...%s.querySelectorAll('thead th[data-col-name]')].map(t => t.getAttribute('tabindex'))",
+                          sv_card_js(card))))
+}
+
+sv_focus_th <- function(b, card, col) {
+  sv_js(b, sprintf("(() => { const t = %s; t.focus({preventScroll: true}); return document.activeElement === t; })()",
+                   sv_th_js(card, col)))
+}
+
+sv_join_js <- function(pairs) {
+  sprintf("(() => { const e = %s; %s.forEach(x => e.addConnections([{fromTable: x[0], fromCol: x[1], toTable: x[2], toCol: x[3], type: 'left_join'}]));
+    return e.connections.length; })()", sv_acc_eng, jsonlite::toJSON(pairs))
+}
+
+sv_ann_log <- function(b) unlist(sv_js(b, paste0(sv_acc_eng, ".announceLog.slice()")))
+
+sv_spy_send <- function(b) {
+  sv_js(b, sprintf("(() => { const e = %s; e._sent = []; const orig = e.send;
+    e.send = function (n, v) { e._sent.push([n, v]); return orig.apply(e, arguments); }; return true; })()", sv_acc_eng))
+}
+
+sv_key_c <- function(b) sv_key(b, "c", code = "KeyC", text = "c")
+sv_key_j <- function(b) sv_key(b, "j", code = "KeyJ", text = "j")
+CTRL <- 2L
+
+sv_source_n <- function(b) sv_js(b, "document.querySelectorAll('.sv-kb-connect-source').length")
+
+sv_std_cards <- list(patients = c(40, 120), visits = c(760, 120), labs = c(40, 900))
+
+test_that("Enter goes into the headers, Left/Right move, Escape goes back", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_place_cards(b, sv_std_cards)
+  # with focus elsewhere no header is a Tab stop
+  expect_true(all(sv_th_tabindex(b, "patients") == "-1"))
+  expect_true(sv_focus_card(b, "patients"))
+  expect_equal(sv_th_tabindex(b, "patients"), c("0", "-1", "-1", "-1"))
+  sv_key(b, "Enter")
+  expect_identical(sv_js(b, sv_focus_th_js), "patients.patient_id")
+  expect_equal(sv_th_tabindex(b, "patients"), c("0", "-1", "-1", "-1"))
+  btns <- function(col) unlist(sv_js(b, sprintf("[...%s.querySelectorAll('button')].map(x => x.getAttribute('tabindex'))",
+                                                 sv_th_js("patients", col))))
+  expect_true(all(btns("patient_id") == "0"))
+  expect_true(all(btns("sex") == "-1"))
+  expect_true(all(sv_th_tabindex(b, "visits") == "-1"))
+  sv_key(b, "ArrowRight")
+  expect_identical(sv_js(b, sv_focus_th_js), "patients.sex")
+  expect_equal(sv_th_tabindex(b, "patients"), c("-1", "0", "-1", "-1"))
+  expect_true(all(btns("sex") == "0"))
+  expect_true(all(btns("patient_id") == "-1"))
+  sv_key(b, "ArrowRight")
+  sv_key(b, "ArrowRight")
+  sv_key(b, "ArrowRight")  # the last column: stays
+  expect_identical(sv_js(b, sv_focus_th_js), "patients.site")
+  sv_key(b, "ArrowLeft")
+  expect_identical(sv_js(b, sv_focus_th_js), "patients.age")
+  # headers keys never move the card
+  expect_equal(unlist(sv_card_pos(b, "patients")), c(left = 40, top = 120))
+  # Tab from the header reaches its own tool buttons
+  sv_tab(b)
+  expect_identical(sv_js(b, "document.activeElement.getAttribute('data-action')"), "sort-col")
+  expect_identical(sv_js(b, "document.activeElement.closest('th').getAttribute('data-col-name')"), "age")
+  sv_tab(b, shift = TRUE)
+  expect_identical(sv_js(b, sv_focus_th_js), "patients.age")
+  sv_key(b, "Escape")
+  expect_identical(sv_js(b, sv_focus_where_js), "patients")
+  # the card remembers nothing odd: Enter goes to the first header again
+  sv_key(b, "Enter")
+  expect_identical(sv_js(b, sv_focus_th_js), "patients.patient_id")
+  # switch off: every header attribute is back
+  sv_js(b, paste0(sv_acc_eng, ".setAccess(false)"))
+  expect_equal(sv_js(b, "document.querySelectorAll('thead th[tabindex], thead button[tabindex]').length"), 0)
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+test_that("C then Enter on another card's column creates one join, one step, one column_mapped", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_place_cards(b, sv_std_cards)
+  sv_spy_send(b)
+  n0 <- sv_js(b, paste0(sv_acc_eng, ".connections.length"))
+  s0 <- sv_js(b, paste0(sv_acc_eng, ".pipeline.steps.length"))
+  expect_true(sv_focus_card(b, "patients"))
+  sv_key(b, "Enter")
+  sv_key_c(b)
+  expect_identical(sv_last_ann(b), "Connecting from patients.patient_id. Choose a column.")
+  expect_true(sv_js(b, sprintf("%s.classList.contains('sv-kb-connect-source')", sv_th_js("patients", "patient_id"))))
+  # a column of the same card does not complete
+  sv_key(b, "ArrowRight")
+  sv_key(b, "Enter")
+  expect_identical(sv_last_ann(b), "Choose a column in another table.")
+  expect_equal(sv_source_n(b), 1)
+  expect_equal(sv_js(b, paste0(sv_acc_eng, ".connections.length")), n0)
+  sv_key(b, "ArrowRight", modifiers = ALT)
+  expect_identical(sv_js(b, sv_focus_where_js), "visits")
+  sv_key(b, "Enter")
+  sv_key(b, "ArrowRight")
+  expect_identical(sv_js(b, sv_focus_th_js), "visits.pid")
+  sv_key(b, "Enter")
+  expect_equal(sv_js(b, paste0(sv_acc_eng, ".connections.length")), n0 + 1)
+  expect_equal(sv_js(b, paste0(sv_acc_eng, ".pipeline.steps.length")), s0 + 1)
+  mapped <- sv_js(b, sprintf("%s._sent.filter(x => x[0] === 'column_mapped').map(x => x[1])", sv_acc_eng))
+  expect_length(mapped, 1)
+  expect_identical(mapped[[1]]$from_table, "patients")
+  expect_identical(mapped[[1]]$from_col, "patient_id")
+  expect_identical(mapped[[1]]$to_table, "visits")
+  expect_identical(mapped[[1]]$to_col, "pid")
+  # the join type a mouse click-to-connect creates
+  expect_identical(mapped[[1]]$join_type, sv_js(b, paste0(sv_acc_eng, ".CLICK_JOIN_TYPE")))
+  log <- sv_ann_log(b)
+  i_conn <- max(which(log == "Connecting from patients.patient_id. Choose a column."))
+  i_join <- which(log == "Join step added. 1 step.")
+  expect_length(i_join, 1)
+  expect_gt(i_join, i_conn)
+  expect_equal(sv_source_n(b), 0)
+  expect_identical(sv_js(b, sv_focus_th_js), "visits.pid")
+  # the generated code parses in R
+  code <- sv_js(b, paste0(sv_acc_eng, ".generatedCode"))
+  expect_match(code, "left_join")
+  expect_silent(parse(text = code))
+  # one undo step
+  sv_key(b, "z", code = "KeyZ", modifiers = CTRL)
+  expect_equal(sv_js(b, paste0(sv_acc_eng, ".pipeline.steps.length")), s0)
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+test_that("Escape cancels connecting", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_place_cards(b, sv_std_cards)
+  expect_true(sv_focus_card(b, "patients"))
+  sv_key(b, "Enter")
+  sv_key_c(b)
+  expect_equal(sv_source_n(b), 1)
+  sv_key(b, "Escape")
+  expect_identical(sv_last_ann(b), "Connecting cancelled.")
+  expect_equal(sv_source_n(b), 0)
+  expect_identical(sv_js(b, sv_focus_th_js), "patients.patient_id")
+  # cancelled from another card too
+  sv_key_c(b)
+  sv_key(b, "ArrowRight", modifiers = ALT)
+  expect_identical(sv_js(b, sv_focus_where_js), "visits")
+  sv_key(b, "Escape")
+  expect_identical(sv_last_ann(b), "Connecting cancelled.")
+  expect_equal(sv_source_n(b), 0)
+  # nothing is joined afterwards
+  sv_key(b, "Enter")
+  sv_key(b, "Enter")
+  expect_equal(sv_js(b, paste0(sv_acc_eng, ".connections.length")), 0)
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+test_that("Delete removes one join; with several a menu lists each plus all", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_place_cards(b, sv_std_cards)
+  conns <- function() sv_js(b, paste0(sv_acc_eng, ".connections.length"))
+  menu_js <- "document.querySelector('.sideview-kb-menu[role=\"menu\"]')"
+  # none
+  expect_true(sv_focus_th(b, "patients", "patient_id"))
+  sv_key(b, "Delete")
+  expect_identical(sv_last_ann(b), "No joins on patients.patient_id.")
+  # one
+  expect_equal(sv_js(b, sv_join_js(list(c("patients", "patient_id", "visits", "pid")))), 1)
+  sv_key(b, "Delete")
+  expect_equal(conns(), 0)
+  expect_identical(sv_last_ann(b), "Removed 1 join on patients.patient_id.")
+  expect_identical(sv_js(b, sv_focus_th_js), "patients.patient_id")
+  expect_false(sv_js(b, sprintf("!!%s", menu_js)))
+  # several: a menu
+  sv_js(b, sv_join_js(list(c("patients", "patient_id", "visits", "pid"), c("labs", "patient_id", "patients", "patient_id"))))
+  expect_equal(conns(), 2)
+  sv_key(b, "Delete")
+  expect_true(sv_js(b, sprintf("!!%s", menu_js)))
+  items <- unlist(sv_js(b, sprintf("[...%s.querySelectorAll('button[role=\"menuitem\"]')].map(x => x.textContent)", menu_js)))
+  expect_equal(items, c("Remove join to visits.pid", "Remove join to labs.patient_id", "All joins on this column"))
+  expect_true(sv_js(b, sprintf("document.activeElement === %s.querySelector('button[role=\"menuitem\"]')", menu_js)))
+  sv_key(b, "ArrowDown")
+  expect_identical(sv_js(b, "document.activeElement.textContent"), "Remove join to labs.patient_id")
+  sv_key(b, "ArrowUp")
+  expect_identical(sv_js(b, "document.activeElement.textContent"), "Remove join to visits.pid")
+  sv_key(b, "Escape")
+  expect_false(sv_js(b, sprintf("!!%s", menu_js)))
+  expect_identical(sv_js(b, sv_focus_th_js), "patients.patient_id")
+  expect_equal(conns(), 2)
+  # one item removes that join only
+  sv_key(b, "Delete")
+  sv_key(b, "Enter")
+  expect_equal(conns(), 1)
+  expect_identical(sv_last_ann(b), "Removed 1 join on patients.patient_id.")
+  expect_identical(sv_js(b, sv_focus_th_js), "patients.patient_id")
+  expect_identical(sv_js(b, paste0(sv_acc_eng, ".connections[0].fromTable")), "labs")
+  # All joins on this column
+  sv_js(b, sv_join_js(list(c("patients", "patient_id", "visits", "pid"))))
+  sv_key(b, "Delete")
+  sv_key(b, "End")
+  expect_identical(sv_js(b, "document.activeElement.textContent"), "All joins on this column")
+  sv_key(b, "Enter")
+  expect_equal(conns(), 0)
+  expect_identical(sv_last_ann(b), "Removed 2 joins on patients.patient_id.")
+  expect_false(sv_js(b, sprintf("!!%s", menu_js)))
+  expect_identical(sv_js(b, sv_focus_th_js), "patients.patient_id")
+  expect_equal(sv_js(b, paste0(sv_acc_eng, ".pipeline.steps.filter(s => s.kind === 'join').length")), 0)
+  # switch off closes an open menu
+  sv_js(b, sv_join_js(list(c("patients", "patient_id", "visits", "pid"), c("patients", "patient_id", "labs", "patient_id"))))
+  sv_key(b, "Delete")
+  expect_true(sv_js(b, sprintf("!!%s", menu_js)))
+  sv_js(b, paste0(sv_acc_eng, ".setAccess(false)"))
+  expect_false(sv_js(b, sprintf("!!%s", menu_js)))
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+test_that("J moves to the joined column and cycles", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_place_cards(b, sv_std_cards)
+  sv_js(b, sv_join_js(list(c("patients", "patient_id", "visits", "pid"), c("labs", "patient_id", "patients", "patient_id"))))
+  # the join checks announce their relationship asynchronously; let them land first
+  Sys.sleep(1)
+  expect_true(sv_focus_th(b, "patients", "patient_id"))
+  sv_key_j(b)
+  expect_identical(sv_js(b, sv_focus_th_js), "visits.pid")
+  expect_identical(sv_last_ann(b), "visits.pid")
+  sv_key_j(b)
+  expect_identical(sv_js(b, sv_focus_th_js), "labs.patient_id")
+  expect_identical(sv_last_ann(b), "labs.patient_id")
+  sv_key_j(b)
+  expect_identical(sv_js(b, sv_focus_th_js), "patients.patient_id")
+  sv_key_j(b)
+  expect_identical(sv_js(b, sv_focus_th_js), "visits.pid")
+  # the landing header is the card's roving stop
+  expect_equal(sv_th_tabindex(b, "visits"), c("-1", "0", "-1"))
+  # no joins: focus stays
+  expect_true(sv_focus_th(b, "patients", "sex"))
+  sv_key_j(b)
+  expect_identical(sv_js(b, sv_focus_th_js), "patients.sex")
+  expect_identical(sv_last_ann(b), "No joins on patients.sex.")
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+test_that("switching the access off mid-connect cancels it silently", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_place_cards(b, sv_std_cards)
+  expect_true(sv_focus_th(b, "patients", "patient_id"))
+  sv_key_c(b)
+  expect_equal(sv_source_n(b), 1)
+  sv_js(b, paste0(sv_acc_eng, ".setAccess(false)"))
+  expect_equal(sv_source_n(b), 0)
+  expect_false("Connecting cancelled." %in% sv_ann_log(b))
+  expect_identical(sv_last_ann(b), "Accessible canvas off.")
+  sv_js(b, paste0(sv_acc_eng, ".setAccess(true)"))
+  expect_true(sv_focus_th(b, "visits", "pid"))
+  sv_key(b, "Enter")
+  expect_equal(sv_js(b, paste0(sv_acc_eng, ".connections.length")), 0)
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+test_that("list view, the ? dialog and Ctrl+K each cancel connecting", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  sv_place_cards(b, sv_std_cards)
+  sv_js(b, paste0(sv_acc_eng, ".setShortcuts(true)"))
+  start <- function() {
+    expect_true(sv_focus_th(b, "patients", "patient_id"))
+    sv_key_c(b)
+    expect_equal(sv_source_n(b), 1)
+  }
+  start()
+  sv_js(b, paste0(sv_acc_eng, ".setView('list')"))
+  expect_equal(sv_source_n(b), 0)
+  expect_true("Connecting cancelled." %in% sv_ann_log(b))
+  sv_js(b, paste0(sv_acc_eng, ".setView('canvas')"))
+  start()
+  sv_key(b, "?", code = "Slash", modifiers = SHIFT, text = "?")
+  expect_true(sv_js(b, "!!document.querySelector('.sideview-shortcuts-scrim')"))
+  expect_equal(sv_source_n(b), 0)
+  sv_key(b, "Escape")
+  expect_false(sv_js(b, "!!document.querySelector('.sideview-shortcuts-scrim')"))
+  start()
+  sv_key(b, "k", code = "KeyK", modifiers = CTRL)
+  expect_true(sv_js(b, "!!document.querySelector('.sideview-search-scrim')"))
+  expect_equal(sv_source_n(b), 0)
+  sv_key(b, "Escape")
+  # a cancelled connect makes no join on the next Enter
+  expect_true(sv_focus_th(b, "visits", "pid"))
+  sv_key(b, "Enter")
+  expect_equal(sv_js(b, paste0(sv_acc_eng, ".connections.length")), 0)
+  sv_js(b, "localStorage.removeItem('sideview.access'); localStorage.removeItem('sideview.shortcuts')")
+})
+
+test_that("module: sv_remove_card() on the focused or source card moves focus and cancels connecting", {
+  skip_if_no_browser()
+  app <- sv_start_app(paste0(
+    "shiny::shinyApp(shiny::fluidPage(sideview::sideviewUI('m', height = '780px', access = TRUE)),",
+    "function(input, output, session) { px <- sideview::sideviewServer('m', cards = list(",
+    "patients = patients, visits = visits, labs = labs));",
+    "shiny::observeEvent(input$rm, sideview::sv_remove_card(px, input$rm)) })"))
+  b <- sv_open_page(app$url, 1360, 820, wait_for = sv_acc_ready)
+  withr::defer({
+    try(b$close(), silent = TRUE)
+    try(app$proc$kill(), silent = TRUE)
+  })
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 3", timeout = 60))
+  sv_place_cards(b, sv_std_cards)
+  # the focused card is also the source
+  expect_true(sv_focus_th(b, "visits", "pid"))
+  sv_key_c(b)
+  expect_equal(sv_source_n(b), 1)
+  sv_js(b, "Shiny.setInputValue('rm', 'visits', {priority: 'event'}); true")
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 2", timeout = 30))
+  expect_equal(sv_source_n(b), 0)
+  expect_true("Connecting cancelled." %in% sv_ann_log(b))
+  expect_identical(sv_js(b, sv_focus_where_js), "labs")
+  # the source card goes while focus is on another card
+  expect_true(sv_focus_th(b, "labs", "patient_id"))
+  sv_key_c(b)
+  sv_key(b, "ArrowUp", modifiers = ALT)
+  expect_identical(sv_js(b, sv_focus_where_js), "patients")
+  n_cancel <- sum(sv_ann_log(b) == "Connecting cancelled.")
+  sv_js(b, "Shiny.setInputValue('rm', 'labs', {priority: 'event'}); true")
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 1", timeout = 30))
+  expect_equal(sv_source_n(b), 0)
+  expect_equal(sum(sv_ann_log(b) == "Connecting cancelled."), n_cancel + 1)
+  expect_identical(sv_js(b, sv_focus_where_js), "patients")
+  sv_key(b, "Enter")
+  sv_key(b, "Enter")
+  expect_equal(sv_js(b, paste0(sv_acc_eng, ".connections.length")), 0)
+  sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+test_that("card and column names are shown as literal text in announcements and the menu", {
+  skip_if_no_browser()
+  b <- sv_acc_open("gadget", access = TRUE)
+  x <- "<img src=x onerror=\"window.__x=1\">"
+  xj <- jsonlite::toJSON(x, auto_unbox = TRUE)
+  sv_js(b, sprintf("(() => { const e = %s; const n = %s; const d = {}; d[n] = ['a', 'b']; d.other = [1, 2];
+    e.addCardFromR({name: n, data: d}); return true; })()", sv_acc_eng, xj))
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 4"))
+  pos <- sv_std_cards
+  pos[[x]] <- c(760, 900)
+  sv_place_cards(b, pos)
+  sv_js(b, sv_join_js(list(c("patients", "patient_id", x, x), c("patients", "patient_id", "visits", "pid"))))
+  expect_true(sv_focus_th(b, x, x))
+  sv_key_c(b)
+  expect_identical(sv_last_ann(b), paste0("Connecting from ", x, ".", x, ". Choose a column."))
+  sv_key(b, "Escape")
+  expect_true(sv_focus_th(b, "patients", "patient_id"))
+  sv_key_j(b)
+  expect_identical(sv_last_ann(b), paste0(x, ".", x))
+  expect_true(sv_focus_th(b, "patients", "patient_id"))
+  sv_key(b, "Delete")
+  items <- unlist(sv_js(b, "[...document.querySelectorAll('.sideview-kb-menu button[role=\"menuitem\"]')].map(x => x.textContent)"))
+  expect_identical(items[1], paste0("Remove join to ", x, ".", x))
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-kb-menu img').length"), 0)
+  sv_key(b, "Escape")
+  sv_key(b, "Delete")
+  sv_key(b, "End")
+  sv_key(b, "Enter")
+  expect_identical(sv_last_ann(b), "Removed 2 joins on patients.patient_id.")
+  expect_true(sv_focus_th(b, x, x))
+  sv_key(b, "Delete")
+  expect_identical(sv_last_ann(b), paste0("No joins on ", x, ".", x, "."))
+  Sys.sleep(0.3)
+  expect_true(sv_js(b, "typeof window.__x === 'undefined'"))
   sv_js(b, "localStorage.removeItem('sideview.access')")
 })

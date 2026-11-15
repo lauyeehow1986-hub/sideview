@@ -7,11 +7,19 @@
  *
  * On: every card is a Tab stop (tabindex="0", role="group", aria-label = card name) in reading
  * order (top-to-bottom, then left-to-right), its header buttons are Tab stops only while focus is
- * inside that card, and the column-header buttons stay out of the Tab order (Task 7 opens the
- * focused header's own buttons). A focused card takes:
+ * inside that card. The column headers (th) are a roving Tab stop: inside the card with focus one
+ * th is at tabindex 0 (the last one focused, else the first) with its own tool buttons, every other
+ * th and header button is at -1. A focused card takes:
  *   Arrows           move 20 px          Shift+Arrows  move 100 px
  *   JUMP_MODS+Arrows focus the nearest card in that direction
+ *   Enter            focus the first column header
  *   PageUp / PageDown / Home / End  scroll the card's table body
+ * A focused column header takes:
+ *   Left / Right     previous / next header      Escape  back to the card (or cancel connecting)
+ *   JUMP_MODS+Arrows focus the nearest card      C       start connecting from this column
+ *   Enter            while connecting: join to this column (click-to-connect's path and type)
+ *   Delete           remove its join; several: a menu of each join plus "All joins on this column"
+ *   J                focus the column it is joined to (cycles through them and back)
  * Moves send one sideview_card_moved and announce "<name> moved." after a 500 ms pause.
  * Every attribute set here, and the card order in the DOM, is put back by disable().
  */
@@ -53,6 +61,18 @@
     return Number(n).toLocaleString('en-US');
   }
 
+  function noMods(e) {
+    return !e.ctrlKey && !e.metaKey && !e.altKey;
+  }
+
+  function focusEl(el) {
+    try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
+  }
+
+  function portIn(th) {
+    return th.querySelector('.sideview-col-port');
+  }
+
   function SideviewAccess(engine) {
     var self = this;
     this.engine = engine;
@@ -65,6 +85,9 @@
     this._orderTimer = null;
     this._observer = null;
     this._decorateQueued = false;
+    this._connect = null;      // { th, card, table, col } while connecting by keyboard
+    this._menu = null;         // { el, th, card } of the open join menu
+    this._jCycle = null;       // { th, at, list, i } of the J cycle
 
     this._onKeyDown = function (e) { self.handleKeyDown(e); };
     this._onFocusIn = function (e) { self.handleFocusIn(e); };
@@ -162,11 +185,49 @@
     return h ? h.querySelectorAll('button, a[href], input, select, [tabindex]') : [];
   };
 
-  // Header buttons are Tab stops only while focus is inside their card.
+  // ---- column headers ----
+
+  SideviewAccess.prototype.headers = function (cardEl) {
+    return Array.prototype.slice.call(cardEl.querySelectorAll('thead th[data-col-name]'));
+  };
+
+  SideviewAccess.prototype.isHeader = function (el, cardEl) {
+    return !!(el && el.tagName === 'TH' && el.hasAttribute('data-col-name') && el.closest &&
+      el.closest('thead') && el.closest('.sideview-card') === cardEl);
+  };
+
+  // The card's roving header: the last one focused while it is still there, else the first.
+  SideviewAccess.prototype.currentTh = function (cardEl) {
+    var ths = this.headers(cardEl);
+    var c = cardEl._svAccTh;
+    return c && ths.indexOf(c) >= 0 ? c : (ths[0] || null);
+  };
+
+  SideviewAccess.prototype.colOf = function (th) {
+    return th.getAttribute('data-col-name');
+  };
+
+  // Found by comparing names, never by a selector built from table text.
+  SideviewAccess.prototype.thFor = function (table, col) {
+    var meta = this.engine.cardMetaByName(table);
+    if (!meta || !meta.element) return null;
+    var ths = this.headers(meta.element);
+    for (var i = 0; i < ths.length; i++) if (this.colOf(ths[i]) === col) return ths[i];
+    return null;
+  };
+
+  // Header buttons and the roving th are Tab stops only while focus is inside their card.
   SideviewAccess.prototype.setActive = function (cardEl, active) {
     var btns = this.headerButtons(cardEl);
     for (var i = 0; i < btns.length; i++) {
       if (active) this._reset(btns[i], 'tabindex'); else this._set(btns[i], 'tabindex', '-1');
+    }
+    var cur = active ? this.currentTh(cardEl) : null;
+    var ths = this.headers(cardEl);
+    for (var j = 0; j < ths.length; j++) this._set(ths[j], 'tabindex', ths[j] === cur ? '0' : '-1');
+    var tools = cardEl.querySelectorAll('thead button, thead [tabindex]:not(th)');
+    for (var k = 0; k < tools.length; k++) {
+      this._set(tools[k], 'tabindex', cur && cur.contains(tools[k]) ? '0' : '-1');
     }
   };
 
@@ -180,13 +241,13 @@
       self._set(card, 'tabindex', '0');
       self._set(card, 'role', 'group');
       self._set(card, 'aria-label', self.cardName(card));
-      var thBtns = card.querySelectorAll('thead button, thead [tabindex]');
-      for (var i = 0; i < thBtns.length; i++) self._set(thBtns[i], 'tabindex', '-1');
       // the table body is not a Tab stop (Chrome makes a scroller without focusable children one)
       var body = card.querySelector('.sideview-card-body');
       if (body) self._set(body, 'tabindex', '-1');
       self.setActive(card, !!(active && card.contains(active)));
     });
+    // a re-rendered card (replaced from R) takes the connect source with it
+    if (this._connect && !this.container.contains(this._connect.th)) this.cancelConnect();
   };
 
   SideviewAccess.prototype.scheduleDecorate = function () {
@@ -284,6 +345,8 @@
   SideviewAccess.prototype.disable = function () {
     if (!this.on) return;
     this.cancelConnect(true);
+    this.closeMenu(false);
+    this._jCycle = null;
     this.flushMove();
     this.on = false;
     if (this._observer) { this._observer.disconnect(); this._observer = null; }
@@ -294,12 +357,14 @@
     }
     this.restoreOrder();
     this._restoreAll();
+    this.cardEls().forEach(function (c) { c._svAccTh = null; });
   };
 
   SideviewAccess.prototype.destroy = function () {
+    // a move still waiting for its pause is sent first (disable() flushes it)
+    if (this.on) this.disable();
     if (this._moveTimer) { clearTimeout(this._moveTimer); this._moveTimer = null; }
     this._pending = null;
-    if (this.on) this.disable();
     if (this._unsub) { this._unsub(); this._unsub = null; }
     this.container.removeEventListener('keydown', this._onKeyDown);
     this.container.removeEventListener('focusin', this._onFocusIn);
@@ -307,9 +372,200 @@
     this.container.removeEventListener('pointerup', this._onPointerUp);
   };
 
-  // Connecting columns by keyboard is Task 7's; switching off mid-connect cancels it.
+  // ---- connecting columns by keyboard ----
+
+  SideviewAccess.prototype.startConnect = function (th, cardEl) {
+    this.cancelConnect(true);
+    // a mouse draft in progress gives way
+    if (this.engine.activePort && this.engine.cleanupDraft) this.engine.cleanupDraft();
+    var table = this.cardName(cardEl), col = this.colOf(th);
+    this._connect = { th: th, card: cardEl, table: table, col: col };
+    th.classList.add('sv-kb-connect-source');
+    this.engine.announce('Connecting from ' + table + '.' + col + '. Choose a column.');
+  };
+
+  // Ends a keyboard connect; announces it unless `silent`. Returns whether one was running.
   SideviewAccess.prototype.cancelConnect = function (silent) {
-    return false;
+    var c = this._connect;
+    var src = this.container.querySelectorAll('.sv-kb-connect-source');
+    for (var i = 0; i < src.length; i++) src[i].classList.remove('sv-kb-connect-source');
+    if (!c) return false;
+    this._connect = null;
+    if (c.th && c.th.classList) c.th.classList.remove('sv-kb-connect-source');
+    if (!silent) this.engine.announce('Connecting cancelled.');
+    return true;
+  };
+
+  // The same connection a click on two ports makes: addConnection(), one column_mapped, one step.
+  SideviewAccess.prototype.completeConnect = function (th, cardEl) {
+    var c = this._connect;
+    if (!c) return;
+    if (!this.container.contains(c.th)) { this.cancelConnect(); return; }
+    if (cardEl === c.card) {
+      this.engine.announce('Choose a column in another table.');
+      return;
+    }
+    var eng = this.engine;
+    var data = {
+      fromCard: c.card.dataset.cardId,
+      fromTable: c.card.dataset.cardName,
+      fromCol: c.col,
+      fromElement: portIn(c.th),
+      toCard: cardEl.dataset.cardId,
+      toTable: cardEl.dataset.cardName,
+      toCol: this.colOf(th),
+      toElement: portIn(th),
+      type: eng.CLICK_JOIN_TYPE
+    };
+    this.cancelConnect(true);
+    var before = eng.announceLog ? eng.announceLog.length : 0;
+    eng.addConnection(data);
+    // a key added to an existing join between the two tables adds no step, so nothing was said
+    if (eng.announceLog && eng.announceLog.length === before) {
+      eng.announce('Joined ' + c.table + '.' + c.col + ' to ' + this.cardName(cardEl) + '.' + data.toCol + '.');
+    }
+  };
+
+  // ---- joins on a column: Delete, the menu and J ----
+
+  SideviewAccess.prototype.joinsOn = function (table, col) {
+    var out = [];
+    (this.engine.connections || []).forEach(function (conn) {
+      if (conn.fromTable === table && conn.fromCol === col) {
+        out.push({ id: conn.id, table: conn.toTable, col: conn.toCol });
+      } else if (conn.toTable === table && conn.toCol === col) {
+        out.push({ id: conn.id, table: conn.fromTable, col: conn.fromCol });
+      }
+    });
+    return out;
+  };
+
+  SideviewAccess.prototype.deleteJoins = function (th, cardEl) {
+    var table = this.cardName(cardEl), col = this.colOf(th);
+    var joins = this.joinsOn(table, col);
+    if (!joins.length) { this.engine.announce('No joins on ' + table + '.' + col + '.'); return; }
+    if (joins.length === 1) { this.removeJoins(th, cardEl, joins); return; }
+    this.openMenu(th, cardEl, joins);
+  };
+
+  SideviewAccess.prototype.removeJoins = function (th, cardEl, joins) {
+    var eng = this.engine;
+    var label = this.cardName(cardEl) + '.' + this.colOf(th);
+    this.closeMenu(false);
+    joins.forEach(function (j) { eng.removeConnection(j.id); });
+    this._jCycle = null;
+    if (this.container.contains(th)) this.focusHeader(th, cardEl);
+    var n = joins.length;
+    eng.announce('Removed ' + n + (n === 1 ? ' join' : ' joins') + ' on ' + label + '.');
+  };
+
+  // Every label is set with textContent / setAttribute: table and column names are never markup.
+  SideviewAccess.prototype.openMenu = function (th, cardEl, joins) {
+    var self = this, doc = global.document;
+    this.closeMenu(false);
+    var menu = doc.createElement('div');
+    menu.className = 'sideview-kb-menu';
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-label', 'Joins on ' + this.cardName(cardEl) + '.' + this.colOf(th));
+    var add = function (text, list) {
+      var b = doc.createElement('button');
+      b.type = 'button';
+      b.setAttribute('role', 'menuitem');
+      b.setAttribute('tabindex', '-1');
+      b.textContent = text;
+      b.addEventListener('click', function () { self.removeJoins(th, cardEl, list); });
+      menu.appendChild(b);
+    };
+    joins.forEach(function (j) { add('Remove join to ' + j.table + '.' + j.col, [j]); });
+    add('All joins on this column', joins);
+    this.container.appendChild(menu);
+    var c = this.container.getBoundingClientRect(), r = th.getBoundingClientRect();
+    var left = Math.max(0, Math.min(r.left - c.left, this.container.clientWidth - menu.offsetWidth));
+    var top = r.bottom - c.top + 4;
+    if (top + menu.offsetHeight > this.container.clientHeight) {
+      top = Math.max(0, r.top - c.top - menu.offsetHeight - 4);
+    }
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+    this._menu = { el: menu, th: th, card: cardEl };
+    focusEl(menu.firstChild);
+  };
+
+  // Closes the join menu; `refocus` puts focus back on its column header.
+  SideviewAccess.prototype.closeMenu = function (refocus) {
+    var m = this._menu;
+    if (!m) return false;
+    this._menu = null;
+    if (m.el.parentNode) m.el.parentNode.removeChild(m.el);
+    if (refocus && this.container.contains(m.th)) this.focusHeader(m.th, m.card);
+    return true;
+  };
+
+  SideviewAccess.prototype.menuKey = function (e) {
+    var items = Array.prototype.slice.call(this._menu.el.querySelectorAll('[role="menuitem"]'));
+    var i = items.indexOf(e.target);
+    var to = -1;
+    if (e.key === 'ArrowDown') to = (i + 1) % items.length;
+    else if (e.key === 'ArrowUp') to = (i - 1 + items.length) % items.length;
+    else if (e.key === 'Home') to = 0;
+    else if (e.key === 'End') to = items.length - 1;
+    else if (e.key === 'Escape' || e.key === 'Tab') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.closeMenu(true);
+      return;
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      // act on keydown (the native click would come on keyup/keypress, after focus has moved)
+      e.preventDefault();
+      e.stopPropagation();
+      if (i >= 0) items[i].click();
+      return;
+    } else return;
+    e.preventDefault();
+    focusEl(items[to]);
+  };
+
+  // J: the columns joined to this one in turn, then back to where the cycle began.
+  SideviewAccess.prototype.jumpJoined = function (th, cardEl) {
+    var cyc = this._jCycle;
+    if (!cyc || cyc.at !== th || !this.container.contains(cyc.th)) {
+      var table = this.cardName(cardEl), col = this.colOf(th);
+      var joins = this.joinsOn(table, col);
+      if (!joins.length) { this.engine.announce('No joins on ' + table + '.' + col + '.'); return; }
+      cyc = { th: th, list: joins.concat([{ table: table, col: col, origin: true }]), i: -1 };
+    }
+    for (var k = 0; k < cyc.list.length; k++) {
+      cyc.i = (cyc.i + 1) % cyc.list.length;
+      var to = cyc.list[cyc.i];
+      var target = to.origin ? cyc.th : this.thFor(to.table, to.col);
+      if (!target) continue;
+      cyc.at = target;
+      this._jCycle = cyc;
+      this.focusHeader(target, target.closest('.sideview-card'));
+      this.engine.announce(to.table + '.' + to.col);
+      return;
+    }
+  };
+
+  // ---- cards leaving ----
+
+  // Called by the engine before it takes a card off the canvas.
+  SideviewAccess.prototype.cardRemoving = function (cardEl) {
+    if (!this.on || !cardEl) return;
+    if (this._connect && this._connect.card === cardEl) this.cancelConnect();
+    if (this._menu && this._menu.card === cardEl) this.closeMenu(false);
+    if (this._jCycle && (cardEl.contains(this._jCycle.th) || cardEl.contains(this._jCycle.at))) {
+      this._jCycle = null;
+    }
+    var active = global.document ? global.document.activeElement : null;
+    if (!active || !cardEl.contains(active)) return;
+    this.syncOrder();
+    var cards = this.viewportCards();
+    var i = cards.indexOf(cardEl);
+    var next = i >= 0 ? (cards[i + 1] || cards[i - 1] || null) : null;
+    if (!next) next = cards.filter(function (c) { return c !== cardEl; })[0] || null;
+    if (next) this.focusCard(next);
+    else focusEl(this.container);
   };
 
   // ---- focus ----
@@ -318,8 +574,15 @@
     if (!this.on) return;
     var t = e.target;
     var self = this;
+    var th = t && t.closest ? t.closest('thead th[data-col-name]') : null;
+    var owner = th ? th.closest('.sideview-card') : null;
+    if (owner && this.metaFor(owner)) owner._svAccTh = th;
     this.cardEls().forEach(function (card) { self.setActive(card, card.contains(t)); });
-    if (isCard(t)) {
+    if (th && th === t && owner) {
+      var vis = true;
+      try { vis = t.matches(':focus-visible'); } catch (err) { vis = true; }
+      if (vis) this.headerIntoView(th, owner);
+    } else if (isCard(t)) {
       var visible = true;
       try { visible = t.matches(':focus-visible'); } catch (err) { visible = true; }
       // keyboard focus pans the card into view; a mouse click on a card does not move the view
@@ -330,6 +593,15 @@
   SideviewAccess.prototype.handleFocusOut = function (e) {
     if (!this.on) return;
     var t = e.target;
+    var rel = e.relatedTarget;
+    // focus that leaves the join menu (a click elsewhere) closes it
+    if (this._menu && this._menu.el.contains(t) && !(rel && this._menu.el.contains(rel))) {
+      var me = this;
+      setTimeout(function () {
+        var a = global.document ? global.document.activeElement : null;
+        if (me._menu && !(a && me._menu.el.contains(a))) me.closeMenu(false);
+      }, 0);
+    }
     var card = t && t.closest ? t.closest('.sideview-card') : null;
     if (!card) return;
     var next = e.relatedTarget;
@@ -339,6 +611,27 @@
   SideviewAccess.prototype.focusCard = function (cardEl) {
     try { cardEl.focus({ preventScroll: true }); } catch (e) { cardEl.focus(); }
     this.ensureVisible(cardEl);
+  };
+
+  SideviewAccess.prototype.focusHeader = function (th, cardEl) {
+    if (!th || !cardEl) return;
+    cardEl._svAccTh = th;
+    this.setActive(cardEl, true);
+    focusEl(th);
+    this.headerIntoView(th, cardEl);
+  };
+
+  // Scroll the card body sideways so the header shows, then pan the view to it.
+  SideviewAccess.prototype.headerIntoView = function (th, cardEl) {
+    var body = cardEl.querySelector('.sideview-card-body');
+    var pz = this.engine.panzoom;
+    var scale = (pz && pz.getScale && pz.getScale()) || 1;
+    if (body && body.clientWidth) {
+      var br = body.getBoundingClientRect(), tr = th.getBoundingClientRect();
+      if (tr.left < br.left) body.scrollLeft -= (br.left - tr.left) / scale;
+      else if (tr.right > br.right) body.scrollLeft += Math.min(tr.left - br.left, tr.right - br.right) / scale;
+    }
+    this.ensureVisible(th);
   };
 
   // The part of the container a card can be seen in: below the top chrome, above the AI bar,
@@ -398,6 +691,7 @@
   SideviewAccess.prototype.handleKeyDown = function (e) {
     if (!this.on || e.defaultPrevented) return;
     var t = e.target;
+    if (this._menu && this._menu.el.contains(t)) { this.menuKey(e); return; }
     if (e.key === 'Tab') {
       this.syncOrder();
       // Shift+Tab from a card lands on the previous card's last header button, as Tab goes forward
@@ -408,8 +702,23 @@
       }
       return;
     }
-    if (!isCard(t) || !this.container.contains(t) || !this.metaFor(t)) return;
+    var cardEl = t && t.closest ? t.closest('.sideview-card') : null;
+    if (!cardEl || !this.container.contains(cardEl) || !this.metaFor(cardEl)) return;
     if (this.engine.isTypingTarget(t) || !this.engine.ownsKeyboard()) return;
+    var onTh = this.isHeader(t, cardEl);
+    if (!onTh && t !== cardEl) return;
+    if (e.key === 'Escape' && this._connect) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.cancelConnect();
+      return;
+    }
+    if (onTh) { this.headerKey(e, t, cardEl); return; }
+    if (e.key === 'Enter' && noMods(e) && !e.shiftKey) {
+      var first = this.headers(t)[0];
+      if (first) { e.preventDefault(); this.focusHeader(first, t); }
+      return;
+    }
     var dir = DIRS[e.key];
     if (dir) {
       if (modsMatch(e, JUMP_MODS)) {
@@ -425,6 +734,40 @@
     if (SCROLL_KEYS[e.key] && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
       e.preventDefault();
       this.scrollBody(t, e.key);
+    }
+  };
+
+  SideviewAccess.prototype.headerKey = function (e, th, cardEl) {
+    var dir = DIRS[e.key];
+    if (dir && modsMatch(e, JUMP_MODS)) {
+      e.preventDefault();
+      this.jump(cardEl, dir);
+      return;
+    }
+    if (!noMods(e)) return;
+    var k = e.key;
+    if ((k === 'ArrowLeft' || k === 'ArrowRight') && !e.shiftKey) {
+      e.preventDefault();
+      var ths = this.headers(cardEl);
+      var to = ths[ths.indexOf(th) + (k === 'ArrowRight' ? 1 : -1)];
+      if (to) this.focusHeader(to, cardEl);
+    } else if (k === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.focusCard(cardEl);
+    } else if (k === 'c' || k === 'C') {
+      e.preventDefault();
+      this.startConnect(th, cardEl);
+    } else if (k === 'Enter' && !e.shiftKey) {
+      if (!this._connect) return;
+      e.preventDefault();
+      this.completeConnect(th, cardEl);
+    } else if (k === 'Delete') {
+      e.preventDefault();
+      this.deleteJoins(th, cardEl);
+    } else if (k === 'j' || k === 'J') {
+      e.preventDefault();
+      this.jumpJoined(th, cardEl);
     }
   };
 
