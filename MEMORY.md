@@ -13,7 +13,7 @@ list view and the console, not only on the canvas.
 | A | Text-first access (list view, `sv_describe()`, announcements, table ARIA) | done, 0.8.0 (PRs #13-#17, #18 minors) |
 | C | Accessibility testing (axe-core, AX-tree tests, NVDA script, CI a11y job) | done, 0.8.0 (PR #12, NVDA fixes #19) |
 | B | Keyboard and low vision (access switch) | done, 0.9.0 (PR #20, version bump #22) |
-| D | Unmatched / dropped rows as cards; stack two tables and compare columns; compare data cuts by key | **in progress: spec** (branch `d/spec`), target 0.10.0 |
+| D | Unmatched / dropped rows as cards; stack two tables and compare columns; compare data cuts by key | **in progress: spec written, awaiting user review** (`plans/2026-11-16-derived-cards-design.md`, branch `d/spec`); then plan; PRs D1 derived cards + unmatched rows, D2 stack, D3 compare data cuts; target 0.10.0 |
 | E | `metatools::combine_supp()` option (SUPP/ADSL merges only); `dm` import and export; `pointblank` export; `metacore` spec check (labelled "spec check") | not started, after D |
 
 Other pending tasks:
