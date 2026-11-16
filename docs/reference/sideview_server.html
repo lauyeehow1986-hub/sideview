@@ -114,8 +114,8 @@ codebook export. The badges on the canvas come from the cards given to
 
 
 <dt id="arg-state">state<a class="anchor" aria-label="anchor" href="#arg-state"></a></dt>
-<dd><p>Optional workspace state (a state object or its JSON text) applied once the first cards arrive;
-derived cards in it are built by R first. See <code><a href="sv_save_state.html">sv_save_state()</a></code>.</p></dd>
+<dd><p>Optional workspace state (a <code>sideview_state</code> list, as <code><a href="sideview.html">sideview()</a></code> passes it). The gadget uses it
+to build, on whole tables, the derived cards that read lazy inputs; <code><a href="sideview.html">sideview()</a></code> embeds the state itself.</p></dd>
 
 </dl></div>
     <div class="section level2">
