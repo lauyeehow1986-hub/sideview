@@ -230,3 +230,48 @@ sv_supp_orphans <- function(parent, supp, rdomain = NULL, what = c("orphans", "b
   sv_derive_rows(if (what == "orphans") "supp_orphans" else "supp_bad_idvarval",
                  list(parent = parent, supp = supp), list(plan = chk$plan, rdomain = rdomain))
 }
+
+# The derived-card buttons for a join check `d` (decision 1: R offers them, offers with n == 0 are dropped).
+# The counts are the rows the derived card will hold: with a rule, `unmatched` is the rows with no key
+# partner and `outside_window` the rows the rule dropped. A key-type clash (decision 2) offers nothing.
+sv_derive_offers_join <- function(d, x_name, y_name, by, rule = NULL) {
+  if (!is.list(d) || !is.null(d$error) || length(d$type_issues)) return(list())
+  dropped_x <- if (is.null(rule)) 0 else d$rule_dropped_x %||% 0
+  dropped_y <- if (is.null(rule)) 0 else d$rule_dropped_y %||% 0
+  n_un <- c(x = d$n_x - d$matched_x - dropped_x, y = d$n_y - d$matched_y - dropped_y)
+  names_of <- c(x = x_name, y = y_name)
+  other <- c(x = y_name, y = x_name)
+  make <- function(op, side, n, label) {
+    list(op = op, inputs = c(x_name, y_name),
+         args = list(by = sv_derive_by_pairs(by), rule = rule, side = side), n = as.integer(n), label = label)
+  }
+  out <- list()
+  for (side in c("x", "y")) {
+    out[[length(out) + 1L]] <- make("unmatched", side, n_un[[side]],
+      sprintf("%s rows with no match in %s (%d)", names_of[[side]], other[[side]], as.integer(n_un[[side]])))
+  }
+  if (!is.null(rule)) {
+    n_ow <- c(x = dropped_x, y = dropped_y)
+    for (side in c("x", "y")) {
+      out[[length(out) + 1L]] <- make("outside_window", side, n_ow[[side]],
+        sprintf("%s rows outside the date window (%d)", names_of[[side]], as.integer(n_ow[[side]])))
+    }
+  }
+  Filter(function(o) o$n > 0L, out)
+}
+
+# The derived-card buttons for a SUPP check. The plan is left out (decision 8): R recomputes it.
+sv_derive_offers_supp <- function(chk, parent_name, supp_name, rdomain) {
+  if (!is.list(chk) || !is.null(chk$error)) return(list())
+  mk <- function(op, n, label) {
+    list(op = op, inputs = c(parent_name, supp_name), args = list(rdomain = rdomain),
+         n = as.integer(n), label = label)
+  }
+  out <- list(
+    mk("supp_orphans", chk$n_orphan %||% 0L,
+       sprintf("%s rows with no parent row (%d)", supp_name, as.integer(chk$n_orphan %||% 0L))),
+    mk("supp_bad_idvarval", chk$bad_idvarval$n %||% 0L,
+       sprintf("%s rows with an unreadable IDVARVAL (%d)", supp_name, as.integer(chk$bad_idvarval$n %||% 0L)))
+  )
+  Filter(function(o) o$n > 0L, out)
+}

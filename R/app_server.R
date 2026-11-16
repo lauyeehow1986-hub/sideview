@@ -331,6 +331,13 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
         error = function(e) list()
       )
     }
+    if (is.null(result$error)) {
+      # as.list so zero or one offers stay a JSON array
+      result$derive_offers <- tryCatch(
+        as.list(sv_derive_offers_join(result, req$left, req$right, by_cols, rule)),
+        error = function(e) list()
+      )
+    }
     result$id <- req$id
     result$left <- req$left
     result$right <- req$right
@@ -376,7 +383,12 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
         function() sv_supp_check(cp$data, cs$data, parent_name = parent_name,
                                  supp_name = supp_name, rdomain = rdomain, plan = plan)
       )
-      sv_supp_reply(chk)
+      reply <- sv_supp_reply(chk)
+      reply$derive_offers <- tryCatch(
+        as.list(sv_derive_offers_supp(chk, parent_name, supp_name, rdomain)),
+        error = function(e) list()
+      )
+      reply
     }, error = function(e) list(error = conditionMessage(e)))
     result$id <- req$id
     dispatch_message("sideview_supp_check", result)

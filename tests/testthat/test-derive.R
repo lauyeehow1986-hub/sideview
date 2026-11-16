@@ -158,3 +158,121 @@ test_that("a list form of `by` gives the same unmatched rows as the character fo
   expect_equal(sv_unmatched(f$ae, f$dm, list(list(x = "USUBJID", y = "USUBJID"))),
                sv_unmatched(f$ae, f$dm, "USUBJID"))
 })
+
+# ---- offers in the check replies (Task 4) ----
+
+offer_ns <- function(o) vapply(o, function(z) z$n, 1L)
+
+test_that("join offers without a rule: unmatched x and y, counts equal the derived rows", {
+  f <- derive_fx()
+  d <- sv_join_diagnostics(f$ae, f$dm, "USUBJID", x_name = "ae", y_name = "dm")
+  o <- sv_derive_offers_join(d, "ae", "dm", "USUBJID", NULL)
+  expect_length(o, 2L)
+  expect_identical(vapply(o, function(z) z$op, ""), c("unmatched", "unmatched"))
+  expect_identical(vapply(o, function(z) z$args$side, ""), c("x", "y"))
+  expect_identical(o[[1]]$inputs, c("ae", "dm"))
+  expect_equal(o[[1]]$n, nrow(sv_unmatched(f$ae, f$dm, "USUBJID")))
+  expect_equal(o[[2]]$n, nrow(sv_unmatched(f$ae, f$dm, "USUBJID", side = "y")))
+  expect_true(all(nzchar(vapply(o, function(z) z$label, ""))))
+})
+
+test_that("join offers with a rule: counts equal the derived rows, zeros dropped", {
+  t <- rule_tables("Date", 7)
+  rule <- rule_cases()[[3]]
+  d <- sv_join_diagnostics(t$x, t$y, "id", rule = rule, x_name = "x", y_name = "y")
+  o <- sv_derive_offers_join(d, "x", "y", "id", rule)
+  expect_lte(length(o), 4L)
+  for (z in o) {
+    rows <- sv_unmatched(t$x, t$y, "id", rule = rule, side = z$args$side, what = z$op)
+    expect_equal(z$n, nrow(rows), info = paste(z$op, z$args$side))
+    expect_gt(z$n, 0L)
+  }
+  expect_true("outside_window" %in% vapply(o, function(z) z$op, ""))
+  # a perfect match offers nothing
+  x <- data.frame(id = 1:3)
+  d0 <- sv_join_diagnostics(x, x, "id", x_name = "x", y_name = "y")
+  expect_length(sv_derive_offers_join(d0, "x", "y", "id", NULL), 0L)
+})
+
+test_that("mixed key kinds get no offer", {
+  x <- data.frame(id = c("1", "2", "9"))
+  y <- data.frame(id = 1:2)
+  d <- sv_join_diagnostics(x, y, "id", x_name = "x", y_name = "y")
+  expect_true(length(d$type_issues) > 0L)
+  expect_length(sv_derive_offers_join(d, "x", "y", "id", NULL), 0L)
+})
+
+derive_supp_fx <- function() {
+  list(
+    ae = data.frame(USUBJID = c("S1", "S2"), AESEQ = 1:2, stringsAsFactors = FALSE),
+    supp = data.frame(RDOMAIN = "AE", USUBJID = c("S1", "S2", "S2"), IDVAR = "AESEQ",
+                      IDVARVAL = c("1", "9", "x"), QNAM = "AETRTEM", QVAL = "Y", stringsAsFactors = FALSE)
+  )
+}
+
+test_that("SUPP offers: orphans and bad IDVARVAL, no plan", {
+  f <- derive_supp_fx()
+  chk <- sv_supp_check(f$ae, f$supp, "ae", "suppae", rdomain = "AE")
+  o <- sv_derive_offers_supp(chk, "ae", "suppae", "AE")
+  expect_identical(vapply(o, function(z) z$op, ""), c("supp_orphans", "supp_bad_idvarval"))
+  expect_equal(offer_ns(o), c(nrow(sv_supp_orphans(f$ae, f$supp, "AE")),
+                              nrow(sv_supp_orphans(f$ae, f$supp, "AE", what = "bad_idvarval"))))
+  expect_identical(o[[1]]$args, list(rdomain = "AE"))
+  expect_identical(o[[1]]$inputs, c("ae", "suppae"))
+  # nothing wrong, nothing offered
+  ok <- sv_supp_check(f$ae, f$supp[1, ], "ae", "suppae", rdomain = "AE")
+  expect_length(sv_derive_offers_supp(ok, "ae", "suppae", "AE"), 0L)
+})
+
+test_that("the join and SUPP replies carry derive_offers, [] when empty, none on an error", {
+  f <- derive_fx()
+  sf <- derive_supp_fx()
+  cards <- sv_normalize_cards(list(ae = f$ae, dm = f$dm, sae = sf$ae, suppae = sf$supp))
+  shiny::testServer(sideview_server(cards), {
+    last <- function(type) {
+      m <- Filter(function(z) identical(z$type, type), session$userData$custom_messages)
+      m[[length(m)]]$message
+    }
+    session$setInputs(join_diagnostics_request = list(
+      id = "j1", left = "ae", right = "dm", by = list(list(left = "USUBJID", right = "USUBJID"))))
+    j <- last("sideview_join_diagnostics")
+    expect_length(j$derive_offers, 2L)
+    expect_identical(j$derive_offers[[1]]$op, "unmatched")
+    session$setInputs(join_diagnostics_request = list(
+      id = "j2", left = "ae", right = "ae", by = list(list(left = "USUBJID", right = "USUBJID"))))
+    j2 <- last("sideview_join_diagnostics")
+    expect_identical(j2$derive_offers, list())
+    session$setInputs(join_diagnostics_request = list(
+      id = "j3", left = "ae", right = "dm", by = list(list(left = "nope", right = "USUBJID"))))
+    j3 <- last("sideview_join_diagnostics")
+    expect_false(is.null(j3$error))
+    expect_null(j3$derive_offers)
+
+    session$setInputs(supp_check_request = list(id = "s1", parent = "sae", supp = "suppae", rdomain = "AE"))
+    s <- last("sideview_supp_check")
+    expect_length(s$derive_offers, 2L)
+    expect_identical(s$derive_offers[[1]]$op, "supp_orphans")
+    session$setInputs(supp_check_request = list(id = "s2", parent = "sae", supp = "nope"))
+    s2 <- last("sideview_supp_check")
+    expect_false(is.null(s2$error))
+    expect_null(s2$derive_offers)
+  })
+})
+
+test_that("the module path carries derive_offers on both replies", {
+  f <- derive_fx()
+  sf <- derive_supp_fx()
+  shiny::testServer(sideviewServer, args = list(id = "cv",
+      cards = list(ae = f$ae, dm = f$dm, sae = sf$ae, suppae = sf$supp)), {
+    session$setInputs(sideview_ready = list(nonce = 1))
+    last <- function(type) {
+      m <- Filter(function(z) identical(z$type, type), session$userData$custom_messages)
+      m[[length(m)]]$message
+    }
+    session$setInputs(join_diagnostics_request = list(
+      id = "j1", left = "ae", right = "dm", by = list(list(left = "USUBJID", right = "USUBJID"))))
+    expect_length(last("sideview_join_diagnostics")$derive_offers, 2L)
+    session$setInputs(supp_check_request = list(id = "s1", parent = "sae", supp = "suppae", rdomain = "AE"))
+    expect_length(last("sideview_supp_check")$derive_offers, 2L)
+  })
+})
