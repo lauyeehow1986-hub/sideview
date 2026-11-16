@@ -3,6 +3,31 @@
 Running log of what changed, why, and how it was verified. Newest entries first.
 Each entry: **date — change — why — verification**. Keep the "Open issues" table current.
 
+## Roadmap and task list (keep current; updated 2026-11-16)
+
+Agreed 2026-11-13: five sub-projects, each with its own spec, plan and PR. D and E must also work in the
+list view and the console, not only on the canvas.
+
+| # | Sub-project | Status |
+|---|---|---|
+| A | Text-first access (list view, `sv_describe()`, announcements, table ARIA) | done, 0.8.0 (PRs #13-#17, #18 minors) |
+| C | Accessibility testing (axe-core, AX-tree tests, NVDA script, CI a11y job) | done, 0.8.0 (PR #12, NVDA fixes #19) |
+| B | Keyboard and low vision (access switch) | done, 0.9.0 (PR #20, version bump #22) |
+| D | Unmatched / dropped rows as cards; stack two tables and compare columns; compare data cuts by key | **in progress: spec** (branch `d/spec`), target 0.10.0 |
+| E | `metatools::combine_supp()` option (SUPP/ADSL merges only); `dm` import and export; `pointblank` export; `metacore` spec check (labelled "spec check") | not started, after D |
+
+Other pending tasks:
+- [x] CI workflow was invalid since the a11y job (steps context in job env): fixed in PR #21 (2026-11-16).
+- [ ] First real CI run on `main` (`e483d83`): check results; the arrow 26 / duckdb 2.0 tz-aware gt/gte filter
+      failure (`test-lazy.R:1101`) may show up now.
+- [ ] CRAN submission of 0.9.0: local `devtools::check()` `--as-cran` and the full suite first; needs the user's go-ahead.
+- [ ] Manual-script gaps for B: checks 2 and 14-19 not walked one by one; High Contrast Night sky not confirmed.
+- [ ] Backlog for B: visible hint/toast when `C` starts a connect; a "dismiss suggestions" control.
+- [ ] Cleanup: stale worktrees, `C:\src\chk*` folders, merged local branches (`a11y/b-canvas`, `a11y/b-spec`, `ci/fix-a11y-env`, `release/0.9.0`).
+- [ ] Unscheduled backlog (see "Backlog" below): table version diff overlaps D's data-cut compare; validation rules
+      (pointblank) overlap E; PHI/PII column tagging; Quarto/R-script pipeline export; very wide tables (column virtualisation untested).
+
+
 ---
 
 ### 2026-11-15 - Accessible canvas final-review fixes (B, I1-I4, P1, P2, M1, M2, M7, M8, M9)
