@@ -44,8 +44,8 @@ codebook export. The badges on the canvas come from the cards given to
 \code{\link[=sideview_ui]{sideview_ui()}}, so pass the same \code{cdisc} there (or build the page with
 \code{\link[=sideview]{sideview()}} or \code{\link[=sideviewUI]{sideviewUI()}}, which keep the two in step).}
 
-\item{state}{Optional workspace state (a state object or its JSON text) applied once the first cards arrive;
-derived cards in it are built by R first. See \code{\link[=sv_save_state]{sv_save_state()}}.}
+\item{state}{Optional workspace state (a \code{sideview_state} list, as \code{\link[=sideview]{sideview()}} passes it). The gadget uses it
+to build, on whole tables, the derived cards that read lazy inputs; \code{sideview()} embeds the state itself.}
 }
 \value{
 A Shiny server function \verb{function(input, output, session)}.

@@ -1220,9 +1220,9 @@ None of these blocks D1; none is fixed. Source: `.superpowers/sdd/2026-11-16-der
 - Task 3: minor (deferred): args$con_env smuggled via args, undocumented
 - Task 3: minor (deferred, check in Task 5/6): sv_lazy_release does not evict con_env$tbls[[key]]; callers must evict
 - Task 3: minor (deferred): cleanup test does not exercise placing an uncached Arrow table
-- Task 3: note: test-lazy-browser.R has 2 failures (list paging shows ellipsis) seen in the implementer's run; check on a clean base before final review
+- Task 3 (open): test-lazy-browser.R had 2 failures (list paging shows an ellipsis) in the implementer's run; still to check on a clean base. A whole-suite browser run on the final branch state was not done.
 - Task 4: minor (deferred): no test of offers on lazy card or NA-key; weak expect_lte(length(o),4); rdomain=NULL leaves null element
-- Task 4: note: counts describe the 50-row preview when lazy_or_preview falls back; check in Task 5 that the built card uses the same basis
+- Task 4 (open): the offer counts describe the 50-row preview when lazy_or_preview falls back, while a card built on whole tables may differ; not reconciled.
 - Task 5: minor (deferred): sv_derive_validate unused (asked in fix round anyway); key kinds on preview for lazy (asked in fix round); payload built after store add (asked in fix round)
 - Task 5: minor (deferred): no dedupe by request_id (retries make _2,_3 and temp tables); derived-of-derived: forget of inner releases tables the outer SQL uses (decision 6 engine removes dependants; needs test in Task 6); no tests for non-syntactic cols / NA keys via derive handler / n==offer n from real offer; $ partial matching on req fields (use [[exact=TRUE]]); no basis marker on derived card after fallback; sv_derive_name make.names changes the exact name in the taken-name error
 - Task 6: manual check owed (user, RStudio): gadget client accepts card_add at first flush for lazy-input derive steps

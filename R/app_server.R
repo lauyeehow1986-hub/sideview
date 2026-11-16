@@ -950,8 +950,8 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
 #' @param run_env Environment where **Run in R** evaluates the pipeline and
 #'   stores its result (as `sv_result` unless another name is given). Defaults
 #'   to the environment `sideview_server()` is called from.
-#' @param state Optional workspace state (a state object or its JSON text) applied once the first cards arrive;
-#'   derived cards in it are built by R first. See [sv_save_state()].
+#' @param state Optional workspace state (a `sideview_state` list, as [sideview()] passes it). The gadget uses it
+#'   to build, on whole tables, the derived cards that read lazy inputs; `sideview()` embeds the state itself.
 #'
 #' @return A Shiny server function `function(input, output, session)`.
 #' @export
