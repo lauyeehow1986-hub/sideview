@@ -173,6 +173,8 @@ sv_derive_supp_rows <- function(op, tables, args) {
     p <- parent[pcols]
   } else {
     q <- dplyr::select(parent, dplyr::all_of(pcols))
+    # duckdb cannot push a filter down into an Arrow scan: keep the narrow key columns first
+    if (length(attr(parent, "sv_arrow_views", exact = TRUE))) q <- dplyr::compute(q)
     subj <- unique(as.character(side$supp$USUBJID))
     u <- rlang::sym("USUBJID")
     if (anyNA(subj)) {

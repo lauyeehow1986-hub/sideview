@@ -1571,3 +1571,157 @@ test_that("supp step state round trip", {
   expect_equal(unlist(out$qnams), "AETRTEM")
   expect_identical(out$kind, "supp")
 })
+
+# ---- derive steps (D1 task 7) ----
+
+derive_js <- function(extra = "") {
+  paste0("
+    const p = new P.Pipeline();
+    p.setPipe('%>%');
+    p.setTables({ ae: { lazy: null, codeRef: 'ae' }, dm: { lazy: null, codeRef: 'dm' } });
+    const by = [{x: 'USUBJID', y: 'USUBJID'}];
+    const step = P.deriveStep('ae_unmatched_dm', 'unmatched', ['ae', 'dm'], {by: by, side: 'x'});
+    p.add(step);
+  ", extra)
+}
+
+test_that("a derive step composes to one assignment, and a chain on it follows after a blank line", {
+  out <- run_pipeline_js(derive_js("
+    const alone = p.compose();
+    p.add({kind: 'filter', table: 'ae_unmatched_dm', conds: ['term == \"a\"'], condCols: ['term']});
+    out = { alone: alone, chained: p.compose(), live: p.deriveLive(step), kind: p.lazyKind('ae_unmatched_dm'),
+            ref: p.refFor('ae_unmatched_dm') };
+  "))
+  line <- 'ae_unmatched_dm <- dplyr::anti_join(ae, dm, by = "USUBJID", na_matches = "na")'
+  expect_identical(out$alone, line)
+  expect_identical(out$chained, paste0(line, "\n\nae_unmatched_dm %>%\n  dplyr::filter(term == \"a\")"))
+  expect_true(out$live)
+  expect_null(out$kind)
+  expect_identical(out$ref, "ae_unmatched_dm")
+  expect_parses(out$chained)
+})
+
+test_that("a derive step whose input is missing is not written and is not live", {
+  out <- run_pipeline_js(derive_js("
+    p.setTables({ ae: { lazy: null, codeRef: 'ae' } });
+    out = { code: p.compose(), live: p.deriveLive(step) };
+  "))
+  expect_false(out$live)
+  expect_identical(out$code, "")
+})
+
+test_that("disableMissing leaves a derive step alone, and undo, redo and a JSON round trip keep it", {
+  out <- run_pipeline_js(derive_js("
+    const r1 = p.disableMissing('dm', null);
+    const r2 = p.disableMissing('ae_unmatched_dm', null);
+    const enabled = p.steps[0].enabled;
+    const json = JSON.stringify(p.toJSON());
+    const q = new P.Pipeline();
+    q.setTables({ ae: { lazy: null, codeRef: 'ae' }, dm: { lazy: null, codeRef: 'dm' } });
+    q.load(JSON.parse(json));
+    p.undo();
+    const undone = p.steps.length;
+    p.redo();
+    out = { n1: r1.disabled.length, n2: r2.disabled.length, enabled: enabled, loaded: q.steps[0],
+            code: q.compose(), undone: undone, redone: p.steps.length };
+  "))
+  expect_equal(out$n1, 0)
+  expect_equal(out$n2, 0)
+  expect_true(out$enabled)
+  expect_identical(out$loaded$kind, "derive")
+  expect_identical(out$loaded$op, "unmatched")
+  expect_identical(out$loaded$args$side, "x")
+  expect_match(out$code, "anti_join(ae, dm", fixed = TRUE)
+  expect_equal(out$undone, 0)
+  expect_equal(out$redone, 1)
+})
+
+test_that("an older sideview that does not know a derive step still loads the state", {
+  # a step of a kind this version has no verbs for is kept as data: normalize() keeps unknown fields
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.load({ steps: [{ kind: 'derive', key: 'k', table: 't', op: 'unmatched', inputs: ['a', 'b'],
+                       args: { by: [{x: 'i', y: 'i'}], side: 'x', future: 1 } }] });
+    out = { step: p.steps[0], code: p.compose() };
+  ")
+  expect_identical(out$step$args$future, 1L)
+  expect_identical(out$code, "")
+})
+
+test_that("lazyKind of a derived table follows its inputs and whether a rule is set", {
+  js <- function(rule, kx = "arrow", ky = "arrow") {
+    run_pipeline_js(sprintf("
+      const p = new P.Pipeline();
+      p.setTables({ ae: { lazy: %s, codeRef: 'ae' }, dm: { lazy: %s, codeRef: 'dm' } });
+      const args = { by: [{x: 'id', y: 'id'}], side: 'x'%s };
+      p.add(P.deriveStep('d', '%s', ['ae', 'dm'], args));
+      out = { kind: p.lazyKind('d'), code: p.compose() };
+    ", if (is.null(kx)) "null" else paste0("'", kx, "'"), if (is.null(ky)) "null" else paste0("'", ky, "'"),
+    if (is.null(rule)) "" else paste0(", rule: ", rule),
+    if (is.null(rule)) "unmatched" else "outside_window"))
+  }
+  expect_identical(js(NULL)$kind, "arrow")
+  expect_null(js(NULL, NULL, NULL)$kind)
+  r <- "{shape: 'between', xCol: 'a', yFrom: 'b', yTo: 'c'}"
+  expect_identical(js(r)$kind, "duckdb")
+  expect_identical(js(r, "duckdb", "duckdb")$kind, "duckdb")
+  expect_parses(js(NULL)$code)
+  expect_parses(js(r)$code)
+})
+
+test_that("a derived-of-derived chain writes the first assignment before the second and lazyKind propagates", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.setTables({ ae: { lazy: 'duckdb', codeRef: 'ae' }, dm: { lazy: 'duckdb', codeRef: 'dm' },
+                  ex: { lazy: 'duckdb', codeRef: 'ex' } });
+    p.add(P.deriveStep('ae_unmatched_dm', 'unmatched', ['ae', 'dm'], {by: [{x: 'id', y: 'id'}], side: 'x'}));
+    p.add(P.deriveStep('d2', 'unmatched', ['ae_unmatched_dm', 'ex'], {by: [{x: 'id', y: 'id'}], side: 'x'}));
+    out = { code: p.compose(), k1: p.lazyKind('ae_unmatched_dm'), k2: p.lazyKind('d2'), live: p.deriveLive(p.steps[1]) };
+  ")
+  expect_true(out$live)
+  expect_identical(out$k1, "duckdb")
+  expect_identical(out$k2, "duckdb")
+  parts <- strsplit(out$code, "\n\n", fixed = TRUE)[[1]]
+  expect_match(parts[1], "^ae_unmatched_dm <- ")
+  expect_match(parts[2], "^d2 <- dplyr::anti_join\\(ae_unmatched_dm, ex")
+  expect_parses(out$code)
+})
+
+test_that("every derive form parses, for both sides, every rule shape and the SUPP ops", {
+  rules <- c(
+    "{shape:'between', xCol:'a', yFrom:'b', yTo:'c'}",
+    "{shape:'overlaps', xFrom:'a', xTo:'a2', yFrom:'b', yTo:'c'}",
+    "{shape:'window', xCol:'a', yCol:'b', from:-7, to:7}",
+    "{shape:'before', xCol:'a', yCol:'b', inclusive:false}",
+    "{shape:'after', xCol:'a', yCol:'b', inclusive:true}")
+  for (kinds in list(c(NA, NA), c("duckdb", "duckdb"), c("arrow", "arrow"), c(NA, "duckdb"), c("arrow", "duckdb"))) {
+    for (side in c("x", "y")) {
+      for (r in c(NA, rules)) {
+        meta <- jsonlite::toJSON(list(
+          ae = list(lazy = if (is.na(kinds[1])) NULL else kinds[1], codeRef = "ae", kinds = list(a = "Date", a2 = "Date", b = "Date", c = "Date")),
+          dm = list(lazy = if (is.na(kinds[2])) NULL else kinds[2], codeRef = "dm", kinds = list(a = "Date"))),
+          auto_unbox = TRUE, null = "null")
+        op <- if (is.na(r)) "unmatched" else "outside_window"
+        out <- run_pipeline_js(sprintf("
+          const p = new P.Pipeline();
+          p.setTables(%s);
+          p.add(P.deriveStep('d', '%s', ['ae', 'dm'], {by: [{x: 'my key', y: 'k'}, {x: 'id', y: 'id'}], side: '%s'%s}));
+          out = p.compose();", meta, op, side, if (is.na(r)) "" else paste0(", rule: ", r)))
+        expect_parses(out, paste(paste(kinds, collapse = "/"), side, r))
+        expect_false(grepl("collect()", out, fixed = TRUE))
+        expect_match(out, "na_matches", fixed = TRUE)
+      }
+    }
+  }
+  plan <- "{keys: ['STUDYID', 'USUBJID'], idvars: [{idvar: 'AESEQ', type: 'integer'}, {idvar: '', type: null}], rdomain_col: true}"
+  for (op in c("supp_orphans", "supp_bad_idvarval")) {
+    for (lz in c("null", "'duckdb'", "'arrow'")) {
+      out <- run_pipeline_js(sprintf("
+        const p = new P.Pipeline();
+        p.setTables({ ae: { lazy: %s, codeRef: 'ae' }, suppae: { lazy: %s, codeRef: 'suppae' } });
+        p.add(P.deriveStep('d', '%s', ['ae', 'suppae'], {rdomain: 'AE', plan: %s}));
+        out = p.compose();", lz, lz, op, plan))
+      expect_parses(out, paste(op, lz))
+    }
+  }
+})

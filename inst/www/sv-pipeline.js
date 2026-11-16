@@ -365,6 +365,7 @@
       case 'recode': return 'recode ' + step.col + ' (' + (step.map || []).length + ' values)';
       case 'summarise': return 'summarise' + ((step.groups || []).length ? ' by ' + step.groups.join(', ') : '');
       case 'custom': return step.label || 'custom code';
+      case 'derive': return 'rows of ' + step.table;
       case 'supp': return 'merge ' + String(step.supp).toUpperCase() + ' (' + (step.qnams || []).length +
         ' QNAMs on ' + (step.idvars || []).map(function (v) {
           return v.idvar === '' ? 'subject' : v.idvar;
@@ -414,12 +415,22 @@
 
   /** 'arrow' | 'duckdb' for a lazy table, else null. */
   Pipeline.prototype.lazyKind = function (name) {
+    // a derived card is the table its derive step writes: it is as lazy as that step's expression ends
+    var d = this.deriveFor(name);
+    if (d) {
+      this._kindBusy = this._kindBusy || {};
+      if (!this._kindBusy[name]) {
+        this._kindBusy[name] = true;
+        try { return this.deriveExpr(d).kind; } finally { this._kindBusy[name] = false; }
+      }
+    }
     var m = this.tables[name];
     return m && m.lazy ? m.lazy : null;
   };
 
   /** The R expression that names a table: a lazy table's codeRef when it differs from its name. */
   Pipeline.prototype.refFor = function (name) {
+    if (this.deriveFor(name)) return ident(name);
     var m = this.tables[name];
     if (m && m.lazy && m.codeRef && m.codeRef !== name) return m.codeRef;
     return ident(name);
@@ -677,7 +688,7 @@
     for (var i = 0; i < this.steps.length; i++) {
       var s = this.steps[i];
       if (key && s.key === key) { if (last) continue; break; }
-      if (s.table !== table || s.enabled === false) continue;
+      if (s.table !== table || s.enabled === false || s.kind === 'derive') continue;
       stepColumns(s, cols);
       if (unknownAfter(s)) return null;
     }
@@ -763,7 +774,7 @@
       var live = function (s) { return s.enabled !== false; };
       if (columns === null || columns === undefined) {
         self.steps.forEach(function (s) {
-          if (live(s) && (s.table === table || (s.kind === 'join' && s.right === table) ||
+          if (s.kind !== 'derive' && live(s) && (s.table === table || (s.kind === 'join' && s.right === table) ||
               (s.kind === 'supp' && s.supp === table))) {
             note(s, []);
             s.enabled = false;
@@ -774,7 +785,7 @@
       var cols = columns.slice();
       var unknown = false;
       self.steps.forEach(function (s) {
-        if (s.table !== table || !live(s)) return;
+        if (s.table !== table || !live(s) || s.kind === 'derive') return;
         if (!unknown) {
           var miss = lack(cols, leftNeeds(s, cols));
           if (miss.length) { note(s, miss); s.enabled = false; return; }
@@ -855,13 +866,330 @@
       return { ok: false, reason: 'Strict applies only to a join on the original tables: an earlier step changes the rows' };
     }
     var prepared = step.right !== step.table && steps.some(function (x) {
-      return x.table === step.right && x.kind !== 'custom';
+      return x.table === step.right && x.kind !== 'custom' && x.kind !== 'derive';
     });
     if (prepared) {
       return { ok: false, reason: 'Strict applies only to a join on the original tables: ' + step.right + ' has steps of its own' };
     }
     return { ok: true, reason: '' };
   };
+
+  /**
+   * How a join moves its sides onto one backend (shared by compose()'s chains and deriveExpr()).
+   * `kind` / `con` describe the left side (a lazy backend, or null in memory, and what remote_con() can
+   * read), `r` the right side `{ref, kind}`. Returns `{wrap, rightRef, copy, kind, con}`: `wrap`
+   * ([open, rest]) puts the left side inside `open + <left> + rest`; `copy` asks for copy = TRUE.
+   * A date rule has no Arrow form, so a rule join moves Arrow onto duckdb.
+   */
+  function crossBackend(kind, con, r, hasRule, moveCon, duckRef, name) {
+    var o = { wrap: null, rightRef: r.ref, copy: false, kind: kind, con: con };
+    if (hasRule && kind === 'arrow' && r.kind !== 'duckdb') {
+      // arrow has no inequality join: a rule join runs in duckdb. Both sides move onto one
+      // connection: a duckdb card's (moveCon) or, with none, arrow's default one.
+      o.wrap = ['dplyr::compute(arrow::to_duckdb(', moveCon + '))'];
+      if (r.kind === 'arrow') o.rightRef = 'dplyr::compute(arrow::to_duckdb(' + r.ref + moveCon + '))';
+      else o.copy = true;
+      o.kind = 'duckdb';
+      o.con = duckRef;
+    } else if (hasRule && !kind && r.kind === 'arrow') {
+      o.wrap = ['dplyr::compute(arrow::to_duckdb(arrow::arrow_table(', ')' + moveCon + '))'];
+      o.rightRef = 'dplyr::compute(arrow::to_duckdb(' + r.ref + moveCon + '))';
+      o.kind = 'duckdb';
+      o.con = duckRef;
+    } else if (kind === 'duckdb' && !r.kind) o.copy = true;
+    else if (kind === 'duckdb' && r.kind === 'arrow') {
+      // compute(): to_duckdb() registers a view that R's garbage collector may drop before
+      // the query runs ("Table arrow_003 does not exist"); compute() makes a real table.
+      // con is null after a rule join moved arrow into arrow's default duckdb connection
+      // (no duckdb card in the steps).
+      o.rightRef = 'dplyr::compute(arrow::to_duckdb(' + r.ref +
+        (con ? ', con = dbplyr::remote_con(' + con + ')' : '') + '))';
+    } else if (kind === 'arrow' && r.kind === 'duckdb') {
+      o.wrap = ['dplyr::compute(arrow::to_duckdb(', ', con = dbplyr::remote_con(' + r.ref + ')))'];
+      o.kind = 'duckdb';
+      o.con = r.ref;
+    } else if (!kind && r.kind === 'duckdb') {
+      // A name of our own: copy_to(overwrite = TRUE) under the data frame's name would
+      // replace a real table of that name in the user's database.
+      o.wrap = ['dplyr::copy_to(dbplyr::remote_con(' + r.ref + '), ',
+        ', name = ' + str('sideview_' + name) + ', overwrite = TRUE)'];
+      o.kind = 'duckdb';
+      o.con = r.ref;
+    } else if (!kind && r.kind === 'arrow') {
+      o.wrap = ['arrow::arrow_table(', ')'];
+      o.kind = 'arrow';
+      o.con = null;
+    }
+    return o;
+  }
+
+  // ---- derived tables: the rows behind a join or SUPP check, as code (twin of sv_derive_card) ----
+
+  /** The live derive step that writes `name`, or null. */
+  Pipeline.prototype.deriveFor = function (name) {
+    for (var i = this.steps.length - 1; i >= 0; i--) {
+      var s = this.steps[i];
+      if (s.kind === 'derive' && s.table === name && this.deriveLive(s)) return s;
+    }
+    return null;
+  };
+
+  /**
+   * Whether a derive step is written: enabled, with two inputs that are on the canvas (setTables) or
+   * written by an earlier live derive step. Never a reason to disable the step (disableMissing skips it).
+   */
+  Pipeline.prototype.deriveLive = function (step) {
+    var self = this;
+    if (!step || step.kind !== 'derive' || step.enabled === false) return false;
+    var ins = [].concat(step.inputs || []);
+    if (ins.length !== 2) return false;
+    var at = this.steps.indexOf(step);
+    if (at < 0) {
+      at = this.steps.length;
+      for (var i = 0; i < this.steps.length; i++) {
+        if (step.id !== undefined && this.steps[i].id === step.id) { at = i; break; }
+      }
+    }
+    return ins.every(function (n) {
+      if (self.tables[n]) return true;
+      for (var j = 0; j < at; j++) {
+        var x = self.steps[j];
+        if (x.kind === 'derive' && x.table === n && self.deriveLive(x)) return true;
+      }
+      return false;
+    });
+  };
+
+  // The condition of an outside_window anti join, written for the kept side `side` (x$ is the kept
+  // table in the join, y$ the other one). `lazy`: the join runs on duckdb.
+  function deriveRule(rule, side, kindOf, lazy) {
+    var r = rule;
+    var strict = r.inclusive === false;
+    var k = side === 'x' ? 'x$' : 'y$';   // the table the rule's x columns are on
+    var o = side === 'x' ? 'y$' : 'x$';   // and the one its y columns are on
+    var out = { prep: null, expr: '', post: null, other: null };
+    switch (r.shape) {
+      case 'between':
+        out.expr = 'between(' + k + ident(r.xCol) + ', ' + o + ident(r.yFrom) + ', ' + o + ident(r.yTo) + ')';
+        break;
+      case 'overlaps':
+        out.expr = 'overlaps(' + k + ident(r.xFrom) + ', ' + k + ident(r.xTo) + ', ' +
+          o + ident(r.yFrom) + ', ' + o + ident(r.yTo) + ')';
+        break;
+      case 'window': {
+        var kd = kindOf ? kindOf(r.xCol) : null;
+        var lo = '.sv_lo = ' + offsetExpr(r.xCol, r.from, kd, lazy);
+        var hi = '.sv_hi = ' + offsetExpr(r.xCol, r.to, kd, lazy);
+        if (side === 'x') {
+          out.prep = 'dplyr::mutate(' + lo + ', ' + hi + ')';
+          out.post = 'dplyr::select(-.sv_lo, -.sv_hi)';
+          out.expr = 'between(y$' + ident(r.yCol) + ', x$.sv_lo, x$.sv_hi)';
+        } else {
+          out.other = 'dplyr::mutate(%s, ' + lo + ', ' + hi + ')';
+          out.expr = 'between(x$' + ident(r.yCol) + ', y$.sv_lo, y$.sv_hi)';
+        }
+        break;
+      }
+      case 'before':
+        out.expr = k + ident(r.xCol) + (strict ? ' > ' : ' >= ') + o + ident(r.yCol);
+        break;
+      case 'after':
+        out.expr = k + ident(r.xCol) + (strict ? ' < ' : ' <= ') + o + ident(r.yCol);
+        break;
+    }
+    return out;
+  }
+
+  /**
+   * The right-hand side of a derived table's assignment and the backend it ends in:
+   * `{code, kind}`, kind `'arrow'`, `'duckdb'` or null (in memory). The step is
+   * `{kind: 'derive', table, op, inputs: [x, y], args}`; `args` is what R's builder kept
+   * (`by`, `side`, `rule`; for a SUPP op `rdomain` and `plan`). Nothing is collected.
+   */
+  Pipeline.prototype.deriveExpr = function (step) {
+    var pipe = this.pipe;
+    var ins = [].concat(step.inputs || []).map(String);
+    var args = step.args || {};
+    var op = step.op;
+    if (ins.length !== 2) return { code: '', kind: null };
+    if (op === 'supp_orphans' || op === 'supp_bad_idvarval') {
+      return { code: deriveSuppCode(this, op, ins, args), kind: null };
+    }
+    var side = args.side === 'y' ? 'y' : 'x';
+    var rule = args.rule || null;
+    if (op === 'outside_window' && !rule) return { code: '', kind: null };
+    var keep = side === 'x' ? ins[0] : ins[1];
+    var other = side === 'x' ? ins[1] : ins[0];
+    var kp = [].concat(args.by || []).map(function (p) {
+      return side === 'x' ? { left: String(p.x), right: String(p.y) } : { left: String(p.y), right: String(p.x) };
+    });
+    if (!kp.length) return { code: '', kind: null };
+    var kk = this.lazyKind(keep);
+    var ko = this.lazyKind(other);
+    var duckRef = kk === 'duckdb' ? this.refFor(keep) : (ko === 'duckdb' ? this.refFor(other) : null);
+    var moveCon = duckRef ? ', con = dbplyr::remote_con(' + duckRef + ')' : '';
+    var hasRule = !!rule;
+    var cb = crossBackend(kk, kk ? this.refFor(keep) : null, { ref: this.refFor(other), kind: ko },
+      hasRule, moveCon, duckRef, keep);
+    var head = this.refFor(keep);
+    if (cb.wrap) head = cb.wrap[0] + head + cb.wrap[1];
+    var copy = cb.copy ? ', copy = TRUE' : '';
+    var right = cb.rightRef;
+    var local = right !== this.refFor(other);
+    if (local) right = '.sv_other';
+    var code;
+    if (!hasRule) {
+      code = 'dplyr::anti_join(' + head + ', ' + right + ', by = ' + joinBy(kp) +
+        ', na_matches = "na"' + copy + ')';
+    } else if (op === 'unmatched') {
+      code = 'dplyr::anti_join(' + head + ', ' + right + ', by = ' + joinBy(kp) +
+        ', na_matches = "never"' + copy + ')';
+    } else if (side === 'y' && (rule.shape === 'before' || rule.shape === 'after')) {
+      // A nearest-match rule keeps, for each x row, the nearest y rows: a y row is inside the window
+      // only if it is one of those. So collect the (key, date) of the y rows that are nearest to some
+      // x row, then keep the y rows with a key partner that are none of them. The pair table is
+      // built from the kept table on the left, so copy = TRUE moves a data frame onto its database.
+      var nk = kp.map(function (p, i) { return '.sv_k' + (i + 1); });
+      var strictR = rule.inclusive === false;
+      // the x date is on or after the y date (before) or on or before it (after)
+      var cmp = rule.shape === 'before' ? (strictR ? '<' : '<=') : (strictR ? '>' : '>=');
+      var ysel = 'dplyr::select(.sv_keep, ' + kp.map(function (p, i) { return nk[i] + ' = ' + ident(p.left); })
+        .concat(['.sv_yd = ' + ident(rule.yCol)]).join(', ') + ')';
+      var xsel = 'dplyr::distinct(dplyr::select(.sv_other, ' + kp.map(function (p, i) {
+        return nk[i] + ' = ' + ident(p.right);
+      }).concat(['.sv_xd = ' + ident(rule.xCol)]).join(', ') + '))';
+      var byNear = 'dplyr::join_by(' + nk.concat(['.sv_yd ' + cmp + ' .sv_xd']).join(', ') + ')';
+      var grp = nk.concat(['.sv_xd']).join(', ');
+      var pair = ['dplyr::inner_join(' + ysel + ', ' + xsel + ', by = ' + byNear + ', na_matches = "never"' + copy + ')',
+        'dplyr::group_by(' + grp + ')',
+        'dplyr::filter(.sv_yd == ' + (rule.shape === 'before' ? 'max' : 'min') + '(.sv_yd, na.rm = TRUE))',
+        'dplyr::ungroup()',
+        'dplyr::distinct(' + nk.concat(['.sv_yd']).join(', ') + ')'].join(' ' + pipe + '\n      ');
+      var byPair = 'c(' + kp.map(function (p, i) { return ident(p.left) + ' = ' + str(nk[i]); })
+        .concat([ident(rule.yCol) + ' = ".sv_yd"']).join(', ') + ')';
+      code = 'local({\n  .sv_keep <- ' + head + '\n  .sv_other <- ' + cb.rightRef + '\n  .sv_pair <- ' + pair +
+        '\n  .sv_keep ' + pipe + '\n    dplyr::semi_join(.sv_other, by = ' + joinBy(kp) +
+        ', na_matches = "never"' + copy + ') ' + pipe +
+        '\n    dplyr::anti_join(.sv_pair, by = ' + byPair + ', na_matches = "never")\n})';
+      return { code: code, kind: cb.kind };
+    } else {
+      var tx = this.tables[ins[0]];
+      var rp = deriveRule(rule, side, function (col) { return tx && tx.kinds ? tx.kinds[col] : null; },
+        cb.kind === 'duckdb');
+      var lines = [head];
+      lines.push('dplyr::semi_join(' + right + ', by = ' + joinBy(kp) + ', na_matches = "never"' + copy + ')');
+      if (rp.prep) lines.push(rp.prep);
+      lines.push('dplyr::anti_join(' + (rp.other ? rp.other.replace('%s', right) : right) + ', by = ' +
+        joinByCall(kp, rp.expr) + ', na_matches = "never"' + copy + ')');
+      if (rp.post) lines.push(rp.post);
+      code = lines.join(' ' + pipe + '\n  ');
+    }
+    if (local) {
+      code = 'local({\n  .sv_other <- ' + cb.rightRef + '\n  ' + code.replace(/\n/g, '\n  ') + '\n})';
+    }
+    return { code: code, kind: cb.kind };
+  };
+
+  /**
+   * One local({...}) block for a SUPP op: the SUPP rows of the check's own steps (RDOMAIN filter, key
+   * text, IDVARVAL converted to the key type) matched against the parent's key text. A parent that is
+   * lazy is first cut to the subjects the SUPP rows name and to the key columns, then collected.
+   * The plan (args.plan, from R's check) says the keys and levels; it is never recomputed here.
+   */
+  function deriveSuppCode(self, op, ins, args) {
+    var plan = args.plan || {};
+    var keys = suppList(plan.keys).map(String);
+    var levels = suppList(plan.idvars).map(function (v) {
+      v = v || {};
+      return {
+        idvar: v.idvar === null || v.idvar === undefined ? '' : String(v.idvar),
+        type: v.type ? String(v.type) : 'character'
+      };
+    });
+    var rdomain = args.rdomain === undefined || args.rdomain === null ? '' : String(args.rdomain);
+    var parent = self.refFor(ins[0]);
+    var supp = self.refFor(ins[1]);
+    var suppLazy = !!self.lazyKind(ins[1]);
+    var parentLazy = !!self.lazyKind(ins[0]);
+    var pcols = keys.slice();
+    levels.forEach(function (l) { if (l.idvar !== '' && pcols.indexOf(l.idvar) < 0) pcols.push(l.idvar); });
+    var nl = ' ' + self.pipe + '\n      ';
+    var g = ['local({'];
+    var sl = [supp];
+    if (plan.rdomain_col) sl.push('dplyr::filter(RDOMAIN == ' + str(rdomain) + ')');
+    if (suppLazy) sl.push('dplyr::collect()');
+    g.push('  s <- ' + sl.join(nl));
+    if (suppLazy) g.push('  s <- as.data.frame(s, stringsAsFactors = FALSE)');
+    g.push('  n <- nrow(s)');
+    g.push('  chr <- function(x) {');
+    g.push('    if (inherits(x, "integer64")) x <- suppressWarnings(as.numeric(x))');
+    g.push('    as.character(x)');
+    g.push('  }');
+    g.push('  iv <- as.character(s$IDVAR)');
+    g.push('  iv[is.na(iv) | !nzchar(trimws(iv))] <- ""');
+    g.push('  skey <- paste(' + keys.map(function (k) { return 'chr(s[[' + str(k) + ']])'; }).join(', ') +
+      ', sep = "\\r")');
+    g.push('  val <- rep("", n)');
+    g.push('  bad <- rep(FALSE, n)');
+    levels.forEach(function (l) {
+      if (l.idvar === '') return;
+      g.push('  r <- iv == ' + str(l.idvar));
+      g.push('  v <- as.character(s$IDVARVAL[r])');
+      if (l.type === 'integer' || l.type === 'double') {
+        var re = l.type === 'integer' ? SUPP_INT_RE.source : SUPP_DBL_RE.source;
+        g.push('  ok <- grepl(' + str(re) + ', v, perl = TRUE)');
+        g.push('  num <- suppressWarnings(' + (l.type === 'integer' ? 'as.integer' : 'as.numeric') +
+          '(ifelse(ok, v, NA_character_)))');
+        if (l.type === 'double') g.push('  num[is.na(num) | abs(num) > 1e308] <- NA_real_');
+        g.push('  cv <- ifelse(is.na(num), NA_character_, as.character(num))');
+      } else {
+        g.push('  cv <- v');
+      }
+      g.push('  val[r] <- cv');
+      g.push('  bad[r] <- is.na(cv)');
+    });
+    g.push('  subj <- unique(as.character(s$USUBJID))');
+    g.push('  q <- dplyr::select(' + parent + ', dplyr::all_of(c(' + pcols.map(str).join(', ') + ')))');
+    if (parentLazy) {
+      g.push('  q <- if (anyNA(subj)) {');
+      g.push('    dplyr::filter(q, USUBJID %in% !!subj[!is.na(subj)] | is.na(USUBJID))');
+      g.push('  } else {');
+      g.push('    dplyr::filter(q, USUBJID %in% !!subj)');
+      g.push('  }');
+      g.push('  p <- as.data.frame(dplyr::collect(dplyr::distinct(q)), stringsAsFactors = FALSE)');
+    } else {
+      g.push('  p <- as.data.frame(q, stringsAsFactors = FALSE)');
+    }
+    g.push('  pkey <- paste(' + keys.map(function (k) { return 'chr(p[[' + str(k) + ']])'; }).join(', ') +
+      ', sep = "\\r")');
+    g.push('  matched <- rep(FALSE, n)');
+    levels.forEach(function (l) {
+      if (l.idvar === '') {
+        g.push('  r <- iv == ""');
+        g.push('  matched[r] <- skey[r] %in% pkey');
+      } else {
+        g.push('  r <- iv == ' + str(l.idvar));
+        g.push('  matched[r] <- !bad[r] & paste(skey[r], val[r], sep = "\\r") %in%');
+        g.push('    paste(pkey, chr(p[[' + str(l.idvar) + ']]), sep = "\\r")');
+      }
+    });
+    g.push('  keep <- ' + (op === 'supp_orphans' ? '!matched & !bad' : 'bad'));
+    g.push('  out <- s[keep, , drop = FALSE]');
+    g.push('  rownames(out) <- NULL');
+    g.push('  out');
+    g.push('})');
+    return g.join('\n');
+  }
+
+  /** A derive step for Pipeline.add(): `table` is the derived card's name, `args` what R's builder kept. */
+  function deriveStep(table, op, inputs, args) {
+    inputs = [].concat(inputs || []).map(String);
+    args = args || {};
+    return {
+      kind: 'derive', key: JSON.stringify(['derive', op, inputs, args]),
+      table: String(table), op: op, inputs: inputs, args: args
+    };
+  }
 
   /** Compose the enabled steps into one R script ('' when there is nothing). */
   // Known limit: a factor column holding NA segfaults duckdb 1.4.x when an arrow table is scanned through it.
@@ -875,7 +1203,7 @@
         if (s.code && String(s.code).trim()) blocks.push({ custom: String(s.code).trim() });
         return;
       }
-      if (!s.table) return;
+      if (!s.table || s.kind === 'derive') return;
       if (!chains[s.table]) {
         chains[s.table] = [];
         blocks.push({ table: s.table });
@@ -899,6 +1227,13 @@
 
     var self = this;
     var out = [];
+    // derived tables first, in step order: a chain on one starts from its name, and a derived table
+    // may read an earlier derived table. No collect(): a lazy derived table stays lazy (spec 5.4).
+    steps.forEach(function (s) {
+      if (s.kind !== 'derive' || !self.deriveLive(s)) return;
+      var d = self.deriveExpr(s);
+      if (d.code) out.push(ident(s.table) + ' <- ' + d.code);
+    });
     var state = {};
     var asPrep = {};
     var finished = {};  // t -> { kind }: the chain's lazy backend after its steps
@@ -948,43 +1283,12 @@
           var rightRef = r.ref;
           var ctx = {};
           var hasRule = !!s.rule && !self.joinRuleProblem(s);
-          if (hasRule && kind === 'arrow' && r.kind !== 'duckdb') {
-            // arrow has no inequality join: a rule join runs in duckdb. Both sides move onto one
-            // connection: a duckdb card's (moveCon) or, with none, arrow's default one.
-            wrapHead('dplyr::compute(arrow::to_duckdb(', moveCon + '))');
-            if (r.kind === 'arrow') rightRef = 'dplyr::compute(arrow::to_duckdb(' + r.ref + moveCon + '))';
-            else ctx.copy = true;
-            kind = 'duckdb';
-            con = duckRef;
-          } else if (hasRule && !kind && r.kind === 'arrow') {
-            wrapHead('dplyr::compute(arrow::to_duckdb(arrow::arrow_table(', ')' + moveCon + '))');
-            rightRef = 'dplyr::compute(arrow::to_duckdb(' + r.ref + moveCon + '))';
-            kind = 'duckdb';
-            con = duckRef;
-          } else if (kind === 'duckdb' && !r.kind) ctx.copy = true;
-          else if (kind === 'duckdb' && r.kind === 'arrow') {
-            // compute(): to_duckdb() registers a view that R's garbage collector may drop before
-            // the query runs ("Table arrow_003 does not exist"); compute() makes a real table.
-            // con is null after a rule join moved arrow into arrow's default duckdb connection
-            // (no duckdb card in the steps).
-            rightRef = 'dplyr::compute(arrow::to_duckdb(' + r.ref +
-              (con ? ', con = dbplyr::remote_con(' + con + ')' : '') + '))';
-          } else if (kind === 'arrow' && r.kind === 'duckdb') {
-            wrapHead('dplyr::compute(arrow::to_duckdb(', ', con = dbplyr::remote_con(' + r.ref + ')))');
-            kind = 'duckdb';
-            con = r.ref;
-          } else if (!kind && r.kind === 'duckdb') {
-            // A name of our own: copy_to(overwrite = TRUE) under the data frame's name would
-            // replace a real table of that name in the user's database.
-            wrapHead('dplyr::copy_to(dbplyr::remote_con(' + r.ref + '), ',
-              ', name = ' + str('sideview_' + t) + ', overwrite = TRUE)');
-            kind = 'duckdb';
-            con = r.ref;
-          } else if (!kind && r.kind === 'arrow') {
-            wrapHead('arrow::arrow_table(', ')');
-            kind = 'arrow';
-            con = null;
-          }
+          var cbk = crossBackend(kind, con, r, hasRule, moveCon, duckRef, t);
+          if (cbk.wrap) wrapHead(cbk.wrap[0], cbk.wrap[1]);
+          rightRef = cbk.rightRef;
+          if (cbk.copy) ctx.copy = true;
+          kind = cbk.kind;
+          con = cbk.con;
           // The rule forms: `kind` is the chain's backend now that any cross-backend move above has
           // happened, so with a rule it is null (in memory) or 'duckdb'.
           if (hasRule) {
@@ -2479,6 +2783,7 @@
     saySupp: saySupp,
     sayProfile: sayProfile,
     suppStep: suppStep,
+    deriveStep: deriveStep,
     splitReply: splitReply,
     joinDiagnostics: joinDiagnostics,
     strictArgs: strictArgs,
