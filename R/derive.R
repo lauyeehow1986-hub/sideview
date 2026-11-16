@@ -1,0 +1,138 @@
+# Derived rows: the rows behind a join-check or SUPP-check count, as a table. The console
+# (sv_unmatched()) and the canvas card builder both call sv_derive_rows(), so the rows agree.
+
+sv_derive_ops <- c("unmatched", "outside_window", "supp_orphans", "supp_bad_idvarval")
+
+# `by` as a list of {x, y} column pairs: from a character vector (as dplyr takes it) or already a list.
+sv_derive_by_pairs <- function(by) {
+  if (is.character(by)) {
+    if (!length(by)) stop("`by` must name at least one key column.", call. = FALSE)
+    by_x <- if (is.null(names(by))) by else ifelse(nzchar(names(by)), names(by), by)
+    return(lapply(seq_along(by), function(i) list(x = unname(by_x[i]), y = unname(by[i]))))
+  }
+  if (!is.list(by) || !length(by)) stop("`by` must name at least one key column.", call. = FALSE)
+  lapply(by, function(p) list(x = as.character(p$x), y = as.character(p$y)))
+}
+
+sv_derive_rows <- function(op, tables, args) {
+  if (!op %in% sv_derive_ops) stop(sprintf("Unknown derive op: %s", op), call. = FALSE)
+  if (!op %in% c("unmatched", "outside_window")) {
+    stop(sprintf("Derive op %s is not available yet.", op), call. = FALSE)
+  }
+  if (length(tables) != 2L) stop("A derived table needs two input tables.", call. = FALSE)
+  if (any(vapply(tables, sv_is_lazy_input, logical(1)))) {
+    stop("Unmatched rows of a duckdb or Arrow table need duckdb.", call. = FALSE)
+  }
+  if (!all(vapply(tables, is.data.frame, logical(1)))) stop("Input tables must be data frames.", call. = FALSE)
+  x <- tables[[1L]]
+  y <- tables[[2L]]
+  nms <- names(tables)
+  x_name <- if (length(nms) >= 1L && nzchar(nms[1L])) nms[1L] else "x"
+  y_name <- if (length(nms) >= 2L && nzchar(nms[2L])) nms[2L] else "y"
+  pairs <- sv_derive_by_pairs(args$by)
+  by_x <- vapply(pairs, function(p) p$x, "")
+  by_y <- vapply(pairs, function(p) p$y, "")
+  miss_x <- setdiff(by_x, names(x))
+  miss_y <- setdiff(by_y, names(y))
+  if (length(miss_x)) stop(sprintf("Not in %s: %s", x_name, paste(miss_x, collapse = ", ")), call. = FALSE)
+  if (length(miss_y)) stop(sprintf("Not in %s: %s", y_name, paste(miss_y, collapse = ", ")), call. = FALSE)
+  issues <- sv_join_type_issues(x, y, by_x, by_y, x_name, y_name)
+  if (length(issues)) stop(paste(issues, collapse = " "), call. = FALSE)
+  side <- if (identical(args$side, "y")) "y" else "x"
+  rule <- args$rule
+  if (identical(op, "outside_window") && is.null(rule)) stop("outside_window needs a date rule.", call. = FALSE)
+  if (!is.null(rule)) {
+    problem <- sv_join_rule_problem(rule, vapply(x, sv_key_kind, character(1)),
+                                    vapply(y, sv_key_kind, character(1)))
+    if (!is.null(problem)) stop(problem, call. = FALSE)
+    rule <- sv_join_rule_normalize(rule)
+  }
+  keep <- if (side == "x") x else y
+
+  if (is.null(rule)) {
+    # na_matches = "na": a missing key matches a missing key, as in a default dplyr join
+    out <- if (side == "x") {
+      dplyr::anti_join(x, y, by = stats::setNames(by_y, by_x), na_matches = "na")
+    } else {
+      dplyr::anti_join(y, x, by = stats::setNames(by_x, by_y), na_matches = "na")
+    }
+    return(out)
+  }
+
+  # na_matches = "never": a missing key matches nothing. A row with no key partner is `unmatched`;
+  # a row with a key partner but no pair the rule keeps is `outside_window`.
+  kx <- sv_join_keys(x[by_x])
+  ky <- sv_join_keys(y[by_y])
+  na_x <- sv_join_any_na(x[by_x])
+  na_y <- sv_join_any_na(y[by_y])
+  pr <- sv_join_rule_pairs(x, y, by_x, by_y, rule)
+  if (side == "x") {
+    has_key <- !na_x & kx %in% ky[!na_y]
+    paired <- seq_len(nrow(x)) %in% pr$.rx
+  } else {
+    has_key <- !na_y & ky %in% kx[!na_x]
+    paired <- seq_len(nrow(y)) %in% pr$.ry
+  }
+  rows <- if (identical(op, "unmatched")) !has_key else has_key & !paired
+  out <- keep[rows, , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
+
+# A syntactic card name for a derived table (decision 3: an explicit `name` is used as it is).
+sv_derive_name <- function(op, inputs, args, taken, name = NULL) {
+  if (!is.null(name)) {
+    nm <- make.names(name)
+    if (nm %in% taken) stop(sprintf("A table named %s is already on the canvas.", nm), call. = FALSE)
+    return(nm)
+  }
+  kept_i <- if (identical(args$side, "y")) 2L else 1L
+  supp <- if (!is.null(args$supp)) args$supp else inputs[length(inputs)]
+  base <- switch(op,
+    unmatched = paste0(inputs[kept_i], "_unmatched_", inputs[3L - kept_i]),
+    outside_window = paste0(inputs[kept_i], "_outside_window"),
+    supp_orphans = paste0(supp, "_orphans"),
+    supp_bad_idvarval = paste0(supp, "_bad_idvarval"),
+    stop(sprintf("Unknown derive op: %s", op), call. = FALSE))
+  base <- make.names(base)
+  nm <- base
+  i <- 2L
+  while (nm %in% taken) {
+    nm <- make.names(paste0(base, "_", i))
+    i <- i + 1L
+  }
+  nm
+}
+
+#' Rows That Have No Partner in a Join
+#'
+#' Returns the rows of one table that a join check counts as unmatched, so the
+#' number on the join step can be opened as a table. With no `rule` the keys are
+#' compared as [dplyr::anti_join()] compares them (`NA` matches `NA`), and the rows
+#' are `anti_join(x, y, by)`. With a date `rule` a missing key matches nothing
+#' (`na_matches = "never"`); `what = "unmatched"` gives the rows whose key has no
+#' partner at all, and `what = "outside_window"` the rows that have a key partner
+#' but no pair the rule keeps. The two together are the rows the join check
+#' counts as unmatched under the rule.
+#'
+#' The canvas builds the same rows from its join-check button, and generates code
+#' that rebuilds them.
+#'
+#' @param x,y Tables: data frames, or duckdb or Arrow tables (these stay lazy).
+#' @param by Join columns, as in [sv_join_diagnostics()].
+#' @param rule Optional date rule, as in [sv_join_diagnostics()].
+#' @param side `"x"` for the rows of `x`, `"y"` for the rows of `y`.
+#' @param what `"unmatched"` or `"outside_window"` (needs a `rule`).
+#' @return The rows of the chosen table, with its columns and row order.
+#' @export
+#' @examples
+#' ae <- data.frame(USUBJID = c("a", "b", NA, "z"), aeterm = c("x", "y", "z", "w"))
+#' dm <- data.frame(USUBJID = c("a", "b", "c"))
+#' sv_unmatched(ae, dm, "USUBJID")
+sv_unmatched <- function(x, y, by, rule = NULL, side = c("x", "y"),
+                         what = c("unmatched", "outside_window")) {
+  side <- match.arg(side)
+  what <- match.arg(what)
+  if (identical(what, "outside_window") && is.null(rule)) stop("outside_window needs a date rule.", call. = FALSE)
+  sv_derive_rows(what, list(x = x, y = y), list(by = sv_derive_by_pairs(by), rule = rule, side = side))
+}

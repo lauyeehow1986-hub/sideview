@@ -241,3 +241,16 @@ sv_say_mappings <- function(m) {
   }, "")
   c(paste0(sv_say_num(n), if (n == 1) " suggested join." else " suggested joins."), lines)
 }
+
+# The text of a derive offer button (R writes it). `kept` is the table whose rows are opened;
+# `other` is the table it is compared with (not used in the label).
+sv_say_derive_offer <- function(op, n, kept, other = NULL) {
+  num <- sv_say_num(n)
+  rows <- if (n == 1) " row" else " rows"
+  switch(op,
+    unmatched = paste0("Open ", num, " unmatched ", kept, rows, " as a card"),
+    outside_window = paste0("Open ", num, " ", kept, rows, " outside the date window as a card"),
+    supp_orphans = paste0("Open ", num, " orphan ", kept, rows, " as a card"),
+    supp_bad_idvarval = paste0("Open ", num, " ", kept, rows, " with a bad IDVARVAL as a card"),
+    stop(sprintf("Unknown derive op: %s", op), call. = FALSE))
+}
