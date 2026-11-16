@@ -3223,3 +3223,31 @@ test_that("module: removing an input removes both derived cards quietly; adding 
   expect_equal(n_steps(), 2)
   expect_equal(attr(b, "sv_errors")(), character())
 })
+
+test_that("module: replacing a SUPP card updates the plan of its derived card, so the code reads the new IDVAR", {
+  skip_if_no_browser()
+  app <- sv_start_app(paste0(
+    "{ sae <<- data.frame(USUBJID = c('S1', 'S2'), AESEQ = 1:2, AESPID = c(7L, 8L), stringsAsFactors = FALSE);",
+    "supp <<- data.frame(RDOMAIN = 'AE', USUBJID = c('S1', 'S2', 'S2'), IDVAR = 'AESEQ', IDVARVAL = c('1', '9', 'x'), QNAM = 'AETRTEM', QVAL = 'Y', stringsAsFactors = FALSE);",
+    "supp2 <<- rbind(supp, data.frame(RDOMAIN = 'AE', USUBJID = 'S1', IDVAR = 'AESPID', IDVARVAL = '7', QNAM = 'AEX', QVAL = 'N', stringsAsFactors = FALSE));",
+    "shiny::shinyApp(shiny::fluidPage(sideview::sideviewUI('m', height = '780px')),",
+    "function(input, output, session) { px <- sideview::sideviewServer('m', cards = list(sae = sae, suppae = supp));",
+    "shiny::observeEvent(input$rep, sideview::sv_replace_card(px, 'suppae', supp2)) }) }"))
+  b <- sv_open_page(app$url, 1400, 900, wait_for = sv_acc_ready)
+  withr::defer({
+    try(b$close(), silent = TRUE)
+    try(app$proc$kill(), silent = TRUE)
+  })
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 2", timeout = 60))
+  sv_js(b, sprintf("%s.requestDerive({op: 'supp_orphans', inputs: ['sae', 'suppae'], args: {rdomain: 'AE'}}); true", sv_dv_eng))
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 3", timeout = 60))
+  step <- sprintf("%s.pipeline.steps.filter(s => s.kind === 'derive')[0]", sv_dv_eng)
+  expect_equal(unlist(sv_js(b, sprintf("%s.args.plan.idvars.map(v => v.idvar)", step))), "AESEQ")
+  expect_false(grepl("AESPID", sv_js(b, sprintf("%s.pipeline.compose()", sv_dv_eng)), fixed = TRUE))
+  sv_js(b, "Shiny.setInputValue('rep', Math.random(), {priority: 'event'}); true")
+  expect_true(sv_wait_js(b, sprintf("%s.args.plan.idvars.some(v => v.idvar === 'AESPID')", step), timeout = 60))
+  expect_equal(sv_js(b, sprintf("%s.pipeline.steps.filter(s => s.kind === 'derive').length", sv_dv_eng)), 1)
+  expect_true(grepl("AESPID", sv_js(b, sprintf("%s.pipeline.compose()", sv_dv_eng)), fixed = TRUE))
+  expect_equal(sv_dv_card_n(b), 3)
+  expect_equal(attr(b, "sv_errors")(), character())
+})

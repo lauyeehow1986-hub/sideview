@@ -4698,6 +4698,14 @@ function sendToShiny(name, value) {
     });
 
     var out = this.pipeline.disableMissing(name, columns, oldColumns);
+    // R rebuilt a derived card from the new data and recomputed its plan (a SUPP merge's IDVARs, key kinds):
+    // the derive step takes it, or $code() would compose the old plan against the new rows
+    if (cardData.derived && global.SideviewPipeline) {
+      var dd = cardData.derived;
+      var fresh = global.SideviewPipeline.deriveStep(name, dd.op, dd.inputs, dd.args);
+      var dstep = this.pipeline.steps.filter(function (st) { return st.kind === 'derive' && st.table === name; })[0];
+      if (dstep) this.pipeline.update(dstep.id, { op: fresh.op, inputs: fresh.inputs, args: fresh.args, key: fresh.key });
+    }
     // The header sort / filter stays on the card where its column is still there and its step was not disabled.
     var self2 = this;
     var offIds = {};
@@ -6992,9 +7000,9 @@ function sendToShiny(name, value) {
     }
     // Keep the saved view: the first layout only places cards the state lacks.
     if (out.restored.length) this._restoredView = true;
-    // A saved page has no R to build derived tables: their steps stay in the file and are skipped in the code.
+    // A saved page has no R to build derived tables: their steps stay in the file and in the code (deriveLive needs the inputs only); the tables are not shown.
     if (!this.hasR() && Array.isArray(p.steps) && p.steps.some(function (st) { return st && st.kind === 'derive'; })) {
-      this.showToast('Derived tables are not available in a saved page; their steps are skipped.', 'info');
+      this.showToast('Derived tables are not shown in a saved page; their steps stay in the generated code.', 'info');
     }
     this.scheduleConnectorUpdate();
     return out;

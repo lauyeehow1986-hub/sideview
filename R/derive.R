@@ -256,13 +256,13 @@ sv_derive_offers_join <- function(d, x_name, y_name, by, rule = NULL) {
   out <- list()
   for (side in c("x", "y")) {
     out[[length(out) + 1L]] <- make("unmatched", side, n_un[[side]],
-      sprintf("%s rows with no match in %s (%d)", names_of[[side]], other[[side]], as.integer(n_un[[side]])))
+      sv_say_derive_offer("unmatched", as.integer(n_un[[side]]), names_of[[side]], other[[side]]))
   }
   if (!is.null(rule)) {
     n_ow <- c(x = dropped_x, y = dropped_y)
     for (side in c("x", "y")) {
       out[[length(out) + 1L]] <- make("outside_window", side, n_ow[[side]],
-        sprintf("%s rows outside the date window (%d)", names_of[[side]], as.integer(n_ow[[side]])))
+        sv_say_derive_offer("outside_window", as.integer(n_ow[[side]]), names_of[[side]], other[[side]]))
     }
   }
   Filter(function(o) o$n > 0L, out)
@@ -277,9 +277,9 @@ sv_derive_offers_supp <- function(chk, parent_name, supp_name, rdomain) {
   }
   out <- list(
     mk("supp_orphans", chk$n_orphan %||% 0L,
-       sprintf("%s rows with no parent row (%d)", supp_name, as.integer(chk$n_orphan %||% 0L))),
+       sv_say_derive_offer("supp_orphans", as.integer(chk$n_orphan %||% 0L), supp_name, parent_name)),
     mk("supp_bad_idvarval", chk$bad_idvarval$n %||% 0L,
-       sprintf("%s rows with an unreadable IDVARVAL (%d)", supp_name, as.integer(chk$bad_idvarval$n %||% 0L)))
+       sv_say_derive_offer("supp_bad_idvarval", as.integer(chk$bad_idvarval$n %||% 0L), supp_name, parent_name))
   )
   Filter(function(o) o$n > 0L, out)
 }

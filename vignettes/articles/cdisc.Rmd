@@ -233,7 +233,7 @@ Notes:
 * The rows come from the tables as loaded, not from a pipeline result: a filter on the card does not change them.
 * In a Shiny module, removing an input removes the cards derived from it, and adding the input back brings them
   back; replacing it rebuilds them from the new data.
-* The widget has no R, so it offers no buttons; a saved state's derived steps are skipped there.
+* The widget has no R, so it offers no buttons; a saved state's derived steps stay in its code but the derived tables are not shown there.
 
 ## What it does not do
 

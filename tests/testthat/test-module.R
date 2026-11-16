@@ -993,6 +993,29 @@ test_that("replacing an input rebuilds the derived cards in place, in order", {
   })
 })
 
+test_that("replacing a SUPP card sends the rebuilt derived card with the plan of the new data", {
+  st <- dv_start()
+  st$cards$sae$AESPID <- c(7L, 8L)
+  shiny::testServer(sideviewServer, args = st, {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    session$setInputs(derive_request = dv_req(
+      id = "s1", op = "supp_orphans", inputs = list("sae", "suppae"), args = list(rdomain = "AE")))
+    old <- px$ctl$store$get("suppae_orphans")
+    old_idvars <- vapply(old$derived$args$plan$idvars, function(v) v$idvar, "")
+    expect_identical(old_idvars, "AESEQ")
+    n0 <- length(msgs(session, "sideview_card_replace"))
+    supp2 <- rbind(dv_supp, data.frame(RDOMAIN = "AE", USUBJID = "S1", IDVAR = "AESPID",
+                                       IDVARVAL = "7", QNAM = "AEX", QVAL = "N", stringsAsFactors = FALSE))
+    sv_replace_card(px, "suppae", supp2)
+    reps <- utils::tail(msgs(session, "sideview_card_replace"), length(msgs(session, "sideview_card_replace")) - n0)
+    expect_identical(vapply(reps, function(m) m$message$card$name, ""), c("suppae", "suppae_orphans"))
+    d <- reps[[2L]]$message$card$derived
+    expect_identical(d$op, "supp_orphans")
+    expect_true("AESPID" %in% vapply(d$args$plan$idvars, function(v) v$idvar, ""))
+  })
+})
+
 test_that("a rebuild that fails removes the card and its dependants with one toast", {
   shiny::testServer(sideviewServer, args = dv_start(), {
     px <- session$getReturned()

@@ -1596,7 +1596,7 @@ test_that("list view join check offers the unmatched rows as a button; Enter ope
   btn <- "document.querySelector('.sideview-listview [data-sv-join-result] button[data-sv-lv-action=\"derive-open\"]')"
   expect_true(sv_wait_js(b, sprintf("!!%s", btn), timeout = 60))
   # one real button, the offer's label as its text, no offer JSON in the DOM, and no duplicate on a re-check
-  expect_equal(sv_js(b, sprintf("%s.textContent", btn)), "ae rows with no match in dm (2)")
+  expect_equal(sv_js(b, sprintf("%s.textContent", btn)), "Open 2 unmatched ae rows as a card")
   expect_equal(sv_js(b, sprintf("%s.tagName + %s.type", btn, btn)), "BUTTONbutton")
   expect_false(grepl("{", sv_js(b, "document.querySelector('.sideview-listview [data-sv-join-result]').innerHTML"), fixed = TRUE))
   sv_js(b, paste0(sv_lv_join_btn("Check join"), ".click(); true"))

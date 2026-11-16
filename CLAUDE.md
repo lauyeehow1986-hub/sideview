@@ -141,10 +141,16 @@ rstudio bridge: R/rstudio.R
     an input back lets the browser re-add the card through the reconcile loop. State with derive steps is built before
     it reaches the canvas (`sv_derive_from_state()`, `sv_module_add_derived()`); a step that cannot be built is skipped.
   - **Gadget:** `sideview(state =)` builds the derived cards of in-memory inputs up front; with `skip_lazy = TRUE` a step
-    that reads a lazy card waits for the browser's reconcile loop. The gadget shares one `sideview_card_add` path
-    with module mode. The CDISC finalize skips derived cards (they get no tag).
-  - **Widget:** no R, so no offers, no buttons; a saved state's derive steps stay in the file, are skipped in the code
-    and one toast says so.
+    that reads a lazy card is built by the server (`sv_derive_from_state()` on whole tables, in the session) and sent
+    as `sideview_card_add` at the first flush, not by the reconcile loop. The gadget shares one `sideview_card_add` path
+    with module mode. A derived card gets the tag of the card it keeps (`finish()` in `sv_derive_card()`: the SUPP
+    card's tag for the SUPP ops); the CDISC finalize does not tag it on its own.
+  - **Widget:** no R, so no offers, no buttons and no derived cards; a saved state's derive steps stay in the file and
+    `compose()` still writes them whenever both inputs are on the canvas (`deriveLive()` needs the inputs, not the
+    derived card). One toast says the tables are not shown.
+  - **Module replace of a SUPP input:** the rebuilt derived card's `derived` (op, inputs, args with R's new plan)
+    travels in `sideview_card_replace`; `replaceCard()` writes it into the matching derive step, so `$code()` follows
+    the new data.
   - The list view shows the same offers as real buttons (`appendOffers()`, `data-sv-lv-action="derive-open"`); a
     duplicate open zooms the existing card and announces it.
 - **Column inspector / codebook:** same twin rule. `sv_column_profile()` / `sv_codebook()` (R/codebook.R) and

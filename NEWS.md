@@ -19,7 +19,7 @@ RStudio pass is still to do.
   rebuilds them in place; adding it back brings them back. A state saved with derived cards is restored with them.
 * New inputs `derive_request` and `derive_forget`, new message `sideview_derive_result`, and a `derive_offers` field on
   the join-check and SUPP-check replies (see CLAUDE.md). The widget has no R: it shows no buttons, and a saved state's
-  derive steps are skipped with a notice.
+  derive steps stay in the code (when both inputs are there) but the tables are not shown, with a notice.
 
 # sideview 0.9.0
 

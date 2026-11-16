@@ -1232,3 +1232,9 @@ None of these blocks D1; none is fixed. Source: `.superpowers/sdd/2026-11-16-der
 - Task 8: minor (deferred): race test uses fixed Sys.sleep(3); 30s derivePending sweep drops a legitimately slow lazy derive (late reply gets no step, dup click possible); _rRemoved has no reset path in applyState/clearOperations/step removal (stale skip after failed-rebuild replace then good replace)
 - Task 9: minor (deferred): list-view test compares label to literal not drawer; SUPP buttons untested; weak "{" DOM check; no focus-after-Enter assert; no list-view CSS/axe for derive buttons; duplicate open zooms hidden canvas card in list view
 - Behaviours worth knowing (not defects): an R-removed derived card sets `_rRemoved` and is not asked for again until an input leaves and returns; `derivePending` is swept after 30 s; derive offers are R-only (no widget buttons).
+
+### D1 final-review fixes
+- Derive offer labels are built by `sv_say_derive_offer()` (actions, e.g. "Open 2 unmatched ae rows as a card"); tests pin them.
+- `replaceCard()` now writes the rebuilt derived card's `derived` (R's new SUPP plan) into its derive step, so `$code()` follows replaced SUPP data. R already sent it in `sideview_card_replace`. Tests: test-module.R (message carries the new IDVAR), test-layout-browser.R (module: compose reads AESPID after replace; fails without the fix).
+- Docs: derived cards carry the kept card's tag; the gadget builds lazy derive steps in `sv_derive_from_state()` at the first flush; widget derive steps stay in the code when both inputs exist (toast, CLAUDE.md, NEWS and article reworded).
+- Verified: node --check on inst/www/*.js; unit filter derive|module|pipeline|say|diagnostics|supp; test-layout-browser.R and test-a11y-browser.R each in one real-browser run (NOT_CRAN=true), all passing.
