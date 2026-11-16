@@ -98,6 +98,25 @@ sv_cdisc_wire_tag <- function(tag) {
   tag
 }
 
+#' A derived card's recipe as the browser receives it (internal)
+#'
+#' `{op, inputs, args}` as JSON-safe lists: `inputs` and a plan's `keys` stay arrays, a plan goes
+#' through JSON so data frames and NA become plain rows and nulls.
+#' @noRd
+sv_derived_wire <- function(d) {
+  args <- d$args
+  if (!is.null(args$plan)) {
+    plan <- args$plan
+    plan$keys <- as.list(plan$keys)
+    args$plan <- jsonlite::fromJSON(
+      as.character(jsonlite::toJSON(plan, auto_unbox = TRUE, null = "null", na = "null",
+                                    digits = NA, dataframe = "rows")),
+      simplifyVector = FALSE)
+  }
+  if (!is.null(args$by)) args$by <- unname(lapply(args$by, as.list))
+  list(op = d$op, inputs = as.list(as.character(d$inputs)), args = args)
+}
+
 #' The card as the browser receives it
 #'
 #' Drops the R `source` (never serialised), adds labels, `lazy`, `codeRef` and the
@@ -116,6 +135,7 @@ sv_card_payload <- function(card, preview_rows = NULL) {
   }
   # The R source object stays in R; the browser only learns that the card is lazy.
   card$source <- NULL
+  if (!is.null(card$derived)) card$derived <- sv_derived_wire(card$derived)
   card$lazy <- if (isTRUE(card$is_lazy)) card$lazy_source else NULL
   card$codeRef <- card$code_ref
   total <- card$dims[1]

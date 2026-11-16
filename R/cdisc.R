@@ -442,6 +442,8 @@ sv_cdisc_finalize <- function(cards, cdisc = "auto") {
     for (i in seq_along(cards)) {
       c <- cards[[i]]
       if (!identical(c$type, "grid")) next
+      # a derived card keeps the tag it was given (its kept card's), never one read from its own name
+      if (!is.null(c$derived)) next
       if (!is.null(keys) && !(clean[i] %in% keys)) next
       src <- if (!is.null(c$source)) c$source else c$data
       tag <- sv_cdisc_detect_safely(src, c$name, cdisc)

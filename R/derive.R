@@ -275,3 +275,201 @@ sv_derive_offers_supp <- function(chk, parent_name, supp_name, rdomain) {
   )
   Filter(function(o) o$n > 0L, out)
 }
+
+
+# ---- derive_request: validation and the card builder (module mode is an untrusted client) ----
+#
+# The client names an op, two cards of the store and a few columns. Nothing it sends is evaluated:
+# inputs are looked up in the store by name, columns are compared with the tables' own names, and
+# only the allowlisted args are read (anything else is dropped).
+
+sv_derive_max_pairs <- 20L
+
+# One string from a client value (a scalar, or a one-element list); NULL for anything else.
+sv_derive_scalar <- function(v, max_chars = 500L) {
+  if (is.list(v)) v <- unlist(v, use.names = FALSE)
+  if (!is.character(v) || length(v) != 1L || is.na(v) || !nzchar(v) || nchar(v) > max_chars) return(NULL)
+  v
+}
+
+# The column names of a card, without reading data: a duckdb tbl answers from its own schema, any other
+# card from its preview (a head() of the table, so it has every column).
+sv_derive_card_cols <- function(card) {
+  if (inherits(card$source, "tbl_lazy")) sv_lazy_names(card$source) else names(card$data)
+}
+
+# `by` as the client sent it (a list of {x, y}, or a data frame of them) -> list of list(x, y), or stop.
+sv_derive_clean_by <- function(by) {
+  if (is.data.frame(by)) by <- lapply(seq_len(nrow(by)), function(i) as.list(by[i, , drop = FALSE]))
+  if (!is.list(by) || !length(by)) stop("Pick at least one key column pair.", call. = FALSE)
+  if (length(by) > sv_derive_max_pairs) {
+    stop(sprintf("A derived table takes at most %d key pairs.", sv_derive_max_pairs), call. = FALSE)
+  }
+  lapply(by, function(p) {
+    px <- if (is.list(p)) sv_derive_scalar(p$x) else NULL
+    py <- if (is.list(p)) sv_derive_scalar(p$y) else NULL
+    if (is.null(px) || is.null(py)) stop("Each key pair needs a column of each table.", call. = FALSE)
+    list(x = px, y = py)
+  })
+}
+
+# Check a request against the store and return the clean request, `list(op, inputs, args, name)`
+# (stops with a message on anything wrong). `args` holds only what the op reads.
+sv_derive_clean <- function(req, store) {
+  if (!is.list(req)) stop("Not a derive request.", call. = FALSE)
+  op <- sv_derive_scalar(req$op, 40L)
+  if (is.null(op) || !op %in% sv_derive_ops) stop("Unknown derive op.", call. = FALSE)
+  inputs <- req$inputs
+  if (is.list(inputs)) inputs <- unlist(inputs, use.names = FALSE)
+  if (!is.character(inputs) || length(inputs) != 2L || anyNA(inputs)) {
+    stop("A derived table needs two input tables.", call. = FALSE)
+  }
+  inputs <- unname(inputs)
+  for (nm in inputs) {
+    if (!store$has(nm)) stop(sprintf("Not in the canvas: %s", substr(nm, 1L, 100L)), call. = FALSE)
+  }
+  cx <- store$get(inputs[1L])
+  cy <- store$get(inputs[2L])
+  if (!is.data.frame(cx$data) || !is.data.frame(cy$data)) stop("A derived table needs tables as inputs.", call. = FALSE)
+  name <- req$name
+  if (!is.null(name)) {
+    name <- sv_derive_scalar(name, 200L)
+    if (is.null(name)) stop("The table name must be one non-empty string.", call. = FALSE)
+  }
+  raw <- req$args
+  if (!is.list(raw)) raw <- list()
+
+  if (op %in% c("supp_orphans", "supp_bad_idvarval")) {
+    args <- list()
+    if (!is.null(raw$rdomain)) {
+      rd <- sv_derive_scalar(raw$rdomain, 8L)
+      if (is.null(rd) || !grepl("^[A-Z][A-Z0-9]{0,7}$", rd)) stop("Not a valid RDOMAIN.", call. = FALSE)
+      args$rdomain <- rd
+    }
+    return(list(op = op, inputs = inputs, args = args, name = name))
+  }
+
+  side <- sv_derive_scalar(raw$side, 1L)
+  if (is.null(side) || !side %in% c("x", "y")) stop("`side` must be \"x\" or \"y\".", call. = FALSE)
+  pairs <- sv_derive_clean_by(raw$by)
+  by_x <- vapply(pairs, function(p) p$x, "")
+  by_y <- vapply(pairs, function(p) p$y, "")
+  cols_x <- sv_derive_card_cols(cx)
+  cols_y <- sv_derive_card_cols(cy)
+  miss_x <- setdiff(by_x, cols_x)
+  miss_y <- setdiff(by_y, cols_y)
+  if (length(miss_x)) stop(sprintf("Not in %s: %s", inputs[1L], paste(substr(miss_x, 1L, 100L), collapse = ", ")), call. = FALSE)
+  if (length(miss_y)) stop(sprintf("Not in %s: %s", inputs[2L], paste(substr(miss_y, 1L, 100L), collapse = ", ")), call. = FALSE)
+  issues <- sv_join_type_issues(cx$data, cy$data, by_x, by_y, inputs[1L], inputs[2L])
+  if (length(issues)) stop(paste(issues, collapse = " "), call. = FALSE)
+  args <- list(by = pairs, side = side)
+  if (!is.null(raw$rule)) {
+    if (!is.list(raw$rule)) stop("Unknown date rule.", call. = FALSE)
+    rule <- sv_rule_from_shiny(raw$rule)
+    problem <- sv_join_rule_problem(rule, vapply(cx$data, sv_key_kind, character(1)),
+                                    vapply(cy$data, sv_key_kind, character(1)))
+    if (!is.null(problem)) stop(problem, call. = FALSE)
+    args$rule <- sv_join_rule_normalize(rule)
+  } else if (identical(op, "outside_window")) {
+    stop("outside_window needs a date rule.", call. = FALSE)
+  }
+  list(op = op, inputs = inputs, args = args, name = name)
+}
+
+# NULL when the request is fine, else the message of the first problem (decision 2 and 3 included).
+sv_derive_validate <- function(req, store) {
+  tryCatch({
+    clean <- sv_derive_clean(req, store)
+    if (!is.null(clean$name)) sv_derive_name(clean$op, clean$inputs, clean$args, store$names(), clean$name)
+    NULL
+  }, error = function(e) conditionMessage(e))
+}
+
+# Build the card of a valid request and return it (the caller adds it to the store). `lazy_or_preview`
+# and `card_full` are the server's own: the whole table is used when every lazy input still answers, else
+# the preview rows (the same basis the check's counts, and so the offer, were computed on).
+# `cdisc = FALSE` leaves the card untagged.
+sv_derive_card <- function(req, store, con_env, lazy_or_preview = NULL, card_full = sv_card_is_lazy,
+                           cdisc = "auto") {
+  clean <- sv_derive_clean(req, store)
+  op <- clean$op
+  inputs <- clean$inputs
+  args <- clean$args
+  cx <- store$get(inputs[1L])
+  cy <- store$get(inputs[2L])
+  if (is.null(lazy_or_preview)) {
+    lazy_or_preview <- function(card, f_lazy, f_preview) {
+      if (any(vapply(card, card_full, logical(1)))) f_lazy() else f_preview()
+    }
+  }
+  cards <- list(cx, cy)
+  nm <- sv_derive_name(op, inputs, args, store$names(), clean$name)
+  is_supp <- op %in% c("supp_orphans", "supp_bad_idvarval")
+  tag_from <- if (is_supp) cy else if (identical(args$side, "y")) cy else cx
+  finish <- function(card) {
+    card$cdisc <- if (isFALSE(cdisc)) NULL else tag_from$cdisc
+    card
+  }
+
+  if (is_supp) {
+    # decision 8: the plan is R's. The RDOMAIN is the client's hint only where the SUPP card allows it.
+    rdomain <- sv_supp_rdomain_hint(cy, args$rdomain)
+    if (is.null(rdomain)) {
+      for (tg in cy$cdisc$merge_targets) {
+        if (identical(tg$card, cx$id)) { rdomain <- tg$rdomain; break }
+      }
+    }
+    side_of <- function(card, other) {
+      if (!card_full(card)) return(card$data)
+      if (inherits(card$source, "tbl_duckdb_connection")) return(card$source)
+      if (card_full(other) && inherits(other$source, "tbl_duckdb_connection")) return(card$source)
+      sv_lazy_tbl(card$source, con_env, card$id)
+    }
+    run <- function(parent, supp) {
+      chk <- if (any(vapply(list(parent, supp), sv_is_lazy_input, logical(1)))) {
+        sv_lazy_supp_check(parent, supp, inputs[1L], inputs[2L], rdomain = rdomain, con_env = con_env)
+      } else {
+        sv_supp_check(parent, supp, inputs[1L], inputs[2L], rdomain = rdomain)
+      }
+      if (!is.null(chk$error)) stop(chk$error, call. = FALSE)
+      rd <- if (is.null(rdomain)) sub("^SUPP", "", toupper(inputs[2L])) else rdomain
+      out <- sv_derive_rows(op, list(parent = parent, supp = supp), list(plan = chk$plan, rdomain = rd))
+      list(rows = out, args = list(rdomain = rd, plan = chk$plan))
+    }
+    res <- lazy_or_preview(cards,
+      function() run(side_of(cx, cy), side_of(cy, cx)),
+      function() run(cx$data, cy$data))
+    # decision 7: a SUPP card is in memory, the rows collected after the RDOMAIN filter
+    return(finish(new_sideview_card(
+      name = nm, type = "grid", data = res$rows,
+      derived = list(op = op, inputs = inputs, args = res$args))))
+  }
+
+  derived <- list(op = op, inputs = inputs, args = args)
+  in_memory <- function() {
+    rows <- sv_derive_rows(op, stats::setNames(list(cx$data, cy$data), inputs), args)
+    new_sideview_card(name = nm, type = "grid", data = rows, derived = derived)
+  }
+  lazy <- function() {
+    # the recipe keeps the input cards; the rows are built on the session connection when asked for
+    id <- generate_card_id()
+    src <- sv_derived_source(op, args, stats::setNames(list(cx, cy), inputs))
+    ok <- FALSE
+    on.exit(if (!ok) {
+      # a failed build leaves nothing on the connection and nothing cached under the card id
+      if (!is.null(con_env$tbls[[id]])) {
+        sv_lazy_release(con_env$tbls[[id]], con_env)
+        con_env$tbls[[id]] <- NULL
+      }
+    })
+    tbl <- sv_lazy_tbl(src, con_env, id)
+    n <- sv_lazy_count(dplyr::pull(dplyr::count(tbl), "n"))
+    prev <- as.data.frame(dplyr::collect(utils::head(tbl, 50L)), stringsAsFactors = FALSE)
+    card <- new_sideview_card(id = id, name = nm, type = "grid", data = prev,
+                              dims = c(n, ncol(prev)), is_lazy = TRUE, lazy_source = "duckdb",
+                              source = src, derived = derived)
+    ok <- TRUE
+    card
+  }
+  finish(lazy_or_preview(cards, lazy, in_memory))
+}

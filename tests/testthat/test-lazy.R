@@ -2121,3 +2121,67 @@ test_that("release runs cleanup", {
   sv_lazy_release(tb, e)
   expect_identical(sort(DBI::dbListTables(con)), sort(before))
 })
+
+test_that("a lazy derived card serves from R, sends no source, and forget evicts it (D1 task 5)", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbWriteTable(con, "va", data.frame(id = 1:120, grp = rep(c("a", "b", "c"), 40), stringsAsFactors = FALSE))
+  DBI::dbWriteTable(con, "vb", data.frame(id = 1:100, v = 1:100))
+  by <- list(list(x = "id", y = "id"))
+  shiny::testServer(sideviewServer,
+    args = list(id = "cv", cards = list(va = dplyr::tbl(con, "va"), vb = dplyr::tbl(con, "vb"))), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    session$setInputs(derive_request = list(id = "l1", op = "unmatched", inputs = list("va", "vb"),
+                                            args = list(by = by, side = "x")))
+    adds <- Filter(function(m) identical(m$type, "sideview_card_add"), session$userData$custom_messages)
+    m <- adds[[length(adds)]]$message
+    expect_identical(m$request_id, "l1")
+    expect_identical(m$card$name, "va_unmatched_vb")
+    expect_identical(m$card$lazy, "duckdb")
+    expect_identical(m$card$totalRows, 20L)
+    expect_lte(nrow(m$card$data), 50L)
+    expect_null(m$card$source)
+    expect_false(grepl('"source"', jsonlite::toJSON(m$card, auto_unbox = TRUE, force = TRUE), fixed = TRUE))
+    card <- px$ctl$store$get("va_unmatched_vb")
+    expect_s3_class(card$source, "sv_derived_source")
+    expect_true(card$is_lazy)
+    env <- session$userData$sv_lazy_env
+    expect_false(is.null(env$tbls[[card$id]]))
+    # side y, from the same inputs: the rows of vb that va does not have
+    session$setInputs(derive_request = list(id = "l2", op = "unmatched", inputs = list("va", "vb"),
+                                            args = list(by = by, side = "y")))
+    expect_true(px$ctl$store$has("vb_unmatched_va"))
+    session$setInputs(derive_forget = list(name = "va_unmatched_vb"))
+    expect_false(px$ctl$store$has("va_unmatched_vb"))
+    expect_null(env$tbls[[card$id]])
+  })
+})
+
+test_that("a derive_request after a lost link falls back to the preview rows with one toast (D1 task 5)", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbWriteTable(con, "va", data.frame(id = 1:120, grp = rep(c("a", "b", "c"), 40), stringsAsFactors = FALSE))
+  DBI::dbWriteTable(con, "vb", data.frame(id = 1:100, v = 1:100))
+  by <- list(list(x = "id", y = "id"))
+  shiny::testServer(sideviewServer,
+    args = list(id = "cv", cards = list(va = dplyr::tbl(con, "va"), vb = dplyr::tbl(con, "vb"))), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    DBI::dbExecute(con, "DROP TABLE va")
+    session$setInputs(derive_request = list(id = "f1", op = "unmatched", inputs = list("va", "vb"),
+                                            args = list(by = by, side = "x")))
+    toasts <- Filter(function(m) identical(m$type, "sideview_toast"), session$userData$custom_messages)
+    expect_length(toasts, 1L)
+    card <- px$ctl$store$get("va_unmatched_vb")
+    expect_false(is.null(card))
+    # built in memory from the previews (the basis the offers used), not from the lost table
+    expect_false(isTRUE(card$is_lazy))
+    expect_null(card$source)
+    expect_identical(card$dims[1], nrow(card$data))
+  })
+})

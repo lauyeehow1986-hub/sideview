@@ -663,3 +663,166 @@ test_that("the module chrome renders no code-execution buttons and no gadget LLM
   expect_true(grepl('data-sv-llm="true"', as.character(sideview_ui(list(a = mtcars), gadget = TRUE)), fixed = TRUE))
   expect_false(grepl("data-sv-llm", as.character(sideview_ui(list(a = mtcars))), fixed = TRUE))
 })
+
+# ---- derive_request / derive_forget (D1 task 5) ----
+
+dv_ae <- data.frame(USUBJID = c("a", "b", "b", "z", NA, "q"), term = letters[1:6], stringsAsFactors = FALSE)
+dv_dm <- data.frame(USUBJID = c("a", "b", "c", NA), site = 1:4, stringsAsFactors = FALSE)
+dv_sae <- data.frame(USUBJID = c("S1", "S2"), AESEQ = 1:2, stringsAsFactors = FALSE)
+dv_supp <- data.frame(RDOMAIN = "AE", USUBJID = c("S1", "S2", "S2"), IDVAR = "AESEQ",
+                      IDVARVAL = c("1", "9", "x"), QNAM = "AETRTEM", QVAL = "Y", stringsAsFactors = FALSE)
+dv_start <- function() list(id = "cv", cards = list(ae = dv_ae, dm = dv_dm, sae = dv_sae, suppae = dv_supp))
+dv_by <- function(x = "USUBJID", y = "USUBJID") list(list(x = x, y = y))
+dv_req <- function(id = "r1", op = "unmatched", inputs = list("ae", "dm"), args = list(by = dv_by(), side = "x"),
+                   ...) {
+  c(list(id = id, op = op, inputs = inputs, args = args), list(...))
+}
+dv_last <- function(session, type) {
+  m <- msgs(session, type)
+  if (length(m)) m[[length(m)]]$message else NULL
+}
+
+test_that("a valid derive_request adds the card, sends it with request_id, and n equals the offer", {
+  shiny::testServer(sideviewServer, args = dv_start(), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    n_before <- length(msgs(session, "sideview_card_add"))
+    session$setInputs(derive_request = dv_req(
+      args = list(by = dv_by(), side = "x", code = "system('id')")))
+    expect_true(px$ctl$store$has("ae_unmatched_dm"))
+    adds <- msgs(session, "sideview_card_add")
+    expect_length(adds, n_before + 1L)
+    m <- adds[[length(adds)]]$message
+    expect_identical(m$request_id, "r1")
+    expect_identical(m$card$name, "ae_unmatched_dm")
+    expect_identical(m$card$derived$op, "unmatched")
+    expect_identical(unlist(m$card$derived$inputs), c("ae", "dm"))
+    # an argument off the allowlist is dropped, not passed on
+    expect_null(m$card$derived$args$code)
+    expect_identical(m$ns, session$ns(""))
+    n <- nrow(sv_unmatched(dv_ae, dv_dm, "USUBJID"))
+    expect_identical(m$card$totalRows, n)
+    expect_null(dv_last(session, "sideview_derive_result"))
+    expect_true("ae_unmatched_dm" %in% px$cards())
+  })
+})
+
+test_that("a forged derive_request is refused with an error reply and the store unchanged", {
+  shiny::testServer(sideviewServer, args = dv_start(), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    before <- px$ctl$store$names()
+    n_msgs <- length(msgs(session, "sideview_card_add"))
+    i <- 0L
+    refuse <- function(req, pattern = NULL) {
+      i <<- i + 1L
+      req$id <- paste0("bad", i)
+      session$setInputs(derive_request = req)
+      r <- dv_last(session, "sideview_derive_result")
+      expect_identical(r$id, req$id)
+      expect_true(is.character(r$error) && nzchar(r$error))
+      if (!is.null(pattern)) expect_match(r$error, pattern, fixed = TRUE)
+      expect_identical(px$ctl$store$names(), before)
+      expect_length(msgs(session, "sideview_card_add"), n_msgs)
+    }
+    refuse(dv_req(op = "system"))
+    refuse(dv_req(op = c("unmatched", "outside_window")))
+    refuse(dv_req(inputs = list("Sys.getenv", "dm")))
+    refuse(dv_req(inputs = list("ae", "ae", "dm")))
+    refuse(dv_req(inputs = list("ae")))
+    refuse(dv_req(args = list(by = dv_by(y = "x; system('id')"), side = "x")))
+    refuse(dv_req(args = list(by = dv_by(x = "x; system('id')"), side = "x")))
+    refuse(dv_req(args = list(by = rep(dv_by(), 21L), side = "x")))
+    refuse(dv_req(args = list(by = list(), side = "x")))
+    refuse(dv_req(args = list(by = dv_by(), side = "z")))
+    # mixed key kinds (decision 2): the message is the join check's
+    refuse(dv_req(args = list(by = dv_by(x = "term", y = "site"), side = "x")), "dplyr will refuse")
+    # a rule with a column the table does not have
+    refuse(dv_req(op = "outside_window",
+                  args = list(by = dv_by(), side = "x",
+                              rule = list(shape = "window", xCol = "nope", yCol = "site", from = 0, to = 1))))
+    refuse(dv_req(op = "outside_window"))
+    refuse(dv_req(op = "supp_orphans", inputs = list("sae", "suppae"), args = list(rdomain = "AE;drop")))
+    refuse(dv_req(op = "supp_orphans", inputs = list("sae", "nope"), args = list(rdomain = "AE")))
+    # a request that is not even a list is ignored without a reply
+    session$setInputs(derive_request = "unmatched")
+    expect_identical(px$ctl$store$names(), before)
+  })
+})
+
+test_that("an exact name is used as it is, and a taken one is an error", {
+  shiny::testServer(sideviewServer, args = dv_start(), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    session$setInputs(derive_request = dv_req(id = "n1", name = "my_rows"))
+    expect_true(px$ctl$store$has("my_rows"))
+    before <- px$ctl$store$names()
+    session$setInputs(derive_request = dv_req(id = "n2", name = "my_rows"))
+    r <- dv_last(session, "sideview_derive_result")
+    expect_identical(r$id, "n2")
+    expect_match(r$error, "A table named my_rows is already on the canvas.", fixed = TRUE)
+    session$setInputs(derive_request = dv_req(id = "n3", name = "ae"))
+    expect_match(dv_last(session, "sideview_derive_result")$error, "already on the canvas", fixed = TRUE)
+    expect_identical(px$ctl$store$names(), before)
+    # no name: R chooses one and numbers it when taken
+    session$setInputs(derive_request = dv_req(id = "n4"))
+    session$setInputs(derive_request = dv_req(id = "n5"))
+    expect_true(all(c("ae_unmatched_dm", "ae_unmatched_dm_2") %in% px$ctl$store$names()))
+  })
+})
+
+test_that("a SUPP derive_request takes the plan from R, never from the client", {
+  shiny::testServer(sideviewServer, args = dv_start(), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    session$setInputs(derive_request = dv_req(
+      id = "s1", op = "supp_orphans", inputs = list("sae", "suppae"),
+      args = list(rdomain = "AE", plan = list(keys = list("EVIL"), idvars = list()))))
+    m <- msgs(session, "sideview_card_add")
+    m <- m[[length(m)]]$message
+    expect_identical(m$card$name, "suppae_orphans")
+    expect_identical(m$request_id, "s1")
+    expect_identical(unlist(m$card$derived$args$plan$keys), "USUBJID")
+    expect_identical(m$card$derived$args$rdomain, "AE")
+    expect_identical(m$card$totalRows, nrow(sv_supp_orphans(dv_sae, dv_supp, "AE")))
+    session$setInputs(derive_request = dv_req(
+      id = "s2", op = "supp_bad_idvarval", inputs = list("sae", "suppae"), args = list(rdomain = "AE")))
+    m2 <- msgs(session, "sideview_card_add")
+    m2 <- m2[[length(m2)]]$message
+    expect_identical(m2$card$name, "suppae_bad_idvarval")
+    expect_identical(m2$card$totalRows, nrow(sv_supp_orphans(dv_sae, dv_supp, "AE", what = "bad_idvarval")))
+  })
+})
+
+test_that("derive_forget removes a derived card only, and anything else is ignored", {
+  shiny::testServer(sideviewServer, args = dv_start(), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    session$setInputs(derive_request = dv_req())
+    expect_true(px$ctl$store$has("ae_unmatched_dm"))
+    session$setInputs(derive_forget = list(name = "ae"))
+    expect_true(px$ctl$store$has("ae"))
+    session$setInputs(derive_forget = list(name = "nope"))
+    session$setInputs(derive_forget = list(name = c("ae", "dm")))
+    session$setInputs(derive_forget = "ae_unmatched_dm")
+    expect_true(px$ctl$store$has("ae_unmatched_dm"))
+    session$setInputs(derive_forget = list(name = "ae_unmatched_dm"))
+    expect_false(px$ctl$store$has("ae_unmatched_dm"))
+    expect_false("ae_unmatched_dm" %in% px$cards())
+    expect_setequal(px$ctl$store$names(), c("ae", "dm", "sae", "suppae"))
+  })
+})
+
+test_that("the gadget server answers derive_request too", {
+  cards <- sv_normalize_cards(list(ae = dv_ae, dm = dv_dm))
+  shiny::testServer(sideview_server(cards), {
+    session$setInputs(derive_request = dv_req(id = "g1"))
+    adds <- msgs(session, "sideview_card_add")
+    m <- adds[[length(adds)]]$message
+    expect_identical(m$request_id, "g1")
+    expect_identical(m$card$name, "ae_unmatched_dm")
+    expect_null(m$ns)
+    session$setInputs(derive_request = dv_req(id = "g2", op = "nope"))
+    expect_match(dv_last(session, "sideview_derive_result")$error, "Unknown")
+  })
+})

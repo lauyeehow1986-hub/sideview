@@ -64,3 +64,25 @@ test_that("one lazy env per session", {
   expect_true(is.environment(e1))
   expect_identical(e1, e2)
 })
+
+test_that("a derived card's payload carries derived (JSON-safe) and never source", {
+  card <- new_sideview_card(name = "ae_unmatched_dm", type = "grid", data = data.frame(a = 1:2),
+    derived = list(op = "unmatched", inputs = c("ae", "dm"),
+                   args = list(by = list(list(x = "k", y = "k")), side = "x")))
+  expect_identical(card$derived$op, "unmatched")
+  p <- sv_card_payload(card)
+  expect_identical(p$derived$op, "unmatched")
+  expect_identical(p$derived$inputs, list("ae", "dm"))
+  expect_identical(p$derived$args$by[[1]]$x, "k")
+  expect_null(p$source)
+  json <- jsonlite::toJSON(p, auto_unbox = TRUE, force = TRUE)
+  expect_match(json, '"inputs":["ae","dm"]', fixed = TRUE)
+  # a plain card has none
+  expect_null(sv_card_payload(new_sideview_card(name = "p", data = data.frame(a = 1)))$derived)
+  # a one-key plan still goes out as an array
+  s <- new_sideview_card(name = "s", data = data.frame(a = 1),
+    derived = list(op = "supp_orphans", inputs = c("ae", "supp"),
+                   args = list(rdomain = "AE", plan = list(keys = "USUBJID", idvars = list()))))
+  js <- jsonlite::toJSON(sv_card_payload(s), auto_unbox = TRUE, force = TRUE)
+  expect_match(js, '"keys":["USUBJID"]', fixed = TRUE)
+})

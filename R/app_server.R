@@ -852,6 +852,45 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     invisible(NULL)
   }
 
+  # Derived cards: the rows behind a join-check or SUPP-check count, as a card. Registered in the gadget
+  # and in the module (nothing here runs code). The client names an op, two store cards and columns;
+  # sv_derive_card() validates them all and drops what is not on the allowlist, so a refused request
+  # changes nothing. A reply carries the request id; success is the card itself (`request_id` set).
+  shiny::observeEvent(input$derive_request, {
+    req <- input$derive_request
+    if (!is.list(req)) return()
+    rid <- sv_derive_scalar(req$id, 200L)
+    card <- tryCatch(
+      sv_derive_card(req, card_store, con_env, lazy_or_preview = lazy_or_preview,
+                     card_full = card_full, cdisc = cdisc),
+      error = function(e) {
+        dispatch_message("sideview_derive_result", list(id = rid, error = conditionMessage(e)))
+        NULL
+      }
+    )
+    if (is.null(card)) return()
+    card_store$add(card)
+    if (isTRUE(module) && !is.null(ctl)) ctl$cards_rv(card_store$names())
+    dispatch_message("sideview_card_add", list(
+      card = sv_card_payload(card, if (isTRUE(module)) sv_preview_rows else NULL),
+      request_id = rid
+    ))
+  }, ignoreInit = FALSE)
+
+  # The browser dropped a derived card (undo, a removed input): forget what R holds for it. Only a card
+  # that has `derived` goes; any other name is ignored quietly.
+  shiny::observeEvent(input$derive_forget, {
+    req <- input$derive_forget
+    if (!is.list(req)) return()
+    nm <- sv_derive_scalar(req$name, 500L)
+    if (is.null(nm) || !card_store$has(nm)) return()
+    card <- card_store$get(nm)
+    if (is.null(card$derived)) return()
+    forget(card$id)
+    card_store$remove(nm)
+    if (isTRUE(module) && !is.null(ctl)) ctl$cards_rv(card_store$names())
+  }, ignoreInit = FALSE)
+
   ctl <- NULL
   if (isTRUE(module)) {
     ctl <- sv_module_wire(input, session, card_store, dispatch_message)

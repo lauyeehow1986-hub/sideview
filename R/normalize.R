@@ -38,7 +38,8 @@ new_sideview_card <- function(id = NULL,
                               is_lazy = FALSE,
                               lazy_source = NULL,
                               source = NULL,
-                              code_ref = NULL) {
+                              code_ref = NULL,
+                              derived = NULL) {
   type <- match.arg(type)
 
   if (is.null(id) || length(id) == 0L || is.na(id[1]) || !nzchar(as.character(id[1]))) {
@@ -94,7 +95,9 @@ new_sideview_card <- function(id = NULL,
     class = c("sideview_card", "list")
   )
   if (!is.null(col_labels)) card$col_labels <- col_labels
-  if (identical(type, "grid")) {
+  # A derived card (rows behind a check count) takes the tag of the card it keeps: the caller sets it.
+  if (!is.null(derived)) card$derived <- derived
+  if (identical(type, "grid") && is.null(derived)) {
     src <- if (!is.null(source)) source else data
     if (!is.null(src)) card$cdisc <- sv_cdisc_detect_safely(src, name)
   }
