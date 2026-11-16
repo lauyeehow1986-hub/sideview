@@ -1195,26 +1195,14 @@ sv_lazy_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_na
 
   rule_x <- rule_y <- character(0)
   if (!is.null(rule)) {
-    # the rule's columns, as far as they are strings, for their kinds (0 rows, nothing placed yet)
-    slot_cols <- function(side) {
-      if (!is.list(rule) || !isTRUE(rule$shape %in% sv_rule_shapes)) return(character(0))
-      v <- unlist(lapply(sv_rule_slots(rule$shape), function(s) {
-        if (sv_rule_slot_side(s) == side && is.character(rule[[s]]) && length(rule[[s]]) == 1L) rule[[s]]
-      }))
-      as.character(unique(v[!is.na(v)]))
-    }
-    zx_rule <- sv_lazy_zero(x, slot_cols("x"))
-    zy_rule <- sv_lazy_zero(y, slot_cols("y"))
-    problem <- sv_join_rule_problem(rule, vapply(zx_rule, sv_key_kind, character(1)),
-                                    vapply(zy_rule, sv_key_kind, character(1)))
-    if (!is.null(problem)) stop(problem, call. = FALSE)
-    rule <- sv_join_rule_normalize(rule)
-    rule_x <- slot_cols("x")
-    rule_y <- slot_cols("y")
-    rule_kind <- sv_key_kind(zx_rule[[rule[[sv_rule_slots(rule$shape)[1L]]]]])
-    is_dbl <- function(z) vapply(z, function(v) identical(sv_lazy_kind(v), "double"), logical(1))
-    dbl_x <- is_dbl(zx_rule)
-    dbl_y <- is_dbl(zy_rule)
+    # the rule's columns and kinds, from 0 rows (nothing placed yet)
+    rs <- sv_lazy_rule_prepare(x, y, rule)
+    rule <- rs$rule
+    rule_x <- rs$rule_x
+    rule_y <- rs$rule_y
+    rule_kind <- rs$rule_kind
+    dbl_x <- rs$dbl_x
+    dbl_y <- rs$dbl_y
   }
 
   placed <- sv_lazy_place(x, y, con_env, cols_x = c(by_x, rule_x), cols_y = c(by_y, rule_y))
