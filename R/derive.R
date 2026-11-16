@@ -285,6 +285,9 @@ sv_derive_offers_supp <- function(chk, parent_name, supp_name, rdomain) {
 
 sv_derive_max_pairs <- 20L
 
+# A field of a client list, by exact name (`$` would take a partial match).
+sv_field <- function(x, name) if (is.list(x)) x[[name, exact = TRUE]] else NULL
+
 # One string from a client value (a scalar, or a one-element list); NULL for anything else.
 sv_derive_scalar <- function(v, max_chars = 500L) {
   if (is.list(v)) v <- unlist(v, use.names = FALSE)
@@ -292,10 +295,17 @@ sv_derive_scalar <- function(v, max_chars = 500L) {
   v
 }
 
-# The column names of a card, without reading data: a duckdb tbl answers from its own schema, any other
-# card from its preview (a head() of the table, so it has every column).
-sv_derive_card_cols <- function(card) {
-  if (inherits(card$source, "tbl_lazy")) sv_lazy_names(card$source) else names(card$data)
+# A 0-row sample of a card's table: the column names and types, with no data read. A lazy card is asked
+# through its duckdb tbl (so an Arrow int64 is judged as duckdb sees it); anything else from its preview.
+sv_derive_zero <- function(card, con_env = NULL) {
+  if (!is.null(con_env) && sv_card_is_lazy(card)) {
+    z <- tryCatch(
+      as.data.frame(dplyr::collect(utils::head(sv_lazy_tbl(card$source, con_env, card$id), 0L)),
+                    stringsAsFactors = FALSE),
+      error = function(e) NULL)
+    if (!is.null(z)) return(z)
+  }
+  card$data[0L, , drop = FALSE]
 }
 
 # `by` as the client sent it (a list of {x, y}, or a data frame of them) -> list of list(x, y), or stop.
@@ -306,20 +316,21 @@ sv_derive_clean_by <- function(by) {
     stop(sprintf("A derived table takes at most %d key pairs.", sv_derive_max_pairs), call. = FALSE)
   }
   lapply(by, function(p) {
-    px <- if (is.list(p)) sv_derive_scalar(p$x) else NULL
-    py <- if (is.list(p)) sv_derive_scalar(p$y) else NULL
+    px <- sv_derive_scalar(sv_field(p, "x"))
+    py <- sv_derive_scalar(sv_field(p, "y"))
     if (is.null(px) || is.null(py)) stop("Each key pair needs a column of each table.", call. = FALSE)
     list(x = px, y = py)
   })
 }
 
 # Check a request against the store and return the clean request, `list(op, inputs, args, name)`
-# (stops with a message on anything wrong). `args` holds only what the op reads.
-sv_derive_clean <- function(req, store) {
+# (stops with a message on anything wrong). `args` holds only what the op reads. `con_env`, when given,
+# lets a lazy input answer its column types from a 0-row query.
+sv_derive_clean <- function(req, store, con_env = NULL) {
   if (!is.list(req)) stop("Not a derive request.", call. = FALSE)
-  op <- sv_derive_scalar(req$op, 40L)
+  op <- sv_derive_scalar(sv_field(req, "op"), 40L)
   if (is.null(op) || !op %in% sv_derive_ops) stop("Unknown derive op.", call. = FALSE)
-  inputs <- req$inputs
+  inputs <- sv_field(req, "inputs")
   if (is.list(inputs)) inputs <- unlist(inputs, use.names = FALSE)
   if (!is.character(inputs) || length(inputs) != 2L || anyNA(inputs)) {
     stop("A derived table needs two input tables.", call. = FALSE)
@@ -331,43 +342,45 @@ sv_derive_clean <- function(req, store) {
   cx <- store$get(inputs[1L])
   cy <- store$get(inputs[2L])
   if (!is.data.frame(cx$data) || !is.data.frame(cy$data)) stop("A derived table needs tables as inputs.", call. = FALSE)
-  name <- req$name
+  name <- sv_field(req, "name")
   if (!is.null(name)) {
     name <- sv_derive_scalar(name, 200L)
     if (is.null(name)) stop("The table name must be one non-empty string.", call. = FALSE)
   }
-  raw <- req$args
+  raw <- sv_field(req, "args")
   if (!is.list(raw)) raw <- list()
 
   if (op %in% c("supp_orphans", "supp_bad_idvarval")) {
     args <- list()
-    if (!is.null(raw$rdomain)) {
-      rd <- sv_derive_scalar(raw$rdomain, 8L)
+    rd <- sv_field(raw, "rdomain")
+    if (!is.null(rd)) {
+      rd <- sv_derive_scalar(rd, 8L)
       if (is.null(rd) || !grepl("^[A-Z][A-Z0-9]{0,7}$", rd)) stop("Not a valid RDOMAIN.", call. = FALSE)
       args$rdomain <- rd
     }
     return(list(op = op, inputs = inputs, args = args, name = name))
   }
 
-  side <- sv_derive_scalar(raw$side, 1L)
+  side <- sv_derive_scalar(sv_field(raw, "side"), 1L)
   if (is.null(side) || !side %in% c("x", "y")) stop("`side` must be \"x\" or \"y\".", call. = FALSE)
-  pairs <- sv_derive_clean_by(raw$by)
+  pairs <- sv_derive_clean_by(sv_field(raw, "by"))
   by_x <- vapply(pairs, function(p) p$x, "")
   by_y <- vapply(pairs, function(p) p$y, "")
-  cols_x <- sv_derive_card_cols(cx)
-  cols_y <- sv_derive_card_cols(cy)
-  miss_x <- setdiff(by_x, cols_x)
-  miss_y <- setdiff(by_y, cols_y)
+  zx <- sv_derive_zero(cx, con_env)
+  zy <- sv_derive_zero(cy, con_env)
+  miss_x <- setdiff(by_x, names(zx))
+  miss_y <- setdiff(by_y, names(zy))
   if (length(miss_x)) stop(sprintf("Not in %s: %s", inputs[1L], paste(substr(miss_x, 1L, 100L), collapse = ", ")), call. = FALSE)
   if (length(miss_y)) stop(sprintf("Not in %s: %s", inputs[2L], paste(substr(miss_y, 1L, 100L), collapse = ", ")), call. = FALSE)
-  issues <- sv_join_type_issues(cx$data, cy$data, by_x, by_y, inputs[1L], inputs[2L])
+  issues <- sv_join_type_issues(zx, zy, by_x, by_y, inputs[1L], inputs[2L])
   if (length(issues)) stop(paste(issues, collapse = " "), call. = FALSE)
   args <- list(by = pairs, side = side)
-  if (!is.null(raw$rule)) {
-    if (!is.list(raw$rule)) stop("Unknown date rule.", call. = FALSE)
-    rule <- sv_rule_from_shiny(raw$rule)
-    problem <- sv_join_rule_problem(rule, vapply(cx$data, sv_key_kind, character(1)),
-                                    vapply(cy$data, sv_key_kind, character(1)))
+  rule_in <- sv_field(raw, "rule")
+  if (!is.null(rule_in)) {
+    if (!is.list(rule_in)) stop("Unknown date rule.", call. = FALSE)
+    rule <- sv_rule_from_shiny(rule_in)
+    problem <- sv_join_rule_problem(rule, vapply(zx, sv_key_kind, character(1)),
+                                    vapply(zy, sv_key_kind, character(1)))
     if (!is.null(problem)) stop(problem, call. = FALSE)
     args$rule <- sv_join_rule_normalize(rule)
   } else if (identical(op, "outside_window")) {
@@ -377,12 +390,34 @@ sv_derive_clean <- function(req, store) {
 }
 
 # NULL when the request is fine, else the message of the first problem (decision 2 and 3 included).
-sv_derive_validate <- function(req, store) {
+# The one validation path: the card builder runs the same sv_derive_clean().
+sv_derive_validate <- function(req, store, con_env = NULL) {
   tryCatch({
-    clean <- sv_derive_clean(req, store)
+    clean <- sv_derive_clean(req, store, con_env)
     if (!is.null(clean$name)) sv_derive_name(clean$op, clean$inputs, clean$args, store$names(), clean$name)
     NULL
   }, error = function(e) conditionMessage(e))
+}
+
+# The RDOMAIN and the tables a SUPP check runs on, for the merge check and the derived SUPP cards alike (so
+# a derived card's rows and the offer's count come from one decision). The RDOMAIN is the client's hint
+# where the SUPP card allows it, else the SUPP card's merge target for this parent, else NULL (the check then
+# reads it from the SUPP name). `lazy_sides()` gives the whole-table sides: an Arrow card goes through its
+# cached duckdb tbl on the session connection unless the other side is the user's own duckdb tbl.
+sv_supp_inputs <- function(cp, cs, hint, card_full, con_env) {
+  rdomain <- sv_supp_rdomain_hint(cs, hint)
+  if (is.null(rdomain)) {
+    for (tg in cs$cdisc$merge_targets) {
+      if (identical(tg$card, cp$id)) { rdomain <- tg$rdomain; break }
+    }
+  }
+  side <- function(card, other) {
+    if (!card_full(card)) return(card$data)
+    if (inherits(card$source, "tbl_duckdb_connection")) return(card$source)
+    if (card_full(other) && inherits(other$source, "tbl_duckdb_connection")) return(card$source)
+    sv_lazy_tbl(card$source, con_env, card$id)
+  }
+  list(rdomain = rdomain, lazy_sides = function() list(parent = side(cp, cs), supp = side(cs, cp)))
 }
 
 # Build the card of a valid request and return it (the caller adds it to the store). `lazy_or_preview`
@@ -391,7 +426,7 @@ sv_derive_validate <- function(req, store) {
 # `cdisc = FALSE` leaves the card untagged.
 sv_derive_card <- function(req, store, con_env, lazy_or_preview = NULL, card_full = sv_card_is_lazy,
                            cdisc = "auto") {
-  clean <- sv_derive_clean(req, store)
+  clean <- sv_derive_clean(req, store, con_env)
   op <- clean$op
   inputs <- clean$inputs
   args <- clean$args
@@ -412,19 +447,9 @@ sv_derive_card <- function(req, store, con_env, lazy_or_preview = NULL, card_ful
   }
 
   if (is_supp) {
-    # decision 8: the plan is R's. The RDOMAIN is the client's hint only where the SUPP card allows it.
-    rdomain <- sv_supp_rdomain_hint(cy, args$rdomain)
-    if (is.null(rdomain)) {
-      for (tg in cy$cdisc$merge_targets) {
-        if (identical(tg$card, cx$id)) { rdomain <- tg$rdomain; break }
-      }
-    }
-    side_of <- function(card, other) {
-      if (!card_full(card)) return(card$data)
-      if (inherits(card$source, "tbl_duckdb_connection")) return(card$source)
-      if (card_full(other) && inherits(other$source, "tbl_duckdb_connection")) return(card$source)
-      sv_lazy_tbl(card$source, con_env, card$id)
-    }
+    # decision 8: the plan is R's.
+    si <- sv_supp_inputs(cx, cy, args$rdomain, card_full, con_env)
+    rdomain <- si$rdomain
     run <- function(parent, supp) {
       chk <- if (any(vapply(list(parent, supp), sv_is_lazy_input, logical(1)))) {
         sv_lazy_supp_check(parent, supp, inputs[1L], inputs[2L], rdomain = rdomain, con_env = con_env)
@@ -437,7 +462,10 @@ sv_derive_card <- function(req, store, con_env, lazy_or_preview = NULL, card_ful
       list(rows = out, args = list(rdomain = rd, plan = chk$plan))
     }
     res <- lazy_or_preview(cards,
-      function() run(side_of(cx, cy), side_of(cy, cx)),
+      function() {
+        s <- si$lazy_sides()
+        run(s$parent, s$supp)
+      },
       function() run(cx$data, cy$data))
     # decision 7: a SUPP card is in memory, the rows collected after the RDOMAIN filter
     return(finish(new_sideview_card(

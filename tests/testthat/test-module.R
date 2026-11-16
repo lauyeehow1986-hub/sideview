@@ -826,3 +826,67 @@ test_that("the gadget server answers derive_request too", {
     expect_match(dv_last(session, "sideview_derive_result")$error, "Unknown")
   })
 })
+
+test_that("sv_derive_validate is the one validation path: NULL or the message, exact field names", {
+  store <- sv_card_store(sv_normalize_cards(list(ae = dv_ae, dm = dv_dm)))
+  expect_null(sv_derive_validate(dv_req(), store))
+  expect_match(sv_derive_validate(dv_req(op = "system"), store), "Unknown")
+  expect_match(sv_derive_validate(dv_req(inputs = list("Sys.getenv", "dm")), store), "Not in the canvas")
+  expect_match(sv_derive_validate(dv_req(args = list(by = dv_by(x = "term", y = "site"), side = "x")), store),
+               "dplyr will refuse", fixed = TRUE)
+  expect_match(sv_derive_validate(dv_req(name = "ae"), store), "already on the canvas", fixed = TRUE)
+  # a field is read by its exact name: `operation` is not `op`
+  forged <- list(id = "p", operation = "unmatched", inputs = list("ae", "dm"),
+                 args = list(by = dv_by(), side = "x"))
+  expect_match(sv_derive_validate(forged, store), "Unknown")
+  partial_args <- dv_req(args = list(by = dv_by(), sid = "x"))
+  expect_match(sv_derive_validate(partial_args, store), "side")
+})
+
+test_that("a payload that cannot be built is an error reply and leaves the store unchanged", {
+  shiny::testServer(sideviewServer, args = dv_start(), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    before <- px$ctl$store$names()
+    n_msgs <- length(msgs(session, "sideview_card_add"))
+    testthat::with_mocked_bindings(
+      session$setInputs(derive_request = dv_req(id = "pe")),
+      sv_card_payload = function(...) stop("boom")
+    )
+    expect_match(dv_last(session, "sideview_derive_result")$error, "boom")
+    expect_identical(px$ctl$store$names(), before)
+    expect_length(msgs(session, "sideview_card_add"), n_msgs)
+  })
+})
+
+test_that("derive add and forget resolve CDISC tags again and broadcast what moved (module)", {
+  ae <- data.frame(STUDYID = "S", USUBJID = c("S1", "S2", "S3"), AESEQ = 1:3, AETERM = c("a", "b", "c"),
+                   AEDECOD = "x", stringsAsFactors = FALSE)
+  dm <- data.frame(STUDYID = "S", USUBJID = c("S1", "S2"), AGE = 1:2, stringsAsFactors = FALSE)
+  supp <- data.frame(STUDYID = "S", RDOMAIN = "AE", USUBJID = c("S1", "S2"), IDVAR = "AESEQ",
+                     IDVARVAL = c("1", "2"), QNAM = "AETRTEM", QVAL = "Y", stringsAsFactors = FALSE)
+  shiny::testServer(sideviewServer, args = list(id = "cv", cards = list(ae = ae, dm = dm, suppae = supp)), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    upd <- function() msgs(session, "sideview_cdisc_update")
+    session$setInputs(derive_request = dv_req(
+      args = list(by = dv_by(), side = "x")))
+    d <- px$ctl$store$get("ae_unmatched_dm")
+    # the derived card carries its kept card's tag, and a later resolve does not wipe it
+    expect_identical(d$cdisc$domain, "AE")
+    supp_id <- px$ctl$store$get("suppae")$id
+    n0 <- length(upd())
+    # removing the original AE card moves SUPPAE's parent to the derived card (the proxy path broadcasts)
+    sv_remove_card(px, "ae")
+    expect_length(upd(), n0 + 1L)
+    expect_identical(upd()[[n0 + 1L]]$message$tags[[supp_id]]$parent_card, d$id)
+    # forgetting the derived card moves it again, and the browser is told
+    session$setInputs(derive_forget = list(name = "ae_unmatched_dm"))
+    expect_length(upd(), n0 + 2L)
+    last <- upd()[[n0 + 2L]]$message
+    expect_true(supp_id %in% names(last$tags))
+    expect_false(identical(last$tags[[supp_id]]$parent_card, d$id))
+    expect_identical(px$ctl$store$get("suppae")$cdisc$parent_card, last$tags[[supp_id]]$parent_card)
+    expect_identical(d$cdisc$domain, px$ctl$store$get("suppae")$cdisc$parent)
+  })
+})

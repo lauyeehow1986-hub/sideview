@@ -2185,3 +2185,26 @@ test_that("a derive_request after a lost link falls back to the preview rows wit
     expect_identical(card$dims[1], nrow(card$data))
   })
 })
+
+test_that("derive validation judges lazy key kinds from a 0-row query (D1 task 5 fix)", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbWriteTable(con, "va", data.frame(id = 1:120, grp = rep(c("a", "b", "c"), 40), stringsAsFactors = FALSE))
+  DBI::dbWriteTable(con, "vb", data.frame(id = 1:100, v = 1:100))
+  store <- sv_card_store(sv_normalize_cards(list(va = dplyr::tbl(con, "va"), vb = dplyr::tbl(con, "vb"))))
+  con_env <- sv_lazy_env()
+  withr::defer(sv_lazy_close(con_env))
+  req <- function(x, y) list(id = "k", op = "unmatched", inputs = list("va", "vb"),
+                             args = list(by = list(list(x = x, y = y)), side = "x"))
+  expect_null(sv_derive_validate(req("id", "id"), store, con_env))
+  expect_match(sv_derive_validate(req("grp", "id"), store, con_env), "dplyr will refuse", fixed = TRUE)
+  expect_match(sv_derive_validate(req("nope", "id"), store, con_env), "Not in va", fixed = TRUE)
+  # the types come from a 0-row collect: a card whose preview is cut away still answers
+  card <- store$get("va")
+  card$data <- card$data[0L, , drop = FALSE]
+  store$replace("va", card)
+  expect_null(sv_derive_validate(req("id", "id"), store, con_env))
+  expect_match(sv_derive_validate(req("grp", "id"), store, con_env), "dplyr will refuse", fixed = TRUE)
+})

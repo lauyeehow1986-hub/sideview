@@ -361,22 +361,13 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
         stop("The merge check needs both tables as data frames.", call. = FALSE)
       }
       plan <- sv_supp_plan_from_client(req$plan)
-      rdomain <- sv_supp_rdomain_hint(cs, req$rdomain)
-      if (is.null(rdomain)) {
-        for (tg in cs$cdisc$merge_targets) {
-          if (identical(tg$card, cp$id)) { rdomain <- tg$rdomain; break }
-        }
-      }
+      si <- sv_supp_inputs(cp, cs, req$rdomain, card_full, con_env)
+      rdomain <- si$rdomain
       chk <- lazy_or_preview(
         list(cp, cs),
         function() {
-          side <- function(card, other) {
-            if (!card_full(card)) return(card$data)
-            if (inherits(card$source, "tbl_duckdb_connection")) return(card$source)
-            if (card_full(other) && inherits(other$source, "tbl_duckdb_connection")) return(card$source)
-            sv_lazy_tbl(card$source, con_env, card$id)
-          }
-          sv_lazy_supp_check(side(cp, cs), side(cs, cp), parent_name = parent_name,
+          s <- si$lazy_sides()
+          sv_lazy_supp_check(s$parent, s$supp, parent_name = parent_name,
                              supp_name = supp_name, rdomain = rdomain, plan = plan,
                              con_env = con_env)
         },
@@ -854,41 +845,56 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
 
   # Derived cards: the rows behind a join-check or SUPP-check count, as a card. Registered in the gadget
   # and in the module (nothing here runs code). The client names an op, two store cards and columns;
-  # sv_derive_card() validates them all and drops what is not on the allowlist, so a refused request
-  # changes nothing. A reply carries the request id; success is the card itself (`request_id` set).
+  # sv_derive_validate() checks them all and sv_derive_card() drops what is not on the allowlist, so a
+  # refused request changes nothing. A reply carries the request id; success is the card itself
+  # (`request_id` set). In a module the CDISC tags are resolved again over the new canvas, as the
+  # proxy verbs do, and any tag that moved is sent.
   shiny::observeEvent(input$derive_request, {
     req <- input$derive_request
     if (!is.list(req)) return()
-    rid <- sv_derive_scalar(req$id, 200L)
-    card <- tryCatch(
-      sv_derive_card(req, card_store, con_env, lazy_or_preview = lazy_or_preview,
-                     card_full = card_full, cdisc = cdisc),
-      error = function(e) {
-        dispatch_message("sideview_derive_result", list(id = rid, error = conditionMessage(e)))
-        NULL
-      }
-    )
-    if (is.null(card)) return()
+    rid <- sv_derive_scalar(sv_field(req, "id"), 200L)
+    fail <- function(msg) dispatch_message("sideview_derive_result", list(id = rid, error = msg))
+    problem <- sv_derive_validate(req, card_store, con_env)
+    if (!is.null(problem)) return(fail(problem))
+    prep <- tryCatch({
+      card <- sv_derive_card(req, card_store, con_env, lazy_or_preview = lazy_or_preview,
+                             card_full = card_full, cdisc = cdisc)
+      # the payload first: if it cannot be built, nothing has been added
+      list(card = card, payload = sv_card_payload(card, if (isTRUE(module)) sv_preview_rows else NULL))
+    }, error = function(e) {
+      fail(conditionMessage(e))
+      NULL
+    })
+    if (is.null(prep)) return()
+    card <- prep$card
+    payload <- prep$payload
     card_store$add(card)
-    if (isTRUE(module) && !is.null(ctl)) ctl$cards_rv(card_store$names())
-    dispatch_message("sideview_card_add", list(
-      card = sv_card_payload(card, if (isTRUE(module)) sv_preview_rows else NULL),
-      request_id = rid
-    ))
+    tags <- list()
+    if (isTRUE(module) && !is.null(ctl)) {
+      tags <- sv_module_refinalize(ctl, except = card$id)
+      ctl$cards_rv(card_store$names())
+      payload <- tryCatch(sv_card_payload(card_store$get(card$name), sv_preview_rows), error = function(e) payload)
+    }
+    dispatch_message("sideview_card_add", list(card = payload, request_id = rid))
+    if (isTRUE(module) && !is.null(ctl)) sv_emit_cdisc(ctl, tags)
   }, ignoreInit = FALSE)
 
   # The browser dropped a derived card (undo, a removed input): forget what R holds for it. Only a card
-  # that has `derived` goes; any other name is ignored quietly.
+  # that has `derived` goes; any other name is ignored quietly. Tags that pointed at it are resolved again.
   shiny::observeEvent(input$derive_forget, {
     req <- input$derive_forget
     if (!is.list(req)) return()
-    nm <- sv_derive_scalar(req$name, 500L)
+    nm <- sv_derive_scalar(sv_field(req, "name"), 500L)
     if (is.null(nm) || !card_store$has(nm)) return()
     card <- card_store$get(nm)
     if (is.null(card$derived)) return()
     forget(card$id)
     card_store$remove(nm)
-    if (isTRUE(module) && !is.null(ctl)) ctl$cards_rv(card_store$names())
+    if (isTRUE(module) && !is.null(ctl)) {
+      tags <- sv_module_refinalize(ctl)
+      ctl$cards_rv(card_store$names())
+      sv_emit_cdisc(ctl, tags)
+    }
   }, ignoreInit = FALSE)
 
   ctl <- NULL
