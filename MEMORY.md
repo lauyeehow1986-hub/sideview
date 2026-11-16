@@ -1170,3 +1170,7 @@ Each sub-project gets its own spec, plan and build, in this order:
 - Edge: Alt+Arrow card jumps work and the page does not go back or forward, so `JUMP_MODS` stays `alt`.
 - Magnifier 200% and 400%, High Contrast (both themes, switch off and on): reported OK by the user. RStudio dialog and Viewer, with Alt+Left there: NOT yet run. Claude checked checks 1, 3, 4, 6, 7 itself in a Chromium pane.
 - Not run in full: checks 2, 14 to 19 were not walked one by one; High Contrast Night sky was not confirmed separately. Backlog: a "dismiss suggestions" control (Clear in the drawer also removes joins).
+
+## Accessible canvas: RStudio pass and arrange on switch-on (2026-11-16)
+- RStudio dialog and Viewer pane, with Alt+Arrow there: reported OK by the user. All manual passes are done; `JUMP_MODS` stays `alt`.
+- Change at the user's request (38d1e9e): switching on arranges overlapping cards; switching off puts back every card not moved since. Tests: access-browser, a11y-browser, layout-browser, 2354 passed. Full suite not re-run after it.

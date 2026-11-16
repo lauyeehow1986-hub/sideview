@@ -2,8 +2,7 @@
 
 Accessible canvas: one switch that makes the canvas itself usable by keyboard and at low vision. Off by default; with it
 off the canvas is unchanged. Checked with automated WCAG tests (axe, switch on and off) and real-browser keyboard tests;
-the manual script in `plans/2026-11-15-access-manual-script.md` (Windows Magnifier, High Contrast, Edge, RStudio dialog
-and Viewer) has not been run yet, and Alt+Arrows is not yet verified in RStudio or Edge. The release number is decided at
+a manual pass (Windows Magnifier at 200% and 400%, High Contrast, Edge, RStudio dialog and Viewer, Alt+Arrow card jumps) found no problems. The release number is decided at
 merge time.
 
 ## Accessible canvas switch

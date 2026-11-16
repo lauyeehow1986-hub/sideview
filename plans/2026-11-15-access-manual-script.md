@@ -1,6 +1,6 @@
 # Manual script for the accessible canvas (2026-11-15)
 
-Manual pass for the Accessible canvas switch (keyboard and low vision). Windows 11, Edge, then RStudio. **Status: Edge, Magnifier and High Contrast run 2026-11-16; RStudio still pending (see Results).** Run it with the user present, driven by Claude, and record the
+Manual pass for the Accessible canvas switch (keyboard and low vision). Windows 11, Edge, then RStudio. **Status: Edge, Magnifier and High Contrast run 2026-11-16; RStudio dialog and Viewer reported OK (see Results).** Run it with the user present, driven by Claude, and record the
 outcome in `MEMORY.md`.
 
 Synthetic data only. Not for clinical use.
@@ -99,6 +99,6 @@ switch off, then on.
 | Magnifier 200% | 2026-11-16 | pass | OK, reported by the user |
 | Magnifier 400% | 2026-11-16 | pass | OK, reported by the user |
 | High Contrast | 2026-11-16 | pass | OK, reported by the user (checks on and off) |
-| RStudio dialog | pending | pending | |
-| RStudio Viewer | pending | pending | |
-| Alt+Left in RStudio dialog and Viewer | pending | pending | |
+| RStudio dialog | 2026-11-16 | pass | reported OK by the user |
+| RStudio Viewer | 2026-11-16 | pass | reported OK by the user |
+| Alt+Left in RStudio dialog and Viewer | 2026-11-16 | pass | reported OK by the user |
