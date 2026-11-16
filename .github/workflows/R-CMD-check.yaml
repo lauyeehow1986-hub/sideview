@@ -60,7 +60,6 @@ jobs:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       NOT_CRAN: true
       SV_AXE_PATH: ${{ github.workspace }}/node_modules/axe-core/axe.min.js
-      CHROMOTE_CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
     steps:
       - uses: actions/checkout@v4
 
@@ -87,3 +86,5 @@ jobs:
       # on a skip for a missing Chrome / axe-core (testthat reports those as green).
       - name: Run accessibility tests
         run: Rscript .github/scripts/run-a11y-tests.R
+        env:
+          CHROMOTE_CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
