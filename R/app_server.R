@@ -384,10 +384,12 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
                                  supp_name = supp_name, rdomain = rdomain, plan = plan)
       )
       reply <- sv_supp_reply(chk)
-      reply$derive_offers <- tryCatch(
-        as.list(sv_derive_offers_supp(chk, parent_name, supp_name, rdomain)),
-        error = function(e) list()
-      )
+      if (is.null(reply$error)) {
+        reply$derive_offers <- tryCatch(
+          as.list(sv_derive_offers_supp(chk, parent_name, supp_name, rdomain)),
+          error = function(e) list()
+        )
+      }
       reply
     }, error = function(e) list(error = conditionMessage(e)))
     result$id <- req$id

@@ -256,6 +256,11 @@ test_that("the join and SUPP replies carry derive_offers, [] when empty, none on
     s2 <- last("sideview_supp_check")
     expect_false(is.null(s2$error))
     expect_null(s2$derive_offers)
+    # a check-level error (no SUPP rows for the RDOMAIN) is a reply with an error, not an exception
+    session$setInputs(supp_check_request = list(id = "s3", parent = "sae", supp = "suppae", rdomain = "CM"))
+    s3 <- last("sideview_supp_check")
+    expect_false(is.null(s3$error))
+    expect_null(s3$derive_offers)
   })
 })
 

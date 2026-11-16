@@ -264,7 +264,7 @@ sv_derive_offers_join <- function(d, x_name, y_name, by, rule = NULL) {
 sv_derive_offers_supp <- function(chk, parent_name, supp_name, rdomain) {
   if (!is.list(chk) || !is.null(chk$error)) return(list())
   mk <- function(op, n, label) {
-    list(op = op, inputs = c(parent_name, supp_name), args = list(rdomain = rdomain),
+    list(op = op, inputs = c(parent_name, supp_name), args = if (is.null(rdomain)) list() else list(rdomain = rdomain),
          n = as.integer(n), label = label)
   }
   out <- list(
