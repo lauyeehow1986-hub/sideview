@@ -736,6 +736,31 @@ test_that("a three-way chain across duckdb, a data frame and arrow equals the da
   }
 })
 
+test_that("refit clears undo and redo when the step changed, and keeps them when it did not", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.add({kind:'arrange', key:'a', table:'labs', cols:[{col:'id'}]});
+    p.add(P.deriveStep('lab_orph', 'supp_orphans', ['sae', 'suppae'], {rdomain: 'AE', plan: {idvars: [{idvar: 'AESEQ'}]}}));
+    p.add({kind:'arrange', key:'b', table:'labs', cols:[{col:'val'}]});
+    p.undo();
+    const had = [p.canUndo(), p.canRedo()];
+    const step = p.steps.filter(s => s.kind === 'derive')[0];
+    const noop = p.refit(step.id, { args: JSON.parse(JSON.stringify(step.args)) });
+    const kept = [p.canUndo(), p.canRedo()];
+    const changed = p.refit(step.id, { args: {rdomain: 'AE', plan: {idvars: [{idvar: 'AESPID'}]}} });
+    out = { had: had, noop: noop, kept: kept, changed: changed, canUndo: p.canUndo(), canRedo: p.canRedo(),
+            idvar: step.args.plan.idvars[0].idvar, undone: p.undo() };
+  ")
+  expect_equal(unlist(out$had), c(TRUE, TRUE))
+  expect_false(out$noop)
+  expect_equal(unlist(out$kept), c(TRUE, TRUE))
+  expect_true(out$changed)
+  expect_false(out$canUndo)
+  expect_false(out$canRedo)
+  expect_equal(out$idvar, "AESPID")
+  expect_false(out$undone)
+})
+
 test_that("disableMissing keeps steps whose columns exist", {
   out <- run_pipeline_js("
     const p = new P.Pipeline();

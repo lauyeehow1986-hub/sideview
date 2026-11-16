@@ -4704,7 +4704,7 @@ function sendToShiny(name, value) {
       var dd = cardData.derived;
       var fresh = global.SideviewPipeline.deriveStep(name, dd.op, dd.inputs, dd.args);
       var dstep = this.pipeline.steps.filter(function (st) { return st.kind === 'derive' && st.table === name; })[0];
-      if (dstep) this.pipeline.update(dstep.id, { op: fresh.op, inputs: fresh.inputs, args: fresh.args, key: fresh.key });
+      if (dstep) this.pipeline.refit(dstep.id, { op: fresh.op, inputs: fresh.inputs, args: fresh.args, key: fresh.key });
     }
     // The header sort / filter stays on the card where its column is still there and its step was not disabled.
     var self2 = this;

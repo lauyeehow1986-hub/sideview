@@ -3248,6 +3248,11 @@ test_that("module: replacing a SUPP card updates the plan of its derived card, s
   expect_true(sv_wait_js(b, sprintf("%s.args.plan.idvars.some(v => v.idvar === 'AESPID')", step), timeout = 60))
   expect_equal(sv_js(b, sprintf("%s.pipeline.steps.filter(s => s.kind === 'derive').length", sv_dv_eng)), 1)
   expect_true(grepl("AESPID", sv_js(b, sprintf("%s.pipeline.compose()", sv_dv_eng)), fixed = TRUE))
+  # the replace made the earlier history stale: one undo must not bring back the old plan
+  expect_false(isTRUE(sv_js(b, sprintf("%s.pipeline.canUndo()", sv_dv_eng))))
+  sv_js(b, sprintf("%s.pipeline.undo(); true", sv_dv_eng))
+  expect_true("AESPID" %in% unlist(sv_js(b, sprintf("%s.args.plan.idvars.map(v => v.idvar)", step))))
+  expect_true(grepl("AESPID", sv_js(b, sprintf("%s.pipeline.compose()", sv_dv_eng)), fixed = TRUE))
   expect_equal(sv_dv_card_n(b), 3)
   expect_equal(attr(b, "sv_errors")(), character())
 })

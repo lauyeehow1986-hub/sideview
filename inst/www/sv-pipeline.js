@@ -525,6 +525,18 @@
     });
   };
 
+  // Update a step to fit new data (a replaced card). History from before no longer fits the data, so a change
+  // clears undo and redo, as disableMissing does; a no-op leaves them alone.
+  Pipeline.prototype.refit = function (id, patch) {
+    var undo = this.undoStack, redo = this.redoStack;
+    var changed = this.update(id, patch);
+    if (changed) this.clearHistory();
+    else { this.undoStack = undo; this.redoStack = redo; }
+    return changed;
+  };
+
+  Pipeline.prototype.clearHistory = function () { this.undoStack = []; this.redoStack = []; };
+
   Pipeline.prototype.toggle = function (id) {
     var s = this.find(id);
     return s ? this.update(id, { enabled: !s.enabled }) : false;
@@ -810,7 +822,7 @@
     var disabled = order.map(function (id) { return found[id]; });
     var missing = [];
     disabled.forEach(function (d) { d.missing.forEach(function (c) { if (missing.indexOf(c) < 0) missing.push(c); }); });
-    if (disabled.length) { this.undoStack = []; this.redoStack = []; }
+    if (disabled.length) this.clearHistory();
     return { disabled: disabled, missing: missing };
   };
   Pipeline.prototype.canUndo = function () { return this.undoStack.length > 0; };
