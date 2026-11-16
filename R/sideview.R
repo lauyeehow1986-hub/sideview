@@ -231,6 +231,12 @@ sideview <- function(...,
   }
   
   card_list <- sv_cdisc_finalize(card_list, cdisc)
+  # the derived tables of a restored state: built from the cards above, tagged like any other
+  if (!is.null(state)) {
+    n_cards <- length(card_list)
+    card_list <- sv_derive_from_state(card_list, state, sv_derive_preview_builder(cdisc))
+    if (length(card_list) > n_cards) card_list <- sv_cdisc_finalize(card_list, cdisc)
+  }
 
   # Build Shiny application object
   ui <- sideview_ui(card_list, title = title, gadget = TRUE,

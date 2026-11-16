@@ -514,3 +514,24 @@ test_that("an invalid view$mode is dropped on RDS save and on load", {
   saveRDS(list(version = "0.3.0", view = list(mode = "list")), tf)
   expect_equal(sv_load_state(tf)$view$mode, "list")
 })
+
+test_that("sv_derive_from_state builds derive steps in order and skips what fails", {
+  ae <- data.frame(USUBJID = c("a", "z"), stringsAsFactors = FALSE)
+  dm <- data.frame(USUBJID = "a", stringsAsFactors = FALSE)
+  cards <- list(new_sideview_card(name = "ae", data = ae), new_sideview_card(name = "dm", data = dm))
+  by <- list(list(x = "USUBJID", y = "USUBJID"))
+  st <- list(pipeline = list(steps = list(
+    list(kind = "filter", table = "ae"),
+    list(kind = "derive", table = "second", op = "unmatched", inputs = list("first", "dm"),
+         args = list(by = by, side = "x")),
+    list(kind = "derive", table = "first", op = "unmatched", inputs = list("ae", "dm"),
+         args = list(by = by, side = "x")),
+    list(kind = "derive", table = "bad", op = "unmatched", inputs = list("ae", "gone"),
+         args = list(by = by, side = "x")))))
+  out <- sv_derive_from_state(cards, st)
+  # `second` reads `first`, which comes later in the steps: skipped until its input exists
+  expect_identical(vapply(out, function(cd) cd$name, ""), c("ae", "dm", "first"))
+  expect_identical(out[[3L]]$derived$inputs, c("ae", "dm"))
+  expect_identical(sv_derive_from_state(cards, list()), cards)
+  expect_identical(sv_derive_from_state(cards, NULL), cards)
+})

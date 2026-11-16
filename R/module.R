@@ -90,6 +90,7 @@ sideviewServer <- function(id, cards = list(), state = NULL, llm_fn = NULL, cdis
     ctl <- impl$ctl
     ctl$forget <- impl$forget
     ctl$cdisc <- cdisc
+    ctl$derive_build <- impl$derive_build
 
     ns <- session$ns("")
     proxy <- structure(
@@ -104,7 +105,9 @@ sideviewServer <- function(id, cards = list(), state = NULL, llm_fn = NULL, cdis
     if (is.null(llm_fn)) ctl$emit("sideview_llm", list(enabled = FALSE))
 
     if (!is.null(state)) {
-      ctl$emit("sideview_state_set", list(state = sv_state_json(sv_module_state(state))))
+      state <- sv_module_state(state)
+      sv_module_add_derived(proxy, state)
+      ctl$emit("sideview_state_set", list(state = sv_state_json(state)))
     }
     if (is.function(cards)) {
       shiny::observe({
@@ -216,7 +219,9 @@ sv_remove_card <- function(proxy, name) {
 #' @export
 sv_set_state <- function(proxy, state) {
   sv_check_proxy(proxy)
-  json <- sv_state_json(sv_module_state(state))
+  state <- sv_module_state(state)
+  sv_module_add_derived(proxy, state)
+  json <- sv_state_json(state)
   proxy$ctl$emit("sideview_state_set", list(state = json))
   invisible(proxy)
 }
@@ -316,6 +321,16 @@ sv_initial_cards <- function(cards, id) {
   )
 }
 
+# The derived cards of a state, built before the state reaches the canvas (a derive step needs its table to exist).
+# Cards already on the canvas under that name are left alone.
+sv_module_add_derived <- function(proxy, state) {
+  ctl <- proxy$ctl
+  cards <- unname(ctl$store$all())
+  all <- sv_derive_from_state(cards, state, ctl$derive_build)
+  for (card in all[-seq_along(cards)]) sv_proxy_add(proxy, card)
+  invisible(proxy)
+}
+
 sv_module_state <- function(state) {
   if (is.character(state) && length(state) == 1L && grepl("^\\s*\\{", state)) {
     return(sv_state_from_json(state))
@@ -339,15 +354,47 @@ sv_proxy_add <- function(proxy, card) {
 sv_proxy_replace <- function(proxy, card) {
   ctl <- proxy$ctl
   old <- ctl$store$get(card$name)
-  # the cached rows, order and converted table of the old data must not answer for the new
+  # derived cards that read this one are rebuilt in place (same name) once the new data is in
+  dep_names <- sv_derive_dependants(ctl$store, card$name)
+  dep_old <- lapply(dep_names, function(nm) ctl$store$get(nm))
+  # the cached rows, order and converted table of the old data must not answer for the new; the derived
+  # tables' lazy views read the input's, so they go first, last-built first
+  for (dc in rev(dep_old)) ctl$forget(dc$id)
   if (!is.null(old)) ctl$forget(old$id)
   ctl$forget(card$id)
   ctl$store$replace(card$name, card)
-  tags <- sv_module_refinalize(ctl, except = card$id)
-  card <- ctl$store$get(card$name)
+  build <- ctl$derive_build %||% sv_derive_preview_builder(ctl$cdisc %||% "auto")
+  rebuilt <- character()
+  dead <- character()
+  for (dc in dep_old) {
+    new <- if (any(as.character(unlist(dc$derived$inputs)) %in% dead)) {
+      NULL
+    } else {
+      tryCatch(sv_derive_rebuild(dc, ctl$store, build), error = function(e) NULL)
+    }
+    if (is.null(new)) {
+      dead <- c(dead, dc$name)
+    } else {
+      ctl$store$replace(dc$name, new)
+      rebuilt <- c(rebuilt, dc$name)
+    }
+  }
+  for (nm in rev(dead)) {
+    ctl$store$remove(nm)
+    if (isTRUE(ctl$ready)) ctl$send("sideview_card_remove", list(name = nm))
+  }
+  tags <- sv_module_refinalize(ctl, except = ctl$store$get(card$name)$id)
   ctl$cards_rv(ctl$store$names())
   if (isTRUE(ctl$ready)) {
-    ctl$send("sideview_card_replace", list(card = sv_card_payload(card, sv_preview_rows)))
+    for (nm in c(card$name, rebuilt)) {
+      ctl$send("sideview_card_replace", list(card = sv_card_payload(ctl$store$get(nm), sv_preview_rows)))
+    }
+  }
+  if (length(dead)) {
+    ctl$emit("sideview_toast", list(
+      text = sprintf("Removed %s: could not rebuild %s from the new data of %s.",
+                     paste(dead, collapse = ", "), if (length(dead) == 1L) "it" else "them", card$name),
+      type = "warning"))
   }
   sv_emit_cdisc(ctl, tags)
   invisible(proxy)
@@ -355,12 +402,15 @@ sv_proxy_replace <- function(proxy, card) {
 
 sv_proxy_remove <- function(proxy, name) {
   ctl <- proxy$ctl
-  old <- ctl$store$get(name)
-  if (!is.null(old)) ctl$forget(old$id)
-  ctl$store$remove(name)
+  # derived cards that read this one go first, last-built first (a card's lazy tables read its inputs')
+  for (nm in c(rev(sv_derive_dependants(ctl$store, name)), name)) {
+    old <- ctl$store$get(nm)
+    if (!is.null(old)) ctl$forget(old$id)
+    ctl$store$remove(nm)
+    if (isTRUE(ctl$ready)) ctl$send("sideview_card_remove", list(name = nm))
+  }
   tags <- sv_module_refinalize(ctl)
   ctl$cards_rv(ctl$store$names())
-  if (isTRUE(ctl$ready)) ctl$send("sideview_card_remove", list(name = name))
   sv_emit_cdisc(ctl, tags)
   invisible(proxy)
 }
@@ -404,7 +454,10 @@ sv_sync_cards <- function(proxy, new_cards, keep = character()) {
   for (card in new_cards) {
     if (!store$has(card$name)) sv_proxy_add(proxy, card)
   }
-  for (nm in setdiff(store$names(), c(new_names, keep))) sv_proxy_remove(proxy, nm)
+  for (nm in setdiff(store$names(), c(new_names, keep))) {
+    # a derived card follows its inputs (removed with them), so `cards` does not name it
+    if (store$has(nm) && is.null(store$get(nm)$derived)) sv_proxy_remove(proxy, nm)
+  }
   invisible(proxy)
 }
 

@@ -901,7 +901,12 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
   if (isTRUE(module)) {
     ctl <- sv_module_wire(input, session, card_store, dispatch_message)
   }
-  invisible(list(store = card_store, send = dispatch_message, forget = forget, ctl = ctl))
+  # builds a derived card on this session (whole lazy tables on its connection), for state and rebuilds
+  derive_build <- function(req, store) {
+    sv_derive_card(req, store, con_env, lazy_or_preview = lazy_or_preview, card_full = card_full, cdisc = cdisc)
+  }
+  invisible(list(store = card_store, send = dispatch_message, forget = forget, ctl = ctl,
+                 derive_build = derive_build))
 }
 
 #' Sideview Server Logic

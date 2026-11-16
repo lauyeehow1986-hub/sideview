@@ -501,3 +501,73 @@ sv_derive_card <- function(req, store, con_env, lazy_or_preview = NULL, card_ful
   }
   finish(lazy_or_preview(cards, lazy, in_memory))
 }
+
+# ---- derived cards follow their inputs (remove, replace, state) ----
+
+# The derived cards that read `name`, directly or through another derived card, in dependency order (a card
+# comes after every card it reads). Read from each card's `derived$inputs`; there is no separate graph.
+sv_derive_dependants <- function(store, name) {
+  out <- character()
+  repeat {
+    reach <- c(name, out)
+    added <- FALSE
+    for (nm in setdiff(store$names(), reach)) {
+      d <- store$get(nm)$derived
+      if (!is.null(d) && any(as.character(unlist(d$inputs)) %in% reach)) {
+        out <- c(out, nm)
+        reach <- c(reach, nm)
+        added <- TRUE
+      }
+    }
+    if (!added) break
+  }
+  out
+}
+
+# The request a stored derived card was built from: the same shape the browser sends, so the rebuild goes
+# through sv_derive_clean() like any request.
+sv_derive_request_of <- function(card) {
+  d <- card$derived
+  list(op = d$op, inputs = as.list(as.character(unlist(d$inputs))), args = d$args, name = card$name)
+}
+
+# A builder for callers with no session: whole lazy tables need the session connection, so the rows come
+# from the preview of each input.
+sv_derive_preview_builder <- function(cdisc = "auto") {
+  function(req, store) {
+    sv_derive_card(req, store, NULL, lazy_or_preview = function(card, f_lazy, f_preview) f_preview(),
+                   cdisc = cdisc)
+  }
+}
+
+# Rebuild a derived card from its recipe under its own name. The store it is built against has no card of that
+# name (so the name is free), and nothing in `store` changes. Stops if an input or a column is gone.
+sv_derive_rebuild <- function(card, store, build) {
+  others <- unname(Filter(function(cd) !identical(cd$name, card$name), store$all()))
+  build(sv_derive_request_of(card), sv_card_store(others))
+}
+
+# `cards` with the derived cards of a saved state appended. The state's pipeline holds the derive steps
+# `{kind, key, table, op, inputs, args}`; each is rebuilt through the validating builder (state from a file is
+# as untrusted as a browser message), under the exact name `table`, once its inputs are present. A step that
+# cannot be built is skipped: its browser step waits. `build(req, store)` defaults to the preview builder.
+sv_derive_from_state <- function(cards, state, build = NULL) {
+  steps <- if (is.list(state)) sv_field(sv_field(state, "pipeline"), "steps") else NULL
+  if (!is.list(steps) || !length(steps)) return(cards)
+  if (is.null(build)) build <- sv_derive_preview_builder()
+  store <- sv_card_store(cards)
+  for (step in steps) {
+    if (!is.list(step) || !identical(sv_field(step, "kind"), "derive")) next
+    tbl <- sv_derive_scalar(sv_field(step, "table"), 200L)
+    if (is.null(tbl) || store$has(tbl)) next
+    req <- list(op = sv_field(step, "op"), inputs = sv_field(step, "inputs"),
+                args = sv_field(step, "args"), name = tbl)
+    card <- tryCatch({
+      build(req, store)
+    }, error = function(e) NULL)
+    if (is.null(card) || !identical(card$name, make.names(tbl))) next
+    store$add(card)
+    cards[[length(cards) + 1L]] <- card
+  }
+  cards
+}
