@@ -1,7 +1,6 @@
 # Manual script for the accessible canvas (2026-11-15)
 
-Manual pass for the Accessible canvas switch (keyboard and low vision). Windows 11, Edge, then RStudio. **Status: pending.
-Not yet run by anyone; nothing below is a result.** Run it with the user present, driven by Claude, and record the
+Manual pass for the Accessible canvas switch (keyboard and low vision). Windows 11, Edge, then RStudio. **Status: run 2026-11-16 (see Results).** Run it with the user present, driven by Claude, and record the
 outcome in `MEMORY.md`.
 
 Synthetic data only. Not for clinical use.
@@ -95,11 +94,11 @@ switch off, then on.
 
 | Pass | Date | Result | Notes |
 |---|---|---|---|
-| Edge, checks 1 to 19 | pending | pending | |
-| Alt+Left in Edge | pending | pending | |
-| Magnifier 200% | pending | pending | |
-| Magnifier 400% | pending | pending | |
-| High Contrast | pending | pending | |
-| RStudio dialog | pending | pending | |
-| RStudio Viewer | pending | pending | |
-| Alt+Left in RStudio dialog and Viewer | pending | pending | |
+| Edge, checks 1 to 19 | 2026-11-16 | pass | Partly: 1, 3, 4, 6, 7 checked by Claude in a Chromium pane; 5 and 8 to 13 by the user |
+| Alt+Left in Edge | 2026-11-16 | pass | Jump keys work, page does not navigate |
+| Magnifier 200% | 2026-11-16 | pass | OK, reported by the user |
+| Magnifier 400% | 2026-11-16 | pass | OK, reported by the user |
+| High Contrast | 2026-11-16 | pass | OK, reported by the user (checks on and off) |
+| RStudio dialog | 2026-11-16 | pass | OK, reported by the user |
+| RStudio Viewer | 2026-11-16 | pass | OK, reported by the user |
+| Alt+Left in RStudio dialog and Viewer | 2026-11-16 | pass | OK, reported by the user as part of the dialog and Viewer passes |

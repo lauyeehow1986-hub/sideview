@@ -1165,3 +1165,8 @@ Each sub-project gets its own spec, plan and build, in this order:
 - The final whole-branch review fixes (I1-I4, P1, P2, M1, M2, M7, M8, M9) were re-reviewed: all addressed.
 - Still pending: the manual script `plans/2026-11-15-access-manual-script.md` (Magnifier 200%/400%, High Contrast, Edge, RStudio dialog and Viewer), including whether Alt+Arrows navigate Back in RStudio or Edge (`JUMP_MODS`).
 - Parked for later: test-access-browser should clean up `sideview.access` in localStorage itself (withr::defer); the switch-off axe run covers 1360x820 only.
+
+## Accessible canvas: manual pass (2026-11-16)
+- Edge: Alt+Arrow card jumps work and the page does not go back or forward, so `JUMP_MODS` stays `alt`.
+- Magnifier 200% and 400%, High Contrast, RStudio dialog and Viewer: reported OK by the user. Claude checked checks 1, 3, 4, 6, 7 itself in a Chromium pane.
+- Not run in full: checks 2, 14 to 19 were not walked one by one; High Contrast Night sky was not confirmed separately. Backlog: a "dismiss suggestions" control (Clear in the drawer also removes joins).
