@@ -3051,7 +3051,7 @@ sv_dv_app <- paste0(
 
 sv_dv_eng <- "document.querySelector('.sideview-container')._sideviewInstance"
 
-sv_dv_open <- function() {
+sv_dv_open <- function(connect = TRUE) {
   skip_if_no_browser()
   app <- sv_start_app(sv_dv_app)
   b <- sv_open_page(app$url, 1400, 900)
@@ -3059,7 +3059,9 @@ sv_dv_open <- function() {
     try(b$close(), silent = TRUE)
     try(app$proc$kill(), silent = TRUE)
   })
-  sv_js(b, sprintf("(() => { const e = %s; e.addConnections([{fromTable: 'ae', fromCol: 'USUBJID', toTable: 'dm', toCol: 'USUBJID', type: 'left_join'}]); return true; })()", sv_dv_eng))
+  if (connect) {
+    sv_js(b, sprintf("(() => { const e = %s; e.addConnections([{fromTable: 'ae', fromCol: 'USUBJID', toTable: 'dm', toCol: 'USUBJID', type: 'left_join'}]); return true; })()", sv_dv_eng))
+  }
   b
 }
 
@@ -3094,7 +3096,7 @@ test_that("a derived card opens from the join check, once, and undo and redo tak
   expect_match(sv_js(b, sprintf("%s.pipeline.compose()", sv_dv_eng)), "dplyr::anti_join(", fixed = TRUE)
   expect_match(sv_js(b, sprintf("%s.pipeline.compose()", sv_dv_eng)), paste0(steps[[1]], " <- "), fixed = TRUE)
   # a second click finds the card there: no second card, no second step
-  sv_js(b, "(() => { const b = document.querySelector('[data-action=\"derive-open\"]'); if (b) b.click(); return true; })()")
+  sv_dv_click_offer(b)
   Sys.sleep(1.5)
   expect_equal(sv_dv_card_n(b), 3)
   expect_equal(sv_js(b, sprintf("%s.pipeline.steps.filter(s => s.kind === 'derive').length", sv_dv_eng)), 1)
@@ -3120,16 +3122,104 @@ test_that("the Pipeline tab lists the derive step as text", {
   expect_false(grepl("{", sv_js(b, "(document.querySelector('.sideview-derive-offers') || {outerHTML: ''}).outerHTML"), fixed = TRUE))
 })
 
-test_that("a saved workspace brings its derived card back where it was", {
+test_that("a saved workspace opened with openState() brings its derived card back where it was", {
   b <- sv_dv_open()
   sv_dv_click_offer(b)
   expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 3", timeout = 60))
   st <- sv_js(b, sprintf("JSON.stringify(%s.getState())", sv_dv_eng))
   pos0 <- sv_js(b, sprintf("(() => { const m = [...%s.cards.values()].find(x => x.name === 'ae_unmatched_dm'); return [m.x, m.y]; })()", sv_dv_eng))
-  b2 <- sv_dv_open()
-  # a fresh gadget with the saved state: the connection and the derive step come, then R builds the card
-  sv_js(b2, sprintf("(() => { %s.applyState(%s); %s.reconcileDerived(); return true; })()", sv_dv_eng, st, sv_dv_eng))
-  expect_true(sv_wait_js(b2, "[...document.querySelectorAll('.sideview-card')].length === 3", timeout = 60))
+  b2 <- sv_dv_open(connect = FALSE)
+  expect_equal(sv_dv_card_n(b2), 2)
+  # the real Open path: clear, apply, then R builds the derived card from the saved step
+  sv_js(b2, sprintf("(() => { %s.openState(%s); return true; })()", sv_dv_eng, st))
+  expect_true(sv_wait_js(b2, "document.querySelectorAll('.sideview-card').length === 3", timeout = 60))
   pos1 <- sv_js(b2, sprintf("(() => { const m = [...%s.cards.values()].find(x => x.name === 'ae_unmatched_dm'); return [m.x, m.y]; })()", sv_dv_eng))
   expect_equal(unlist(pos1), unlist(pos0))
+  expect_equal(sv_js(b2, sprintf("%s.pipeline.steps.filter(s => s.kind === 'derive').length", sv_dv_eng)), 1)
+  expect_equal(sv_js(b2, "document.querySelectorAll('.sideview-toast-danger').length"), 0)
+})
+
+test_that("undo while a derive request is in flight: the late card goes, the step does not come back, redo still works", {
+  b <- sv_dv_open()
+  sv_dv_click_offer(b)
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 3", timeout = 60))
+  steps_n <- function() sv_js(b, sprintf("%s.pipeline.steps.filter(s => s.kind === 'derive').length", sv_dv_eng))
+  # hold the reconcile request back: undo drops the card, redo asks R for it again, the reply is withheld
+  sv_js(b, sprintf("(() => { const e = %s; e._held = []; e._origSend = e.send;
+    e.send = function (n, v) { if (n === 'derive_request') { e._held.push([n, v]); return true; } return e._origSend.apply(e, arguments); };
+    e.undoPipeline(); return true; })()", sv_dv_eng))
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 2", timeout = 30))
+  expect_equal(steps_n(), 0)
+  sv_js(b, sprintf("%s.redoPipeline(); true", sv_dv_eng))
+  expect_true(sv_wait_js(b, sprintf("%s._held.length === 1", sv_dv_eng), timeout = 30))
+  expect_equal(steps_n(), 1)
+  # undo again before R answers
+  sv_js(b, sprintf("%s.undoPipeline(); true", sv_dv_eng))
+  expect_equal(steps_n(), 0)
+  # R answers late
+  sv_js(b, sprintf("(() => { const e = %s; e.send = e._origSend; e._held.forEach(h => e.send(h[0], h[1])); return true; })()", sv_dv_eng))
+  Sys.sleep(3)
+  expect_equal(sv_dv_card_n(b), 2)
+  expect_equal(sv_js(b, sprintf("%s.pipeline.steps.filter(s => s.kind === 'derive').length", sv_dv_eng)), 0)
+  expect_gte(sv_js(b, sprintf("%s.pipeline.redoStack.length", sv_dv_eng)), 1)
+  sv_js(b, sprintf("%s.redoPipeline(); true", sv_dv_eng))
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 3", timeout = 60))
+  expect_equal(sv_js(b, sprintf("%s.pipeline.steps.filter(s => s.kind === 'derive').length", sv_dv_eng)), 1)
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("module: removing an input removes both derived cards quietly; adding it back brings them back; a failed rebuild is quiet", {
+  skip_if_no_browser()
+  app <- sv_start_app(paste0(
+    "{ dm <<- data.frame(STUDYID = 'SV-001', DOMAIN = 'DM', USUBJID = paste0('SV-001-', 1:4), AGE = c(34, 51, 62, 45), stringsAsFactors = FALSE);",
+    "ae <<- data.frame(STUDYID = 'SV-001', DOMAIN = 'AE', USUBJID = paste0('SV-001-', c(1:4, 8, 9)), AESEQ = 1:6, stringsAsFactors = FALSE);",
+    "shiny::shinyApp(shiny::fluidPage(sideview::sideviewUI('m', height = '780px')),",
+    "function(input, output, session) { px <- sideview::sideviewServer('m', cards = list(ae = ae, dm = dm));",
+    "shiny::observeEvent(input$rm, sideview::sv_remove_card(px, input$rm));",
+    "shiny::observeEvent(input$add, sideview::sv_add_card(px, ae, 'ae'));",
+    "shiny::observeEvent(input$bad, sideview::sv_replace_card(px, 'ae', ae[, c('STUDYID', 'AESEQ')])) }) }"))
+  b <- sv_open_page(app$url, 1400, 900, wait_for = sv_acc_ready)
+  withr::defer({
+    try(b$close(), silent = TRUE)
+    try(app$proc$kill(), silent = TRUE)
+  })
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 2", timeout = 60))
+  danger <- function() sv_js(b, "document.querySelectorAll('.sideview-toast-danger').length")
+  n_steps <- function() sv_js(b, sprintf("%s.pipeline.steps.filter(s => s.kind === 'derive').length", sv_dv_eng))
+  sv_js(b, sprintf("%s.addConnections([{fromTable: 'ae', fromCol: 'USUBJID', toTable: 'dm', toCol: 'USUBJID', type: 'left_join'}]); true", sv_dv_eng))
+  sv_dv_click_offer(b)
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 3", timeout = 60))
+  # the second level: the derived card joined to dm, its own unmatched rows
+  sv_js(b, sprintf("%s.addConnections([{fromTable: 'ae_unmatched_dm', fromCol: 'USUBJID', toTable: 'dm', toCol: 'USUBJID', type: 'left_join'}]); true", sv_dv_eng))
+  expect_true(sv_wait_js(b, sprintf("Object.values(%s._deriveOffers).some(o => o.inputs[0] === 'ae_unmatched_dm')", sv_dv_eng), timeout = 60))
+  sv_js(b, sprintf("(() => { const e = %s; const o = Object.values(e._deriveOffers).find(o => o.inputs[0] === 'ae_unmatched_dm'); return e.requestDerive(o); })()", sv_dv_eng))
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 4", timeout = 60))
+  expect_equal(n_steps(), 2)
+  rows <- function() sv_js(b, "[...document.querySelectorAll('.sideview-card[data-derived=true]')].map(c => c.querySelectorAll('tbody tr[data-row-index]').length).sort()")
+  rows0 <- unlist(rows())
+  expect_equal(danger(), 0)
+
+  # the host removes the input: both derived cards go, with no refused request and no danger toast
+  sv_js(b, "Shiny.setInputValue('rm', 'ae', {priority: 'event'}); true")
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 1", timeout = 30))
+  Sys.sleep(2)
+  expect_equal(sv_dv_card_n(b), 1)
+  expect_equal(danger(), 0)
+  expect_equal(n_steps(), 2)
+  # the input comes back: both derived cards are rebuilt from their steps, with the same content
+  sv_js(b, "Shiny.setInputValue('add', Math.random(), {priority: 'event'}); true")
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 4", timeout = 90))
+  expect_equal(n_steps(), 2)
+  expect_equal(unlist(rows()), rows0)
+  expect_equal(danger(), 0)
+
+  # a replace R cannot rebuild from: the derived cards are removed, nothing is asked of R again, no danger toast
+  sv_js(b, sprintf("(() => { const e = %s; e._sentNames = []; const o = e.send; e.send = function (n, v) { e._sentNames.push(n); return o.apply(e, arguments); }; return true; })()", sv_dv_eng))
+  sv_js(b, "Shiny.setInputValue('bad', Math.random(), {priority: 'event'}); true")
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card[data-derived=true]').length === 0", timeout = 30))
+  Sys.sleep(2)
+  expect_equal(danger(), 0)
+  expect_false("derive_request" %in% unlist(sv_js(b, sprintf("%s._sentNames", sv_dv_eng))))
+  expect_equal(n_steps(), 2)
+  expect_equal(attr(b, "sv_errors")(), character())
 })

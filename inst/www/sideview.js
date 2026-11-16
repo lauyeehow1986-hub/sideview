@@ -767,6 +767,9 @@ function sendToShiny(name, value) {
     this._deriveFailed = {};
     this._deriveSkip = {};
     this._deriveSkipTimer = null;
+    // tables R removed (a cascade, a failed rebuild): not asked of R again until an input has left and come back
+    this._rRemoved = {};
+    this._derivePendTimer = null;
     this._pendingGeo = {};
     this._forgot = {};
     this._reconTimer = null;
@@ -1750,6 +1753,7 @@ function sendToShiny(name, value) {
     if (this._snapshotTimer) { clearTimeout(this._snapshotTimer); this._snapshotTimer = null; }
     if (this._reconTimer) { clearTimeout(this._reconTimer); this._reconTimer = null; }
     if (this._deriveSkipTimer) { clearTimeout(this._deriveSkipTimer); this._deriveSkipTimer = null; }
+    if (this._derivePendTimer) { clearInterval(this._derivePendTimer); this._derivePendTimer = null; }
     if (this._cardResizeObserver) { this._cardResizeObserver.disconnect(); this._cardResizeObserver = null; }
     this._globalListeners.forEach(function (l) {
       try { l[0].removeEventListener(l[1], l[2], l[3]); } catch (e) {}
@@ -4270,6 +4274,24 @@ function sendToShiny(name, value) {
     return found;
   };
 
+  var DERIVE_PENDING_MS = 30000;
+
+  /**
+   * A request R never answers (it drops a malformed one without a reply) would wait for ever and block the same
+   * request: pending entries older than 30 s are dropped by a timer that runs only while some are pending.
+   */
+  SideviewEngine.prototype.sweepDerivePending = function () {
+    var self = this;
+    if (this._derivePendTimer) return;
+    this._derivePendTimer = setInterval(function () {
+      var now = Date.now();
+      Object.keys(self.derivePending).forEach(function (k) {
+        if (now - (self.derivePending[k].t || 0) > DERIVE_PENDING_MS) delete self.derivePending[k];
+      });
+      if (!Object.keys(self.derivePending).length) { clearInterval(self._derivePendTimer); self._derivePendTimer = null; }
+    }, 5000);
+  };
+
   /**
    * Open the rows behind a check count as a card: zoom to the card when it is already on the canvas
    * (never a second one), else ask R. The card, when it comes, brings the derive step with it.
@@ -4290,7 +4312,8 @@ function sendToShiny(name, value) {
     if (waiting) return true;
     this._deriveSeq += 1;
     var id = 'dv' + this._deriveSeq + '_' + Date.now().toString(36);
-    this.derivePending[id] = { op: rec.op, inputs: rec.inputs, args: rec.args, sig: sig, offer: true };
+    this.derivePending[id] = { op: rec.op, inputs: rec.inputs, args: rec.args, sig: sig, offer: true, t: Date.now() };
+    this.sweepDerivePending();
     if (!this.send('derive_request', { id: id, op: rec.op, inputs: rec.inputs, args: rec.args })) {
       delete this.derivePending[id];
       this.showToast('The R session is not connected.', 'warning');
@@ -4422,17 +4445,29 @@ function sendToShiny(name, value) {
       if (!this._constructed || !this.hasR()) return;
       var delayed = false;
       p.steps.slice().forEach(function (s) {
-        if (s.kind !== 'derive' || !p.deriveLive(s)) return;
+        if (s.kind !== 'derive') return;
         var table = s.table;
-        if (self.cardMetaByName(table) || self._deriveFailed[table] || self._deriveSkip[table]) return;
         var ins = asArray(s.inputs).map(String);
-        if (!ins.every(function (n) { return !!self.cardMetaByName(n); })) return;
+        var present = ins.every(function (n) { return !!self.cardMetaByName(n); });
+        // R removed this table (its input went, or it could not rebuild it): R will not build it again until an
+        // input has left the canvas and come back, so no request goes out before that
+        var rr = self._rRemoved[table];
+        if (self.cardMetaByName(table)) { delete self._rRemoved[table]; return; }
+        if (rr) {
+          if (!present) { self._rRemoved[table] = 'seen'; return; }
+          if (rr === true) return;
+          delete self._rRemoved[table];
+        }
+        if (!p.deriveLive(s)) return;
+        if (self._deriveFailed[table] || self._deriveSkip[table]) return;
+        if (!present) return;
         if (Object.keys(self.derivePending).some(function (k) { return self.derivePending[k].table === table; })) return;
         // a card dropped a moment ago is forgotten by R in the same flush: ask again after it
         if (self._forgot[table] && Date.now() - self._forgot[table] < 250) { delayed = true; return; }
         self._deriveSeq += 1;
         var id = 'dv' + self._deriveSeq + '_' + Date.now().toString(36);
-        self.derivePending[id] = { op: s.op, inputs: ins, args: s.args || {}, table: table };
+        self.derivePending[id] = { op: s.op, inputs: ins, args: s.args || {}, table: table, t: Date.now() };
+        self.sweepDerivePending();
         if (!self.send('derive_request', { id: id, op: s.op, inputs: ins, args: s.args || {}, name: table })) {
           delete self.derivePending[id];
         }
@@ -4459,7 +4494,13 @@ function sendToShiny(name, value) {
     if (pend && pend.sig) this._deriveSig[pend.sig] = name;
     var has = this.pipeline.steps.some(function (s) { return s.kind === 'derive' && s.table === name; });
     if (pend && !has) {
-      this.pipeline.add(P.deriveStep(name, d.op || pend.op, asArray(d.inputs).length ? d.inputs : pend.inputs, d.args || pend.args), 'derive');
+      if (pend.offer) {
+        this.pipeline.add(P.deriveStep(name, d.op || pend.op, asArray(d.inputs).length ? d.inputs : pend.inputs, d.args || pend.args), 'derive');
+      } else {
+        // asked for by a step that is gone since (undo, a cleared or opened workspace): the late card goes, no step comes back
+        this.dropDerivedCard(name);
+        return;
+      }
     }
     var meta = this.cardMetaByName(name);
     if (meta && pend && pend.offer) {
@@ -4526,7 +4567,6 @@ function sendToShiny(name, value) {
       data.x = inEl ? (parseFloat(inEl.style.left) || 0) + (inEl.offsetWidth || 340) + 24 : 40;
       data.y = inEl ? (parseFloat(inEl.style.top) || 0) : 60;
       placed = true;
-      data.derived = Object.assign({}, data.derived);
       data._svDerivedPlace = true;
     } else if (!placed && this.cards.size) {
       var right = 0;
@@ -4617,6 +4657,7 @@ function sendToShiny(name, value) {
     if (cardData.id && cardData.id !== meta.id && !this.cards.has(cardData.id)) {
       newId = String(cardData.id);
       this.cards.delete(meta.id);
+      if (this._hiddenGeom) delete this._hiddenGeom[meta.id];
       this.connections.forEach(function (c) {
         if (c.fromCard === meta.id) c.fromCard = newId;
         if (c.toCard === meta.id) c.toCard = newId;
@@ -5403,7 +5444,7 @@ function sendToShiny(name, value) {
             var waiting = p.deriveLive(s) ? '' : self.deriveWaiting(s);
             var dtext = 'Derived: ' + s.table + ' from ' + asArray(s.inputs).join(' and ') +
               (waiting ? ' (waiting for ' + waiting + ')' : '');
-            return '<li class="sideview-step is-derive' + (waiting ? ' is-waiting' : '') +
+            return '<li class="sideview-step is-derive' + (waiting ? ' is-waiting is-disabled' : '') +
               '" data-step-id="' + escapeHtml(s.id) + '" id="' + escapeHtml(self.stepElId(s)) + '" tabindex="-1">' +
               '<span class="sideview-step-text" title="' + escapeHtml(dtext) + '">' + escapeHtml(dtext) + '</span>' +
               '<button type="button" class="sideview-icon-btn" data-step-action="up" aria-label="Move step up"' +
@@ -8384,6 +8425,10 @@ function sendToShiny(name, value) {
       }
     });
     self.onMessage('sideview_card_remove', function (data) {
+      // R removed it: a derived table R no longer holds is not asked of R again before an input comes back
+      if (data && data.name && self.pipeline.steps.some(function (st) { return st.kind === 'derive' && st.table === data.name; })) {
+        self._rRemoved[String(data.name)] = true;
+      }
       if (data && self.removeCard(data.name)) self.announce('Table ' + data.name + ' removed.');
     });
     self.onMessage('sideview_state_set', function (data) {
