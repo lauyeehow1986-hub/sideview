@@ -1238,3 +1238,8 @@ None of these blocks D1; none is fixed. Source: `.superpowers/sdd/2026-11-16-der
 - `replaceCard()` now writes the rebuilt derived card's `derived` (R's new SUPP plan) into its derive step, so `$code()` follows replaced SUPP data. R already sent it in `sideview_card_replace`. Tests: test-module.R (message carries the new IDVAR), test-layout-browser.R (module: compose reads AESPID after replace; fails without the fix).
 - Docs: derived cards carry the kept card's tag; the gadget builds lazy derive steps in `sv_derive_from_state()` at the first flush; widget derive steps stay in the code when both inputs exist (toast, CLAUDE.md, NEWS and article reworded).
 - Verified: node --check on inst/www/*.js; unit filter derive|module|pipeline|say|diagnostics|supp; test-layout-browser.R and test-a11y-browser.R each in one real-browser run (NOT_CRAN=true), all passing.
+
+## D1 parked after final review
+- Undo after a module `proxy$replace` of a SUPP card can restore the stale SUPP plan (`replaceCard` updates the derive step through `pipeline.update`, which keeps undo history). Fix: clear undo/redo when the replace changes the step, as `disableMissing` does. Not fixed in D1.
+- Only the join `unmatched` offer label is pinned end to end; the other three offer labels are untested.
+- Committed `docs/` still says derive steps are "skipped" in a saved page; rebuild docs before release.
