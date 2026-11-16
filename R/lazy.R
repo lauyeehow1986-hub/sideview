@@ -1347,13 +1347,14 @@ sv_lazy_join_diagnostics <- function(x, y, by, sample_n = 5L, x_name = "x", y_na
 #' A data frame is returned as is. A lazy SUPP table is filtered on `RDOMAIN` (when it has
 #' that column) before it is collected, and only the columns the check reads come back; the
 #' number of rows the filter dropped is counted by the database.
+#' @param all_cols Keep every column of a lazy SUPP, in its order (derived rows), not just those the check reads.
 #' @return `list(data, n_other)`; `n_other` is `NULL` for a data frame (the shared SUPP-side
 #'   step counts it).
 #' @noRd
-sv_lazy_supp_rows <- function(supp, rdomain) {
+sv_lazy_supp_rows <- function(supp, rdomain, all_cols = FALSE) {
   if (is.data.frame(supp)) return(list(data = supp, n_other = NULL))
   want <- c("STUDYID", "RDOMAIN", "USUBJID", "IDVAR", "IDVARVAL", "QNAM", "QLABEL", "QVAL")
-  have <- intersect(want, sv_lazy_names(supp))
+  have <- if (all_cols) as.character(sv_lazy_names(supp)) else intersect(want, sv_lazy_names(supp))
   q <- dplyr::select(supp, dplyr::all_of(have))
   n_other <- 0L
   if ("RDOMAIN" %in% have) {

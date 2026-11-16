@@ -1981,6 +1981,8 @@ test_that("supp ops over duckdb and Arrow equal the in-memory rows", {
              mk(u[3], "AESEQ", "x", "Q4"), mk(u[3], "AESEQ", "1e999", "Q5"), mk("SV-001-999", "", "", "Q6"),
              mk(u[2], "", "", "Q7"), mk(u[4], "AESEQ", "3000000001", "Q8"))
   s <- rbind(s, transform(s[1, ], RDOMAIN = "CM", QNAM = "Q9"))
+  s$QORIG <- "CRF"
+  s <- s[, c("QORIG", setdiff(names(s), "QORIG"))]
   i64 <- arrow::Table$create(parent, schema = arrow::schema(
     STUDYID = arrow::utf8(), USUBJID = arrow::utf8(), AESEQ = arrow::int64(), AETERM = arrow::utf8()))
   parent_i <- parent
@@ -2011,6 +2013,7 @@ test_that("supp ops over duckdb and Arrow equal the in-memory rows", {
       for (sn in names(supps)) {
         got <- sv_supp_orphans(parents[[pn]], supps[[sn]], rdomain = "AE", what = what)
         expect_s3_class(got, "data.frame")
+        expect_identical(names(got), names(s))
         expect_equal(got, want, tolerance = 1e-12, label = paste(pn, sn, what))
       }
     }

@@ -138,9 +138,10 @@ test_that("supp ops filter on RDOMAIN", {
   f <- supp_derive_fx()
   o <- sv_supp_orphans(f$ae, f$supp, rdomain = "AE")
   expect_true(all(o$RDOMAIN == "AE"))
-  # the CM row is not an orphan of AE; asked for CM, the check fails first (ae has no CMSEQ)
+  # the CM row is not an orphan of AE; asked for CM, only the CM row is looked at
   expect_false("Q8" %in% o$QNAM)
-  expect_error(sv_supp_orphans(f$ae, f$supp, rdomain = "CM"), "CMSEQ")
+  cm <- data.frame(STUDYID = "SV-001", USUBJID = f$ae$USUBJID, CMSEQ = 2:5, stringsAsFactors = FALSE)
+  expect_identical(sv_supp_orphans(cm, f$supp, rdomain = "CM")$QNAM, "Q8")
 })
 
 test_that("supp ops through sv_derive_rows take the plan and give SUPP row order", {

@@ -146,7 +146,7 @@ sv_derive_supp_rows <- function(op, tables, args) {
   plan <- args$plan
   rdomain <- args$rdomain
   if (is.null(plan) || is.null(rdomain)) stop("A SUPP derived table needs a plan and an RDOMAIN.", call. = FALSE)
-  rows <- sv_lazy_supp_rows(supp, rdomain)
+  rows <- sv_lazy_supp_rows(supp, rdomain, all_cols = TRUE)
   s <- rows$data
   if (!is.data.frame(s)) s <- as.data.frame(s, stringsAsFactors = FALSE)
   side <- sv_supp_side(s, "SUPP", rdomain)
