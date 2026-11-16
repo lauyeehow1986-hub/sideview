@@ -19,7 +19,13 @@ sv_derive_rows <- function(op, tables, args) {
   if (op %in% c("supp_orphans", "supp_bad_idvarval")) return(sv_derive_supp_rows(op, tables, args))
   if (length(tables) != 2L) stop("A derived table needs two input tables.", call. = FALSE)
   if (any(vapply(tables, sv_is_lazy_input, logical(1)))) {
-    stop("Unmatched rows of a duckdb or Arrow table need duckdb.", call. = FALSE)
+    if (!sv_has_duckdb()) stop("Unmatched rows of a duckdb or Arrow table need duckdb.", call. = FALSE)
+    nms <- names(tables)
+    args$op <- op
+    if (length(nms) >= 2L && nzchar(nms[1L]) && is.null(args$x_name)) args$x_name <- nms[1L]
+    if (length(nms) >= 2L && nzchar(nms[2L]) && is.null(args$y_name)) args$y_name <- nms[2L]
+    con_env <- if (is.null(args$con_env)) sv_lazy_env() else args$con_env
+    return(sv_lazy_unmatched(tables[[1L]], tables[[2L]], args, con_env))
   }
   if (!all(vapply(tables, is.data.frame, logical(1)))) stop("Input tables must be data frames.", call. = FALSE)
   x <- tables[[1L]]

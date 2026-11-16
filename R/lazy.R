@@ -25,6 +25,7 @@ sv_has_duckdb <- function() {
 #' @noRd
 sv_card_is_lazy <- function(card) {
   if (is.null(card$source) || !sv_has_duckdb()) return(FALSE)
+  if (inherits(card$source, "sv_derived_source")) return(TRUE)
   if (identical(card$lazy_source, "arrow") && !requireNamespace("arrow", quietly = TRUE)) {
     return(FALSE)
   }
@@ -150,6 +151,8 @@ sv_lazy_arrow_views <- function(con) {
 #' A user's own duckdb table carries no such names and is left alone. Never fails.
 #' @noRd
 sv_lazy_release <- function(tbl, con_env) {
+  cleanup <- attr(tbl, "sv_cleanup", exact = TRUE)
+  if (is.function(cleanup)) tryCatch(cleanup(), error = function(e) NULL)
   views <- attr(tbl, "sv_arrow_views", exact = TRUE)
   if (length(views) && !is.null(con_env$con)) {
     for (nm in views) {
@@ -176,6 +179,7 @@ sv_lazy_release <- function(tbl, con_env) {
 sv_lazy_tbl <- function(source, con_env, key = NULL, levels = TRUE) {
   if (inherits(source, "tbl_duckdb_connection")) return(source)
   if (!is.null(key) && !is.null(con_env$tbls[[key]])) return(con_env$tbls[[key]])
+  if (inherits(source, "sv_derived_source")) return(sv_lazy_derived_tbl(source, con_env, key))
   con <- sv_lazy_con(con_env)
   was <- sv_lazy_arrow_views(con)
   tbl <- arrow::to_duckdb(sv_lazy_decode_dictionaries(source), con = con, auto_disconnect = FALSE)
@@ -984,8 +988,9 @@ sv_lazy_join_sample <- function(sx, sy, nk, side, n, tzs = NULL) {
 #' @param kind The rule's kind: `"Date"`, `"date-time"` or `"numeric"`.
 #' @param dbl Named logical: which rule columns of this side are plain doubles.
 #' @param nk Number of key columns.
+#' @param all_cols Keep every column of `side` (derived rows) and add the rule's, with no row tag.
 #' @noRd
-sv_lazy_rule_side <- function(side, rule, which, kind, dbl, nk) {
+sv_lazy_rule_side <- function(side, rule, which, kind, dbl, nk, all_cols = FALSE) {
   val <- function(col) {
     s <- rlang::sym(col)
     if (identical(kind, "date-time")) {
@@ -1017,6 +1022,7 @@ sv_lazy_rule_side <- function(side, rule, which, kind, dbl, nk) {
       list(.sv_ya = val(rule$yCol)))
   }
   side <- dplyr::mutate(side, !!!cols)
+  if (all_cols) return(side)
   row <- stats::setNames(".sv_row", if (identical(which, "x")) ".sv_rx" else ".sv_ry")
   dplyr::select(side, dplyr::all_of(c(sv_lazy_key_names(nk), row, names(cols))))
 }
@@ -1902,4 +1908,167 @@ sv_cdisc_lazy_query <- function(tbl, kind, col = NULL) {
   # sum()/n_distinct() over zero rows can be NULL: that is no rows, so unique
   n[is.na(n)] <- 0; nn[is.na(nn)] <- 0; d[is.na(d)] <- 0
   nn <= 1 && d == n - nn
+}
+
+# ---- derived cards: unmatched / outside_window rows as a lazy tbl (D1) ----
+
+#' The rule's columns and kinds, read from 0 rows (nothing placed yet)
+#'
+#' The same steps `sv_lazy_join_diagnostics()` takes before it places the tables.
+#' @return `list(rule, rule_x, rule_y, rule_kind, dbl_x, dbl_y)`; stops on a bad rule.
+#' @noRd
+sv_lazy_rule_prepare <- function(x, y, rule) {
+  slot_cols <- function(side) {
+    if (!is.list(rule) || !isTRUE(rule$shape %in% sv_rule_shapes)) return(character(0))
+    v <- unlist(lapply(sv_rule_slots(rule$shape), function(s) {
+      if (sv_rule_slot_side(s) == side && is.character(rule[[s]]) && length(rule[[s]]) == 1L) rule[[s]]
+    }))
+    as.character(unique(v[!is.na(v)]))
+  }
+  zx_rule <- sv_lazy_zero(x, slot_cols("x"))
+  zy_rule <- sv_lazy_zero(y, slot_cols("y"))
+  problem <- sv_join_rule_problem(rule, vapply(zx_rule, sv_key_kind, character(1)),
+                                  vapply(zy_rule, sv_key_kind, character(1)))
+  if (!is.null(problem)) stop(problem, call. = FALSE)
+  rule <- sv_join_rule_normalize(rule)
+  is_dbl <- function(z) vapply(z, function(v) identical(sv_lazy_kind(v), "double"), logical(1))
+  list(rule = rule, rule_x = slot_cols("x"), rule_y = slot_cols("y"),
+       rule_kind = sv_key_kind(zx_rule[[rule[[sv_rule_slots(rule$shape)[1L]]]]]),
+       dbl_x = is_dbl(zx_rule), dbl_y = is_dbl(zy_rule))
+}
+
+#' Unmatched rows, or rows outside the date window, of one side, as a duckdb tbl
+#'
+#' The twin of the in-memory branch of `sv_derive_rows()`: the same dplyr
+#' expressions over tables placed on one connection (`sv_lazy_place()`), nothing
+#' collected. With no rule the rows are `anti_join(x, y, na_matches = "na")`; with a
+#' rule a missing key matches nothing: `unmatched` rows have no key partner, and
+#' `outside_window` rows have one but no pair the rule keeps. The rows without a
+#' rule pair are found by the rule's own conditions on narrow tables
+#' (`sv_lazy_rule_lone()`), then matched back to the full rows by the values they were
+#' found on, so no row tag crosses a query. The result has the kept side's columns and
+#' carries its `sv_tz` / `sv_factors`, and `sv_cleanup` (undoes the placement; run by
+#' `sv_lazy_release()`).
+#' @param x,y Data frames, duckdb tbls or Arrow objects.
+#' @param args `list(op, by, rule, side, x_name, y_name)`; `op` is `"unmatched"` (default)
+#'   or `"outside_window"`, `by` as for `sv_derive_by_pairs()`.
+#' @param con_env An environment from `sv_lazy_env()`.
+#' @noRd
+sv_lazy_unmatched <- function(x, y, args, con_env) {
+  op <- if (identical(args$op, "outside_window")) "outside_window" else "unmatched"
+  side <- if (identical(args$side, "y")) "y" else "x"
+  x_name <- args$x_name %||% "x"
+  y_name <- args$y_name %||% "y"
+  pairs <- sv_derive_by_pairs(args$by)
+  by_x <- vapply(pairs, function(p) p$x, "")
+  by_y <- vapply(pairs, function(p) p$y, "")
+  miss_x <- setdiff(by_x, sv_lazy_names(x))
+  miss_y <- setdiff(by_y, sv_lazy_names(y))
+  if (length(miss_x)) stop(sprintf("Not in %s: %s", x_name, paste(miss_x, collapse = ", ")), call. = FALSE)
+  if (length(miss_y)) stop(sprintf("Not in %s: %s", y_name, paste(miss_y, collapse = ", ")), call. = FALSE)
+  rule <- args$rule
+  if (identical(op, "outside_window") && is.null(rule)) stop("outside_window needs a date rule.", call. = FALSE)
+  rs <- NULL
+  if (!is.null(rule)) {
+    rs <- sv_lazy_rule_prepare(x, y, rule)
+    rule <- rs$rule
+  }
+  src <- if (side == "x") x else y
+  factors <- attr(src, "sv_factors", exact = TRUE)
+  if (is.null(factors) && identical(sv_lazy_origin(src), "arrow")) factors <- sv_lazy_factors(src)
+
+  placed <- sv_lazy_place(x, y, con_env)
+  ok <- FALSE
+  on.exit(if (!ok) placed$cleanup(), add = TRUE)
+  kept <- placed[[side]]
+  cols_keep <- as.character(sv_lazy_names(kept))
+
+  zx <- dplyr::collect(utils::head(dplyr::select(placed$x, dplyr::all_of(unique(by_x))), 0L))
+  zy <- dplyr::collect(utils::head(dplyr::select(placed$y, dplyr::all_of(unique(by_y))), 0L))
+  issues <- sv_join_type_issues(zx, zy, by_x, by_y, x_name, y_name)
+  if (length(issues)) stop(paste(issues, collapse = " "), call. = FALSE)
+
+  if (is.null(rule)) {
+    # na_matches = "na": a missing key matches a missing key, as in a default dplyr join
+    out <- if (side == "x") {
+      dplyr::anti_join(placed$x, placed$y, by = stats::setNames(by_y, by_x), na_matches = "na")
+    } else {
+      dplyr::anti_join(placed$y, placed$x, by = stats::setNames(by_x, by_y), na_matches = "na")
+    }
+  } else {
+    nk <- length(by_x)
+    kn <- sv_lazy_key_names(nk)
+    kind_x <- vapply(by_x, function(cn) sv_key_kind(zx[[cn]]), "")
+    kind_y <- vapply(by_y, function(cn) sv_key_kind(zy[[cn]]), "")
+    text <- kind_x != kind_y
+    lazy_x <- vapply(by_x, function(cn) sv_lazy_kind(zx[[cn]]), "")
+    lazy_y <- vapply(by_y, function(cn) sv_lazy_kind(zy[[cn]]), "")
+    tz_of <- function(tbl, z, by) {
+      vapply(by, function(cn) {
+        if (inherits(z[[cn]], "POSIXct")) sv_lazy_zone_for(attr(tbl, "sv_tz"), cn) else NA_character_
+      }, "", USE.NAMES = FALSE)
+    }
+    tz_x <- tz_of(placed$x, zx, by_x)
+    tz_y <- tz_of(placed$y, zy, by_y)
+    side_x <- function(row = FALSE) {
+      sv_lazy_join_side(placed$x, by_x, lazy_x, text, kind_x == "character", NULL, row, tz_x)
+    }
+    side_y <- function(row = FALSE) {
+      sv_lazy_join_side(placed$y, by_y, lazy_y, text, kind_y == "character", NULL, row, tz_y)
+    }
+    keyed <- if (side == "x") side_x() else side_y()
+    other_keys <- dplyr::select(if (side == "x") side_y() else side_x(), dplyr::all_of(kn))
+    if (identical(op, "unmatched")) {
+      out <- dplyr::anti_join(keyed, other_keys, by = kn, na_matches = "never")
+    } else {
+      nx <- sv_lazy_rule_side(side_x(row = TRUE), rule, "x", rs$rule_kind, rs$dbl_x, nk)
+      ny <- sv_lazy_rule_side(side_y(row = TRUE), rule, "y", rs$rule_kind, rs$dbl_y, nk)
+      lone <- sv_lazy_rule_lone(nx, ny, nk, rule, side)
+      vals <- intersect(as.character(sv_lazy_names(lone)), c(".sv_xa", ".sv_xb", ".sv_ya", ".sv_yb"))
+      lone <- dplyr::distinct(dplyr::select(lone, dplyr::all_of(c(kn, vals))))
+      wide <- sv_lazy_rule_side(keyed, rule, side, rs$rule_kind,
+                                if (side == "x") rs$dbl_x else rs$dbl_y, nk, all_cols = TRUE)
+      by <- stats::setNames(c(kn, vals), c(kn, vals))
+      out <- dplyr::semi_join(wide, lone, by = by, na_matches = "na")
+      out <- dplyr::semi_join(out, other_keys, by = kn, na_matches = "never")
+    }
+  }
+  out <- dplyr::select(out, dplyr::all_of(cols_keep))
+  tz <- attr(kept, "sv_tz", exact = TRUE)
+  if (length(tz)) attr(out, "sv_tz") <- tz
+  if (length(factors)) attr(out, "sv_factors") <- factors
+  attr(out, "sv_cleanup") <- placed$cleanup
+  ok <- TRUE
+  out
+}
+
+#' The recipe of a derived card: how to build its rows from the input cards
+#'
+#' A derived lazy card keeps no table. Its `source` is this recipe, and
+#' `sv_lazy_tbl()` builds the rows on the session connection from the inputs.
+#' @param op `"unmatched"` or `"outside_window"`.
+#' @param args `list(by, rule, side)`.
+#' @param inputs A named list of the input card objects (x first, y second).
+#' @noRd
+sv_derived_source <- function(op, args, inputs) {
+  structure(list(op = op, args = args, inputs = inputs), class = "sv_derived_source")
+}
+
+#' Build the lazy tbl of a derived recipe and cache it under `key`
+#' @noRd
+sv_lazy_derived_tbl <- function(source, con_env, key = NULL) {
+  inputs <- source$inputs
+  tbls <- lapply(inputs, function(card) {
+    if (sv_card_is_lazy(card)) sv_lazy_tbl(card$source, con_env, card$id) else card$data
+  })
+  nms <- names(inputs)
+  args <- source$args
+  args$op <- source$op
+  if (length(nms) >= 2L) {
+    if (is.null(args$x_name) && nzchar(nms[1L])) args$x_name <- nms[1L]
+    if (is.null(args$y_name) && nzchar(nms[2L])) args$y_name <- nms[2L]
+  }
+  tbl <- sv_lazy_unmatched(tbls[[1L]], tbls[[2L]], args, con_env)
+  if (!is.null(key)) con_env$tbls[[key]] <- tbl
+  tbl
 }

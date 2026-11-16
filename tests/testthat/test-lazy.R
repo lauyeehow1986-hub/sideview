@@ -2023,3 +2023,101 @@ test_that("supp ops over duckdb and Arrow equal the in-memory rows", {
   expect_gt(length(sizes), 4L)   # the spy saw the calls
   expect_lt(max(sizes), 1000L)
 })
+
+# ---- derived cards: unmatched / outside_window over lazy tables (D1 task 3) ----
+
+derive_arr <- function(d) {
+  d <- as.data.frame(d, stringsAsFactors = FALSE)
+  d <- d[do.call(order, unname(as.list(d))), , drop = FALSE]
+  rownames(d) <- NULL
+  d
+}
+
+test_that("lazy unmatched equals in-memory over duckdb, Arrow and mixed inputs", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  fx <- lazy_fixture()
+  n_checked <- 0L
+  rules <- c(list(NULL), rule_cases()[c(1, 3)])
+  for (kind in c("Date", "date-time")) {
+    t <- rule_tables(kind, 11)
+    x <- t$x[c("id", "xd", "xe")]
+    hows <- c("df", "duckdb", "arrow")
+    for (hx in hows) for (hy in hows) {
+      if (hx == "df" && hy == "df") next
+      for (rule in rules) for (side in c("x", "y")) for (op in c("unmatched", "outside_window")) {
+        if (is.null(rule) && op == "outside_window") next
+        args <- list(by = sv_derive_by_pairs("id"), rule = rule, side = side)
+        want <- sv_derive_rows(op, list(x = x, y = t$y), args)
+        gc()
+        r <- sv_derive_rows(op, list(x = join_side(x, hx, fx$con, "dx"), y = join_side(t$y, hy, fx$con, "dy")), args)
+        expect_true(inherits(r, "tbl_lazy"))
+        lab <- paste(kind, hx, hy, rule$shape, side, op)
+        expect_equal(derive_arr(dplyr::collect(r)), derive_arr(want), tolerance = 1e-12, label = lab)
+        expect_identical(names(dplyr::collect(utils::head(r, 0L))), names(want), label = lab)
+        n_checked <- n_checked + 1L
+        sv_lazy_release(r, list(con = NULL))
+      }
+    }
+  }
+  expect_gt(n_checked, 100L)
+})
+
+test_that("building a lazy derived card never collects", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  con <- sv_lazy_con(e)
+  n <- 4000L
+  ae <- data.frame(id = rep(seq_len(n), 2L), v = seq_len(2L * n))
+  dm <- data.frame(id = seq_len(n - 5L))
+  DBI::dbWriteTable(con, "dg_ae", ae)
+  DBI::dbWriteTable(con, "dg_dm", dm)
+  card <- function(nm, src, df) {
+    structure(list(id = nm, name = nm, data = utils::head(df, 3L), source = src), class = "sideview_card")
+  }
+  inputs <- list(ae = card("ae", dplyr::tbl(con, "dg_ae"), ae), dm = card("dm", arrow::arrow_table(dm), dm))
+  src <- sv_derived_source("unmatched", list(by = sv_derive_by_pairs("id"), side = "x"), inputs)
+  expect_s3_class(src, "sv_derived_source")
+  sizes <- integer(0)
+  real_collect <- dplyr::collect
+  testthat::local_mocked_bindings(
+    collect = function(x, ...) {
+      out <- real_collect(x, ...)
+      if (is.data.frame(out)) sizes <<- c(sizes, nrow(out))
+      out
+    },
+    .package = "dplyr"
+  )
+  tb <- sv_lazy_tbl(src, e, "ae_unmatched_dm")
+  cnt <- dplyr::collect(dplyr::count(tb))$n
+  expect_equal(as.numeric(cnt), 10)
+  expect_identical(sv_lazy_tbl(src, e, "ae_unmatched_dm"), tb)   # cached by key
+  expect_lt(max(sizes, 0L), 100L)
+  expect_true(sv_card_is_lazy(card("d", src, ae)))
+})
+
+test_that("release runs cleanup", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  con <- sv_lazy_con(e)
+  ae <- data.frame(id = c(1, 2, 3, 9))
+  dm <- data.frame(id = c(1, 2, 3))
+  inputs <- list(ae = structure(list(id = "ae", data = ae, source = NULL), class = "sideview_card"),
+                 dm = structure(list(id = "dm", data = dm, source = arrow::arrow_table(dm)), class = "sideview_card"))
+  sv_lazy_tbl(inputs$dm$source, e, "dm")   # the input's cached view stays; only the placement goes
+  before <- DBI::dbListTables(con)
+  src <- sv_derived_source("unmatched", list(by = sv_derive_by_pairs("id"), side = "x"), inputs)
+  tb <- sv_lazy_tbl(src, e, "k")
+  expect_true(is.function(attr(tb, "sv_cleanup")))
+  expect_gt(length(DBI::dbListTables(con)), length(before))
+  expect_equal(dplyr::collect(tb)$id, 9)
+  sv_lazy_release(tb, e)
+  expect_identical(sort(DBI::dbListTables(con)), sort(before))
+})
