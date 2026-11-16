@@ -1959,3 +1959,64 @@ test_that("lazy supp checks and profiles carry the classes and read as the in-me
     }
   }
 })
+
+test_that("supp ops over duckdb and Arrow equal the in-memory rows", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  fx <- lazy_fixture()
+  f <- sv_cdisc_fixtures()
+  big <- 3000000000
+  u <- c(f$ae$USUBJID, "SV-001-005")
+  parent <- data.frame(STUDYID = "SV-001", USUBJID = u, AESEQ = c(1, 2, 3, big, 5), AETERM = "x",
+                       stringsAsFactors = FALSE)
+  mk <- function(usubjid, idvar, idvarval, qnam) {
+    data.frame(STUDYID = "SV-001", RDOMAIN = "AE", USUBJID = usubjid, IDVAR = idvar, IDVARVAL = idvarval,
+               QNAM = qnam, QLABEL = qnam, QVAL = "Y", stringsAsFactors = FALSE)
+  }
+  filler <- data.frame(STUDYID = "SV-001", USUBJID = sprintf("F-%04d", 1:2000), AESEQ = 1, AETERM = "x",
+                       stringsAsFactors = FALSE)
+  parent <- rbind(parent, filler)
+  s <- rbind(mk(u[1], "AESEQ", "1", "Q1"), mk(u[2], "AESEQ", "99", "Q2"), mk(u[4], "AESEQ", "3000000000", "Q3"),
+             mk(u[3], "AESEQ", "x", "Q4"), mk(u[3], "AESEQ", "1e999", "Q5"), mk("SV-001-999", "", "", "Q6"),
+             mk(u[2], "", "", "Q7"), mk(u[4], "AESEQ", "3000000001", "Q8"))
+  s <- rbind(s, transform(s[1, ], RDOMAIN = "CM", QNAM = "Q9"))
+  i64 <- arrow::Table$create(parent, schema = arrow::schema(
+    STUDYID = arrow::utf8(), USUBJID = arrow::utf8(), AESEQ = arrow::int64(), AETERM = arrow::utf8()))
+  parent_i <- parent
+  parent_i$AESEQ <- as.integer(c(1, 2, 3, 4, 5, rep(1, 2000)))
+  i64_small <- arrow::Table$create(parent_i, schema = arrow::schema(
+    STUDYID = arrow::utf8(), USUBJID = arrow::utf8(), AESEQ = arrow::int64(), AETERM = arrow::utf8()))
+  DBI::dbWriteTable(fx$con, "sdp", parent, overwrite = TRUE)
+  DBI::dbWriteTable(fx$con, "sds", s, overwrite = TRUE)
+  parents <- list(duckdb = dplyr::tbl(fx$con, "sdp"), arrow_int64 = i64, arrow_small = i64_small)
+  supps <- list(df = s, duckdb = dplyr::tbl(fx$con, "sds"))
+
+  # the parent is never collected in full: no collect() may return as many rows as the parent
+  sizes <- integer(0)
+  real_collect <- dplyr::collect
+  testthat::local_mocked_bindings(
+    collect = function(x, ...) {
+      out <- real_collect(x, ...)
+      if (is.data.frame(out)) sizes <<- c(sizes, nrow(out))
+      out
+    },
+    .package = "dplyr"
+  )
+  for (pn in names(parents)) {
+    pdf <- if (pn == "arrow_small") transform(parent_i, AESEQ = as.numeric(AESEQ)) else parent
+    plan <- sv_supp_check(pdf, s, "ae", "suppae", rdomain = "AE")$plan
+    for (what in c("orphans", "bad_idvarval")) {
+      want <- sv_supp_orphans(pdf, s, rdomain = "AE", what = what)
+      for (sn in names(supps)) {
+        got <- sv_supp_orphans(parents[[pn]], supps[[sn]], rdomain = "AE", what = what)
+        expect_s3_class(got, "data.frame")
+        expect_equal(got, want, tolerance = 1e-12, label = paste(pn, sn, what))
+      }
+    }
+    chk <- sv_supp_check(pdf, s, "ae", "suppae", rdomain = "AE")
+    expect_equal(nrow(sv_supp_orphans(pdf, s, rdomain = "AE")), chk$n_orphan)
+  }
+  expect_gt(length(sizes), 4L)   # the spy saw the calls
+  expect_lt(max(sizes), 1000L)
+})

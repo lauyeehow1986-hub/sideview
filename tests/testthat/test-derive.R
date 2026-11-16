@@ -86,3 +86,74 @@ test_that("say", {
   expect_identical(sv_say_derive_offer("supp_bad_idvarval", 1, "suppae", "ae"), "Open 1 suppae row with a bad IDVARVAL as a card")
   expect_identical(sv_say_derive_offer("supp_bad_idvarval", 12, "suppae", "ae"), "Open 12 suppae rows with a bad IDVARVAL as a card")
 })
+
+supp_derive_fx <- function() {
+  f <- sv_cdisc_fixtures()
+  u <- f$ae$USUBJID
+  mk <- function(rd, usubjid, idvar, idvarval, qnam) {
+    data.frame(STUDYID = "SV-001", RDOMAIN = rd, USUBJID = usubjid, IDVAR = idvar, IDVARVAL = idvarval,
+               QNAM = qnam, QLABEL = qnam, QVAL = "Y", stringsAsFactors = FALSE)
+  }
+  s <- rbind(
+    mk("AE", u[1], "AESEQ", "1", "Q1"),
+    mk("AE", u[2], "AESEQ", "99", "Q2"),
+    mk("AE", u[3], "AESEQ", " 3 ", "Q3"),
+    mk("AE", u[1], "AESEQ", "x", "Q4"),
+    mk("AE", u[1], "AESEQ", "1e999", "Q5"),
+    mk("AE", "SV-001-999", "", "", "Q6"),
+    mk("AE", u[2], "", "", "Q7"),
+    mk("CM", u[1], "CMSEQ", "1", "Q8"))
+  list(ae = f$ae, supp = s)
+}
+
+test_that("supp_orphans count equals the check's n_orphan", {
+  f <- supp_derive_fx()
+  chk <- sv_supp_check(f$ae, f$supp, "ae", "suppae")
+  o <- sv_supp_orphans(f$ae, f$supp, rdomain = "AE")
+  expect_s3_class(o, "data.frame")
+  expect_equal(nrow(o), chk$n_orphan)
+  expect_identical(o$QNAM, c("Q2", "Q6"))
+  expect_identical(names(o), names(f$supp))
+})
+
+test_that("bad_idvarval count equals bad_idvarval$n", {
+  f <- supp_derive_fx()
+  chk <- sv_supp_check(f$ae, f$supp, "ae", "suppae")
+  b <- sv_supp_orphans(f$ae, f$supp, rdomain = "AE", what = "bad_idvarval")
+  expect_equal(nrow(b), chk$bad_idvarval$n)
+  # "x" and "1e999" are bad; " 3 " converts (ASCII whitespace) and is matched
+  expect_identical(b$IDVARVAL, c("x", "1e999"))
+  expect_false(" 3 " %in% sv_supp_orphans(f$ae, f$supp, rdomain = "AE")$IDVARVAL)
+})
+
+test_that("orphans + bad + matched = n_supp", {
+  f <- supp_derive_fx()
+  chk <- sv_supp_check(f$ae, f$supp, "ae", "suppae")
+  o <- sv_supp_orphans(f$ae, f$supp, rdomain = "AE")
+  b <- sv_supp_orphans(f$ae, f$supp, rdomain = "AE", what = "bad_idvarval")
+  expect_equal(nrow(o) + nrow(b) + chk$n_matched, chk$n_supp)
+})
+
+test_that("supp ops filter on RDOMAIN", {
+  f <- supp_derive_fx()
+  o <- sv_supp_orphans(f$ae, f$supp, rdomain = "AE")
+  expect_true(all(o$RDOMAIN == "AE"))
+  # the CM row is not an orphan of AE; asked for CM, the check fails first (ae has no CMSEQ)
+  expect_false("Q8" %in% o$QNAM)
+  expect_error(sv_supp_orphans(f$ae, f$supp, rdomain = "CM"), "CMSEQ")
+})
+
+test_that("supp ops through sv_derive_rows take the plan and give SUPP row order", {
+  f <- supp_derive_fx()
+  plan <- sv_supp_check(f$ae, f$supp, "ae", "suppae")$plan
+  o <- sv_derive_rows("supp_orphans", list(parent = f$ae, supp = f$supp), list(plan = plan, rdomain = "AE"))
+  expect_identical(o$QNAM, c("Q2", "Q6"))
+  expect_identical(rownames(o), as.character(seq_len(nrow(o))))
+  expect_identical(sv_derive_name("supp_orphans", c("ae", "suppae"), list(), character()), "suppae_orphans")
+})
+
+test_that("a list form of `by` gives the same unmatched rows as the character form", {
+  f <- derive_fx()
+  expect_equal(sv_unmatched(f$ae, f$dm, list(list(x = "USUBJID", y = "USUBJID"))),
+               sv_unmatched(f$ae, f$dm, "USUBJID"))
+})

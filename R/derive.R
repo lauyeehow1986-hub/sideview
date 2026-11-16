@@ -16,9 +16,7 @@ sv_derive_by_pairs <- function(by) {
 
 sv_derive_rows <- function(op, tables, args) {
   if (!op %in% sv_derive_ops) stop(sprintf("Unknown derive op: %s", op), call. = FALSE)
-  if (!op %in% c("unmatched", "outside_window")) {
-    stop(sprintf("Derive op %s is not available yet.", op), call. = FALSE)
-  }
+  if (op %in% c("supp_orphans", "supp_bad_idvarval")) return(sv_derive_supp_rows(op, tables, args))
   if (length(tables) != 2L) stop("A derived table needs two input tables.", call. = FALSE)
   if (any(vapply(tables, sv_is_lazy_input, logical(1)))) {
     stop("Unmatched rows of a duckdb or Arrow table need duckdb.", call. = FALSE)
@@ -135,4 +133,94 @@ sv_unmatched <- function(x, y, by, rule = NULL, side = c("x", "y"),
   what <- match.arg(what)
   if (identical(what, "outside_window") && is.null(rule)) stop("outside_window needs a date rule.", call. = FALSE)
   sv_derive_rows(what, list(x = x, y = y), list(by = sv_derive_by_pairs(by), rule = rule, side = side))
+}
+
+# The SUPP rows behind the check's orphan or bad-IDVARVAL count, in SUPP row order (decision 7: always a
+# data frame). The SUPP side and the match are the check's own steps (sv_supp_side(), sv_supp_convert_side(),
+# sv_supp_match_df()), so the rows agree with its counts. The parent is never collected in full: it is
+# filtered to the subjects the SUPP rows name, reduced to the distinct key and level columns, then collected.
+sv_derive_supp_rows <- function(op, tables, args) {
+  if (length(tables) != 2L) stop("A derived table needs two input tables.", call. = FALSE)
+  parent <- tables[[1L]]
+  supp <- tables[[2L]]
+  plan <- args$plan
+  rdomain <- args$rdomain
+  if (is.null(plan) || is.null(rdomain)) stop("A SUPP derived table needs a plan and an RDOMAIN.", call. = FALSE)
+  rows <- sv_lazy_supp_rows(supp, rdomain)
+  s <- rows$data
+  if (!is.data.frame(s)) s <- as.data.frame(s, stringsAsFactors = FALSE)
+  side <- sv_supp_side(s, "SUPP", rdomain)
+  if (!is.null(side$error)) stop(side$error, call. = FALSE)
+  keys <- as.character(unlist(plan$keys))
+  types <- character(0)
+  for (l in plan$idvars) {
+    if (nzchar(l$idvar)) types[l$idvar] <- as.character(l$type)
+  }
+  ivs <- side$levels[nzchar(side$levels)]
+  if (length(setdiff(ivs, names(types)))) {
+    stop("The SUPP table has an IDVAR the plan does not know: check it again.", call. = FALSE)
+  }
+  pcols <- unique(c(keys, ivs))
+  miss <- setdiff(pcols, sv_lazy_names(parent))
+  if (length(miss)) stop(sprintf("Not in the parent: %s", paste(miss, collapse = ", ")), call. = FALSE)
+  if (is.data.frame(parent)) {
+    p <- parent[pcols]
+  } else {
+    q <- dplyr::select(parent, dplyr::all_of(pcols))
+    subj <- unique(as.character(side$supp$USUBJID))
+    u <- rlang::sym("USUBJID")
+    if (anyNA(subj)) {
+      q <- dplyr::filter(q, !!u %in% !!subj[!is.na(subj)] | is.na(!!u))
+    } else {
+      q <- dplyr::filter(q, !!u %in% !!subj)
+    }
+    p <- as.data.frame(dplyr::collect(dplyr::distinct(q)), stringsAsFactors = FALSE)
+  }
+  conv <- sv_supp_convert_side(side, types, keys)
+  matched <- sv_supp_match_df(side, conv, p, keys)
+  keep <- if (identical(op, "supp_orphans")) !matched & !conv$bad else conv$bad
+  out <- side$supp[keep, , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
+
+#' Rows of a SUPP Table That the Merge Check Counts as Orphans or Bad
+#'
+#' Returns the `SUPP--` rows behind a count of [sv_supp_check()]: the orphan rows
+#' (`what = "orphans"`, `n_orphan`), which convert but find no parent record, or the
+#' rows whose `IDVARVAL` does not convert to the type of the parent column
+#' (`what = "bad_idvarval"`, `bad_idvarval$n`). The rows are the `SUPP--` columns,
+#' in the order of the table, after the `RDOMAIN` filter. A duckdb or Arrow parent
+#' stays lazy: only the rows of the subjects the `SUPP--` table names are read.
+#'
+#' @param parent The parent table: a data frame, or a duckdb or Arrow table.
+#' @param supp The `SUPP--` table: a data frame, or a duckdb or Arrow table.
+#' @param rdomain The parent domain, as in [sv_supp_check()]. `NULL` uses the
+#'   `RDOMAIN` of the first row of an in-memory `supp`.
+#' @param what `"orphans"` or `"bad_idvarval"`.
+#' @return A data frame with the columns of `supp`.
+#' @export
+#' @examples
+#' ae <- data.frame(USUBJID = c("S1", "S2"), AESEQ = 1:2)
+#' suppae <- data.frame(RDOMAIN = "AE", USUBJID = c("S1", "S2", "S2"), IDVAR = "AESEQ",
+#'                      IDVARVAL = c("1", "9", "x"), QNAM = "AETRTEM", QVAL = "Y")
+#' sv_supp_orphans(ae, suppae)
+#' sv_supp_orphans(ae, suppae, what = "bad_idvarval")
+sv_supp_orphans <- function(parent, supp, rdomain = NULL, what = c("orphans", "bad_idvarval")) {
+  what <- match.arg(what)
+  if (is.null(rdomain)) {
+    first <- if (is.data.frame(supp) && "RDOMAIN" %in% names(supp)) {
+      as.character(supp$RDOMAIN[!is.na(supp$RDOMAIN)][1L])
+    } else NA_character_
+    if (is.na(first)) stop("Give `rdomain`: the SUPP table does not name one.", call. = FALSE)
+    rdomain <- first
+  }
+  chk <- if (any(vapply(list(parent, supp), sv_is_lazy_input, logical(1)))) {
+    sv_lazy_supp_check(parent, supp, "parent", "supp", rdomain = rdomain)
+  } else {
+    sv_supp_check(parent, supp, "parent", "supp", rdomain = rdomain)
+  }
+  if (!is.null(chk$error)) stop(chk$error, call. = FALSE)
+  sv_derive_rows(if (what == "orphans") "supp_orphans" else "supp_bad_idvarval",
+                 list(parent = parent, supp = supp), list(plan = chk$plan, rdomain = rdomain))
 }
