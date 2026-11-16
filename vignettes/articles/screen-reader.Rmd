@@ -91,6 +91,44 @@ sv_describe(patients)
 
 A large duckdb or Arrow table is described from its summaries and is never loaded into memory.
 
+## Keyboard and low vision
+
+If you can see the screen, at least in part, or cannot use a mouse, you can use the canvas itself. Turn on the
+**Accessible canvas** switch: press `?` and use the switch in the dialog, or start with it on.
+
+```{r access, eval = FALSE}
+# for one call
+sideview(patients, visits, access = TRUE)
+
+# an htmlwidget (sideview_widget() has no access argument)
+sideview_widget(patients, visits, options = list(access = TRUE))
+
+# for the whole session, the widget and save_sideview() included
+options(sideview.access = TRUE)
+```
+
+The argument or option only sets the starting state. The switch in the `?` dialog changes it, and the browser remembers
+that choice, which wins over R. With the switch off the canvas is unchanged.
+
+With the switch on:
+
+- The zoom never goes below 100%. Text is at least 16 px, every control is at least 24 by 24 px, the focus ring is 3 px,
+  and a high-contrast colour set replaces the theme colours. Joins are 3 px wide with a dash pattern and an arrowhead each,
+  so crossing joins can be told apart without colour.
+- Each card is a Tab stop, in reading order. Inside a card, Tab reaches its buttons, one column header and its table
+  body ("patients rows"), then the next card. On a card, Arrows move it 20 px (Shift+Arrows 100 px), Alt+Arrows focus the
+  nearest card, Enter goes to its first column header, and PageUp, PageDown, Home and End scroll its table. The view
+  follows focus.
+- On a column header, Left and Right move along the columns and Esc goes back to the card. `C` starts a join and Enter
+  completes it on the column you have moved to (Esc cancels), Delete removes a join (a small menu if there are several), and
+  `J` jumps to the joined column. Moves and joins are announced. The keys work with the single-key shortcuts off and never
+  fire while you type.
+- Windows High Contrast and "increase contrast" are followed even with the switch off.
+
+Alt+Left is also the browser's Back key. sideview cancels it for the jump, but this has not yet been checked in Edge or in
+RStudio. If it takes you back in your setup, the list view still gives you every join and filter by keyboard, and please
+report it.
+
 ## Use a browser, not the RStudio pane
 
 For a screen reader we recommend the gadget in a real browser:

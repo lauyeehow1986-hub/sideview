@@ -1,3 +1,55 @@
+# sideview 0.9.0 (development)
+
+Accessible canvas: one switch that makes the canvas itself usable by keyboard and at low vision. Off by default; with it
+off the canvas is unchanged. Checked with automated WCAG tests (axe, switch on and off) and real-browser keyboard tests;
+a manual pass (Windows Magnifier at 200% and 400%, High Contrast, Edge, RStudio dialog and Viewer, Alt+Arrow card jumps) found no problems. The release number is decided at
+merge time.
+
+## Accessible canvas switch
+
+* Switching it on arranges the cards when the larger text makes them overlap; switching it off puts every card you have not moved since back where it was.
+* `sideview()`, `sideview_ui()` and `sideviewUI()` take `access = FALSE`, set for a session by
+  `options(sideview.access = TRUE)`. The widget has no `access` argument: use
+  `sideview_widget(..., options = list(access = TRUE))`, or the same option, which `sideview_widget()` and
+  `save_sideview()` also follow. It sets the starting state only: the `?` dialog has an "Accessible canvas" switch beside
+  the shortcuts switch, and the browser remembers the choice (`localStorage` key `sideview.access`), which wins over R.
+  Each canvas reads its state once when it starts, so switching one of two canvases on a page leaves the other as it is
+  until the next load. The container carries `data-sv-access` and the class `sv-access` while on. The choice is not part
+  of workspace state.
+* Workspace state saved with the switch on keeps the default card sizes (the switch only enlarges cards on screen), so
+  opening it with the switch off gives the same layout. A card the user resized is saved with an optional
+  `user_sized: true` (no schema bump) and keeps its size when the state is opened with the switch on.
+* Switching off never leaves focus on a header or a card body that has lost its Tab stop: focus goes to the canvas, also
+  when the switch is turned off in the `?` dialog.
+
+## Low vision
+
+* With the switch on the zoom never goes below 100% (wheel, `-`, `0`, Fit all and a restored view are all clamped). Turning
+  it on below 100% zooms to 100% around the focused card. Text is at least 16 px, every control is at least 24 by 24 px on
+  screen, the focus ring is 3 px, and a high-contrast colour set (text 7:1, lines and ports 4.5:1) replaces the theme
+  colours. Splines are 3 px wide with one of six dash patterns (butt caps, so the gaps stay open) and an arrowhead, so
+  crossing joins can be told apart without colour; suggested joins end in a hollow marker. Badges that used only colour (CDISC, key-check state,
+  discrepancies) carry text.
+* Windows High Contrast (`forced-colors: active`) and `prefers-contrast: more` are followed even with the switch off: system
+  colours for splines, ports, borders and the focus ring, stronger borders under more contrast.
+* One change applies with the switch off too: the key names in the search dialog's hint (`.sideview-search-hint kbd`) now
+  use the text colour (`--sv-text`) rather than the hint's muted colour, for contrast.
+* The axe matrix now also runs with the switch on (light and dark, three sizes, canvas, drawer tabs, AI bar, filter popover,
+  `?` and search dialogs) with no accepted rules, so `target-size` passes there. The default (switch off) canvas keeps its
+  `target-size` exemption: its buttons are 24 px in CSS but the fit zoom shrinks them on screen.
+
+## Keyboard on the canvas
+
+* With the switch on, each card is a Tab stop (reading order). Inside it Tab reaches the card's buttons, one roving column
+  header and the table body (a region named "<name> rows", for scrolling with the keys below), then the next card,
+  and the view follows focus so the item is never under the drawer, AI bar or minimap. On a card: Arrows move it 20 px,
+  Shift+Arrows 100 px (one `sideview_card_moved` per pause, announced "AE moved."), Alt+Arrows focus the nearest card,
+  Enter goes to the first header, PageUp/PageDown/Home/End scroll the table. On a column header: Left/Right, Esc, `C` to
+  start connecting (Enter completes the join as a click does: one `column_mapped`, one undoable step), Delete to remove a
+  join (a menu when there are several), `J` to jump to the joined column. These keys work with the shortcuts switch off and
+  never fire while typing. They are listed in the `?` dialog while the switch is on.
+* If Alt+Left navigates away in a host, the jump moves to Ctrl+Alt+Arrows (`JUMP_MODS` in `sv-access.js`).
+
 # sideview 0.8.0
 
 Text-first accessibility: a list view that reads top to bottom, results printed as plain sentences, live announcements and

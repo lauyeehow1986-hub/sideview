@@ -16,6 +16,7 @@ sideview(
   state = NULL,
   cdisc = "auto",
   view = getOption("sideview.view", "canvas"),
+  access = getOption("sideview.access", FALSE),
   env = parent.frame(),
   run = interactive()
 )
@@ -79,6 +80,12 @@ sideview(
   The default is `getOption("sideview.view", "canvas")`. A saved
   workspace (`state`) that records a view wins over this argument; a
   state without one leaves it as it is.
+
+- access:
+
+  `TRUE` starts with the Accessible canvas switch on. The default is
+  `getOption("sideview.access", FALSE)`; the switch in the `?` list is
+  remembered in the browser and wins.
 
 - env:
 
@@ -178,6 +185,12 @@ Double-click a card title, a minimap rectangle or a search result to
 zoom to that card.
 
 ## Options
+
+- `sideview.access`:
+
+  `TRUE` starts with the Accessible canvas switch on (default `FALSE`).
+  It is the default only: the switch in the `?` list is remembered in
+  the browser and wins.
 
 - `sideview.shortcuts`:
 

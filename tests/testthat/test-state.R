@@ -284,6 +284,23 @@ test_that("sv_state_json keeps nulls, one-element arrays and full precision", {
   expect_error(sv_state_from_json(""), "expected JSON text")
 })
 
+test_that("a card's optional user_sized flag survives JSON and a file round trip", {
+  js <- paste0('{"version":"0.3.0","canvas":{"zoom":1,"pan_x":0,"pan_y":0},"cards":[',
+               '{"id":"c1","name":"a","x":0,"y":0,"width":500,"height":300,"minimized":false,"sorts":[],"filters":[],"user_sized":true},',
+               '{"id":"c2","name":"b","x":0,"y":0,"width":640,"height":427,"minimized":false,"sorts":[],"filters":[]}],',
+               '"connections":[],"pipeline":{"code":"","active_tab":"pipeline"}}')
+  st <- sv_state_from_json(js)
+  expect_true(st$cards[[1]]$user_sized)
+  expect_null(st$cards[[2]]$user_sized)
+  out <- sv_state_json(st)
+  expect_match(out, '"user_sized":true', fixed = TRUE)
+  expect_equal(lengths(regmatches(out, gregexpr("user_sized", out, fixed = TRUE))), 1)
+  tf <- tempfile(fileext = ".json")
+  on.exit(unlink(tf), add = TRUE)
+  sv_save_state(st, tf)
+  expect_identical(sv_state_json(sv_load_state(tf)), out)
+})
+
 test_that("sv_as_state accepts NULL, a state, a list or a file path", {
   expect_null(sv_as_state(NULL))
   st <- sv_as_state(list(version = "0.3.0", cards = list()))

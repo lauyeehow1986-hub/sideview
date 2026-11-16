@@ -17,8 +17,51 @@ sv_css_block <- function(css, selector) {
   body <- lines[(start + 1):(end - 1)]
   body <- body[grepl("^\\s*--sv-[a-z0-9-]+\\s*:", body)]
   vals <- trimws(sub(";\\s*$", "", sub("^[^:]+:", "", body)))
+  # The access blocks mark every token !important (they beat inline theme = overrides).
+  vals <- trimws(sub("\\s*!important$", "", vals))
   stats::setNames(vals, trimws(sub(":.*$", "", body)))
 }
+
+sv_access_selectors <- c(".sideview-container.sv-access", ".sideview-container.sv-access.sv-theme-dark",
+                         ".sideview-container.sv-access.sv-theme-auto")
+
+# The token maps the Accessible canvas sees: light <- access, light <- dark <- access <- access-dark.
+sv_access_themes <- function(css = sv_css_text()) {
+  over <- function(base, top) c(top, base[setdiff(names(base), names(top))])
+  light <- sv_css_block(css, ".sideview-container")
+  dark <- sv_css_block(css, ".sideview-container.sv-theme-dark")
+  access <- sv_css_block(css, sv_access_selectors[1])
+  access_dark <- sv_css_block(css, sv_access_selectors[2])
+  list(light = over(light, access), dark = over(over(over(light, dark), access), access_dark))
+}
+
+# Text pairs the theme tests check (AA by default, 7:1 with the Accessible canvas).
+sv_text_pairs <- list(
+  c("--sv-text", "--sv-surface"),
+  c("--sv-text", "--sv-canvas-bg"),
+  c("--sv-text", "--sv-th-bg"),
+  c("--sv-text", "--sv-row-hover"),
+  c("--sv-text-muted", "--sv-surface"),
+  c("--sv-text-muted", "--sv-surface-secondary"),
+  c("--sv-text-muted", "--sv-th-bg"),
+  c("--sv-text-inverse", "--sv-primary"),
+  c("--sv-text-inverse", "--sv-primary-hover"),
+  c("--sv-primary-text", "--sv-surface"),
+  c("--sv-primary-text", "--sv-primary-subtle"),
+  c("--sv-primary-text", "--sv-surface-secondary"),
+  c("--sv-danger-text", "--sv-surface"),
+  c("--sv-success-btn-text", "--sv-success-btn-bg"),
+  c("--sv-success-btn-text", "--sv-success-btn-hover"),
+  c("--sv-badge-type-text", "--sv-badge-type-bg"),
+  c("--sv-cat-text", "--sv-cat-bg"),
+  c("--sv-na-text", "--sv-na-bg"),
+  c("--sv-na-high-text", "--sv-na-high-bg"),
+  c("--sv-code-text", "--sv-code-bg"),
+  c("--sv-tooltip-text", "--sv-tooltip-bg"),
+  c("--sv-cdisc-sdtm-text", "--sv-cdisc-sdtm"),
+  c("--sv-cdisc-send-text", "--sv-cdisc-send"),
+  c("--sv-cdisc-adam-text", "--sv-cdisc-adam")
+)
 
 sv_parse_colour <- function(x) {
   x <- trimws(x)
@@ -76,6 +119,56 @@ test_that("dark tokens override light ones only, and auto mirrors dark", {
   expect_match(css, "@media (prefers-color-scheme: dark)", fixed = TRUE)
 })
 
+test_that("access tokens override existing tokens only, and auto mirrors dark", {
+  css <- sv_css_text()
+  light <- sv_css_block(css, ".sideview-container")
+  access <- sv_css_block(css, sv_access_selectors[1])
+  access_dark <- sv_css_block(css, sv_access_selectors[2])
+  access_auto <- sv_css_block(css, sv_access_selectors[3])
+  expect_gt(length(access), 40)
+  expect_gt(length(access_dark), 40)
+  expect_identical(setdiff(names(access), names(light)), character(0))
+  expect_identical(setdiff(names(access_dark), names(light)), character(0))
+  expect_identical(access_auto, access_dark)
+  # The access dark block sits inside the prefers-color-scheme media query.
+  lines <- trimws(strsplit(css, "\n", fixed = TRUE)[[1]])
+  at <- which(lines == paste0(sv_access_selectors[3], " {"))
+  expect_length(at, 1)
+  media <- max(which(lines[seq_len(at)] == "@media (prefers-color-scheme: dark) {"))
+  expect_false(any(lines[(media + 1):(at - 1)] == "}"))
+  # Every access token is !important, so it beats the inline theme = overrides.
+  for (sel in sv_access_selectors) {
+    raw <- strsplit(css, "\n", fixed = TRUE)[[1]]
+    start <- which(trimws(raw) == paste0(sel, " {"))[1]
+    end <- start + which(trimws(raw[(start + 1):length(raw)]) == "}")[1]
+    decl <- raw[(start + 1):(end - 1)]
+    decl <- decl[grepl(":", decl)]
+    expect_true(all(grepl("!important;\\s*$", decl)), label = paste(sel, "declarations are !important"))
+  }
+  # An access colour never refers to a theme = variant (--sv-primary-text-light etc.).
+  expect_false(any(grepl("var\\(", c(access, access_dark))))
+})
+
+test_that("access text meets 7:1 and non-text 4.5:1, light and dark", {
+  th <- sv_access_themes()
+  non_text <- c("--sv-connector-color", "--sv-connector-hover", "--sv-port", "--sv-border", "--sv-border-light",
+                "--sv-focus-ring")
+  # every background a line, port, border or focus ring sits on (cards, headers, hovered rows, panels)
+  non_text_bg <- c("--sv-surface", "--sv-canvas-bg", "--sv-card-bg", "--sv-th-bg", "--sv-surface-secondary",
+                   "--sv-surface-tertiary", "--sv-row-hover")
+  for (theme in names(th)) {
+    t <- th[[theme]]
+    for (p in sv_text_pairs) {
+      ratio <- sv_contrast(t[[p[1]]], t[[p[2]]], under = t[["--sv-surface"]])
+      expect_true(ratio >= 7, label = sprintf("access %s: %s on %s = %.2f", theme, p[1], p[2], ratio))
+    }
+    for (fg in non_text) for (bg in non_text_bg) {
+      ratio <- sv_contrast(t[[fg]], t[[bg]], under = t[["--sv-surface"]])
+      expect_true(ratio >= 4.5, label = sprintf("access %s: %s on %s = %.2f", theme, fg, bg, ratio))
+    }
+  }
+})
+
 test_that("CSS rules use tokens rather than hard-coded colours", {
   css <- sv_css_text()
   lines <- strsplit(css, "\n", fixed = TRUE)[[1]]
@@ -92,32 +185,7 @@ test_that("text colours meet WCAG AA (4.5:1) in light and dark themes", {
   dark <- c(sv_css_block(css, ".sideview-container.sv-theme-dark"))
   dark <- c(dark, light[setdiff(names(light), names(dark))])
 
-  pairs <- list(
-    c("--sv-text", "--sv-surface"),
-    c("--sv-text", "--sv-canvas-bg"),
-    c("--sv-text", "--sv-th-bg"),
-    c("--sv-text", "--sv-row-hover"),
-    c("--sv-text-muted", "--sv-surface"),
-    c("--sv-text-muted", "--sv-surface-secondary"),
-    c("--sv-text-muted", "--sv-th-bg"),
-    c("--sv-text-inverse", "--sv-primary"),
-    c("--sv-text-inverse", "--sv-primary-hover"),
-    c("--sv-primary-text", "--sv-surface"),
-    c("--sv-primary-text", "--sv-primary-subtle"),
-    c("--sv-primary-text", "--sv-surface-secondary"),
-    c("--sv-danger-text", "--sv-surface"),
-    c("--sv-success-btn-text", "--sv-success-btn-bg"),
-    c("--sv-success-btn-text", "--sv-success-btn-hover"),
-    c("--sv-badge-type-text", "--sv-badge-type-bg"),
-    c("--sv-cat-text", "--sv-cat-bg"),
-    c("--sv-na-text", "--sv-na-bg"),
-    c("--sv-na-high-text", "--sv-na-high-bg"),
-    c("--sv-code-text", "--sv-code-bg"),
-    c("--sv-tooltip-text", "--sv-tooltip-bg"),
-    c("--sv-cdisc-sdtm-text", "--sv-cdisc-sdtm"),
-    c("--sv-cdisc-send-text", "--sv-cdisc-send"),
-    c("--sv-cdisc-adam-text", "--sv-cdisc-adam")
-  )
+  pairs <- sv_text_pairs
   for (theme in list(list(name = "light", t = light), list(name = "dark", t = dark))) {
     for (p in pairs) {
       ratio <- sv_contrast(theme$t[[p[1]]], theme$t[[p[2]]], under = theme$t[["--sv-surface"]])

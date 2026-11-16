@@ -275,6 +275,267 @@
   }
 }
 
+/* Accessible canvas (sv-access): a high-contrast token set, text >= 7:1 and splines, borders,
+   ports and the focus ring >= 4.5:1 (test-theme.R). Every token is !important so it beats the
+   inline --sv-* overrides from theme = ; the light/dark mode still follows the theme class.
+   The dark block and the auto block inside the media query are kept equal. */
+.sideview-container.sv-access {
+  --sv-canvas-bg: #ffffff !important;
+  --sv-canvas-grid-dot: #94a3b8 !important;
+  --sv-surface: #ffffff !important;
+  --sv-card-bg: #ffffff !important;
+  --sv-surface-glass: #ffffff !important;
+  --sv-surface-secondary: #f1f5f9 !important;
+  --sv-surface-tertiary: #e2e8f0 !important;
+  --sv-th-bg: #f1f5f9 !important;
+  --sv-row-hover: #e2e8f0 !important;
+  --sv-border: #475569 !important;
+  --sv-border-light: #526075 !important;
+  --sv-border-focus: #1d4ed8 !important;
+  --sv-focus-ring: #1d4ed8 !important;
+  --sv-text: #0b1220 !important;
+  --sv-text-muted: #334155 !important;
+  --sv-text-inverse: #ffffff !important;
+  --sv-primary: #1e40af !important;
+  --sv-primary-hover: #1e3a8a !important;
+  --sv-primary-text: #1e40af !important;
+  --sv-primary-subtle: #eff6ff !important;
+  --sv-primary-ring: rgba(30, 64, 175, 0.4) !important;
+  --sv-primary-tint: rgba(30, 64, 175, 0.12) !important;
+  --sv-accent: #5b21b6 !important;
+  --sv-success: #047857 !important;
+  --sv-warning: #b45309 !important;
+  --sv-danger: #b91c1c !important;
+  --sv-danger-text: #991b1b !important;
+  --sv-danger-subtle: rgba(185, 28, 28, 0.08) !important;
+  --sv-danger-border: #b91c1c !important;
+  --sv-warning-text: #78350f !important;
+  --sv-warning-subtle: rgba(180, 83, 9, 0.1) !important;
+  --sv-success-text: #065f46 !important;
+  --sv-success-btn-bg: #065f46 !important;
+  --sv-success-btn-hover: #064e3b !important;
+  --sv-success-btn-text: #ffffff !important;
+  --sv-hover-overlay: rgba(11, 18, 32, 0.08) !important;
+  --sv-badge-type-bg: #dbeafe !important;
+  --sv-badge-type-text: #1e3a8a !important;
+  --sv-cdisc-sdtm: #e0e7ff !important;
+  --sv-cdisc-sdtm-text: #312e81 !important;
+  --sv-cdisc-send: #ccfbf1 !important;
+  --sv-cdisc-send-text: #134e4a !important;
+  --sv-cdisc-adam: #fce7f3 !important;
+  --sv-cdisc-adam-text: #831843 !important;
+  --sv-spark: #1d4ed8 !important;
+  --sv-cat-bg: #f1f5f9 !important;
+  --sv-cat-border: #475569 !important;
+  --sv-cat-bar: #94a3b8 !important;
+  --sv-cat-text: #0b1220 !important;
+  --sv-na-bg: #fef3c7 !important;
+  --sv-na-text: #78350f !important;
+  --sv-na-border: #b45309 !important;
+  --sv-na-high-bg: #fee2e2 !important;
+  --sv-na-high-text: #7f1d1d !important;
+  --sv-na-high-border: #b91c1c !important;
+  --sv-port: #475569 !important;
+  --sv-port-ring: rgba(30, 64, 175, 0.45) !important;
+  --sv-hl-blue: rgba(59, 130, 246, 0.25) !important;
+  --sv-hl-green: rgba(16, 185, 129, 0.25) !important;
+  --sv-hl-amber: rgba(245, 158, 11, 0.25) !important;
+  --sv-hl-rose: rgba(239, 68, 68, 0.25) !important;
+  --sv-hl-purple: rgba(139, 92, 246, 0.25) !important;
+  --sv-col-selected: rgba(30, 64, 175, 0.12) !important;
+  --sv-disc-exact: rgba(16, 185, 129, 0.18) !important;
+  --sv-disc-fuzzy: rgba(245, 158, 11, 0.18) !important;
+  --sv-disc-diff: rgba(239, 68, 68, 0.18) !important;
+  --sv-swatch-blue: #1d4ed8 !important;
+  --sv-swatch-green: #047857 !important;
+  --sv-swatch-amber: #b45309 !important;
+  --sv-swatch-rose: #b91c1c !important;
+  --sv-swatch-purple: #6d28d9 !important;
+  --sv-code-bg: #0b1220 !important;
+  --sv-code-text: #ffffff !important;
+  --sv-tooltip-bg: #0b1220 !important;
+  --sv-tooltip-text: #ffffff !important;
+  --sv-connector-color: #1d4ed8 !important;
+  --sv-connector-hover: #b91c1c !important;
+  --sv-connector-hover-glow: rgba(185, 28, 28, 0.45) !important;
+  --sv-suggested: #1d4ed8 !important;
+  --sv-suggested-hover: #1e3a8a !important;
+  --sv-suggested-glow: rgba(29, 78, 216, 0.5) !important;
+  --sv-scrim: rgba(11, 18, 32, 0.55) !important;
+}
+
+.sideview-container.sv-access.sv-theme-dark {
+  --sv-canvas-bg: #000000 !important;
+  --sv-canvas-grid-dot: #475569 !important;
+  --sv-surface: #0b1220 !important;
+  --sv-card-bg: #0b1220 !important;
+  --sv-surface-glass: #0b1220 !important;
+  --sv-surface-secondary: #172033 !important;
+  --sv-surface-tertiary: #1e293b !important;
+  --sv-th-bg: #172033 !important;
+  --sv-row-hover: #1e293b !important;
+  --sv-border: #94a3b8 !important;
+  --sv-border-light: #8796ab !important;
+  --sv-border-focus: #93c5fd !important;
+  --sv-focus-ring: #fde047 !important;
+  --sv-text: #ffffff !important;
+  --sv-text-muted: #cbd5e1 !important;
+  --sv-text-inverse: #000000 !important;
+  --sv-primary: #93c5fd !important;
+  --sv-primary-hover: #bfdbfe !important;
+  --sv-primary-text: #bfdbfe !important;
+  --sv-primary-subtle: rgba(147, 197, 253, 0.14) !important;
+  --sv-primary-ring: rgba(147, 197, 253, 0.45) !important;
+  --sv-primary-tint: rgba(147, 197, 253, 0.2) !important;
+  --sv-accent: #c4b5fd !important;
+  --sv-success: #34d399 !important;
+  --sv-warning: #fbbf24 !important;
+  --sv-danger: #f87171 !important;
+  --sv-danger-text: #fca5a5 !important;
+  --sv-danger-subtle: rgba(248, 113, 113, 0.14) !important;
+  --sv-danger-border: #f87171 !important;
+  --sv-warning-text: #fcd34d !important;
+  --sv-warning-subtle: rgba(251, 191, 36, 0.14) !important;
+  --sv-success-text: #6ee7b7 !important;
+  --sv-success-btn-bg: #6ee7b7 !important;
+  --sv-success-btn-hover: #a7f3d0 !important;
+  --sv-success-btn-text: #000000 !important;
+  --sv-hover-overlay: rgba(255, 255, 255, 0.12) !important;
+  --sv-badge-type-bg: #172554 !important;
+  --sv-badge-type-text: #dbeafe !important;
+  --sv-cdisc-sdtm: #1e1b4b !important;
+  --sv-cdisc-sdtm-text: #e0e7ff !important;
+  --sv-cdisc-send: #042f2e !important;
+  --sv-cdisc-send-text: #ccfbf1 !important;
+  --sv-cdisc-adam: #500724 !important;
+  --sv-cdisc-adam-text: #fce7f3 !important;
+  --sv-spark: #60a5fa !important;
+  --sv-cat-bg: #000000 !important;
+  --sv-cat-border: #94a3b8 !important;
+  --sv-cat-bar: #475569 !important;
+  --sv-cat-text: #ffffff !important;
+  --sv-na-bg: #451a03 !important;
+  --sv-na-text: #fde68a !important;
+  --sv-na-border: #f59e0b !important;
+  --sv-na-high-bg: #450a0a !important;
+  --sv-na-high-text: #fecaca !important;
+  --sv-na-high-border: #f87171 !important;
+  --sv-port: #94a3b8 !important;
+  --sv-port-ring: rgba(147, 197, 253, 0.5) !important;
+  --sv-hl-blue: rgba(59, 130, 246, 0.35) !important;
+  --sv-hl-green: rgba(16, 185, 129, 0.32) !important;
+  --sv-hl-amber: rgba(245, 158, 11, 0.32) !important;
+  --sv-hl-rose: rgba(239, 68, 68, 0.35) !important;
+  --sv-hl-purple: rgba(139, 92, 246, 0.36) !important;
+  --sv-col-selected: rgba(147, 197, 253, 0.16) !important;
+  --sv-disc-exact: rgba(16, 185, 129, 0.22) !important;
+  --sv-disc-fuzzy: rgba(245, 158, 11, 0.22) !important;
+  --sv-disc-diff: rgba(239, 68, 68, 0.25) !important;
+  --sv-swatch-blue: #60a5fa !important;
+  --sv-swatch-green: #34d399 !important;
+  --sv-swatch-amber: #fbbf24 !important;
+  --sv-swatch-rose: #f87171 !important;
+  --sv-swatch-purple: #a78bfa !important;
+  --sv-code-bg: #000000 !important;
+  --sv-code-text: #ffffff !important;
+  --sv-tooltip-bg: #ffffff !important;
+  --sv-tooltip-text: #000000 !important;
+  --sv-connector-color: #93c5fd !important;
+  --sv-connector-hover: #fca5a5 !important;
+  --sv-connector-hover-glow: rgba(252, 165, 165, 0.5) !important;
+  --sv-suggested: #93c5fd !important;
+  --sv-suggested-hover: #bfdbfe !important;
+  --sv-suggested-glow: rgba(147, 197, 253, 0.55) !important;
+  --sv-scrim: rgba(0, 0, 0, 0.7) !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  .sideview-container.sv-access.sv-theme-auto {
+    --sv-canvas-bg: #000000 !important;
+    --sv-canvas-grid-dot: #475569 !important;
+    --sv-surface: #0b1220 !important;
+    --sv-card-bg: #0b1220 !important;
+    --sv-surface-glass: #0b1220 !important;
+    --sv-surface-secondary: #172033 !important;
+    --sv-surface-tertiary: #1e293b !important;
+    --sv-th-bg: #172033 !important;
+    --sv-row-hover: #1e293b !important;
+    --sv-border: #94a3b8 !important;
+    --sv-border-light: #8796ab !important;
+    --sv-border-focus: #93c5fd !important;
+    --sv-focus-ring: #fde047 !important;
+    --sv-text: #ffffff !important;
+    --sv-text-muted: #cbd5e1 !important;
+    --sv-text-inverse: #000000 !important;
+    --sv-primary: #93c5fd !important;
+    --sv-primary-hover: #bfdbfe !important;
+    --sv-primary-text: #bfdbfe !important;
+    --sv-primary-subtle: rgba(147, 197, 253, 0.14) !important;
+    --sv-primary-ring: rgba(147, 197, 253, 0.45) !important;
+    --sv-primary-tint: rgba(147, 197, 253, 0.2) !important;
+    --sv-accent: #c4b5fd !important;
+    --sv-success: #34d399 !important;
+    --sv-warning: #fbbf24 !important;
+    --sv-danger: #f87171 !important;
+    --sv-danger-text: #fca5a5 !important;
+    --sv-danger-subtle: rgba(248, 113, 113, 0.14) !important;
+    --sv-danger-border: #f87171 !important;
+    --sv-warning-text: #fcd34d !important;
+    --sv-warning-subtle: rgba(251, 191, 36, 0.14) !important;
+    --sv-success-text: #6ee7b7 !important;
+    --sv-success-btn-bg: #6ee7b7 !important;
+    --sv-success-btn-hover: #a7f3d0 !important;
+    --sv-success-btn-text: #000000 !important;
+    --sv-hover-overlay: rgba(255, 255, 255, 0.12) !important;
+    --sv-badge-type-bg: #172554 !important;
+    --sv-badge-type-text: #dbeafe !important;
+    --sv-cdisc-sdtm: #1e1b4b !important;
+    --sv-cdisc-sdtm-text: #e0e7ff !important;
+    --sv-cdisc-send: #042f2e !important;
+    --sv-cdisc-send-text: #ccfbf1 !important;
+    --sv-cdisc-adam: #500724 !important;
+    --sv-cdisc-adam-text: #fce7f3 !important;
+    --sv-spark: #60a5fa !important;
+    --sv-cat-bg: #000000 !important;
+    --sv-cat-border: #94a3b8 !important;
+    --sv-cat-bar: #475569 !important;
+    --sv-cat-text: #ffffff !important;
+    --sv-na-bg: #451a03 !important;
+    --sv-na-text: #fde68a !important;
+    --sv-na-border: #f59e0b !important;
+    --sv-na-high-bg: #450a0a !important;
+    --sv-na-high-text: #fecaca !important;
+    --sv-na-high-border: #f87171 !important;
+    --sv-port: #94a3b8 !important;
+    --sv-port-ring: rgba(147, 197, 253, 0.5) !important;
+    --sv-hl-blue: rgba(59, 130, 246, 0.35) !important;
+    --sv-hl-green: rgba(16, 185, 129, 0.32) !important;
+    --sv-hl-amber: rgba(245, 158, 11, 0.32) !important;
+    --sv-hl-rose: rgba(239, 68, 68, 0.35) !important;
+    --sv-hl-purple: rgba(139, 92, 246, 0.36) !important;
+    --sv-col-selected: rgba(147, 197, 253, 0.16) !important;
+    --sv-disc-exact: rgba(16, 185, 129, 0.22) !important;
+    --sv-disc-fuzzy: rgba(245, 158, 11, 0.22) !important;
+    --sv-disc-diff: rgba(239, 68, 68, 0.25) !important;
+    --sv-swatch-blue: #60a5fa !important;
+    --sv-swatch-green: #34d399 !important;
+    --sv-swatch-amber: #fbbf24 !important;
+    --sv-swatch-rose: #f87171 !important;
+    --sv-swatch-purple: #a78bfa !important;
+    --sv-code-bg: #000000 !important;
+    --sv-code-text: #ffffff !important;
+    --sv-tooltip-bg: #ffffff !important;
+    --sv-tooltip-text: #000000 !important;
+    --sv-connector-color: #93c5fd !important;
+    --sv-connector-hover: #fca5a5 !important;
+    --sv-connector-hover-glow: rgba(252, 165, 165, 0.5) !important;
+    --sv-suggested: #93c5fd !important;
+    --sv-suggested-hover: #bfdbfe !important;
+    --sv-suggested-glow: rgba(147, 197, 253, 0.55) !important;
+    --sv-scrim: rgba(0, 0, 0, 0.7) !important;
+  }
+}
+
 /* Full-window page rules apply only to the gadget page (html.sv-standalone),
    never to an R Markdown / Quarto page that embeds the widget. */
 html.sv-standalone,
@@ -2621,6 +2882,17 @@ html.sv-standalone body {
   color: var(--sv-text-muted);
 }
 
+.sideview-container .sideview-shortcuts-sub {
+  margin: 14px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-shortcuts [data-sv-access-keys] dt {
+  white-space: normal;
+}
+
 .sideview-container .sideview-shortcuts kbd {
   display: inline-block;
   min-width: 20px;
@@ -2833,6 +3105,7 @@ html.sv-standalone body {
   padding: 0 4px;
   font-family: var(--sv-font-mono);
   font-size: 10px;
+  color: var(--sv-text);
   background: var(--sv-surface-secondary);
   border: 1px solid var(--sv-border);
   border-radius: var(--sv-radius-sm);
@@ -3349,4 +3622,326 @@ html.sv-standalone body {
 .sideview-container .sideview-listview .sideview-drawer-actions {
   border: 1px solid var(--sv-border);
   border-radius: var(--sv-radius);
+}
+
+/* ---- Accessible canvas (sv-access): low-vision layout ---------------------
+   Text >= 16px, every control >= 24 x 24 px, a 3px focus ring, roomier rows,
+   and a text or shape cue on every badge that otherwise differs by colour only.
+   Nothing here applies while the switch is off. */
+.sideview-container.sv-access,
+.sideview-container.sv-access * {
+  font-size: 16px !important;
+}
+
+.sideview-container.sv-access .sideview-lv-heading,
+.sideview-container.sv-access .sideview-ai-icon {
+  font-size: 20px !important;
+}
+
+.sideview-container.sv-access .sideview-virtual-spacer td {
+  font-size: 0 !important;
+  line-height: 0 !important;
+}
+
+.sideview-container.sv-access :focus-visible {
+  outline: 3px solid var(--sv-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Fixed line boxes sized for 11-12px text grow with it. */
+.sideview-container.sv-access .sideview-table thead .sv-label-row td {
+  height: auto;
+  line-height: 1.35;
+}
+
+.sideview-container.sv-access .sideview-cat-label {
+  line-height: 1.2;
+}
+
+.sideview-container.sv-access .sideview-na-badge {
+  line-height: 1.2;
+}
+
+/* Rows: 36px (VirtualTable.setRowHeight keeps the scroll maths in step). */
+.sideview-container.sv-access .sideview-table-virtual tbody tr,
+.sideview-container.sv-access .sideview-table.sideview-table-virtual tbody tr,
+.sideview-container.sv-access .sideview-table-virtual tbody td,
+.sideview-container.sv-access .sideview-table.sideview-table-virtual tbody td {
+  height: 36px;
+}
+
+.sideview-container.sv-access .sideview-table-virtual thead th {
+  width: 200px;
+}
+
+/* 24 x 24 targets. */
+.sideview-container.sv-access button,
+.sideview-container.sv-access [role="switch"],
+.sideview-container.sv-access select,
+.sideview-container.sv-access input:not([type="checkbox"]):not([type="radio"]) {
+  min-width: 24px;
+  min-height: 24px;
+  box-sizing: border-box;
+}
+
+.sideview-container.sv-access input[type="checkbox"],
+.sideview-container.sv-access input[type="radio"] {
+  width: 24px;
+  height: 24px;
+}
+
+.sideview-container.sv-access a[href] {
+  display: inline-block;
+  min-height: 24px;
+  min-width: 24px;
+}
+
+.sideview-container.sv-access .sideview-col-port {
+  width: 24px;
+  height: 24px;
+}
+
+.sideview-container.sv-access .sideview-drawer-tabs {
+  flex-wrap: wrap;
+}
+
+.sideview-container.sv-access .sideview-drawer-content {
+  overflow-y: auto;
+}
+
+/* Cards grow with their text unless the user sized them (data-sv-user-sized). */
+.sideview-container.sv-access .sideview-card.sv-sized:not([data-sv-user-sized]):not(.is-maximized):not(.is-minimized) {
+  width: auto !important;
+  height: auto !important;
+  max-width: 760px;
+}
+
+.sideview-container.sv-access .sideview-card.sv-sized:not([data-sv-user-sized]) .sideview-card-body {
+  max-height: 480px;
+}
+
+/* Badges that differ by colour alone also say what they are. */
+.sideview-container.sv-access .sideview-badge-cdisc.sv-cdisc-sdtm::before { content: "SDTM: "; }
+.sideview-container.sv-access .sideview-badge-cdisc.sv-cdisc-send::before { content: "SEND: "; }
+.sideview-container.sv-access .sideview-badge-cdisc.sv-cdisc-adam::before { content: "ADaM: "; }
+
+.sideview-container.sv-access .sideview-joincheck.is-warn::before,
+.sideview-container.sv-access .sideview-joincheck.is-error::before {
+  display: block;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.sideview-container.sv-access .sideview-joincheck.is-warn::before { content: "Warning"; color: var(--sv-warning-text); }
+.sideview-container.sv-access .sideview-joincheck.is-error::before { content: "Error"; color: var(--sv-danger-text); }
+
+.sideview-container.sv-access .sideview-discrepancy-exact::before,
+.sideview-container.sv-access .sideview-discrepancy-fuzzy::before,
+.sideview-container.sv-access .sideview-discrepancy-diff::before {
+  font-weight: 700;
+  margin-right: 4px;
+}
+.sideview-container.sv-access .sideview-discrepancy-exact::before { content: "="; content: "=" / ""; color: var(--sv-success-text); }
+.sideview-container.sv-access .sideview-discrepancy-fuzzy::before { content: "~"; content: "~" / ""; color: var(--sv-warning-text); }
+.sideview-container.sv-access .sideview-discrepancy-diff::before { content: "!="; content: "!=" / ""; color: var(--sv-danger-text); }
+.sideview-container.sv-access .sideview-discrepancy-diff { border-left-style: double !important; border-left-width: 4px !important; }
+.sideview-container.sv-access .sideview-discrepancy-fuzzy { border-left-style: dashed !important; }
+
+/* Header profiles: room for 16px labels. */
+.sideview-container.sv-access .sideview-cat-profile {
+  width: 96px;
+  height: 24px;
+}
+
+.sideview-container.sv-access .sideview-sparkline {
+  width: 72px;
+  height: 20px;
+}
+
+/* ---- Spline patterns and end markers --------------------------------------
+   Every accepted join carries data-sv-pat: the lowest of 0-5 no live join uses (a key set added
+   in one call shares one), else the live join count mod 6. The patterns and the arrowheads
+   apply under sv-access and forced-colors only; the default canvas keeps its solid splines.
+   Never 6 6 (suggested joins) or 4 4 (the draft line), so the three kinds stay apart.
+   Hover and active change width (5px) and keep the pattern. Patterned paths use butt caps:
+   round caps add half the stroke width at each dash end and close the 4px gaps. */
+.sideview-container .sideview-marker-shape {
+  display: none;
+}
+
+.sideview-container .sideview-marker-solid {
+  fill: var(--sv-connector-color);
+  fill: context-stroke;
+  stroke: none;
+}
+
+.sideview-container .sideview-marker-hollow {
+  fill: var(--sv-canvas-bg);
+  stroke: var(--sv-suggested);
+  stroke: context-stroke;
+  stroke-width: 2px;
+}
+
+.sideview-container.sv-access .sideview-marker-shape {
+  display: inline;
+}
+
+.sideview-container.sv-access .sideview-connector-path[data-sv-pat] { stroke-linecap: butt; }
+.sideview-container.sv-access .sideview-connector-path[data-sv-pat="0"] { stroke-dasharray: none; }
+.sideview-container.sv-access .sideview-connector-path[data-sv-pat="1"] { stroke-dasharray: 12 4; }
+.sideview-container.sv-access .sideview-connector-path[data-sv-pat="2"] { stroke-dasharray: 12 4 2 4; }
+.sideview-container.sv-access .sideview-connector-path[data-sv-pat="3"] { stroke-dasharray: 2 4; }
+.sideview-container.sv-access .sideview-connector-path[data-sv-pat="4"] { stroke-dasharray: 12 4 2 4 2 4; }
+.sideview-container.sv-access .sideview-connector-path[data-sv-pat="5"] { stroke-dasharray: 20 4 6 4; }
+
+/* The active (selected) spline keeps its pattern: no 6 4 dash, no marching. */
+.sideview-container.sv-access .sideview-connector-path.active {
+  animation: none;
+  stroke-width: 5px;
+}
+
+/* ---- Windows High Contrast / forced colours --------------------------------
+   System colours only; the dash patterns and markers apply here too, so joins stay
+   distinguishable when every colour is replaced. */
+@media (forced-colors: active) {
+  .sideview-container .sideview-marker-shape {
+    display: inline;
+  }
+
+  .sideview-container .sideview-marker-solid {
+    fill: CanvasText;
+    fill: context-stroke;
+  }
+
+  .sideview-container .sideview-marker-hollow {
+    fill: Canvas;
+    stroke: CanvasText;
+    stroke: context-stroke;
+  }
+
+  .sideview-container .sideview-connector-path {
+    stroke: CanvasText;
+    stroke-width: 3px;
+  }
+
+  .sideview-container .sideview-connector-path.is-hover,
+  .sideview-container .sideview-connector-path.active {
+    stroke: Highlight;
+    stroke-width: 5px;
+    filter: none;
+  }
+
+  .sideview-container .sideview-connector-path.active {
+    animation: none;
+  }
+
+  .sideview-container .sideview-connector-path[data-sv-pat] { stroke-linecap: butt; }
+  .sideview-container .sideview-connector-path[data-sv-pat="0"] { stroke-dasharray: none; }
+  .sideview-container .sideview-connector-path[data-sv-pat="1"] { stroke-dasharray: 12 4; }
+  .sideview-container .sideview-connector-path[data-sv-pat="2"] { stroke-dasharray: 12 4 2 4; }
+  .sideview-container .sideview-connector-path[data-sv-pat="3"] { stroke-dasharray: 2 4; }
+  .sideview-container .sideview-connector-path[data-sv-pat="4"] { stroke-dasharray: 12 4 2 4 2 4; }
+  .sideview-container .sideview-connector-path[data-sv-pat="5"] { stroke-dasharray: 20 4 6 4; }
+
+  .sideview-container .sideview-col-port {
+    background: ButtonFace;
+    border: 2px solid ButtonText;
+    box-shadow: none;
+  }
+
+  .sideview-container .sideview-col-port:hover,
+  .sideview-container .sideview-col-port.connecting {
+    background: Highlight;
+    border-color: ButtonText;
+    box-shadow: none;
+  }
+
+  .sideview-container .sideview-card {
+    border: 1px solid CanvasText;
+  }
+
+  .sideview-container :focus-visible {
+    outline: 3px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+
+/* ---- prefers-contrast: more -------------------------------------------------
+   Borders, ports, splines and the focus ring take the stronger values of the access tokens.
+   No layout, text size or zoom change. The dark and auto blocks are kept equal. */
+@media (prefers-contrast: more) {
+  .sideview-container {
+    --sv-border: #475569;
+    --sv-border-focus: #1d4ed8;
+    --sv-focus-ring: #1d4ed8;
+    --sv-port: #475569;
+    --sv-connector-color: #1d4ed8;
+  }
+
+  .sideview-container.sv-theme-dark {
+    --sv-border: #94a3b8;
+    --sv-border-focus: #93c5fd;
+    --sv-focus-ring: #fde047;
+    --sv-port: #94a3b8;
+    --sv-connector-color: #93c5fd;
+  }
+
+  .sideview-container .sideview-col-port {
+    border-color: var(--sv-border);
+  }
+
+  .sideview-container :focus-visible {
+    outline: 3px solid var(--sv-focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  .sideview-container.sv-theme-auto {
+    --sv-border: #94a3b8;
+    --sv-border-focus: #93c5fd;
+    --sv-focus-ring: #fde047;
+    --sv-port: #94a3b8;
+    --sv-connector-color: #93c5fd;
+  }
+}
+
+/* ---- Accessible canvas: keyboard joins (connect source, join menu) ---- */
+.sideview-container.sv-access th.sv-kb-connect-source {
+  outline: 3px dashed var(--sv-focus-ring);
+  outline-offset: -3px;
+  background: var(--sv-primary-subtle);
+}
+.sideview-container.sv-access .sideview-kb-menu {
+  position: absolute;
+  z-index: 125;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  max-width: 360px;
+  padding: 4px;
+  background: var(--sv-surface);
+  color: var(--sv-text);
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-md);
+  box-shadow: var(--sv-shadow-popover);
+  font-family: var(--sv-font);
+}
+.sideview-container.sv-access .sideview-kb-menu [role="menuitem"] {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--sv-text);
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.sideview-container.sv-access .sideview-kb-menu [role="menuitem"]:hover {
+  background: var(--sv-hover-overlay);
+}
+.sideview-container.sv-access .sideview-kb-menu [role="menuitem"]:focus-visible {
+  background: var(--sv-primary-subtle);
+  color: var(--sv-primary-text);
 }

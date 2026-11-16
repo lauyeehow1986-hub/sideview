@@ -10,7 +10,8 @@ sideviewUI(
   height = "600px",
   title = NULL,
   theme = "auto",
-  view = getOption("sideview.view", "canvas")
+  view = getOption("sideview.view", "canvas"),
+  access = getOption("sideview.access", FALSE)
 )
 
 sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto")
@@ -28,6 +29,10 @@ sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto")
 \code{"list"} (a text-first list of the tables, for keyboard and screen-reader
 use). The default is \code{getOption("sideview.view", "canvas")}. A workspace
 restored later (Open) that records a view switches to it.}
+
+\item{access}{\code{TRUE} starts with the Accessible canvas switch on (default
+\code{getOption("sideview.access", FALSE)}); the switch in the \verb{?} list is remembered in
+the browser and wins.}
 
 \item{cards}{Tables for the canvas: a (named) list as \code{\link[=sideview]{sideview()}} takes, or a
 \strong{reactive} returning one. A reactive is compared with the canvas by name each

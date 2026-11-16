@@ -1,13 +1,81 @@
 # Changelog
 
+## sideview 0.9.0 (development)
+
+Accessible canvas: one switch that makes the canvas itself usable by
+keyboard and at low vision. Off by default; with it off the canvas is
+unchanged. Checked with automated WCAG tests (axe, switch on and off)
+and real-browser keyboard tests; the manual script in
+`plans/2026-11-15-access-manual-script.md` (Windows Magnifier, High
+Contrast, Edge, RStudio dialog and Viewer) has not been run yet, and
+Alt+Arrows is not yet verified in RStudio or Edge. The release number is
+decided at merge time.
+
+### Accessible canvas switch
+
+- [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md),
+  [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md),
+  [`save_sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/save_sideview.md),
+  [`sideview_ui()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_ui.md)
+  and
+  [`sideviewUI()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewUI.md)
+  take `access = FALSE`, set for a session by
+  `options(sideview.access = TRUE)`. It sets the starting state only:
+  the `?` dialog has an “Accessible canvas” switch beside the shortcuts
+  switch, and the browser remembers the choice (`localStorage` key
+  `sideview.access`), which wins over R. The container carries
+  `data-sv-access` and the class `sv-access` while on; the widget takes
+  `options$access`. The choice is not part of workspace state.
+
+### Low vision
+
+- With the switch on the zoom never goes below 100% (wheel, `-`, `0`,
+  Fit all and a restored view are all clamped). Turning it on below 100%
+  zooms to 100% around the focused card. Text is at least 16 px, every
+  control is at least 24 by 24 px on screen, the focus ring is 3 px, and
+  a high-contrast colour set (text 7:1, lines and ports 4.5:1) replaces
+  the theme colours. Splines are 3 px wide with one of six dash patterns
+  and an arrowhead, so crossing joins can be told apart without colour;
+  suggested joins end in a hollow marker. Badges that used only colour
+  (CDISC, key-check state, discrepancies) carry text.
+- Windows High Contrast (`forced-colors: active`) and
+  `prefers-contrast: more` are followed even with the switch off: system
+  colours for splines, ports, borders and the focus ring, stronger
+  borders under more contrast.
+- The axe matrix now also runs with the switch on (light and dark, three
+  sizes, canvas, drawer tabs, AI bar, filter popover, `?` and search
+  dialogs) with no accepted rules, so `target-size` passes there. The
+  default (switch off) canvas keeps its `target-size` exemption: its
+  buttons are 24 px in CSS but the fit zoom shrinks them on screen.
+
+### Keyboard on the canvas
+
+- With the switch on, each card is one Tab stop (reading order), a
+  column header is a roving stop inside the focused card, and the view
+  follows focus so the item is never under the drawer, AI bar or
+  minimap. On a card: Arrows move it 20 px, Shift+Arrows 100 px (one
+  `sideview_card_moved` per pause, announced “AE moved.”), Alt+Arrows
+  focus the nearest card, Enter goes to the first header,
+  PageUp/PageDown/Home/End scroll the table. On a column header:
+  Left/Right, Esc, `C` to start connecting (Enter completes the join as
+  a click does: one `column_mapped`, one undoable step), Delete to
+  remove a join (a menu when there are several), `J` to jump to the
+  joined column. These keys work with the shortcuts switch off and never
+  fire while typing. They are listed in the `?` dialog while the switch
+  is on.
+- If Alt+Left navigates away in a host, the jump moves to
+  Ctrl+Alt+Arrows (`JUMP_MODS` in `sv-access.js`).
+
 ## sideview 0.8.0
 
 Text-first accessibility: a list view that reads top to bottom, results
 printed as plain sentences, live announcements and an accessibility test
 suite. sideview 0.8.0 is checked with automated WCAG tests (axe) and
-real-browser keyboard tests; the NVDA script was run once in Edge with NVDA 2026.2 (all 15 tasks as written; the RStudio dialog and Viewer pane were not covered); not yet tested by blind users. See the new article “Using
-sideview with a screen reader” and the accessibility feedback issue
-template.
+real-browser keyboard tests; the NVDA script was run once in Edge with
+NVDA 2026.2 (all 15 tasks as written; the RStudio dialog and Viewer pane
+were not covered); not yet tested by blind users. See the new article
+“Using sideview with a screen reader” and the accessibility feedback
+issue template.
 
 ### List view: card changes and the keyboard walk
 
@@ -38,8 +106,7 @@ template.
   take `view = "canvas"` (default) or `"list"`, set for a session by
   `options(sideview.view = "list")`. The container carries
   `data-sv-view` and the widget `options$view`. A saved workspace may
-  now carry `view.mode`; an invalid value is dropped. The list view
-  itself arrives in the next changes.
+  now carry `view.mode`; an invalid value is dropped.
 
 ### List view
 
@@ -54,8 +121,7 @@ template.
   view”) and moves focus to the list’s first heading. The single-key
   shortcuts default to off in the list view.
 - `view = "list"` starts in it. A saved workspace now records the view
-  (`view.mode`) and wins over the `view` argument when it is opened. The
-  section contents arrive in the next changes.
+  (`view.mode`) and wins over the `view` argument when it is opened.
 
 ### List view tables
 
@@ -69,7 +135,9 @@ template.
   and filter; a large (lazy) table is read a window at a time from R.
   Sort announces its result; Inspect writes the profile as sentences
   under the column. A table with more than 30 columns starts with its
-  columns closed.
+  columns closed. List view columns no longer state counts taken from
+  the canvas badges on lazy, preview or truncated cards (they come from
+  the 50-row preview); a sampled “~N distinct” is never shown as exact.
 
 ### Table ARIA
 
@@ -863,21 +931,13 @@ file and a Quarto page), plus new features for clinical data work.
 - Initial release of **`sideview`**: Multi-Table 2D Infinite Canvas for
   interactive data exploration, visual field mapping, and LLM-assisted
   Tidyverse code generation.
-
 - Universal S3 normalization engine
   ([`sv_normalize()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_normalize.md))
   supporting `data.frame`, `tibble`,
   [`base::table`](https://rdrr.io/r/base/table.html), `matrix`, `gt`,
   `flextable`, and `htmlwidgets`.
-
 - Standalone self-contained HTML widget export via
   [`save_sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/save_sideview.md).
-
 - Interactive Shiny Gadget and RStudio Addin
   ([`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md),
   [`sideview_addin()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_addin.md)).
-
-- List view columns no longer state counts taken from the canvas badges
-  on lazy, preview or truncated cards (they come from the 50-row
-  preview); a sampled “~N distinct” is never shown as exact. Filter in
-  the list view is `aria-disabled` until the builder exists.

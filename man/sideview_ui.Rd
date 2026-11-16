@@ -10,7 +10,8 @@ sideview_ui(
   gadget = FALSE,
   theme = "auto",
   state = NULL,
-  view = getOption("sideview.view", "canvas")
+  view = getOption("sideview.view", "canvas"),
+  access = getOption("sideview.access", FALSE)
 )
 }
 \arguments{
@@ -27,6 +28,10 @@ or tabular objects to be normalized.}
 \item{state}{Optional saved workspace to restore on load (see \code{\link[=sideview]{sideview()}}).}
 
 \item{view}{Starting view: \code{"canvas"} (default) or \code{"list"} (see \code{\link[=sideview]{sideview()}}).}
+
+\item{access}{\code{TRUE} starts with the Accessible canvas switch on (default
+\code{getOption("sideview.access", FALSE)}); the switch in the \verb{?} list is remembered in
+the browser and wins.}
 }
 \value{
 A \code{shiny.tag.list} UI definition.

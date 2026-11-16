@@ -19,7 +19,11 @@ new_sideview_state(
 
 \item{cards}{List of card state objects (each specifying \code{id}, \code{name}, \code{x}, \code{y},
 \code{width}, \code{height}, \code{minimized}, \code{sorts} and \code{filters}; a sort is
-\code{list(col, dir)} with \code{dir} \code{"asc"} or \code{"desc"}, a filter is \code{list(col, op, val)}).}
+\code{list(col, dir)} with \code{dir} \code{"asc"} or \code{"desc"}, a filter is \code{list(col, op, val)}).
+A card may also carry \code{user_sized = TRUE} (optional, since 0.9.0): the user
+resized it, so it keeps its size with the Accessible canvas on. With the
+switch on, a card the user did not resize is saved at its default (switch
+off) size, not the enlarged one.}
 
 \item{connections}{List of join connection objects (each specifying \code{from_table}, \code{from_col}, \code{to_table}, \code{to_col}, \code{join_type}).}
 

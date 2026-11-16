@@ -280,6 +280,22 @@ function sendToShiny(name, value) {
     };
   };
 
+  // Row height in px (the CSS row height must match); re-renders the rendered window.
+  VirtualTable.prototype.setRowHeight = function (px) {
+    px = Number(px);
+    if (!(px > 0) || px === this.rowHeight) return;
+    // Keep the first visible row: rescale the scroll position by the new row height.
+    var sc = this.scrollContainer;
+    var firstRow = sc ? sc.scrollTop / this.rowHeight : 0;
+    this.rowHeight = px;
+    this.render();
+    if (sc && firstRow > 0) {
+      // after the render, so the spacers already have the new total height
+      sc.scrollTop = firstRow * px;
+      this.render();
+    }
+  };
+
   VirtualTable.prototype.render = function () {
     var totalCount = this.getRowCount();
     // Table ARIA: the rendered window is a slice, so say how big the whole table is. Header = row 1.
@@ -680,8 +696,11 @@ function sendToShiny(name, value) {
     this._blockListeners = [];
   };
 
+  var engineSeqCounter = 0;
+
   function SideviewEngine(containerElement, options) {
     var self = this;
+    this._engSeq = ++engineSeqCounter;
     this.container = typeof containerElement === 'string'
       ? document.querySelector(containerElement)
       : containerElement;
@@ -740,6 +759,9 @@ function sendToShiny(name, value) {
     this.joinCheckStepId = null;
     // Live-region announcements (see announce()); the last 50 messages are kept for tests.
     this.announceLog = [];
+    this._accessSubs = [];
+    // The Accessible canvas state, resolved once here (see accessOn()); only setAccess() changes it.
+    this._access = resolveAccess(this);
     // 'canvas' | 'list' (see setView); the list view is built the first time it is shown.
     this.view = 'canvas';
     this.listView = null;
@@ -780,6 +802,8 @@ function sendToShiny(name, value) {
     this.ensureDrawer();
     hydrateIcons(this.container);
     this.initPanzoom();
+    this.onAccessChange(function (on) { self.applyZoomFloor(on); });
+    this.onAccessChange(function (on) { self.applyAccessLayout(on); });
     this.initEventListeners();
     this.initExistingCards();
 
@@ -801,6 +825,10 @@ function sendToShiny(name, value) {
       if (restoredOut.missing.length) this.showToast(stateSummary(restoredOut), 'warning');
     }
 
+    // The Accessible canvas class, from the stored choice / R default (no announcement at start).
+    if (this.container.classList) this.container.classList.toggle('sv-access', this.accessOn());
+    // The keyboard model of the Accessible canvas (sv-access.js), when that script is loaded.
+    if (typeof global.SideviewAccess === 'function') this.access = new global.SideviewAccess(this);
     this.registerShinyHandlers();
     this.initMinimap();
     this.initLayoutObserver();
@@ -886,6 +914,17 @@ function sendToShiny(name, value) {
   }
 
   // ---- small shared helpers -------------------------------------------------
+
+  // True when el can take focus by itself: any tabindex, or an enabled native control.
+  function canTakeFocus(el) {
+    if (!el || !el.getAttribute) return false;
+    if (el.getAttribute('tabindex') !== null) return true;
+    if (el.disabled) return false;
+    var tag = (el.tagName || '').toLowerCase();
+    if (tag === 'a') return el.hasAttribute('href');
+    return tag === 'button' || tag === 'input' || tag === 'select' || tag === 'textarea' ||
+      el.isContentEditable === true;
+  }
 
   function escapeHtml(value) {
     return String(value == null ? '' : value)
@@ -1187,7 +1226,7 @@ function sendToShiny(name, value) {
       // setView('canvas') runs the deferred layout instead.
       if (self._needsInitialLayout && self.view !== 'list' && self.container.clientWidth > 0) {
         self._needsInitialLayout = false;
-        if (self.arrangeCards(true) && !self._restoredView) self.fitAll({ maxScale: 1, minScale: READABLE_SCALE });
+        if (self.arrangeCards(true) && !self._restoredView) self.fitAll({ maxScale: 1, minScale: Math.max(READABLE_SCALE, self.minScaleNow()) });
         self.scheduleSnapshot();
       }
       self.scheduleConnectorUpdate();
@@ -1318,9 +1357,21 @@ function sendToShiny(name, value) {
     var availH = this.container.clientHeight - top - this.chromeBottom();
     if (availW <= 0 || availH <= 0) return;
     var s = Math.min(availW / Math.max(maxX - minX, 1), availH / Math.max(maxY - minY, 1));
-    var lo = Math.max(opts.minScale || 0, this.options.minScale);
+    var lo = Math.max(opts.minScale || 0, this.minScaleNow());
     var hi = Math.min(opts.maxScale || this.options.maxScale, this.options.maxScale);
     s = Math.min(Math.max(s, lo), hi);
+    var fc = this.accessOn() ? this.focusedCard() : null;
+    if (fc && !fc.classList.contains('is-maximized')) {
+      // keep the focused card where it is on screen while the zoom changes
+      var cr = fc.getBoundingClientRect();
+      var kr = this.container.getBoundingClientRect();
+      pz.zoomToPoint(s, { clientX: cr.left + cr.width / 2, clientY: cr.top + cr.height / 2 });
+      var pn = pz.getPan();
+      var dx = (kr.left + kr.width / 2) - (cr.left + cr.width / 2);
+      var dy = (kr.top + kr.height / 2) - (cr.top + cr.height / 2);
+      pz.pan(pn.x + dx, pn.y + dy);
+      return;
+    }
     pz.zoom(s);
     pz.pan(margin - minX * s, top - minY * s);
   };
@@ -1342,7 +1393,7 @@ function sendToShiny(name, value) {
     var availH = this.container.clientHeight - top - this.chromeBottom();
     if (availW <= 0 || availH <= 0) return false;
     var s = Math.min(availW / w, availH / h);
-    var lo = Math.max(READABLE_SCALE, this.options.minScale);
+    var lo = Math.max(READABLE_SCALE, this.minScaleNow());
     var hi = Math.min(1.5, this.options.maxScale);
     s = Math.min(Math.max(s, lo), hi);
     pz.zoom(s);
@@ -1557,8 +1608,7 @@ function sendToShiny(name, value) {
         existing.parentNode.removeChild(existing);
         var back = this._searchReturnFocus;
         this._searchReturnFocus = null;
-        if (back && back.focus && this.container.contains(back)) back.focus();
-        else { try { this.container.focus({ preventScroll: true }); } catch (e) {} }
+        this.returnFocus(back);
       }
       return false;
     }
@@ -1569,6 +1619,7 @@ function sendToShiny(name, value) {
     }
     if (this.closeActivePopover) this.closeActivePopover();
     this.toggleShortcuts(false);
+    if (this.access) this.access.cancelConnect();
     this._searchReturnFocus = document.activeElement;
     var n = ++searchSeq;
     var listId = 'sv-search-list-' + n;
@@ -1686,6 +1737,12 @@ function sendToShiny(name, value) {
       try { l[0].removeEventListener(l[1], l[2], l[3]); } catch (e) {}
     });
     this._globalListeners = [];
+    if (this.access) { try { this.access.destroy(); } catch (e) {} this.access = null; }
+    this._accessSubs = [];
+    if (this.svg) {
+      var mdefs = this.svg.querySelector('defs.sideview-marker-defs');
+      if (mdefs && mdefs.parentNode) mdefs.parentNode.removeChild(mdefs);
+    }
     if (this._resizeObserver) { this._resizeObserver.disconnect(); this._resizeObserver = null; }
     if (this.panzoom && this.panzoom.destroy) this.panzoom.destroy();
     this.cards.forEach(function (card) {
@@ -1799,6 +1856,34 @@ function sendToShiny(name, value) {
     [['?'], 'Show or hide this list']
   ];
 
+  // Keys of the Accessible canvas, listed only while the switch is on. Kept in sync with sv-access.js.
+  var ACCESS_SHORTCUTS = [
+    [['Arrows'], 'On a card: move it 20 px'],
+    [['Shift+Arrows'], 'On a card: move it 100 px'],
+    [['Alt+Arrows'], 'On a card or column: focus the nearest card in that direction'],
+    [['Enter'], 'On a card: focus its first column header. While connecting: join to the focused column'],
+    [['Left', 'Right'], 'On a column header: previous / next column'],
+    [['Esc'], 'On a column header: back to the card, or cancel connecting'],
+    [['C'], 'On a column header: start connecting from it'],
+    [['Delete'], 'On a column header: remove its join (several: choose from a menu)'],
+    [['J'], 'On a column header: focus the column it is joined to'],
+    [['PageUp', 'PageDown', 'Home', 'End'], 'On a card: scroll its table']
+  ];
+
+  function accessKeysHtml() {
+    return '<h3 class="sideview-shortcuts-sub" data-sv-access-keys-head>Accessible canvas keys</h3><dl data-sv-access-keys>' +
+      ACCESS_SHORTCUTS.map(function (row) {
+        return '<dt>' + row[0].map(function (k) { return '<kbd>' + escapeHtml(k) + '</kbd>'; }).join(' / ') +
+          '</dt><dd>' + escapeHtml(row[1]) + '</dd>';
+      }).join('') + '</dl>';
+  }
+
+  // Show the access key list in an open ? dialog only while the switch is on.
+  SideviewEngine.prototype.renderAccessKeys = function () {
+    var slot = this.container.querySelector('[data-sv-access-keys-slot]');
+    if (slot) slot.innerHTML = this.accessOn() ? accessKeysHtml() : '';
+  };
+
   var shortcutsSeq = 0;
 
   // WCAG 2.1.4: single-key shortcuts can be turned off. Order: the stored choice, then the
@@ -1828,6 +1913,156 @@ function sendToShiny(name, value) {
     return on;
   };
 
+  // The Accessible canvas switch. Resolved once, when the engine is built (resolveAccess): the stored
+  // choice, then this engine's memory (a blocked localStorage), then the R default
+  // (data-sv-access="true" / options.access === true), else off. There is no view fallback.
+  // Only setAccess() changes it afterwards, so another canvas on the page that changes the stored
+  // choice changes this one on its next load, never half-way (class, zoom floor and keys stay together).
+  var ACCESS_KEY = 'sideview.access';
+
+  function resolveAccess(engine) {
+    var stored = null;
+    try { stored = global.localStorage.getItem(ACCESS_KEY); } catch (e) { stored = null; }
+    if (stored === 'on') return true;
+    if (stored === 'off') return false;
+    if (engine._accessMem === true || engine._accessMem === false) return engine._accessMem;
+    var attr = engine.container.getAttribute ? engine.container.getAttribute('data-sv-access') : null;
+    return attr === 'true' || engine.options.access === true;
+  }
+
+  SideviewEngine.prototype.accessOn = function () {
+    if (this._access !== true && this._access !== false) this._access = resolveAccess(this);
+    return this._access;
+  };
+
+  SideviewEngine.prototype.setAccess = function (on) {
+    on = !!on;
+    this._accessMem = on;
+    this._access = on;
+    try { global.localStorage.setItem(ACCESS_KEY, on ? 'on' : 'off'); } catch (e) {}
+    // The focused card's centre before the larger text resizes it: the zoom floor keeps it there.
+    var fc0 = on ? this.focusedCard() : null;
+    var r0 = fc0 ? fc0.getBoundingClientRect() : null;
+    this._accessAnchor = r0 ? { card: fc0, x: r0.left + r0.width / 2, y: r0.top + r0.height / 2 } : null;
+    if (this.container.classList) this.container.classList.toggle('sv-access', on);
+    var arranged = this.accessLayout(on);
+    var sw = this.container.querySelectorAll('[data-sv-access-switch]');
+    for (var i = 0; i < sw.length; i++) sw[i].setAttribute('aria-checked', on ? 'true' : 'false');
+    this.announce(on ? 'Accessible canvas on.' + (arranged ? ' Cards were arranged so they do not overlap.' : '') : 'Accessible canvas off.');
+    this.renderAccessKeys();
+    var subs = this._accessSubs.slice();
+    for (var j = 0; j < subs.length; j++) {
+      try { subs[j](on); } catch (e) {}
+    }
+    return on;
+  };
+
+  // The larger cards of the Accessible canvas can overlap at their saved positions. Switching on, if any two
+  // overlap, the old positions are kept and the cards are arranged; switching off puts back every card the user
+  // has not moved since, so the default layout returns exactly.
+  SideviewEngine.prototype.accessLayout = function (on) {
+    var self = this;
+    if (on) {
+      var els = [];
+      this.cards.forEach(function (meta) {
+        var el = meta.element;
+        if (el && !el.classList.contains('is-maximized') && !el.classList.contains('is-minimized')) els.push(meta);
+      });
+      var box = function (m) {
+        var x = parseFloat(m.element.style.left) || 0, y = parseFloat(m.element.style.top) || 0;
+        return { x: x, y: y, r: x + m.element.offsetWidth, b: y + m.element.offsetHeight };
+      };
+      var overlap = false;
+      for (var i = 0; i < els.length && !overlap; i++) {
+        var a = box(els[i]);
+        for (var j = i + 1; j < els.length; j++) {
+          var c = box(els[j]);
+          if (a.x < c.r && c.x < a.r && a.y < c.b && c.y < a.b) { overlap = true; break; }
+        }
+      }
+      if (!overlap) { this._preAccessLayout = null; return false; }
+      var saved = [];
+      this.cards.forEach(function (meta) {
+        var el = meta.element;
+        if (el) saved.push({ meta: meta, x: parseFloat(el.style.left) || 0, y: parseFloat(el.style.top) || 0 });
+      });
+      this.arrangeCards(false);
+      saved.forEach(function (s) {
+        s.nx = parseFloat(s.meta.element.style.left) || 0;
+        s.ny = parseFloat(s.meta.element.style.top) || 0;
+      });
+      this._preAccessLayout = saved;
+      return true;
+    } else if (this._preAccessLayout) {
+      this._preAccessLayout.forEach(function (s) {
+        var el = s.meta.element;
+        if (!el || !el.isConnected) return;
+        var x = parseFloat(el.style.left) || 0, y = parseFloat(el.style.top) || 0;
+        if (Math.abs(x - s.nx) > 0.5 || Math.abs(y - s.ny) > 0.5) return; // the user moved it
+        el.style.left = s.x + 'px';
+        el.style.top = s.y + 'px';
+        s.meta.x = s.x;
+        s.meta.y = s.y;
+      });
+      this._preAccessLayout = null;
+      this.scheduleConnectorUpdate();
+    }
+    return false;
+  };
+
+  // Subscribe to switch changes; fn(on) runs after the class has changed. Returns an unsubscribe function.
+  SideviewEngine.prototype.onAccessChange = function (fn) {
+    var subs = this._accessSubs;
+    subs.push(fn);
+    return function () {
+      var i = subs.indexOf(fn);
+      if (i >= 0) subs.splice(i, 1);
+    };
+  };
+
+  // The zoom floor: 1.0 with the Accessible canvas on, else the normal option.
+  var ACCESS_MIN_SCALE = 1;
+  SideviewEngine.prototype.minScaleNow = function () {
+    return this.accessOn() ? Math.max(ACCESS_MIN_SCALE, this.options.minScale) : this.options.minScale;
+  };
+
+  // The card holding keyboard focus, else null.
+  SideviewEngine.prototype.focusedCard = function () {
+    var a = global.document && global.document.activeElement;
+    var c = a && a.closest ? a.closest('.sideview-card') : null;
+    return c && this.container.contains(c) ? c : null;
+  };
+
+  // Apply the zoom floor to the live panzoom (on: raise the scale around the focused card or the view
+  // centre; off: only lower the limit, the zoom stays).
+  SideviewEngine.prototype.applyZoomFloor = function (on) {
+    var pz = this.panzoom;
+    if (!pz || typeof pz.setMinScale !== 'function') return;
+    if (!on) { pz.setMinScale(this.options.minScale); return; }
+    var fc = this.focusedCard();
+    var r = (fc || this.container).getBoundingClientRect();
+    var s0 = pz.getScale ? pz.getScale() : null;
+    pz.setMinScale(this.minScaleNow(), { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 });
+    // The card grew with the switch (CSS): put its centre back where it was before the switch.
+    var a = this._accessAnchor;
+    this._accessAnchor = null;
+    if (fc && a && a.card === fc && s0 !== null && pz.getScale() !== s0 && pz.getPan && pz.pan) {
+      var r1 = fc.getBoundingClientRect(), p = pz.getPan();
+      pz.pan(p.x + a.x - (r1.left + r1.width / 2), p.y + a.y - (r1.top + r1.height / 2));
+    }
+  };
+
+  // Focus goes back to `back` after a dialog closes, unless it has left the canvas or lost its tab
+  // stop while the dialog was open (switch turned off): then, or if focus does not land, the canvas.
+  SideviewEngine.prototype.returnFocus = function (back) {
+    var c = this.container;
+    if (back && back !== c && back.focus && c.contains(back) && canTakeFocus(back)) {
+      back.focus();
+      if (document.activeElement === back) return;
+    }
+    try { c.focus({ preventScroll: true }); } catch (e) {}
+  };
+
   SideviewEngine.prototype.toggleShortcuts = function (show) {
     var self = this;
     var existing = this.container.querySelector('.sideview-shortcuts-scrim');
@@ -1837,12 +2072,12 @@ function sendToShiny(name, value) {
         existing.parentNode.removeChild(existing);
         var back = this._shortcutsReturnFocus;
         this._shortcutsReturnFocus = null;
-        if (back && back.focus && this.container.contains(back)) back.focus();
-        else { try { this.container.focus({ preventScroll: true }); } catch (e) {} }
+        this.returnFocus(back);
       }
       return false;
     }
     if (existing) return true;
+    if (this.access) this.access.cancelConnect();
     this._shortcutsReturnFocus = document.activeElement;
     var id = 'sv-shortcuts-title-' + (++shortcutsSeq);
     var rows = SHORTCUTS.map(function (row) {
@@ -1859,13 +2094,19 @@ function sendToShiny(name, value) {
       '<button type="button" class="sideview-shortcuts-switch" role="switch" data-sv-shortcuts-switch aria-checked="' +
       (this.shortcutsOn() ? 'true' : 'false') + '"><span class="sideview-shortcuts-switch-track" aria-hidden="true"></span>' +
       '<span>Keyboard shortcuts</span></button>' +
-      '<dl>' + rows + '</dl></div>';
+      '<button type="button" class="sideview-shortcuts-switch" role="switch" data-sv-access-switch aria-checked="' +
+      (this.accessOn() ? 'true' : 'false') + '"><span class="sideview-shortcuts-switch-track" aria-hidden="true"></span>' +
+      '<span>Accessible canvas</span></button>' +
+      '<dl>' + rows + '</dl><div data-sv-access-keys-slot></div></div>';
     var sw = scrim.querySelector('[data-sv-shortcuts-switch]');
     sw.addEventListener('click', function () { self.setShortcuts(!self.shortcutsOn()); });
+    var asw = scrim.querySelector('[data-sv-access-switch]');
+    asw.addEventListener('click', function () { self.setAccess(!self.accessOn()); });
     scrim.addEventListener('click', function (e) {
       if (e.target === scrim) self.toggleShortcuts(false);
     });
     this.container.appendChild(scrim);
+    this.renderAccessKeys();
     var dialog = scrim.querySelector('.sideview-shortcuts');
     try { dialog.focus({ preventScroll: true }); } catch (e) { dialog.focus(); }
     return true;
@@ -1889,6 +2130,9 @@ function sendToShiny(name, value) {
     return ['button', 'checkbox', 'radio', 'range', 'color', 'submit', 'reset'].indexOf(type) < 0;
   }
 
+  // For sv-access.js: whether keys typed at `el` are text, not commands.
+  SideviewEngine.prototype.isTypingTarget = function (el) { return isTypingTarget(el); };
+
   // ---- card window controls -------------------------------------------------
 
   // Freeze a card's natural size inline after first layout so that resizing it
@@ -1904,9 +2148,81 @@ function sendToShiny(name, value) {
     card.classList.add('sv-sized');
   };
 
+  // The frozen size is always the default canvas's size: with the Accessible canvas on, cards are
+  // measured without it (one reflow), so switching it off gives back the default layout.
   SideviewEngine.prototype.freezeAllCardSizes = function () {
     var self = this;
+    var pending = false;
+    this.cards.forEach(function (meta) {
+      var c = meta.element;
+      if (c && !c.classList.contains('sv-sized') && !c.classList.contains('is-maximized') &&
+          !c.classList.contains('is-minimized')) pending = true;
+    });
+    if (!pending) return;
+    var cl = this.container.classList;
+    var access = !!(cl && cl.contains('sv-access'));
+    if (access) cl.remove('sv-access');
     this.cards.forEach(function (meta) { self.freezeCardSize(meta.element); });
+    if (access) cl.add('sv-access');
+  };
+
+  // The bottom-right corner (16 CSS px, scaled with the canvas) is the CSS resize handle.
+  var RESIZE_CORNER = 16;
+
+  SideviewEngine.prototype.beginCardResize = function (card, e) {
+    var r = card.getBoundingClientRect();
+    var zone = RESIZE_CORNER * (this.panzoom && this.panzoom.getScale ? this.panzoom.getScale() : 1);
+    if (e.clientX < r.right - zone || e.clientY < r.bottom - zone || e.clientX > r.right || e.clientY > r.bottom) return;
+    var start = {
+      card: card, w: card.offsetWidth, h: card.offsetHeight,
+      styleW: card.style.width, styleH: card.style.height, sized: card.classList.contains('sv-sized')
+    };
+    // With the switch on an auto-sized card is width/height: auto; the drag starts from the size shown.
+    if (this.accessOn()) {
+      card.style.width = start.w + 'px';
+      card.style.height = start.h + 'px';
+      card.classList.add('sv-sized');
+      card.setAttribute('data-sv-user-sized', 'pending');
+    }
+    this._cardResize = start;
+  };
+
+  SideviewEngine.prototype.endCardResize = function () {
+    var s = this._cardResize;
+    if (!s) return;
+    this._cardResize = null;
+    var card = s.card;
+    if (card.offsetWidth !== s.w || card.offsetHeight !== s.h) {
+      card.setAttribute('data-sv-user-sized', 'true');
+      card.classList.add('sv-sized');
+      this.scheduleConnectorUpdate();
+      return;
+    }
+    if (card.getAttribute('data-sv-user-sized') === 'pending') {
+      card.style.width = s.styleW;
+      card.style.height = s.styleH;
+      if (!s.sized) card.classList.remove('sv-sized');
+      card.removeAttribute('data-sv-user-sized');
+    }
+  };
+
+  // Row height of the card tables: taller rows for the 16 px text of the Accessible canvas.
+  var ROW_HEIGHT = 28;
+  var ACCESS_ROW_HEIGHT = 36;
+  SideviewEngine.prototype.rowHeightNow = function () {
+    return this.accessOn() ? ACCESS_ROW_HEIGHT : ROW_HEIGHT;
+  };
+
+  // The switch flipped: the CSS has already changed; re-render the tables at the new row
+  // height and move the splines to the ports' new places.
+  SideviewEngine.prototype.applyAccessLayout = function (on) {
+    var h = on ? ACCESS_ROW_HEIGHT : ROW_HEIGHT;
+    var tables = this.container.querySelectorAll('table');
+    for (var i = 0; i < tables.length; i++) {
+      var vt = tables[i]._virtualTable;
+      if (vt && vt.setRowHeight) vt.setRowHeight(h);
+    }
+    this.scheduleConnectorUpdate();
   };
 
   SideviewEngine.prototype.toggleMinimizeCard = function (card, btn) {
@@ -2056,6 +2372,7 @@ function sendToShiny(name, value) {
       this.svg.setAttribute('height', '100%');
       this.viewport.appendChild(this.svg);
     }
+    this.ensureMarkerDefs();
     // Invisible, wider copies of the splines sit below the cards so a spline
     // crossing a card never steals clicks from the card's own controls.
     this.hitSvg = this.viewport.querySelector('.sideview-connector-hitlayer');
@@ -2200,7 +2517,7 @@ function sendToShiny(name, value) {
 
     this.panzoom = global.Panzoom(this.viewport, {
       canvas: true,
-      minScale: this.options.minScale,
+      minScale: this.minScaleNow(),
       maxScale: this.options.maxScale,
       excludeClass: 'sideview-card',
       wheelRequiresModifier: this.options.mode === 'embedded'
@@ -2259,7 +2576,7 @@ function sendToShiny(name, value) {
         self.fitAll();
       } else if (action === 'arrange-cards') {
         self.arrangeCards(false);
-        self.fitAll({ maxScale: 1, minScale: READABLE_SCALE });
+        self.fitAll({ maxScale: 1, minScale: Math.max(READABLE_SCALE, self.minScaleNow()) });
       } else if (action === 'minimize-card') {
         var minCard = btn.closest('.sideview-card');
         if (minCard) self.toggleMinimizeCard(minCard, btn);
@@ -2688,7 +3005,7 @@ function sendToShiny(name, value) {
         toTable: toCardName,
         toCol: toColName,
         toElement: targetPort,
-        type: 'left_join'
+        type: self.CLICK_JOIN_TYPE
       });
 
       self.showToast('Linked ' + fromTable + '.' + fromCol + ' ↔ ' + toCardName + '.' + toColName, 'success');
@@ -2824,6 +3141,18 @@ function sendToShiny(name, value) {
       document.addEventListener('mousemove', onColResizeMove);
       document.addEventListener('mouseup', onColResizeUp);
     });
+
+    // A card sized by hand (the CSS resize corner) is marked data-sv-user-sized, so the
+    // Accessible canvas keeps its size while auto-sized cards grow with the larger text.
+    this.container.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0) return;
+      var card = e.target && e.target.closest ? e.target.closest('.sideview-card') : null;
+      if (!card || !self.container.contains(card) || card.classList.contains('is-maximized') ||
+          card.classList.contains('is-minimized') || card.getAttribute('data-sv-user-sized') === 'true') return;
+      self.beginCardResize(card, e);
+    });
+    this.listenGlobal(document, 'pointerup', function () { self.endCardResize(); });
+    this.listenGlobal(document, 'pointercancel', function () { self.endCardResize(); });
 
     // Pressing Escape cancels a draft connection, closes the filter popover,
     // or restores a maximized card (in that order).
@@ -3083,7 +3412,7 @@ function sendToShiny(name, value) {
 
       // Initialize VirtualTable for high-performance DOM viewport
       var vTable = new VirtualTable(table, {
-        rowHeight: 28,
+        rowHeight: self.rowHeightNow(),
         buffer: 10,
         data: cardData.data,
         colNames: colNames,
@@ -3294,7 +3623,7 @@ function sendToShiny(name, value) {
       if (table) ensureTableCaption(table, cardName);
       if (table && !table._virtualTable) {
         vTable = new VirtualTable(table, {
-          rowHeight: 28,
+          rowHeight: self.rowHeightNow(),
           buffer: 10
         });
         cardEl._virtualTable = table._virtualTable = vTable;
@@ -3441,6 +3770,9 @@ function sendToShiny(name, value) {
   /**
    * Field click-to-connect field mapping with SVG bezier curves
    */
+
+  // The join a click-to-connect creates (sv-access.js joins by keyboard with the same type).
+  SideviewEngine.prototype.CLICK_JOIN_TYPE = 'left_join';
   
   SideviewEngine.prototype.findPortElement = function (tableName, colName) {
     if (!tableName || !colName) return null;
@@ -3547,6 +3879,7 @@ function sendToShiny(name, value) {
       var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('class', 'sideview-connector-path sideview-spline-suggested dashMove');
       path.dataset.suggested = 'true';
+      path.setAttribute('marker-end', 'url(#' + self.markerId('hollow') + ')');
       path.dataset.fromTable = fromTable;
       path.dataset.fromCol = fromCol;
       path.dataset.toTable = toTable;
@@ -3723,6 +4056,7 @@ function sendToShiny(name, value) {
       path.setAttribute('class',
         'sideview-connector-path sideview-spline-suggested sideview-spline-suggested-cdisc dashMove');
       path.dataset.suggested = 'true';
+      path.setAttribute('marker-end', 'url(#' + self.markerId('hollow') + ')');
       path.dataset.group = groupId;
       if (kind) path.dataset.kind = kind;
       path.dataset.fromTable = r.pair.fromTable;
@@ -3752,17 +4086,68 @@ function sendToShiny(name, value) {
     });
   };
 
+  /** Marker ids are per engine so two canvases on one page never share a <marker>. */
+  SideviewEngine.prototype.markerId = function (kind) {
+    return 'sv-mk-' + this._engSeq + '-' + kind;
+  };
+
+  /** One solid (accepted) and one hollow (suggested) arrowhead in the connector svg. Their shapes are
+   *  hidden by CSS and shown only under .sv-access and forced-colors, so the default canvas is unchanged. */
+  SideviewEngine.prototype.ensureMarkerDefs = function () {
+    if (!this.svg || this.svg.querySelector('defs.sideview-marker-defs')) return;
+    var NS = 'http://www.w3.org/2000/svg';
+    var defs = document.createElementNS(NS, 'defs');
+    defs.setAttribute('class', 'sideview-marker-defs');
+    ['solid', 'hollow'].forEach(function (kind) {
+      var m = document.createElementNS(NS, 'marker');
+      m.setAttribute('id', this.markerId(kind));
+      m.setAttribute('viewBox', '0 0 14 14');
+      m.setAttribute('refX', '12');
+      m.setAttribute('refY', '7');
+      m.setAttribute('markerWidth', '14');
+      m.setAttribute('markerHeight', '14');
+      m.setAttribute('markerUnits', 'userSpaceOnUse');
+      m.setAttribute('orient', 'auto');
+      var shape = document.createElementNS(NS, 'path');
+      shape.setAttribute('d', 'M1,1 L13,7 L1,13 Z');
+      shape.setAttribute('class', 'sideview-marker-shape sideview-marker-' + kind);
+      m.appendChild(shape);
+      defs.appendChild(m);
+    }, this);
+    this.svg.insertBefore(defs, this.svg.firstChild);
+  };
+
+  /** The dash pattern of a new join: the lowest of 0..5 that no live join uses. With nothing removed that
+   *  is join order; state restore re-adds joins in saved order, so it reproduces the saved patterns. More
+   *  than six live joins wrap by the number of live connections. */
+  SideviewEngine.prototype.nextJoinPattern = function () {
+    var used = {}, live = this.connections || [];
+    for (var i = 0; i < live.length; i++) {
+      var pv = live[i].path && live[i].path.dataset ? live[i].path.dataset.svPat : null;
+      if (pv !== null && pv !== undefined) used[pv] = true;
+    }
+    for (var n = 0; n < 6; n++) if (!used[n]) return n;
+    return live.length % 6;
+  };
+
+  SideviewEngine.prototype.decorateAccepted = function (path, pat) {
+    path.dataset.svPat = String(pat);
+    path.setAttribute('marker-end', 'url(#' + this.markerId('solid') + ')');
+  };
+
   /** Several connections that belong together (a CDISC key set): one undo step, one
    *  `column_mapped` per key. Each item is shaped like addConnection's connData. */
   SideviewEngine.prototype.addConnections = function (list) {
     var self = this;
     if (!list || !list.length) return;
+    var pat = this.nextJoinPattern();  // one pattern for the whole key set
     list.forEach(function (connData) {
       self._connSeq = (self._connSeq || 0) + 1;
       var connId = 'conn_' + Date.now() + '_' + self._connSeq;
       var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('class', 'sideview-connector-path');
       path.dataset.connId = connId;
+      self.decorateAccepted(path, pat);
       var titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
       titleEl.textContent = 'Click to disconnect ' + connData.fromCol + ' ↔ ' + connData.toCol;
       path.appendChild(titleEl);
@@ -3798,6 +4183,7 @@ function sendToShiny(name, value) {
     var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('class', 'sideview-connector-path');
     path.dataset.connId = connId;
+    this.decorateAccepted(path, this.nextJoinPattern());
 
     var titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
     titleEl.textContent = 'Click to disconnect ' + connData.fromCol + ' ↔ ' + connData.toCol;
@@ -3926,6 +4312,7 @@ function sendToShiny(name, value) {
       width: el.style.width || '',
       height: minimized ? (el._svRestoreHeight || '') : (el.style.height || ''),
       sized: el.classList.contains('sv-sized'),
+      userSized: el.dataset.svUserSized === 'true',
       auto: el.dataset.autoPlace
     };
     var oldVt = el._virtualTable;
@@ -3951,6 +4338,7 @@ function sendToShiny(name, value) {
     if (geo.width) nel.style.width = geo.width;
     if (geo.height) nel.style.height = geo.height;
     if (geo.sized) nel.classList.add('sv-sized');
+    if (geo.userSized) nel.dataset.svUserSized = 'true';
     if (geo.auto === undefined) delete nel.dataset.autoPlace;
     if (minimized) this.toggleMinimizeCard(nel, nel.querySelector('[data-action="minimize-card"]'));
 
@@ -4010,6 +4398,8 @@ function sendToShiny(name, value) {
       if (c.fromTable === name || c.toTable === name) self.dropConnectionVisually(c);
     });
     var el = meta.element;
+    // keyboard focus and a keyboard connect on this card move on before it goes
+    if (this.access) this.access.cardRemoving(el);
     if (el.classList.contains('is-maximized')) {
       this.toggleMaximizeCard(el, el.querySelector('[data-action="maximize-card"]'));
     }
@@ -6031,6 +6421,7 @@ function sendToShiny(name, value) {
     var pz = this.panzoom;
     var pan = pz && pz.getPan ? pz.getPan() : { x: 0, y: 0 };
     var cards = [];
+    var access = this.accessOn();
     this.cards.forEach(function (card) {
       var el = card.element;
       if (!el) return;
@@ -6039,7 +6430,15 @@ function sendToShiny(name, value) {
       var hg = self._hiddenGeom && self._hiddenGeom[card.id];
       if (!w && hg) w = hg.w;
       if (!h && hg) h = hg.h;
-      if (el.classList.contains('is-maximized') && el._svRestore) {
+      var userSized = el.getAttribute('data-sv-user-sized') === 'true';
+      // With the Accessible canvas on an auto card shows larger than its frozen size: the state keeps
+      // the default canvas's size (the inline one), so a save opened with the switch off is the old layout.
+      var accessAuto = access && !userSized && el.classList.contains('sv-sized') &&
+        !el.classList.contains('is-maximized') && !el.classList.contains('is-minimized');
+      if (accessAuto) {
+        w = parseFloat(el.style.width) || w;
+        h = parseFloat(el.style.height) || h;
+      } else if (el.classList.contains('is-maximized') && el._svRestore) {
         w = parseFloat(el._svRestore.style.width) || null;
         h = parseFloat(el._svRestore.style.height) || null;
       } else if (el.classList.contains('is-minimized')) {
@@ -6047,7 +6446,7 @@ function sendToShiny(name, value) {
       }
       var view = cardViewOf(el);
       var sorts = view.sorts, filters = view.filters;
-      cards.push({
+      var entry = {
         id: card.id,
         name: card.name,
         x: parseFloat(el.style.left) || 0,
@@ -6057,7 +6456,10 @@ function sendToShiny(name, value) {
         minimized: el.classList.contains('is-minimized'),
         sorts: sorts,
         filters: filters
-      });
+      };
+      // optional (no schema bump): a card sized by hand keeps its size with the Accessible canvas on
+      if (userSized) entry.user_sized = true;
+      cards.push(entry);
     });
     return {
       version: STATE_VERSION,
@@ -6125,13 +6527,19 @@ function sendToShiny(name, value) {
       if (el.classList.contains('is-minimized')) self.toggleMinimizeCard(el, el.querySelector('[data-action="minimize-card"]'));
       if (w > 0) el.style.width = w + 'px';
       if (h > 0) el.style.height = h + 'px';
-      if (w > 0 && h > 0) el.classList.add('sv-sized');
+      if (w > 0 && h > 0) {
+        el.classList.add('sv-sized');
+        // the saved size is the user's own (user_sized) or the default canvas's
+        if (s.user_sized === true) el.setAttribute('data-sv-user-sized', 'true');
+        else el.removeAttribute('data-sv-user-sized');
+      }
       delete el.dataset.autoPlace;
       if (s.minimized === true) self.toggleMinimizeCard(el, el.querySelector('[data-action="minimize-card"]'));
       self.applyCardView(el, asArray(s.sorts)[0], asArray(s.filters)[0]);
       out.restored.push(card.name);
     });
 
+    var prevRestored = null;
     asArray(state.connections).forEach(function (c) {
       if (!c) return;
       var from = self.findPortElement(c.from_table, c.from_col);
@@ -6143,6 +6551,12 @@ function sendToShiny(name, value) {
         toCard: toCard.dataset.cardId, toTable: c.to_table, toCol: c.to_col, toElement: to,
         type: c.join_type || 'left_join'
       });
+      // consecutive keys of one table pair were one key set: they share its pattern
+      var made = self.connections[self.connections.length - 1];
+      if (prevRestored && prevRestored.fromTable === c.from_table && prevRestored.toTable === c.to_table) {
+        made.path.dataset.svPat = prevRestored.path.dataset.svPat;
+      }
+      prevRestored = made;
     });
 
     var p = state.pipeline || {};
@@ -6171,7 +6585,7 @@ function sendToShiny(name, value) {
     var cv = state.canvas || {};
     var pz = this.panzoom;
     if (pz && typeof pz.zoom === 'function' && typeof pz.pan === 'function') {
-      var zoom = Math.min(Math.max(finiteOr(cv.zoom, 1), this.options.minScale), this.options.maxScale);
+      var zoom = Math.min(Math.max(finiteOr(cv.zoom, 1), this.minScaleNow()), this.options.maxScale);
       pz.zoom(zoom);
       pz.pan(finiteOr(cv.pan_x, 0), finiteOr(cv.pan_y, 0));
     }
@@ -7186,6 +7600,7 @@ function sendToShiny(name, value) {
   SideviewEngine.prototype.setView = function (mode, opts) {
     if (mode !== 'canvas' && mode !== 'list') return this.view;
     if (mode === this.view || this._destroyed) return this.view;
+    if (this.access) this.access.cancelConnect();
     var self = this;
     var silent = !!(opts && opts.silent);
     var list = mode === 'list';
@@ -7230,7 +7645,7 @@ function sendToShiny(name, value) {
       // the first layout was deferred because the list view was showing: do it now the canvas is visible
       if (this._needsInitialLayout && this.container.clientWidth > 0) {
         this._needsInitialLayout = false;
-        if (this.arrangeCards(true) && !this._restoredView) this.fitAll({ maxScale: 1, minScale: READABLE_SCALE });
+        if (this.arrangeCards(true) && !this._restoredView) this.fitAll({ maxScale: 1, minScale: Math.max(READABLE_SCALE, this.minScaleNow()) });
         this.scheduleSnapshot();
       }
       // the tables were hidden while their rows may have changed: measure and draw them again

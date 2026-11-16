@@ -14,7 +14,8 @@ sideview_ui(
   gadget = FALSE,
   theme = "auto",
   state = NULL,
-  view = getOption("sideview.view", "canvas")
+  view = getOption("sideview.view", "canvas"),
+  access = getOption("sideview.access", FALSE)
 )
 ```
 
@@ -53,6 +54,12 @@ sideview_ui(
 
   Starting view: `"canvas"` (default) or `"list"` (see
   [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)).
+
+- access:
+
+  `TRUE` starts with the Accessible canvas switch on (default
+  `getOption("sideview.access", FALSE)`); the switch in the `?` list is
+  remembered in the browser and wins.
 
 ## Value
 

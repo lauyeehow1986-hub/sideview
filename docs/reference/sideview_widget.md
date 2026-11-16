@@ -47,8 +47,10 @@ sideview_widget(
 
   Named list of canvas options (e.g. `shortcuts = FALSE` to start with
   the single-key shortcuts off, default
-  `getOption("sideview.shortcuts", TRUE)`, `snapToEdge`,
-  `snapThreshold`, `minScale`, `maxScale`).
+  `getOption("sideview.shortcuts", TRUE)`, `snapToEdge`, `access = TRUE`
+  to start with the Accessible canvas switch on (default
+  `getOption("sideview.access", FALSE)`), `snapThreshold`, `minScale`,
+  `maxScale`).
 
 - theme:
 

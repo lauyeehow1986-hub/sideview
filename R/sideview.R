@@ -56,6 +56,9 @@ sv_find_tables <- function(env = parent.frame()) {
 #'   SDTM, SEND or ADaM datasets; `FALSE` turns it off; a named character vector
 #'   such as `c(my_ae = "AE")` sets a table's domain by name (other tables are
 #'   still detected).
+#' @param access `TRUE` starts with the Accessible canvas switch on. The default is
+#'   `getOption("sideview.access", FALSE)`; the switch in the `?` list is remembered in
+#'   the browser and wins.
 #' @param view Starting view: `"canvas"` (default, the pan/zoom canvas) or `"list"`
 #'   (a text-first list of the tables, for keyboard and screen-reader use). The
 #'   default is `getOption("sideview.view", "canvas")`. A saved workspace
@@ -133,6 +136,9 @@ sv_find_tables <- function(env = parent.frame()) {
 #'
 #' @section Options:
 #' \describe{
+#'   \item{`sideview.access`}{`TRUE` starts with the Accessible canvas switch on
+#'     (default `FALSE`). It is the default only: the switch in the `?` list is remembered
+#'     in the browser and wins.}
 #'   \item{`sideview.shortcuts`}{`FALSE` starts the canvas with the single-key
 #'     shortcuts off (default `TRUE`). It is the default only: the "Keyboard
 #'     shortcuts" switch in the `?` list is remembered in the browser and wins.
@@ -173,10 +179,12 @@ sideview <- function(...,
                      state = NULL,
                      cdisc = "auto",
                      view = getOption("sideview.view", "canvas"),
+                     access = getOption("sideview.access", FALSE),
                      env = parent.frame(),
                      run = interactive()) {
   force(env) # parent.frame() is lazy: resolve it before sideview() returns
   view <- sv_check_view(view)
+  access <- sv_check_access(access)
   state <- sv_as_state(state)
   cdisc <- sv_cdisc_check_arg(cdisc)
   viewer <- sv_resolve_viewer(viewer, title)
@@ -226,7 +234,8 @@ sideview <- function(...,
 
   # Build Shiny application object
   ui <- sideview_ui(card_list, title = title, gadget = TRUE,
-                    theme = sv_resolve_theme(theme, rstudio = TRUE), state = state, view = view)
+                    theme = sv_resolve_theme(theme, rstudio = TRUE), state = state, view = view,
+                    access = access)
   server <- sideview_server(card_list, gadget = TRUE, run_env = env, cdisc = cdisc)
   app <- shiny::shinyApp(ui = ui, server = server)
   

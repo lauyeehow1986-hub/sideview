@@ -2739,3 +2739,304 @@ test_that("a widget that starts in the list view inside a hidden container lays 
   }
   expect_length(attr(b, "sv_errors")(), 0)
 })
+
+# --- Accessible canvas: low-vision styling (spec section 6) --------------------
+
+.sv_access <- new.env()
+
+sv_access_ready_js <- "!!document.querySelector('.sideview-container')._sideviewInstance && document.querySelectorAll('.sideview-card').length >= 3"
+sv_access_eng <- "document.querySelector('.sideview-container')._sideviewInstance"
+
+# One gadget page with access = TRUE, shared by the access tests (switched on again on each use).
+sv_access_page <- function(width = 1360, height = 820) {
+  skip_if_no_browser()
+  if (is.null(.sv_access$page)) {
+    .sv_access$app <- sv_start_app("sideview(patients, visits, labs, access = TRUE, run = FALSE)")
+    .sv_access$page <- sv_open_page(.sv_access$app$url, width, height, wait_for = sv_access_ready_js)
+    withr::defer({
+      try(.sv_access$page$close(), silent = TRUE)
+      try(.sv_access$app$proc$kill(), silent = TRUE)
+      .sv_access$page <- NULL
+    }, envir = testthat::teardown_env())
+  }
+  b <- .sv_access$page
+  sv_set_viewport(b, width, height)
+  sv_js(b, sprintf("(() => { const e = %s; if (!e.accessOn()) e.setAccess(true); return true; })()", sv_access_eng))
+  b
+}
+
+sv_access_sizes <- list(c(1360, 820), c(1024, 700), c(375, 812))
+
+# Every visible element with its own text below 16 px, and every visible control below 24 x 24 px.
+sv_access_audit_js <- "(() => {
+  const root = document.querySelector('.sideview-container');
+  const shown = el => {
+    for (let e = el; e && e !== document.documentElement; e = e.parentElement) {
+      const s = getComputedStyle(e);
+      if (s.display === 'none' || s.visibility === 'hidden') return false;
+    }
+    const r = el.getBoundingClientRect();
+    return r.width > 1 && r.height > 1;
+  };
+  const sr = el => !!el.closest('.sv-sr-only');
+  const label = el => el.tagName.toLowerCase() +
+    (typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\\s+/).join('.') : '') +
+    (el.getAttribute('data-action') ? '[' + el.getAttribute('data-action') + ']' : '');
+  const text = [], small = [];
+  root.querySelectorAll('*').forEach(el => {
+    const own = [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim());
+    if (!own || sr(el) || !shown(el)) return;
+    const fs = parseFloat(getComputedStyle(el).fontSize);
+    if (fs < 16 - 0.01) text.push(label(el) + ' ' + fs + 'px: ' + el.textContent.trim().slice(0, 30));
+  });
+  root.querySelectorAll('button, [role=switch], input, select, a[href], .sideview-col-port').forEach(el => {
+    if (sr(el) || !shown(el)) return;
+    const r = el.getBoundingClientRect();
+    if (r.width < 24 - 0.5 || r.height < 24 - 0.5) small.push(label(el) + ' ' + Math.round(r.width * 10) / 10 + 'x' + Math.round(r.height * 10) / 10);
+  });
+  return { text: [...new Set(text)], small: [...new Set(small)] };
+})()"
+
+# Puts the page in each state the low-vision rules cover and audits each.
+sv_access_states <- function(b) {
+  out <- list()
+  audit <- function(name) out[[name]] <<- sv_js(b, sv_access_audit_js)
+  sv_js(b, sprintf("(async () => { %s.showToast('Saved the workspace.', 'info');
+    await new Promise(r => setTimeout(r, 300)); return true; })()", sv_access_eng))
+  audit("canvas + toast")
+  tabs <- unlist(sv_js(b, "[...document.querySelectorAll('.sideview-drawer-tabs [data-tab]')].map(t => t.dataset.tab)"))
+  for (t in tabs) {
+    sv_js(b, sprintf("(async () => {
+      const d = document.querySelector('.sideview-drawer');
+      if (d.classList.contains('collapsed')) document.querySelector('[data-action=\"toggle-drawer\"]').click();
+      document.querySelector('.sideview-drawer-tabs [data-tab=\"%s\"]').click();
+      await new Promise(r => setTimeout(r, 300)); return true; })()", t))
+    audit(paste("drawer", t))
+  }
+  sv_js(b, "(async () => { const d = document.querySelector('.sideview-drawer');
+    if (!d.classList.contains('collapsed')) document.querySelector('[data-action=\"toggle-drawer\"]').click();
+    await new Promise(r => setTimeout(r, 300));
+    document.querySelector('.sideview-ai-input').focus(); await new Promise(r => setTimeout(r, 100)); return true; })()")
+  audit("AI bar focused")
+  sv_js(b, sprintf("(async () => { const c = %s;
+    c.querySelector('[data-action=\"filter-col\"]').click(); await new Promise(r => setTimeout(r, 300)); return true; })()",
+    sv_card_js("patients")))
+  audit("filter popover")
+  sv_js(b, sprintf("(async () => { const e = %s;
+    if (e._activePopover && e._activePopover._closePopover) e._activePopover._closePopover();
+    const p = document.querySelector('.sideview-filter-popover'); if (p) p.remove();
+    e.toggleShortcuts(true); await new Promise(r => setTimeout(r, 200)); return true; })()", sv_access_eng))
+  audit("? dialog")
+  sv_js(b, sprintf("(async () => { const e = %s; e.toggleShortcuts(false); e.toggleSearch(true);
+    const i = document.querySelector('.sideview-search-scrim input');
+    if (i) { i.value = 'pat'; i.dispatchEvent(new Event('input', {bubbles: true})); }
+    await new Promise(r => setTimeout(r, 300)); return true; })()", sv_access_eng))
+  audit("search dialog")
+  sv_js(b, sprintf("(() => { %s.toggleSearch(false); return true; })()", sv_access_eng))
+  out
+}
+
+# One join, patients.patient_id -> labs.patient_id (kept if it is already there).
+sv_access_join <- function(b) {
+  sv_js(b, sprintf("(async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const fire = el => { const x = el.getBoundingClientRect(); ['pointerdown','mousedown','pointerup','mouseup','click'].forEach(t => el.dispatchEvent(new MouseEvent(t, {bubbles: true, button: 0, clientX: x.x + 2, clientY: x.y + 2}))); };
+    const pat = %s, labs = %s;
+    if (!document.querySelector('.sideview-connector-path:not(.sideview-connector-draft):not(.sideview-spline-suggested)')) {
+      fire(pat.querySelector('.sideview-col-port[data-col-name=\"patient_id\"]')); await sleep(150);
+      fire(labs.querySelector('.sideview-col-port[data-col-name=\"patient_id\"]')); await sleep(600);
+    }
+    return true;
+  })()", sv_card_js("patients"), sv_card_js("labs")))
+}
+
+sv_access_clear <- function(b) {
+  sv_js(b, "(async () => { document.querySelector('[data-action=\"clear-operation\"]').click();
+    await new Promise(r => setTimeout(r, 300)); return true; })()")
+}
+
+test_that("access: every text is >= 16px and every control >= 24px", {
+  b <- sv_access_page()
+  sv_access_join(b)
+  for (sz in sv_access_sizes) {
+    sv_set_viewport(b, sz[1], sz[2])
+    states <- sv_access_states(b)
+    for (nm in names(states)) {
+      label <- paste(paste(sz, collapse = "x"), nm)
+      expect_identical(unlist(states[[nm]]$text), NULL, label = paste(label, "text below 16px"))
+      expect_identical(unlist(states[[nm]]$small), NULL, label = paste(label, "controls below 24px"))
+    }
+  }
+  sv_set_viewport(b, 1360, 820)
+  sv_access_clear(b)
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("access: chrome does not overlap", {
+  b <- sv_access_page()
+  for (sz in sv_access_sizes) {
+    sv_set_viewport(b, sz[1], sz[2])
+    rects <- sv_js(b, "(() => {
+      const r = s => { const e = document.querySelector(s); if (!e || getComputedStyle(e).display === 'none' || getComputedStyle(e).visibility === 'hidden') return null; const x = e.getBoundingClientRect(); return x.width && x.height ? x.toJSON() : null; };
+      return { toolbar: r('.sideview-toolbar'), palette: r('.sideview-palette'), ai: r('.sideview-ai-bar'), vw: innerWidth, vh: innerHeight };
+    })()")
+    label <- paste(sz, collapse = "x")
+    expect_false(rect_overlap(rects$toolbar, rects$palette), info = paste("toolbar/palette", label))
+    expect_false(rect_overlap(rects$toolbar, rects$ai), info = paste("toolbar/ai", label))
+    for (nm in c("toolbar", "palette", "ai")) {
+      r <- rects[[nm]]
+      if (is.null(r)) next
+      expect_true(r$left >= 0 && r$right <= rects$vw + 1 && r$bottom <= rects$vh + 1,
+                  info = paste(nm, "inside window", label))
+    }
+    # The open drawer stays clear of the top bar and the AI bar, inside the window, and scrolls.
+    r <- sv_js(b, "(async () => {
+      const d = document.querySelector('.sideview-drawer');
+      if (d.classList.contains('collapsed')) document.querySelector('[data-action=\"toggle-drawer\"]').click();
+      await new Promise(r => setTimeout(r, 400));
+      const box = s => { const e = document.querySelector(s); return e ? e.getBoundingClientRect().toJSON() : null; };
+      const out = { drawer: box('.sideview-drawer'), toolbar: box('.sideview-toolbar'), ai: box('.sideview-ai-bar'),
+                    scrolls: getComputedStyle(d.querySelector('.sideview-drawer-content')).overflowY,
+                    vw: innerWidth, vh: innerHeight };
+      document.querySelector('[data-action=\"toggle-drawer\"]').click();
+      await new Promise(r => setTimeout(r, 300));
+      return out;
+    })()")
+    expect_false(rect_overlap(r$drawer, r$toolbar), info = paste("drawer/toolbar", label))
+    expect_false(rect_overlap(r$drawer, r$ai), info = paste("drawer/ai", label))
+    expect_true(r$drawer$bottom <= r$vh + 1 && r$drawer$right <= r$vw + 1, info = paste("drawer inside", label))
+    expect_true(r$scrolls %in% c("auto", "scroll"), info = paste("drawer scrolls", label))
+  }
+  sv_set_viewport(b, 1360, 820)
+})
+
+sv_access_port_check_js <- function() sprintf("(async () => {
+  await new Promise(r => setTimeout(r, 300));
+  const pat = %s, labs = %s;
+  const p1 = pat.querySelector('.sideview-col-port[data-col-name=\"patient_id\"]');
+  const p2 = labs.querySelector('.sideview-col-port[data-col-name=\"patient_id\"]');
+  const path = document.querySelector('.sideview-connector-path:not(.sideview-connector-draft):not(.sideview-spline-suggested)');
+  if (!path) return { start: 999, end: 999 };
+  const len = path.getTotalLength(), m = path.getScreenCTM();
+  const pt = p => new DOMPoint(p.x, p.y).matrixTransform(m);
+  const a = pt(path.getPointAtLength(0)), z = pt(path.getPointAtLength(len));
+  const c = el => { const x = el.getBoundingClientRect(); return { x: x.x + x.width / 2, y: x.y + x.height / 2 }; };
+  const c1 = c(p1), c2 = c(p2), d = (u, v) => Math.hypot(u.x - v.x, u.y - v.y);
+  return { start: Math.min(d(a, c1), d(a, c2)), end: Math.min(d(z, c1), d(z, c2)) };
+})()", sv_card_js("patients"), sv_card_js("labs"))
+
+test_that("access: splines stay on their ports after the switch flips", {
+  b <- sv_access_page()
+  sv_access_join(b)
+  for (on in c(TRUE, FALSE, TRUE)) {
+    sv_js(b, sprintf("%s.setAccess(%s)", sv_access_eng, tolower(on)))
+    r <- sv_js(b, sv_access_port_check_js())
+    expect_lt(r$start, 6, label = paste("start, access", on))
+    expect_lt(r$end, 6, label = paste("end, access", on))
+  }
+  sv_access_clear(b)
+})
+
+test_that("access: a user-sized card keeps its size; switching off restores the layout", {
+  b <- sv_access_page()
+  sv_js(b, sprintf("(() => { const e = %s; e.setAccess(false); e.panzoom.zoom(1); e.panzoom.pan(0, 0); return true; })()", sv_access_eng))
+  Sys.sleep(0.3)
+  geo <- function() sv_js(b, "(() => { const o = {}; document.querySelectorAll('.sideview-card').forEach(c => {
+    o[c.getAttribute('data-card-name')] = { left: c.style.left, top: c.style.top, w: c.offsetWidth, h: c.offsetHeight }; });
+    return o; })()")
+  # Resize patients by a real drag on its bottom-right corner.
+  corner <- sv_js(b, sprintf("(() => { const r = %s.getBoundingClientRect(); return { x: r.right - 3, y: r.bottom - 3 }; })()",
+                             sv_card_js("patients")))
+  mouse <- function(type, x, y) b$Input$dispatchMouseEvent(type = type, x = x, y = y, button = "left",
+                                                          clickCount = if (type == "mouseMoved") 0 else 1)
+  mouse("mouseMoved", corner$x, corner$y)
+  mouse("mousePressed", corner$x, corner$y)
+  for (t in seq(0.25, 1, by = 0.25)) mouse("mouseMoved", corner$x + 60 * t, corner$y - 60 * t)
+  mouse("mouseReleased", corner$x + 60, corner$y - 60)
+  Sys.sleep(0.3)
+  expect_identical(sv_js(b, sprintf("%s.getAttribute('data-sv-user-sized')", sv_card_js("patients"))), "true")
+  expect_null(sv_js(b, sprintf("%s.getAttribute('data-sv-user-sized')", sv_card_js("visits"))))
+  before <- geo()
+  sv_js(b, sprintf("%s.setAccess(true)", sv_access_eng))
+  Sys.sleep(0.3)
+  on <- geo()
+  expect_equal(on$patients$w, before$patients$w)
+  expect_equal(on$patients$h, before$patients$h)
+  grew <- vapply(c("visits", "labs"), function(n) on[[n]]$w > before[[n]]$w || on[[n]]$h > before[[n]]$h, TRUE)
+  expect_true(any(grew))
+  sv_js(b, sprintf("%s.setAccess(false)", sv_access_eng))
+  Sys.sleep(0.3)
+  expect_equal(geo(), before)
+  sv_js(b, sprintf("%s.setAccess(true)", sv_access_eng))
+})
+
+test_that("access: the contrast tokens beat theme =", {
+  skip_if_no_browser()
+  app <- sv_start_app("sideview(patients, visits, labs, theme = sv_theme(primary = '#ffcc00'), access = TRUE, run = FALSE)")
+  b <- sv_open_page(app$url, 1360, 820, wait_for = sv_access_ready_js)
+  withr::defer({
+    try(b$close(), silent = TRUE)
+    try(app$proc$kill(), silent = TRUE)
+  })
+  path <- system.file("www", "sideview.css", package = "sideview")
+  if (nzchar(sv_pkg_root())) path <- file.path(sv_pkg_root(), "inst", "www", "sideview.css")
+  lines <- readLines(path, warn = FALSE)
+  block <- function(sel) {
+    start <- which(trimws(lines) == paste0(sel, " {"))[1]
+    end <- start + which(trimws(lines[(start + 1):length(lines)]) == "}")[1]
+    body <- lines[(start + 1):(end - 1)]
+    body <- body[grepl("^\\s*--sv-", body)]
+    vals <- trimws(sub("\\s*!important\\s*;\\s*$", "", sub("^[^:]+:", "", body)))
+    stats::setNames(vals, trimws(sub(":.*$", "", body)))
+  }
+  r <- sv_js(b, "(() => { const c = document.querySelector('.sideview-container'), s = getComputedStyle(c);
+    return { dark: matchMedia('(prefers-color-scheme: dark)').matches, cls: c.className,
+             inline: c.style.getPropertyValue('--sv-primary'),
+             primaryText: s.getPropertyValue('--sv-primary-text').trim(),
+             connector: s.getPropertyValue('--sv-connector-color').trim(),
+             ring: s.getPropertyValue('--sv-focus-ring').trim() }; })()")
+  expect_match(r$inline, "#ffcc00", fixed = TRUE) # theme = is still written inline
+  expect_match(r$cls, "sv-theme-auto", fixed = TRUE)
+  expect_match(r$cls, "sv-access", fixed = TRUE)
+  want <- block(".sideview-container.sv-access")
+  if (isTRUE(r$dark)) want <- block(".sideview-container.sv-access.sv-theme-auto")
+  expect_identical(tolower(r$primaryText), tolower(want[["--sv-primary-text"]]))
+  expect_identical(tolower(r$connector), tolower(want[["--sv-connector-color"]]))
+  expect_identical(tolower(r$ring), tolower(want[["--sv-focus-ring"]]))
+})
+
+test_that("access: colour-only badges carry text or a shape", {
+  b <- sv_access_page()
+  sv_access_join(b)
+  r <- sv_js(b, sprintf("(async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const e = %s, labs = %s;
+    const ids = {}; e.cards.forEach((m, id) => { ids[m.name] = id; });
+    e.setCdiscTags({ [ids.labs]: { domain: 'LB', standard: 'SDTM' } });
+    for (let i = 0; i < 40 && !document.querySelector('.sideview-step-diag:not(.is-pending)'); i++) await sleep(150);
+    const td = labs.querySelector('tbody tr[data-row-index] td');
+    td.classList.add('sideview-discrepancy-fuzzy');
+    const own = el => el ? (el.textContent || '').trim() : '';
+    const before = el => el ? getComputedStyle(el, '::before').content : 'none';
+    const badge = document.querySelector('.sideview-badge-cdisc');
+    const diag = document.querySelector('.sideview-step-diag');
+    const jc = document.querySelector('.sideview-joincheck');
+    const jcBefore = cls => { jc.classList.add(cls); const v = getComputedStyle(jc, '::before').content; jc.classList.remove(cls); return v; };
+    const out = { cdisc: own(badge), cdiscBefore: before(badge), diag: own(diag), disc: before(td),
+                  warn: jcBefore('is-warn'), error: jcBefore('is-error') };
+    td.classList.remove('sideview-discrepancy-fuzzy');
+    e.setCdiscTags({ [ids.labs]: null });
+    return out;
+  })()", sv_access_eng, sv_card_js("labs")))
+  sv_access_clear(b)
+  # A CDISC tag names its standard (colour alone told SDTM, SEND and ADaM apart).
+  expect_true(nzchar(r$cdisc))
+  expect_match(r$cdiscBefore, "SDTM", fixed = TRUE)
+  # The key-check state carries its text.
+  expect_true(nzchar(r$diag))
+  # The join check box names its severity in text, not by colour alone.
+  expect_identical(r$warn, "\"Warning\"")
+  expect_identical(r$error, "\"Error\"")
+  # A discrepancy mark gets a shape (a ::before mark) as well as its tint.
+  expect_false(r$disc %in% c("none", "normal", ""))
+})

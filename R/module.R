@@ -22,6 +22,9 @@
 #'   `"list"` (a text-first list of the tables, for keyboard and screen-reader
 #'   use). The default is `getOption("sideview.view", "canvas")`. A workspace
 #'   restored later (Open) that records a view switches to it.
+#' @param access `TRUE` starts with the Accessible canvas switch on (default
+#'   `getOption("sideview.access", FALSE)`); the switch in the `?` list is remembered in
+#'   the browser and wins.
 #' @param cards Tables for the canvas: a (named) list as [sideview()] takes, or a
 #'   **reactive** returning one. A reactive is compared with the canvas by name each
 #'   time it fires: new names are added, names that are gone are removed, and names
@@ -57,10 +60,12 @@
 #' @seealso [sideviewProxy()], [sv_add_card()]
 #' @export
 sideviewUI <- function(id, height = "600px", title = NULL, theme = "auto",
-                       view = getOption("sideview.view", "canvas")) {
+                       view = getOption("sideview.view", "canvas"),
+                       access = getOption("sideview.access", FALSE)) {
   view <- sv_check_view(view)
+  access <- sv_check_access(access)
   ns <- shiny::NS(id)("")
-  sv_ui_build(title = title, theme = theme, ns = ns, height = height, view = view)
+  sv_ui_build(title = title, theme = theme, ns = ns, height = height, view = view, access = access)
 }
 
 #' @rdname sideviewUI

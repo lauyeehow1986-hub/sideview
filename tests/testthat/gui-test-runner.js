@@ -895,6 +895,17 @@ function runAllScenarios() {
   const s8_listed = !!s8_scrim && s8_scrim.textContent.indexOf('Add the step in a builder tab, or apply a date rule') >= 0;
   engine.toggleShortcuts(false);
 
+  // The Accessible canvas keys: listed only while the switch is on, redrawn when it flips with the ? list open.
+  engine.setAccess(false);
+  engine.toggleShortcuts(true);
+  const s8_accTxt = () => container.querySelector('.sideview-shortcuts-scrim').textContent;
+  const s8_accOffHidden = s8_accTxt().indexOf('Accessible canvas keys') < 0;
+  engine.setAccess(true);
+  const s8_accOnShown = s8_accTxt().indexOf('Accessible canvas keys') >= 0 && s8_accTxt().indexOf('Alt+Arrows') >= 0;
+  engine.setAccess(false);
+  const s8_accOffAgain = s8_accTxt().indexOf('Accessible canvas keys') < 0;
+  engine.toggleShortcuts(false);
+
   engine.pipeline.clear();
   engine.pipeline.setTables({});
   engine.ruleDraft = null;
@@ -928,6 +939,9 @@ function runAllScenarios() {
     strict_disabled_on_lazy: s8_lazyDisabled,
     step_label_says_rule_needs_fixing: s8_labelFix,
     strict_enabled_on_original_tables: s8_strictFree,
+    access_keys_hidden_when_off: s8_accOffHidden,
+    access_keys_shown_when_on: s8_accOnShown,
+    access_keys_hidden_again: s8_accOffAgain,
     strict_disabled_after_row_changing_step: s8_rowsGrey,
     strict_enabled_again: s8_strictBack,
     shortcut_listed: s8_listed

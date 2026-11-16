@@ -5,6 +5,22 @@ Each entry: **date — change — why — verification**. Keep the "Open issues"
 
 ---
 
+### 2026-11-15 - Accessible canvas final-review fixes (B, I1-I4, P1, P2, M1, M2, M7, M8, M9)
+- **Change:** (I1) each engine resolves the access state once in its constructor (`resolveAccess()`: stored > `_accessMem` > `data-sv-access` / `options.access` > off); `accessOn()` returns the cached `_access`, only `setAccess()` changes it, so a second canvas on the page keeps its class, row height, zoom floor and `?` switch until the next load. (I2) `getState()` saves an auto-sized card's inline (default) size while the switch is on, plus an optional per-card `user_sized: true` that `applyState()` turns back into `data-sv-user-sized` (no schema bump; R/state.R docs and `man/` updated). (I3) `stroke-linecap: butt` on `[data-sv-pat]` paths under `.sv-access` and `forced-colors` (prefers-contrast has no pattern rules, so round stays there). (I4) docs no longer say the widget or `save_sideview()` take `access =`: `sideview_widget(options = list(access = TRUE))` / `options(sideview.access = TRUE)`. (P1) `setScale` formatting. (P2) `sv_axe_states()` asserts each state (drawer tab selected, AI input focused or hidden in a module, filter popover, `?`, search) before axe runs; new switch-off run of the same panels (modes x themes, 1360) with `SV_AXE_ACCEPTED`. (M8) `disable()` moves focus to the container when it was on an element that lost its tab stop; dialog return focus goes through `engine.returnFocus()` (falls back to the container). (M9) access `--sv-border-light` is `#526075` light / `#8796ab` dark (>= 4.5:1 on every background), test-theme.R checks it on seven backgrounds. (M1, M2, M7) docs: Tab order inside a card, the pattern rule, the search-hint `kbd` colour with the switch off.
+- **Spec deviation (M1), recorded:** the spec says the card body is not a Tab stop. It is one (`tabindex="0"`, `role="region"`, "<name> rows") because axe's `scrollable-region-focusable` fails a scrollable body that keyboard users cannot reach. NEWS, the article and the manual script now say so.
+- **Verified (real Chrome via chromote, `NOT_CRAN=true`, focused filters only):** RED then GREEN for I1, I2 (two tests), I3, M8 (two tests) and M9; filter counts in `.superpowers/sdd/2026-11-15-accessible-canvas-implementation/final-fix-report.md`. `node --check` on sideview.js, sv-access.js, sv-panzoom.js. Not run: full `devtools::test()` / `check()`, the manual script, RStudio by hand.
+
+---
+
+### 2026-11-15 - Accessible canvas docs, manual script, site (B, Task 9)
+- **Change:** docs only. `plans/2026-11-15-access-manual-script.md` (Edge, Magnifier 200% / 400%, Windows High Contrast, RStudio dialog and Viewer, Alt+Left check with the Ctrl+Alt fallback rule); CLAUDE.md (the switch, `sv-access`, `sv-access.js`, keys, zoom floor, OS blocks, colour precedence, `JUMP_MODS`); NEWS 0.9.0 (development); screen-reader article "Keyboard and low vision"; `man/` regenerated; site rebuilt.
+- **What Tasks 1-8 verified (real Chrome via chromote, `NOT_CRAN=true`, focused filters; the full suite and `devtools::check()` are run by the controller):** `access-browser` 323 passing (keys with real CDP key events, Tab and reading order, moves and `sideview_card_moved`, connect / Delete / J, switch-off restores every attribute, switch precedence); `a11y-browser` 622 passing, incl. the axe matrix with the switch on and an empty accepted list (3 modes x 2 themes x 3 sizes x canvas, drawer tabs, AI bar, filter popover, `?`, search); `layout-browser` 897; `access`/`theme`/`computer-use` 468 (access tokens 7:1 text, 4.5:1 non-text; forced-colors and prefers-contrast emulated with `Emulation.setEmulatedMedia`); `node --check` on `sideview.js` and `sv-access.js`; mock-DOM runner `gui-test-runner.js` no false.
+- **Pending (not done, not claimed):** the manual script (Magnifier, High Contrast, Edge, RStudio dialog and Viewer) has NOT been run. `JUMP_MODS = 'alt'` is verified only in Chrome (`preventDefault()` on keydown stops Alt+Left/Right); not verified in RStudio (Qt WebEngine) or Edge. If any host navigates away, change `JUMP_MODS` to `'ctrl+alt'` and update the `?` rows, tests and docs.
+- **target-size backlog item closed** for the switch-on canvas (axe passes with `SV_AXE_ACCEPTED` not applied). The default (switch-off) canvas keeps its `target-size` acceptance by design.
+- **Parked minor notes:** (1) the port border equals the canvas background in the default and access modes. (2) Reordering cards for reading order changes the DOM z-order of overlapping cards; `disable()` puts the original order back. (3) A stale spline after Ctrl+Z of a join is pre-existing (a mouse join does it too); the step is undone, the path stays until the next redraw. (4) `JUMP_MODS = 'alt'` not yet verified in RStudio or Edge (see above).
+
+---
+
 ### 2026-11-14 - Screen-reader article, README, NEWS 0.8.0, feedback template, version (A4, Task 18)
 - **Change:** `vignettes/articles/screen-reader.Rmd` (one eval chunk: `sv_describe()` on a synthetic data frame; the rest `eval = FALSE`), navbar entry and `_pkgdown.yml`; `.github/ISSUE_TEMPLATE/accessibility-feedback.yml` (required: screen reader + version, browser or RStudio pane, sideview version, what you did, what you heard or expected; label `accessibility`); README "Screen Reader Ready" bullet; NEWS `# sideview 0.8.0` (existing a11y entries kept); `Version: 0.8.0`; CLAUDE.md standing rule (list view + sentences) made explicit.
 - **RULING (honest label):** the NVDA pass was NOT run (see Task 17). Everywhere the label reads "checked with automated WCAG tests (axe) and real-browser keyboard tests; an NVDA script is written but has not yet been run; not yet tested by blind users". The article's RStudio-pane section says pane/dialog behaviour with a screen reader is unmeasured and recommends `viewer = "browser"`.
@@ -347,7 +363,7 @@ Each sub-project gets its own spec, plan and build, in this order:
   - E: ARD / TLG cards (analysis results datasets and tables as cards);
   - F: spec / define.xml checks (conformance, which 0.5.0 deliberately does not do).
 - **Sub-project B (keyboard and low vision) backlog:**
-  - axe `target-size` (WCAG 2.5.8) is accepted in `SV_AXE_ACCEPTED` (test-a11y-browser.R): card and column-header icon buttons are 24 px in CSS (since 0.8.0) but the canvas fit-to-view zoom shrinks them on screen (about 17 px). Needs a minimum zoom, or zoom-independent chrome. Sub-project B item: once the zoom floor or zoom-independent chrome is in, remove `target-size` from `SV_AXE_ACCEPTED` and re-run the matrix (the Task 16 ruling keeps it for 0.8.0).
+**CLOSED 2026-11-15 (B):** the switch-on canvas passes axe `target-size` (zoom floor 1.0, 24 px targets) with an empty accepted list; the default canvas keeps the acceptance by design. Original note:   - axe `target-size` (WCAG 2.5.8) is accepted in `SV_AXE_ACCEPTED` (test-a11y-browser.R): card and column-header icon buttons are 24 px in CSS (since 0.8.0) but the canvas fit-to-view zoom shrinks them on screen (about 17 px). Needs a minimum zoom, or zoom-independent chrome. Sub-project B item: once the zoom floor or zoom-independent chrome is in, remove `target-size` from `SV_AXE_ACCEPTED` and re-run the matrix (the Task 16 ruling keeps it for 0.8.0).
 - Table version diff by key (data-lock comparisons between dataset versions).
 - Validation rules (ranges, allowed values, ID uniqueness) exporting `pointblank`-style checks.
 - PHI/PII column tagging that excludes tagged columns from the LLM schema context.
@@ -1142,3 +1158,19 @@ Each sub-project gets its own spec, plan and build, in this order:
 - 8: the list profile box hears the give-up of an unanswered profile request.
 - 11: fixed `Sys.sleep` before "nothing happened" assertions replaced by positive waits (announcer drained, row count, DOM marker).
 - Verified: `node --check`; `test-a11y-browser.R` all green in a real browser (`NOT_CRAN=true`), including 4 new tests for 5-8.
+
+## Accessible canvas: full verification on ce88b48 (2026-11-16)
+- Full `devtools::test()` with `NOT_CRAN=true`: 26094 passed, 0 failed, 0 errors, 0 skipped, 0 warnings.
+- `devtools::check(document = FALSE)` (tests with the real-browser suites, 29 min): 0 errors, 0 warnings, 1 NOTE (the known environmental `NULL` check-directory note).
+- The final whole-branch review fixes (I1-I4, P1, P2, M1, M2, M7, M8, M9) were re-reviewed: all addressed.
+- Still pending: the manual script `plans/2026-11-15-access-manual-script.md` (Magnifier 200%/400%, High Contrast, Edge, RStudio dialog and Viewer), including whether Alt+Arrows navigate Back in RStudio or Edge (`JUMP_MODS`).
+- Parked for later: test-access-browser should clean up `sideview.access` in localStorage itself (withr::defer); the switch-off axe run covers 1360x820 only.
+
+## Accessible canvas: manual pass (2026-11-16)
+- Edge: Alt+Arrow card jumps work and the page does not go back or forward, so `JUMP_MODS` stays `alt`.
+- Magnifier 200% and 400%, High Contrast (both themes, switch off and on): reported OK by the user. RStudio dialog and Viewer, with Alt+Left there: NOT yet run. Claude checked checks 1, 3, 4, 6, 7 itself in a Chromium pane.
+- Not run in full: checks 2, 14 to 19 were not walked one by one; High Contrast Night sky was not confirmed separately. Backlog: a "dismiss suggestions" control (Clear in the drawer also removes joins).
+
+## Accessible canvas: RStudio pass and arrange on switch-on (2026-11-16)
+- RStudio dialog and Viewer pane, with Alt+Arrow there: reported OK by the user. All manual passes are done; `JUMP_MODS` stays `alt`.
+- Change at the user's request (38d1e9e): switching on arranges overlapping cards; switching off puts back every card not moved since. Tests: access-browser, a11y-browser, layout-browser, 2354 passed. Full suite not re-run after it.

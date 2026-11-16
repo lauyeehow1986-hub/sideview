@@ -7,9 +7,10 @@ sentences in the console. This page says how to use both.
 ## How well is this tested
 
 sideview 0.8.0 is **checked with automated WCAG tests (axe) and
-real-browser keyboard tests; an NVDA script is written but has not yet
-been run; not yet tested by blind users.** Please treat it as a first
-step and tell us where it fails (see “Report a problem” below).
+real-browser keyboard tests; the NVDA script was run once in Edge with
+NVDA 2026.2 (all 15 tasks as written; the RStudio dialog and Viewer pane
+were not covered); not yet tested by blind users.** Please treat it as a
+first step and tell us where it fails (see “Report a problem” below).
 
 ## Start in the list view
 
@@ -49,10 +50,12 @@ VoiceOver). The headings are:
     as sentences, and add the join.
 4.  **Merge SUPP**: for a SUPP– table, check and add the merge into its
     parent.
-5.  **Transform**: sort, filter, rename and the other steps.
+5.  **Transform**: the step builders: Filter, Arrange, Mutate, Recode
+    and Summarise.
 6.  **Pipeline**: the steps so far, each of which you can switch off,
     move or delete.
-7.  **Code**: the generated R code, with Copy and Insert.
+7.  **Code**: the generated R code, with Copy (and Insert, in the
+    gadget; a Shiny module has no Insert).
 8.  **Copilot**: present only when a language model is set up.
 
 What you do in the list view makes the same code as the canvas does, and
@@ -73,6 +76,43 @@ the text twin of looking at the cards:
 
 A large duckdb or Arrow table is described from its summaries and is
 never loaded into memory.
+
+## Keyboard and low vision
+
+If you can see the screen, at least in part, or cannot use a mouse, you
+can use the canvas itself. Turn on the **Accessible canvas** switch:
+press `?` and use the switch in the dialog, or start with it on.
+
+`# for one call`` `[`sideview`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)`(``patients``, ``visits``, access ``=`` ``TRUE``)`` `` ``# for the whole session`` `[`options`](https://rdrr.io/r/base/options.html)`(``sideview.access ``=`` ``TRUE``)`
+
+The argument or option only sets the starting state. The switch in the
+`?` dialog changes it, and the browser remembers that choice, which wins
+over R. With the switch off the canvas is unchanged.
+
+With the switch on:
+
+- The zoom never goes below 100%. Text is at least 16 px, every control
+  is at least 24 by 24 px, the focus ring is 3 px, and a high-contrast
+  colour set replaces the theme colours. Joins are 3 px wide with a dash
+  pattern and an arrowhead each, so crossing joins can be told apart
+  without colour.
+- Each card is one Tab stop, in reading order. On a card, Arrows move it
+  20 px (Shift+Arrows 100 px), Alt+Arrows focus the nearest card, Enter
+  goes to its first column header, and PageUp, PageDown, Home and End
+  scroll its table. The view follows focus.
+- On a column header, Left and Right move along the columns and Esc goes
+  back to the card. `C` starts a join and Enter completes it on the
+  column you have moved to (Esc cancels), Delete removes a join (a small
+  menu if there are several), and `J` jumps to the joined column. Moves
+  and joins are announced. The keys work with the single-key shortcuts
+  off and never fire while you type.
+- Windows High Contrast and “increase contrast” are followed even with
+  the switch off.
+
+Alt+Left is also the browser’s Back key. sideview cancels it for the
+jump, but this has not yet been checked in Edge or in RStudio. If it
+takes you back in your setup, the list view still gives you every join
+and filter by keyboard, and please report it.
 
 ## Use a browser, not the RStudio pane
 
