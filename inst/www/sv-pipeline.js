@@ -936,28 +936,28 @@
 
   /**
    * Whether a derive step is written: enabled, with two inputs that are on the canvas (setTables) or
-   * written by an earlier live derive step. Never a reason to disable the step (disableMissing skips it).
+   * written by another live derive step (in any position: compose() orders producers first). Never a reason to disable the step (disableMissing skips it).
    */
   Pipeline.prototype.deriveLive = function (step) {
     var self = this;
     if (!step || step.kind !== 'derive' || step.enabled === false) return false;
     var ins = [].concat(step.inputs || []);
     if (ins.length !== 2) return false;
-    var at = this.steps.indexOf(step);
-    if (at < 0) {
-      at = this.steps.length;
-      for (var i = 0; i < this.steps.length; i++) {
-        if (step.id !== undefined && this.steps[i].id === step.id) { at = i; break; }
-      }
+    // a step that is already being asked about is a cycle: not live
+    this._liveBusy = this._liveBusy || [];
+    if (this._liveBusy.indexOf(step) >= 0) return false;
+    this._liveBusy.push(step);
+    try {
+      // the producer of a derived input may stand anywhere in the steps: compose() writes it first
+      return ins.every(function (n) {
+        if (self.tables[n]) return true;
+        return self.steps.some(function (x) {
+          return x !== step && x.kind === 'derive' && x.table === n && self.deriveLive(x);
+        });
+      });
+    } finally {
+      this._liveBusy.pop();
     }
-    return ins.every(function (n) {
-      if (self.tables[n]) return true;
-      for (var j = 0; j < at; j++) {
-        var x = self.steps[j];
-        if (x.kind === 'derive' && x.table === n && self.deriveLive(x)) return true;
-      }
-      return false;
-    });
   };
 
   // The condition of an outside_window anti join, written for the kept side `side` (x$ is the kept
@@ -1030,7 +1030,7 @@
     var moveCon = duckRef ? ', con = dbplyr::remote_con(' + duckRef + ')' : '';
     var hasRule = !!rule;
     var cb = crossBackend(kk, kk ? this.refFor(keep) : null, { ref: this.refFor(other), kind: ko },
-      hasRule, moveCon, duckRef, keep);
+      hasRule, moveCon, duckRef, 'derive_' + step.table);
     var head = this.refFor(keep);
     if (cb.wrap) head = cb.wrap[0] + head + cb.wrap[1];
     var copy = cb.copy ? ', copy = TRUE' : '';
@@ -1136,10 +1136,9 @@
       g.push('  r <- iv == ' + str(l.idvar));
       g.push('  v <- as.character(s$IDVARVAL[r])');
       if (l.type === 'integer' || l.type === 'double') {
-        var re = l.type === 'integer' ? SUPP_INT_RE.source : SUPP_DBL_RE.source;
-        g.push('  ok <- grepl(' + str(re) + ', v, perl = TRUE)');
-        g.push('  num <- suppressWarnings(' + (l.type === 'integer' ? 'as.integer' : 'as.numeric') +
-          '(ifelse(ok, v, NA_character_)))');
+        // the merge step's conversion (suppKeyConv); an overflow past 1e308 is bad here, as in the check
+        // (the merge step drops those rows with its own filter after the pivot)
+        g.push('  num <- ' + suppKeyConv(l.type, 'v'));
         if (l.type === 'double') g.push('  num[is.na(num) | abs(num) > 1e308] <- NA_real_');
         g.push('  cv <- ifelse(is.na(num), NA_character_, as.character(num))');
       } else {
@@ -1229,11 +1228,20 @@
     var out = [];
     // derived tables first, in step order: a chain on one starts from its name, and a derived table
     // may read an earlier derived table. No collect(): a lazy derived table stays lazy (spec 5.4).
-    steps.forEach(function (s) {
-      if (s.kind !== 'derive' || !self.deriveLive(s)) return;
-      var d = self.deriveExpr(s);
-      if (d.code) out.push(ident(s.table) + ' <- ' + d.code);
-    });
+    var dsteps = steps.filter(function (s) { return s.kind === 'derive' && self.deriveLive(s); });
+    while (dsteps.length) {
+      // the first step none of whose inputs is written by a step still waiting (stable otherwise)
+      var pick = 0;
+      for (var di = 0; di < dsteps.length; di++) {
+        var waits = dsteps.some(function (o) {
+          return o !== dsteps[di] && dsteps[di].inputs.indexOf(o.table) >= 0;
+        });
+        if (!waits) { pick = di; break; }
+      }
+      var ds = dsteps.splice(pick, 1)[0];
+      var d = self.deriveExpr(ds);
+      if (d.code) out.push(ident(ds.table) + ' <- ' + d.code);
+    }
     var state = {};
     var asPrep = {};
     var finished = {};  // t -> { kind }: the chain's lazy backend after its steps
@@ -2461,10 +2469,16 @@
   // IDVARVAL as the parent key's type. Text that does not convert is NA, as in the check
   // (sv_supp_convert / suppConvert): the integer and double patterns are the check's own.
   function suppKeyExpr(type) {
-    if (type !== 'integer' && type !== 'double') return 'IDVARVAL';
+    return suppKeyConv(type, 'IDVARVAL');
+  }
+
+  // The one conversion of IDVARVAL text to the key's type, for the merge step (`vec` = the column
+  // IDVARVAL) and the derive step (`vec` = the level's text vector). Both must agree, so both use it.
+  function suppKeyConv(type, vec) {
+    if (type !== 'integer' && type !== 'double') return vec;
     var re = type === 'integer' ? SUPP_INT_RE.source : SUPP_DBL_RE.source;
     return 'suppressWarnings(' + (type === 'integer' ? 'as.integer' : 'as.numeric') +
-      '(dplyr::if_else(grepl(' + str(re) + ', IDVARVAL, perl = TRUE), as.character(IDVARVAL), NA_character_)))';
+      '(dplyr::if_else(grepl(' + str(re) + ', ' + vec + ', perl = TRUE), as.character(' + vec + '), NA_character_)))';
   }
 
   // A level whose key an Arrow join casts to the parent's type: a numeric IDVAR.

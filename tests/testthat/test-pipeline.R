@@ -1725,3 +1725,30 @@ test_that("every derive form parses, for both sides, every rule shape and the SU
     }
   }
 })
+
+test_that("compose writes a producer derive step before its consumer, however they were added", {
+  out <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.setTables({ ae: { lazy: null, codeRef: 'ae' }, dm: { lazy: null, codeRef: 'dm' }, ex: { lazy: null, codeRef: 'ex' } });
+    const d1 = P.deriveStep('d1', 'unmatched', ['ae', 'dm'], {by: [{x: 'id', y: 'id'}], side: 'x'});
+    const d2 = P.deriveStep('d2', 'unmatched', ['d1', 'ex'], {by: [{x: 'id', y: 'id'}], side: 'x'});
+    p.add(d2);
+    const first = { code: p.compose(), live: p.deriveLive(p.steps[0]) };
+    p.add(d1);
+    const added = p.compose();
+    p.add(d2);
+    p.add(d1);
+    out = { first: first, added: added, readded: p.compose(), order: p.steps.map(function (s) { return s.table; }) };
+  ")
+  expect_false(out$first$live)
+  expect_identical(out$first$code, "")
+  for (code in c(out$added, out$readded)) {
+    parts <- strsplit(code, "
+
+", fixed = TRUE)[[1]]
+    expect_match(parts[1], "^d1 <- ")
+    expect_match(parts[2], "^d2 <- ")
+    expect_parses(code)
+  }
+  expect_identical(unlist(out$order), c("d2", "d1"))
+})

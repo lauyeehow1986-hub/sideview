@@ -174,7 +174,13 @@ sv_derive_supp_rows <- function(op, tables, args) {
   } else {
     q <- dplyr::select(parent, dplyr::all_of(pcols))
     # duckdb cannot push a filter down into an Arrow scan: keep the narrow key columns first
-    if (length(attr(parent, "sv_arrow_views", exact = TRUE))) q <- dplyr::compute(q)
+    if (length(attr(parent, "sv_arrow_views", exact = TRUE))) {
+      # the copy is only needed to build these rows (the SUPP card is in memory): drop it afterwards
+      tmp <- paste0("sv_supp_keys_", paste(sample(c(letters, 0:9), 12, replace = TRUE), collapse = ""))
+      tcon <- dbplyr::remote_con(parent)
+      q <- dplyr::compute(q, name = tmp, temporary = TRUE)
+      on.exit(try(DBI::dbRemoveTable(tcon, tmp), silent = TRUE), add = TRUE)
+    }
     subj <- unique(as.character(side$supp$USUBJID))
     u <- rlang::sym("USUBJID")
     if (anyNA(subj)) {

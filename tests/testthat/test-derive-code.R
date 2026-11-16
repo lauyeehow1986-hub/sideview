@@ -118,6 +118,7 @@ test_that("unmatched without a rule: code equals the builder, NA matching NA, on
       cards[[side]] <- dc_card(fx, "unmatched", c("x", "y"), list(by = list(list(x = "USUBJID", y = "USUBJID")), side = side))
     }
     res <- dc_compose(fx, lapply(cards, list))
+    expect_gt(nrow(dc_rows(fx, cards[[1]])), 0)
     for (side in c("x", "y")) {
       info <- paste(paste(ik, collapse = "/"), side)
       dc_expect(fx, res[[match(side, names(cards))]], cards[[side]], info)
@@ -161,6 +162,9 @@ test_that("with a date rule, unmatched and outside_window code equal the builder
           }
         }
         res <- dc_compose(fx, lapply(cards, list))
+        # a broken code that returned nothing on both sides must not pass: the cases hold rows
+        n_rows <- vapply(cards, function(cd) nrow(dc_rows(fx, cd)), 1)
+        expect_gt(sum(n_rows), 0, label = paste(kind, paste(ik, collapse = "/"), op))
         for (i in seq_along(cards)) {
           dc_expect(fx, res[[i]], cards[[i]], infos[i])
           if (ik[1] == "arrow" && ik[2] == "arrow") expect_identical(res[[i]]$kind, "duckdb", info = infos[i])
@@ -265,4 +269,39 @@ test_that("supp code handles NA subject keys in a lazy parent and an Arrow int64
     res <- dc_compose(fx, list(list(card)))[[1]]
     dc_expect(fx, res, card, paste("int64", op), supp = TRUE)
   }
+})
+
+test_that("a derive step and a chain on the same data frame use different copy_to names, and the rows stay intact", {
+  x <- data.frame(id = c(1:6, NA), v = 1:7)
+  y <- data.frame(id = c(1:3, NA), w = 4:1)
+  fx <- dc_fixture(list(x = x, y = y), c("df", "duckdb"))
+  card <- dc_card(fx, "unmatched", c("x", "y"), list(by = list(list(x = "id", y = "id")), side = "x"))
+  step <- list(kind = "derive", key = "k1", table = card$name, op = "unmatched", inputs = list("x", "y"),
+               args = card$derived$args)
+  join <- list(kind = "join", table = "x", right = "y", type = "left_join", by = list(list(left = "id", right = "id")))
+  filt <- list(kind = "filter", table = "x", conds = list("v > 3"), condCols = list("v"))
+  res <- run_pipeline_js(sprintf("
+    const p = new P.Pipeline();
+    p.setPipe('|>');
+    p.setTables(%s);
+    p.add(%s); p.add(%s); p.add(%s);
+    out = p.compose();", dc_json(fx$meta), dc_json(step), dc_json(filt), dc_json(join)))
+  names_used <- regmatches(res, gregexpr('name = "[^"]+"', res))[[1]]
+  expect_length(names_used, 2L)
+  expect_false(anyDuplicated(names_used) > 0)
+  expect_parses(res)
+  env <- list2env(fx$objs, parent = globalenv())
+  eval(parse(text = res), env)
+  expect_equal(dc_norm(get(card$name, env)), dc_norm(dc_rows(fx, card)), tolerance = 1e-12)
+})
+
+test_that("building a SUPP card on an Arrow parent leaves no temp table on the connection", {
+  t <- dc_supp_tables(FALSE)
+  fx <- dc_fixture(list(ae = t$ae, suppae = t$supp), c("arrow", "arrow"))
+  dc_card(fx, "supp_orphans", c("ae", "suppae"), list(rdomain = "AE"))
+  con <- fx$con_env$con
+  before <- DBI::dbListTables(con)
+  for (i in 1:3) dc_card(fx, "supp_orphans", c("ae", "suppae"), list(rdomain = "AE"))
+  expect_setequal(DBI::dbListTables(con), before)
+  expect_false(any(grepl("sv_supp_keys_|dbplyr_", DBI::dbListTables(con))))
 })
