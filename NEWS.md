@@ -1,4 +1,4 @@
-# sideview 0.9.0 (development)
+# sideview 0.9.0
 
 Accessible canvas: one switch that makes the canvas itself usable by keyboard and at low vision. Off by default; with it
 off the canvas is unchanged. Checked with automated WCAG tests (axe, switch on and off) and real-browser keyboard tests;
