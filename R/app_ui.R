@@ -359,6 +359,8 @@ render_card_tag <- function(card, index = 1L) {
     # the rows R holds for a lazy card: checks that run on them say so (discrepancy, Auto Map)
     `data-preview-rows` = if (is_lazy && !is.na(n_preview)) plain_count(n_preview) else NULL,
     `data-code-ref` = card$code_ref,
+    # a derived card (the rows behind a check count): the engine keeps it with the step that writes it
+    `data-derived` = if (!is.null(card$derived)) "true" else NULL,
     # CDISC tag and variable labels for the engine (badge, header titles, inspector); JSON text
     `data-cdisc` = if (!is.null(card$cdisc)) {
       as.character(jsonlite::toJSON(sv_cdisc_wire_tag(card$cdisc), auto_unbox = TRUE, null = "null"))

@@ -1563,3 +1563,22 @@ test_that("axe-core: no violation with the switch off in the same panels (modes 
   skip_if_no_axe()
   sv_axe_states_check(FALSE, list(c(1360, 820)))
 })
+
+test_that("axe-core finds no violation in the drawer with the derive offer buttons shown", {
+  skip_if_no_browser()
+  skip_if_no_axe()
+  app <- sv_start_app(paste0(
+    "local({ dm <- data.frame(STUDYID = 'SV-001', DOMAIN = 'DM', USUBJID = paste0('SV-001-', 1:4), AGE = c(34, 51, 62, 45), stringsAsFactors = FALSE);",
+    "ae <- data.frame(STUDYID = 'SV-001', DOMAIN = 'AE', USUBJID = paste0('SV-001-', c(1:4, 8, 9)), AESEQ = 1:6, stringsAsFactors = FALSE);",
+    "sideview(ae, dm, run = FALSE) })"))
+  b <- sv_open_page(app$url, 1360, 820)
+  on.exit({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) }, add = TRUE)
+  sv_js(b, "(() => { const e = document.querySelector('.sideview-container')._sideviewInstance;
+    e.addConnections([{fromTable: 'ae', fromCol: 'USUBJID', toTable: 'dm', toCol: 'USUBJID', type: 'left_join'}]); return true; })()")
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-step-diag.is-ok, .sideview-step-diag.is-warn')", timeout = 60))
+  sv_js(b, "document.querySelector('.sideview-drawer').classList.remove('collapsed'); document.querySelector('.sideview-drawer-tab[data-tab=discrepancy]').click(); true")
+  expect_true(sv_wait_js(b, "(() => { const x = document.querySelector('[data-action=\"derive-open\"]'); if (!x) return false; x.scrollIntoView({block: 'center'}); const r = x.getBoundingClientRect(); const h = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return !!h && (h === x || x.contains(h)); })()", timeout = 60))
+  v <- sv_axe_run(b)
+  v <- v[!v$id %in% names(SV_AXE_ACCEPTED), , drop = FALSE]
+  expect_equal(nrow(v), 0, info = paste(v$id, v$targets, collapse = "; "))
+})

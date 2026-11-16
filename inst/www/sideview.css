@@ -1983,6 +1983,37 @@ html.sv-standalone body {
   cursor: pointer;
 }
 
+.sideview-container .sideview-derive-offers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.sideview-container .sideview-derive-btn {
+  padding: 3px 10px;
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-sm);
+  background: var(--sv-surface);
+  color: var(--sv-primary-text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sideview-container .sideview-derive-btn:hover {
+  background: var(--sv-surface-secondary);
+}
+
+.sideview-container .sideview-step.is-waiting .sideview-step-text {
+  color: var(--sv-text-muted);
+}
+
+.sideview-container .sideview-card[data-derived="true"] .sideview-card-header {
+  box-shadow: inset 3px 0 0 var(--sv-primary);
+}
+
 .sideview-container .sideview-suppcheck-subtitle {
   margin: 6px 0 2px;
   color: var(--sv-text-muted);

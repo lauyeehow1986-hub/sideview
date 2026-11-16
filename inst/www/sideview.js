@@ -757,6 +757,21 @@ function sendToShiny(name, value) {
     this.colProfiles = {};
     this.colProfilePending = {};
     this.joinCheckStepId = null;
+    // Derived cards (the rows behind a check count): requests waiting for R, the buttons of the report
+    // on show (by a per-render id), the card an offer made, cards an opened state placed, and the guards
+    // of reconcileDerived()
+    this.derivePending = {};
+    this._deriveSeq = 0;
+    this._deriveOffers = {};
+    this._deriveSig = {};
+    this._deriveFailed = {};
+    this._deriveSkip = {};
+    this._deriveSkipTimer = null;
+    this._pendingGeo = {};
+    this._forgot = {};
+    this._reconTimer = null;
+    this._reconciling = false;
+    this._cardSig = '';
     // Live-region announcements (see announce()); the last 50 messages are kept for tests.
     this.announceLog = [];
     this._accessSubs = [];
@@ -789,6 +804,7 @@ function sendToShiny(name, value) {
         self.renderPipeline();
         // a join check result is not a change of the work; everything else is
         if (label !== 'checks') self.scheduleSnapshot();
+        if (label !== 'checks') self.reconcileDerived();
       }
     });
 
@@ -1732,6 +1748,8 @@ function sendToShiny(name, value) {
     this._annQueue = [];
     this.container.querySelectorAll('.sideview-announcer, .sideview-announcer-alert').forEach(function (n) { n.remove(); });
     if (this._snapshotTimer) { clearTimeout(this._snapshotTimer); this._snapshotTimer = null; }
+    if (this._reconTimer) { clearTimeout(this._reconTimer); this._reconTimer = null; }
+    if (this._deriveSkipTimer) { clearTimeout(this._deriveSkipTimer); this._deriveSkipTimer = null; }
     if (this._cardResizeObserver) { this._cardResizeObserver.disconnect(); this._cardResizeObserver = null; }
     this._globalListeners.forEach(function (l) {
       try { l[0].removeEventListener(l[1], l[2], l[3]); } catch (e) {}
@@ -3321,6 +3339,7 @@ function sendToShiny(name, value) {
     cardEl.className = 'sideview-card panzoom-exclude';
     cardEl.dataset.cardId = cardId;
     cardEl.dataset.cardName = cardName;
+    if (cardData.derived) cardEl.dataset.derived = 'true';
 
     // Positioning
     var hasPos = cardData.x != null || cardData.y != null;
@@ -3435,7 +3454,8 @@ function sendToShiny(name, value) {
       x: initialX,
       y: initialY,
       colLabels: cardData.col_labels || null,
-      cdisc: cardData.cdisc || null
+      cdisc: cardData.cdisc || null,
+      derivedInputs: cardData.derived ? asArray(cardData.derived.inputs).map(String) : null
     };
     this.cards.set(cardId, cardMeta);
     this.renderCdiscBadge(cardMeta);
@@ -3477,6 +3497,7 @@ function sendToShiny(name, value) {
     // a card came or went: the Merge into buttons name their targets on the canvas
     this.refreshSuppButtons();
     if (this.listView) this.listView.syncTables();
+    this.reconcileDerived();
   };
 
   /** 'arrow' | 'duckdb' when the table is lazy, else null. */
@@ -4212,6 +4233,256 @@ function sendToShiny(name, value) {
     });
   };
 
+  // ---- derived cards: the rows behind a check count, as a card (D1) ---------------------------------
+  // R builds the card (derive_request -> sideview_card_add, carrying `derived`); the browser keeps the derive
+  // step that writes it. reconcileDerived() is the one place that keeps cards and steps in line.
+
+  function stableJson(v) {
+    if (v === null || v === undefined) return 'null';
+    if (Array.isArray(v)) return '[' + v.map(stableJson).join(',') + ']';
+    if (typeof v === 'object') {
+      return '{' + Object.keys(v).sort().filter(function (k) { return v[k] !== undefined && v[k] !== null; })
+        .map(function (k) { return JSON.stringify(k) + ':' + stableJson(v[k]); }).join(',') + '}';
+    }
+    return JSON.stringify(v);
+  }
+
+  // The args that make two derived tables the same one: side, RDOMAIN, key pairs and the rule.
+  function deriveArgsKey(args) {
+    args = args || {};
+    var by = asArray(args.by).map(function (p) { return p ? String(p.x) + '\u0001' + String(p.y) : ''; });
+    return JSON.stringify([args.side || null, args.rdomain || null, by, stableJson(args.rule)]);
+  }
+
+  /** The name of a derived card that already holds what `rec` ({op, inputs, args}) would build, or null. */
+  SideviewEngine.prototype.derivedCardFor = function (rec) {
+    var self = this;
+    var ins = asArray(rec.inputs).map(String).join('\u0001');
+    var key = deriveArgsKey(rec.args);
+    var made = this._deriveSig[JSON.stringify([rec.op, asArray(rec.inputs).map(String), stableJson(rec.args)])];
+    if (made && this.cardMetaByName(made)) return made;
+    var found = null;
+    this.pipeline.steps.forEach(function (s) {
+      if (found || s.kind !== 'derive' || s.op !== rec.op) return;
+      if (asArray(s.inputs).map(String).join('\u0001') !== ins || deriveArgsKey(s.args) !== key) return;
+      if (self.cardMetaByName(s.table)) found = s.table;
+    });
+    return found;
+  };
+
+  /**
+   * Open the rows behind a check count as a card: zoom to the card when it is already on the canvas
+   * (never a second one), else ask R. The card, when it comes, brings the derive step with it.
+   */
+  SideviewEngine.prototype.requestDerive = function (offer) {
+    var self = this;
+    if (!offer || typeof offer.op !== 'string' || !Array.isArray(offer.inputs)) return false;
+    var rec = { op: offer.op, inputs: offer.inputs.map(String), args: offer.args || {} };
+    var have = this.derivedCardFor(rec);
+    if (have) {
+      var m = this.cardMetaByName(have);
+      this.zoomToCard(m.element);
+      this.announce('Table ' + have + ' is already on the canvas.');
+      return true;
+    }
+    var sig = JSON.stringify([rec.op, rec.inputs, stableJson(rec.args)]);
+    var waiting = Object.keys(this.derivePending).some(function (k) { return self.derivePending[k].sig === sig; });
+    if (waiting) return true;
+    this._deriveSeq += 1;
+    var id = 'dv' + this._deriveSeq + '_' + Date.now().toString(36);
+    this.derivePending[id] = { op: rec.op, inputs: rec.inputs, args: rec.args, sig: sig, offer: true };
+    if (!this.send('derive_request', { id: id, op: rec.op, inputs: rec.inputs, args: rec.args })) {
+      delete this.derivePending[id];
+      this.showToast('The R session is not connected.', 'warning');
+      return false;
+    }
+    return true;
+  };
+
+  /** The buttons of a check report, one per offer; the offers stay in a per-render map, not in the DOM. */
+  SideviewEngine.prototype.deriveOffersHtml = function (offers) {
+    var self = this;
+    if (!Array.isArray(offers)) return '';
+    var n = 0;
+    var items = offers.filter(function (o) {
+      return o && typeof o.op === 'string' && Array.isArray(o.inputs) && typeof o.label === 'string';
+    }).map(function (o) {
+      n += 1;
+      var id = 'o' + n;
+      self._deriveOffers[id] = o;
+      return '<button type="button" class="sideview-derive-btn" data-action="derive-open" data-offer-id="' + id + '">' +
+        escapeHtml(o.label) + '</button>';
+    });
+    if (!items.length) return '';
+    return '<div class="sideview-derive-offers" role="group" aria-label="Open the rows behind these counts as a card">' +
+      items.join('') + '</div>';
+  };
+
+  var DERIVE_GAP = 24;
+
+  /**
+   * A top-left for a card of w x h next to `anchor` (a card meta): the nearest spot, to the right first, that
+   * overlaps no other card. `selfEl` is left out of the test.
+   */
+  SideviewEngine.prototype.freeSpotNear = function (anchor, w, h, selfEl) {
+    var self = this;
+    var rects = [];
+    this.cards.forEach(function (m) {
+      var el = m.element;
+      if (!el || el === selfEl) return;
+      var hg = self._hiddenGeom && self._hiddenGeom[m.id];
+      var l = parseFloat(el.style.left) || 0, t = parseFloat(el.style.top) || 0;
+      rects.push({ l: l, t: t, r: l + (el.offsetWidth || (hg && hg.w) || 340), b: t + (el.offsetHeight || (hg && hg.h) || 260) });
+    });
+    var free = function (x, y) {
+      for (var i = 0; i < rects.length; i++) {
+        var r = rects[i];
+        if (x < r.r + DERIVE_GAP && x + w + DERIVE_GAP > r.l && y < r.b + DERIVE_GAP && y + h + DERIVE_GAP > r.t) return false;
+      }
+      return true;
+    };
+    var ael = anchor && anchor.element;
+    var al = ael ? (parseFloat(ael.style.left) || 0) : 40;
+    var at = ael ? (parseFloat(ael.style.top) || 0) : 60;
+    var ar = ael ? al + (ael.offsetWidth || 340) : 40;
+    var px = ar + DERIVE_GAP, py = at;
+    var step = 40;
+    for (var k = 0; k <= 80; k++) {
+      var ring = [];
+      for (var dx = -k; dx <= k; dx++) {
+        for (var dy = -k; dy <= k; dy++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== k) continue;
+          var x = px + dx * step, y = py + dy * step;
+          if (x < 0 || y < 0) continue;
+          ring.push({ x: x, y: y, d: dx * dx + dy * dy });
+        }
+      }
+      ring.sort(function (a, b) { return a.d - b.d; });
+      for (var i = 0; i < ring.length; i++) if (free(ring[i].x, ring[i].y)) return { x: ring[i].x, y: ring[i].y };
+    }
+    var right = 0;
+    rects.forEach(function (r) { right = Math.max(right, r.r); });
+    return { x: right + DERIVE_GAP, y: py };
+  };
+
+  /** Put a derived card where an opened state left it, else next to its first input where nothing overlaps. */
+  SideviewEngine.prototype.placeDerivedCard = function (meta) {
+    var el = meta.element;
+    var geo = this._pendingGeo[meta.name];
+    if (geo) {
+      delete this._pendingGeo[meta.name];
+      this.restoreCardGeometry(meta, geo);
+      return;
+    }
+    var inputs = meta.derivedInputs || [];
+    var anchor = inputs.length ? this.cardMetaByName(String(inputs[0])) : null;
+    var spot = this.freeSpotNear(anchor, el.offsetWidth || 340, el.offsetHeight || 260, el);
+    el.style.left = spot.x + 'px';
+    el.style.top = spot.y + 'px';
+    meta.x = spot.x;
+    meta.y = spot.y;
+    delete el.dataset.autoPlace;
+  };
+
+  /** Remove a derived card whose step is gone or not live, and tell R to forget what it holds for it. */
+  SideviewEngine.prototype.dropDerivedCard = function (name) {
+    if (!this.cardMetaByName(name)) return;
+    this.removeCard(name);
+    this._forgot[name] = Date.now();
+    this.send('derive_forget', { name: name });
+    this.announce('Table ' + name + ' removed.');
+  };
+
+  /**
+   * Keep derived cards and derive steps in line (decision 6). A derived card with no live step goes (its input
+   * was replaced or removed, or its step was undone); a live step with no card is asked of R (an opened
+   * state, redo, the inputs coming back). One loop, and a flag keeps it from running inside itself.
+   */
+  SideviewEngine.prototype.reconcileDerived = function () {
+    if (this._reconciling || this._annDestroyed || !this.pipeline) return;
+    this._reconciling = true;
+    try {
+      var self = this;
+      var p = this.pipeline;
+      var sig = [];
+      this.cards.forEach(function (m) { sig.push(m.id + ':' + m.name); });
+      sig = sig.join('|');
+      if (sig !== this._cardSig) { this._cardSig = sig; this._deriveFailed = {}; }
+      for (var guard = 0; guard < 100; guard++) {
+        var gone = null;
+        this.cards.forEach(function (m) {
+          if (gone || !m.element || !m.element.dataset || m.element.dataset.derived !== 'true') return;
+          var any = p.steps.some(function (s) { return s.kind === 'derive' && s.table === m.name; });
+          if (any) m.hadStep = true;
+          if (m.hadStep && !p.deriveFor(m.name)) gone = m.name;
+        });
+        if (!gone) break;
+        this.dropDerivedCard(gone);
+      }
+      if (!this._constructed || !this.hasR()) return;
+      var delayed = false;
+      p.steps.slice().forEach(function (s) {
+        if (s.kind !== 'derive' || !p.deriveLive(s)) return;
+        var table = s.table;
+        if (self.cardMetaByName(table) || self._deriveFailed[table] || self._deriveSkip[table]) return;
+        var ins = asArray(s.inputs).map(String);
+        if (!ins.every(function (n) { return !!self.cardMetaByName(n); })) return;
+        if (Object.keys(self.derivePending).some(function (k) { return self.derivePending[k].table === table; })) return;
+        // a card dropped a moment ago is forgotten by R in the same flush: ask again after it
+        if (self._forgot[table] && Date.now() - self._forgot[table] < 250) { delayed = true; return; }
+        self._deriveSeq += 1;
+        var id = 'dv' + self._deriveSeq + '_' + Date.now().toString(36);
+        self.derivePending[id] = { op: s.op, inputs: ins, args: s.args || {}, table: table };
+        if (!self.send('derive_request', { id: id, op: s.op, inputs: ins, args: s.args || {}, name: table })) {
+          delete self.derivePending[id];
+        }
+      });
+      if (delayed && !this._reconTimer) {
+        this._reconTimer = setTimeout(function () {
+          self._reconTimer = null;
+          self.reconcileDerived();
+        }, 300);
+      }
+    } finally {
+      this._reconciling = false;
+    }
+  };
+
+  /** A derived card came from R: its derive step (when this browser asked), its saved place, the announcement. */
+  SideviewEngine.prototype.derivedArrived = function (data, pend, known) {
+    var P = global.SideviewPipeline;
+    var card = data.card;
+    var name = String(card.name);
+    var d = card.derived || {};
+    delete this._deriveSkip[name];
+    if (data.request_id !== undefined && data.request_id !== null) delete this.derivePending[String(data.request_id)];
+    if (pend && pend.sig) this._deriveSig[pend.sig] = name;
+    var has = this.pipeline.steps.some(function (s) { return s.kind === 'derive' && s.table === name; });
+    if (pend && !has) {
+      this.pipeline.add(P.deriveStep(name, d.op || pend.op, asArray(d.inputs).length ? d.inputs : pend.inputs, d.args || pend.args), 'derive');
+    }
+    var meta = this.cardMetaByName(name);
+    if (meta && pend && pend.offer) {
+      var self = this;
+      requestAnimationFrame(function () { if (!self._annDestroyed && self.cardMetaByName(name) === meta) self.zoomToCard(meta.element); });
+    }
+    if (known && !pend) return;
+    var n = card.dims && card.dims[0];
+    var rows = n === undefined || n === null ? '' : ', ' + fmtCount(n) + (Number(n) === 1 ? ' row' : ' rows');
+    this.announce('Table ' + name + ' added' + rows + '.');
+  };
+
+  /** R refused (or could not build) a derived card. */
+  SideviewEngine.prototype.derivedFailed = function (data) {
+    var id = data && data.id !== undefined && data.id !== null ? String(data.id) : '';
+    var pend = this.derivePending[id];
+    delete this.derivePending[id];
+    if (pend && pend.table) this._deriveFailed[pend.table] = true;
+    var msg = data && data.error ? String(data.error) : 'The derived table could not be opened.';
+    this.showToast(msg, 'danger');
+    this.announce(msg, { assertive: true });
+  };
+
   // ---- cards, state and highlights driven from R (a module's proxy) -------------
 
   SideviewEngine.prototype.cardMetaByName = function (name) {
@@ -4248,7 +4519,16 @@ function sendToShiny(name, value) {
       data.id = 'card_r' + n;
     }
     var placed = data.x != null || data.y != null;
-    if (!placed && this.cards.size) {
+    if (!placed && data.derived && this.cards.size) {
+      // a derived card goes next to its first input; freeSpotNear() settles it once it is measured
+      var inMeta = this.cardMetaByName(String(asArray(data.derived.inputs)[0]));
+      var inEl = inMeta && inMeta.element;
+      data.x = inEl ? (parseFloat(inEl.style.left) || 0) + (inEl.offsetWidth || 340) + 24 : 40;
+      data.y = inEl ? (parseFloat(inEl.style.top) || 0) : 60;
+      placed = true;
+      data.derived = Object.assign({}, data.derived);
+      data._svDerivedPlace = true;
+    } else if (!placed && this.cards.size) {
       var right = 0;
       this.cards.forEach(function (m) {
         var el = m.element;
@@ -4261,6 +4541,7 @@ function sendToShiny(name, value) {
     this.addCard(data, this.cards.size);
     var meta = this.cards.get(data.id);
     if (meta && placed) delete meta.element.dataset.autoPlace;
+    if (meta && data._svDerivedPlace) this.placeDerivedCard(meta);
     this.scheduleConnectorUpdate();
   };
 
@@ -4330,10 +4611,23 @@ function sendToShiny(name, value) {
     if (el.parentNode) el.parentNode.removeChild(el);
     this.syncScrollCards.delete(meta.id);
 
-    var data = Object.assign({}, cardData, { id: meta.id, x: geo.x, y: geo.y });
+    // R rebuilds a derived card under the same name with a new id: the card takes it (rows requests and
+    // CDISC updates name cards by id); a joint on the old id follows
+    var newId = meta.id;
+    if (cardData.id && cardData.id !== meta.id && !this.cards.has(cardData.id)) {
+      newId = String(cardData.id);
+      this.cards.delete(meta.id);
+      this.connections.forEach(function (c) {
+        if (c.fromCard === meta.id) c.fromCard = newId;
+        if (c.toCard === meta.id) c.toCard = newId;
+      });
+    }
+    var data = Object.assign({}, cardData, { id: newId, x: geo.x, y: geo.y });
     if (!data.type && data.data) data.type = 'grid';
+    var hadStep = meta.hadStep;
     this.addCard(data, 0);
-    var next = this.cards.get(meta.id);
+    var next = this.cards.get(newId);
+    if (hadStep) next.hadStep = true;
     var nel = next.element;
     if (geo.width) nel.style.width = geo.width;
     if (geo.height) nel.style.height = geo.height;
@@ -5068,6 +5362,15 @@ function sendToShiny(name, value) {
     return true;
   };
 
+  /** The first input of a derive step that is neither on the canvas nor written by a live derive step. */
+  SideviewEngine.prototype.deriveWaiting = function (s) {
+    var p = this.pipeline;
+    var miss = asArray(s.inputs).filter(function (n) {
+      return !p.tables[n] && !p.steps.some(function (x) { return x !== s && x.kind === 'derive' && x.table === n && p.deriveLive(x); });
+    })[0];
+    return miss === undefined ? 'its inputs' : String(miss);
+  };
+
   SideviewEngine.prototype.renderPipeline = function () {
     var self = this;
     var P = global.SideviewPipeline;
@@ -5095,6 +5398,21 @@ function sendToShiny(name, value) {
           var join = '';
           var ruleRow = '';
           var diag = '';
+          if (s.kind === 'derive') {
+            // a derived table: no enable toggle (the card is there or it is not); not live: what it waits for
+            var waiting = p.deriveLive(s) ? '' : self.deriveWaiting(s);
+            var dtext = 'Derived: ' + s.table + ' from ' + asArray(s.inputs).join(' and ') +
+              (waiting ? ' (waiting for ' + waiting + ')' : '');
+            return '<li class="sideview-step is-derive' + (waiting ? ' is-waiting' : '') +
+              '" data-step-id="' + escapeHtml(s.id) + '" id="' + escapeHtml(self.stepElId(s)) + '" tabindex="-1">' +
+              '<span class="sideview-step-text" title="' + escapeHtml(dtext) + '">' + escapeHtml(dtext) + '</span>' +
+              '<button type="button" class="sideview-icon-btn" data-step-action="up" aria-label="Move step up"' +
+              (i === 0 ? ' disabled' : '') + '>' + icon('chevronUp') + '</button>' +
+              '<button type="button" class="sideview-icon-btn" data-step-action="down" aria-label="Move step down"' +
+              (i === n - 1 ? ' disabled' : '') + '>' + icon('chevronDown') + '</button>' +
+              '<button type="button" class="sideview-icon-btn" data-step-action="delete" aria-label="Delete step">' +
+              icon('trash') + '</button></li>';
+          }
           if (s.kind === 'join') {
             join = self.joinOptionsHtml(s);
             ruleRow = self.ruleRowHtml(s);
@@ -5315,6 +5633,7 @@ function sendToShiny(name, value) {
     var box = this.container.querySelector('.sideview-joincheck');
     if (!box) return;
     var self = this;
+    this._deriveOffers = {};
     // the merge check when it was shown last (or when there is no join to show)
     var supps = this.pipeline.steps.filter(function (x) { return x.kind === 'supp'; });
     var focus = this.reportFocus;
@@ -5385,6 +5704,7 @@ function sendToShiny(name, value) {
       '<dt>Repeated keys</dt><dd>' + fmt(d.dup_keys_x) + ' / ' + fmt(d.dup_keys_y) + '</dd>',
       '<dt>Missing keys</dt><dd>' + fmt(d.na_x) + ' / ' + fmt(d.na_y) + ' rows</dd>',
       '</dl>',
+      this.deriveOffersHtml(d.derive_offers),
       '<table class="sideview-joincheck-rows"><thead><tr><th scope="col">Join type</th><th scope="col">Rows</th></tr></thead><tbody>',
       global.SideviewPipeline.JOIN_TYPES.map(function (j) {
         var known = d.rows[j] !== undefined;
@@ -5975,6 +6295,7 @@ function sendToShiny(name, value) {
       '<dt>Orphaned</dt><dd>' + esc(fmt(d.n_orphan)) + '</dd>',
       '<dt>Other RDOMAIN rows</dt><dd>' + esc(fmt(d.n_other_rdomain)) + '</dd>',
       '</dl>',
+      this.deriveOffersHtml(d.derive_offers),
       samples('Orphaned SUPP rows', d.orphan_samples),
       samples('Repeated SUPP rows', d.repeats.samples),
       samples('IDVARVAL values that do not convert', d.bad_idvarval.samples),
@@ -6503,6 +6824,30 @@ function sendToShiny(name, value) {
     }
   };
 
+  /** A saved card's place, size, collapsed state and header sort / filter, put on a card of the canvas. */
+  SideviewEngine.prototype.restoreCardGeometry = function (card, s) {
+    var self = this;
+    var el = card.element;
+    if (el.classList.contains('is-maximized')) self.toggleMaximizeCard(el, el.querySelector('[data-action="maximize-card"]'));
+    var x = finiteOr(s.x, null), y = finiteOr(s.y, null);
+    if (x !== null) { el.style.left = x + 'px'; card.x = x; }
+    if (y !== null) { el.style.top = y + 'px'; card.y = y; }
+    var w = finiteOr(s.width, 0), h = finiteOr(s.height, 0);
+    if (el.classList.contains('is-minimized')) self.toggleMinimizeCard(el, el.querySelector('[data-action="minimize-card"]'));
+    if (w > 0) el.style.width = w + 'px';
+    if (h > 0) el.style.height = h + 'px';
+    if (w > 0 && h > 0) {
+      el.classList.add('sv-sized');
+      // the saved size is the user's own (user_sized) or the default canvas's
+      if (s.user_sized === true) el.setAttribute('data-sv-user-sized', 'true');
+      else el.removeAttribute('data-sv-user-sized');
+    }
+    delete el.dataset.autoPlace;
+    if (s.minimized === true) self.toggleMinimizeCard(el, el.querySelector('[data-action="minimize-card"]'));
+    self.applyCardView(el, asArray(s.sorts)[0], asArray(s.filters)[0]);
+    this.scheduleConnectorUpdate();
+  };
+
   /**
    * Restore a saved workspace: card geometry, preview sorts/filters, joins,
    * pipeline steps and the view. Returns { restored, missing } card names.
@@ -6514,30 +6859,35 @@ function sendToShiny(name, value) {
     var byName = {};
     this.cards.forEach(function (card) { byName[card.name] = card; });
 
+    // the tables a saved pipeline writes with derive steps: R builds those cards after the state is applied
+    // (reconcileDerived), and each takes its saved place when it comes
+    var derivedNames = {};
+    asArray(state.pipeline && state.pipeline.steps).forEach(function (st) {
+      if (st && st.kind === 'derive' && st.table) derivedNames[String(st.table)] = true;
+    });
     asArray(state.cards).forEach(function (s) {
       if (!s || !s.name) return;
       var card = byName[s.name];
-      if (!card || !card.element) { out.missing.push(String(s.name)); return; }
-      var el = card.element;
-      if (el.classList.contains('is-maximized')) self.toggleMaximizeCard(el, el.querySelector('[data-action="maximize-card"]'));
-      var x = finiteOr(s.x, null), y = finiteOr(s.y, null);
-      if (x !== null) { el.style.left = x + 'px'; card.x = x; }
-      if (y !== null) { el.style.top = y + 'px'; card.y = y; }
-      var w = finiteOr(s.width, 0), h = finiteOr(s.height, 0);
-      if (el.classList.contains('is-minimized')) self.toggleMinimizeCard(el, el.querySelector('[data-action="minimize-card"]'));
-      if (w > 0) el.style.width = w + 'px';
-      if (h > 0) el.style.height = h + 'px';
-      if (w > 0 && h > 0) {
-        el.classList.add('sv-sized');
-        // the saved size is the user's own (user_sized) or the default canvas's
-        if (s.user_sized === true) el.setAttribute('data-sv-user-sized', 'true');
-        else el.removeAttribute('data-sv-user-sized');
+      if (!card || !card.element) {
+        if (derivedNames[String(s.name)]) {
+          self._pendingGeo[String(s.name)] = s;
+          // at start, R may still be sending the derived cards it built: wait for them before asking again
+          if (!self._constructed) self._deriveSkip[String(s.name)] = true;
+        } else {
+          out.missing.push(String(s.name));
+        }
+        return;
       }
-      delete el.dataset.autoPlace;
-      if (s.minimized === true) self.toggleMinimizeCard(el, el.querySelector('[data-action="minimize-card"]'));
-      self.applyCardView(el, asArray(s.sorts)[0], asArray(s.filters)[0]);
+      self.restoreCardGeometry(card, s);
       out.restored.push(card.name);
     });
+    if (!this._constructed && Object.keys(this._deriveSkip).length && !this._deriveSkipTimer) {
+      this._deriveSkipTimer = setTimeout(function () {
+        self._deriveSkipTimer = null;
+        self._deriveSkip = {};
+        self.reconcileDerived();
+      }, 4000);
+    }
 
     var prevRestored = null;
     asArray(state.connections).forEach(function (c) {
@@ -6601,6 +6951,10 @@ function sendToShiny(name, value) {
     }
     // Keep the saved view: the first layout only places cards the state lacks.
     if (out.restored.length) this._restoredView = true;
+    // A saved page has no R to build derived tables: their steps stay in the file and are skipped in the code.
+    if (!this.hasR() && Array.isArray(p.steps) && p.steps.some(function (st) { return st && st.kind === 'derive'; })) {
+      this.showToast('Derived tables are not available in a saved page; their steps are skipped.', 'info');
+    }
     this.scheduleConnectorUpdate();
     return out;
   };
@@ -6663,6 +7017,8 @@ function sendToShiny(name, value) {
     this.clearOperations(true);
     var out = this.applyState(state);
     this.showToast(stateSummary(out), out.missing.length ? 'warning' : 'success');
+    // derived tables the state writes are asked of R now that its steps and cards are in
+    this.reconcileDerived();
     return out;
   };
 
@@ -7062,6 +7418,12 @@ function sendToShiny(name, value) {
     this.container.addEventListener('click', function (e) {
       if (e.target.closest('.sideview-rule-apply')) { self.applyRule(); return; }
       if (e.target.closest('.sideview-rule-cancel')) { self.closeRuleRow(); return; }
+      var deriveBtn = e.target.closest('[data-action="derive-open"]');
+      if (deriveBtn) {
+        var offer = self._deriveOffers[deriveBtn.getAttribute('data-offer-id')];
+        if (offer) self.requestDerive(offer);
+        return;
+      }
       var suppRefresh = e.target.closest('[data-supp-refresh]');
       if (suppRefresh) { self.refreshSuppStep(suppRefresh.dataset.suppRefresh); return; }
       var stepBtn = e.target.closest('[data-step-action]');
@@ -7745,7 +8107,7 @@ function sendToShiny(name, value) {
 
   var STEP_KIND_WORDS = {
     join: 'Join', filter: 'Filter', arrange: 'Sort', mutate: 'Mutate', recode: 'Recode',
-    summarise: 'Summarise', pivot: 'Reshape', supp: 'SUPP merge', custom: 'Custom'
+    summarise: 'Summarise', pivot: 'Reshape', supp: 'SUPP merge', derive: 'Derived table', custom: 'Custom'
   };
 
   // "Join step added. 3 steps." / "Undone. 2 steps." / "Redone. 3 steps."
@@ -8003,12 +8365,19 @@ function sendToShiny(name, value) {
     self.onMessage('sideview_card_add', function (data) {
       if (!data || !data.card) return;
       var known = !!(data.card.name && self.cardMetaByName(data.card.name));
+      var pend = data.card.derived && data.request_id !== undefined && data.request_id !== null
+        ? self.derivePending[String(data.request_id)] : null;
       self.addCardFromR(data.card);
+      if (data.card.derived && data.card.name && self.cardMetaByName(data.card.name)) {
+        self.derivedArrived(data, pend, known);
+        return;
+      }
       // the first population (initial) and a name already on the canvas are not announced
       if (!data.initial && !known && data.card.name && self.cardMetaByName(data.card.name)) {
         self.announce('Table ' + data.card.name + ' added.');
       }
     });
+    self.onMessage('sideview_derive_result', function (data) { self.derivedFailed(data); });
     self.onMessage('sideview_card_replace', function (data) {
       if (data && data.card) {
         if (self.replaceCard(data.card)) self.announce('Table ' + data.card.name + ' replaced.');

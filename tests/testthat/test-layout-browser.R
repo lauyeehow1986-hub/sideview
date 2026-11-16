@@ -3040,3 +3040,96 @@ test_that("access: colour-only badges carry text or a shape", {
   # A discrepancy mark gets a shape (a ::before mark) as well as its tint.
   expect_false(r$disc %in% c("none", "normal", ""))
 })
+
+# ---- derived cards on the canvas (D1, Task 8) ----
+
+sv_dv_app <- paste0(
+  "local({ dm <- data.frame(STUDYID = 'SV-001', DOMAIN = 'DM', USUBJID = paste0('SV-001-', 1:4), AGE = c(34, 51, 62, 45), stringsAsFactors = FALSE);",
+  "ae <- data.frame(STUDYID = 'SV-001', DOMAIN = 'AE', USUBJID = paste0('SV-001-', c(1:4, 8, 9)), AESEQ = 1:6,",
+  "AETERM = c('Headache', 'Nausea', 'Rash', 'Cough', 'Fever', 'Chills'), stringsAsFactors = FALSE);",
+  "sideview(ae, dm, run = FALSE) })")
+
+sv_dv_eng <- "document.querySelector('.sideview-container')._sideviewInstance"
+
+sv_dv_open <- function() {
+  skip_if_no_browser()
+  app <- sv_start_app(sv_dv_app)
+  b <- sv_open_page(app$url, 1400, 900)
+  withr::defer_parent({
+    try(b$close(), silent = TRUE)
+    try(app$proc$kill(), silent = TRUE)
+  })
+  sv_js(b, sprintf("(() => { const e = %s; e.addConnections([{fromTable: 'ae', fromCol: 'USUBJID', toTable: 'dm', toCol: 'USUBJID', type: 'left_join'}]); return true; })()", sv_dv_eng))
+  b
+}
+
+sv_dv_card_n <- function(b) sv_js(b, "document.querySelectorAll('.sideview-card').length")
+
+sv_dv_click_offer <- function(b) {
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-step-diag.is-ok, .sideview-step-diag.is-warn')", timeout = 60))
+  # the step's key check opens the join check in the drawer, where the offer button is
+  sv_js(b, "document.querySelector('.sideview-drawer').classList.remove('collapsed'); document.querySelector('.sideview-drawer-tab[data-tab=discrepancy]').click(); true")
+  expect_true(sv_wait_js(b, "(() => { const x = document.querySelector('[data-action=\"derive-open\"]'); if (!x) return false; x.scrollIntoView({block: 'center'}); const r = x.getBoundingClientRect(); const h = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return !!h && (h === x || x.contains(h)); })()", timeout = 60))
+  pt <- sv_js(b, "(() => { const r = document.querySelector('[data-action=\"derive-open\"]').getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()")
+  for (type in c("mousePressed", "mouseReleased")) {
+    b$Input$dispatchMouseEvent(type = type, x = pt$x, y = pt$y, button = "left", clickCount = 1)
+  }
+}
+
+test_that("a derived card opens from the join check, once, and undo and redo take it away and back", {
+  b <- sv_dv_open()
+  expect_equal(sv_dv_card_n(b), 2)
+  sv_dv_click_offer(b)
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 3", timeout = 60))
+  # the card is placed clear of the others
+  r <- sv_js(b, "[...document.querySelectorAll('.sideview-card')].map(c => { const r = c.getBoundingClientRect();
+    return { name: c.getAttribute('data-card-name') || c.dataset.cardName || '', left: r.left, top: r.top, right: r.right, bottom: r.bottom }; })")
+  expect_equal(length(r), 3)
+  for (i in 1:3) for (j in seq_len(3)) if (i < j) expect_false(rect_overlap(r[[i]], r[[j]]))
+  expect_true(sv_js(b, "!!document.querySelector('.sideview-card[data-derived=\"true\"]')"))
+  # the step is in the pipeline and the code writes the table
+  steps <- sv_js(b, sprintf("%s.pipeline.steps.filter(s => s.kind === 'derive').map(s => s.table)", sv_dv_eng))
+  expect_equal(length(steps), 1)
+  expect_match(sv_js(b, sprintf("%s.pipeline.compose()", sv_dv_eng)), "dplyr::anti_join(", fixed = TRUE)
+  expect_match(sv_js(b, sprintf("%s.pipeline.compose()", sv_dv_eng)), paste0(steps[[1]], " <- "), fixed = TRUE)
+  # a second click finds the card there: no second card, no second step
+  sv_js(b, "(() => { const b = document.querySelector('[data-action=\"derive-open\"]'); if (b) b.click(); return true; })()")
+  Sys.sleep(1.5)
+  expect_equal(sv_dv_card_n(b), 3)
+  expect_equal(sv_js(b, sprintf("%s.pipeline.steps.filter(s => s.kind === 'derive').length", sv_dv_eng)), 1)
+  rows <- sv_js(b, "document.querySelector('.sideview-card[data-derived=\"true\"]').querySelectorAll('tbody tr[data-row-index]').length")
+  # undo removes exactly the derive step and its card; redo brings both back
+  sv_js(b, sprintf("%s.undoPipeline(); true", sv_dv_eng))
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 2", timeout = 30))
+  expect_equal(sv_js(b, sprintf("%s.pipeline.steps.filter(s => s.kind === 'derive').length", sv_dv_eng)), 0)
+  sv_js(b, sprintf("%s.redoPipeline(); true", sv_dv_eng))
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 3", timeout = 60))
+  expect_equal(sv_js(b, sprintf("%s.pipeline.steps.filter(s => s.kind === 'derive').length", sv_dv_eng)), 1)
+  expect_equal(sv_js(b, "document.querySelector('.sideview-card[data-derived=\"true\"]').querySelectorAll('tbody tr[data-row-index]').length"), rows)
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("the Pipeline tab lists the derive step as text", {
+  b <- sv_dv_open()
+  sv_dv_click_offer(b)
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 3", timeout = 60))
+  txt <- sv_js(b, "(() => { const s = document.querySelector('.sideview-step.is-derive .sideview-step-text'); return s ? s.textContent : ''; })()")
+  expect_match(txt, "^Derived: ae_unmatched_dm from ae and dm")
+  # the offer JSON is never put in the page
+  expect_false(grepl("{", sv_js(b, "(document.querySelector('.sideview-derive-offers') || {outerHTML: ''}).outerHTML"), fixed = TRUE))
+})
+
+test_that("a saved workspace brings its derived card back where it was", {
+  b <- sv_dv_open()
+  sv_dv_click_offer(b)
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-card').length === 3", timeout = 60))
+  st <- sv_js(b, sprintf("JSON.stringify(%s.getState())", sv_dv_eng))
+  pos0 <- sv_js(b, sprintf("(() => { const m = [...%s.cards.values()].find(x => x.name === 'ae_unmatched_dm'); return [m.x, m.y]; })()", sv_dv_eng))
+  b2 <- sv_dv_open()
+  # a fresh gadget with the saved state: the connection and the derive step come, then R builds the card
+  sv_js(b2, sprintf("(() => { %s.applyState(%s); %s.reconcileDerived(); return true; })()", sv_dv_eng, st, sv_dv_eng))
+  expect_true(sv_wait_js(b2, "[...document.querySelectorAll('.sideview-card')].length === 3", timeout = 60))
+  pos1 <- sv_js(b2, sprintf("(() => { const m = [...%s.cards.values()].find(x => x.name === 'ae_unmatched_dm'); return [m.x, m.y]; })()", sv_dv_eng))
+  expect_equal(unlist(pos1), unlist(pos0))
+})
