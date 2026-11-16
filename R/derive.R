@@ -550,8 +550,9 @@ sv_derive_rebuild <- function(card, store, build) {
 # `cards` with the derived cards of a saved state appended. The state's pipeline holds the derive steps
 # `{kind, key, table, op, inputs, args}`; each is rebuilt through the validating builder (state from a file is
 # as untrusted as a browser message), under the exact name `table`, once its inputs are present. A step that
-# cannot be built is skipped: its browser step waits. `build(req, store)` defaults to the preview builder.
-sv_derive_from_state <- function(cards, state, build = NULL) {
+# cannot be built is skipped: its browser step waits. With `skip_lazy`, a step that reads a lazy card is
+# skipped too (its rows would come from previews): the session builds it later on whole tables. `build(req, store)` defaults to the preview builder.
+sv_derive_from_state <- function(cards, state, build = NULL, skip_lazy = FALSE) {
   steps <- if (is.list(state)) sv_field(sv_field(state, "pipeline"), "steps") else NULL
   if (!is.list(steps) || !length(steps)) return(cards)
   if (is.null(build)) build <- sv_derive_preview_builder()
@@ -560,12 +561,16 @@ sv_derive_from_state <- function(cards, state, build = NULL) {
     if (!is.list(step) || !identical(sv_field(step, "kind"), "derive")) next
     tbl <- sv_derive_scalar(sv_field(step, "table"), 200L)
     if (is.null(tbl) || store$has(tbl)) next
+    if (isTRUE(skip_lazy)) {
+      ins <- as.character(unlist(sv_field(step, "inputs")))
+      if (any(vapply(ins, function(nm) store$has(nm) && sv_card_is_lazy(store$get(nm)), TRUE))) next
+    }
     req <- list(op = sv_field(step, "op"), inputs = sv_field(step, "inputs"),
                 args = sv_field(step, "args"), name = tbl)
     card <- tryCatch({
       build(req, store)
     }, error = function(e) NULL)
-    if (is.null(card) || !identical(card$name, make.names(tbl))) next
+    if (is.null(card) || !identical(card$name, tbl)) next
     store$add(card)
     cards[[length(cards) + 1L]] <- card
   }

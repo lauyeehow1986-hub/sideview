@@ -535,3 +535,13 @@ test_that("sv_derive_from_state builds derive steps in order and skips what fail
   expect_identical(sv_derive_from_state(cards, list()), cards)
   expect_identical(sv_derive_from_state(cards, NULL), cards)
 })
+
+test_that("sv_derive_from_state keeps the exact table name: a name make.names would change is skipped", {
+  cards <- list(new_sideview_card(name = "ae", data = data.frame(USUBJID = c("a", "z"), stringsAsFactors = FALSE)),
+                new_sideview_card(name = "dm", data = data.frame(USUBJID = "a", stringsAsFactors = FALSE)))
+  by <- list(list(x = "USUBJID", y = "USUBJID"))
+  step <- function(tbl) list(kind = "derive", table = tbl, op = "unmatched", inputs = list("ae", "dm"),
+                             args = list(by = by, side = "x"))
+  out <- sv_derive_from_state(cards, list(pipeline = list(steps = list(step("my table"), step("my_table")))))
+  expect_identical(vapply(out, function(cd) cd$name, ""), c("ae", "dm", "my_table"))
+})

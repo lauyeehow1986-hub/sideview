@@ -234,7 +234,7 @@ sideview <- function(...,
   # the derived tables of a restored state: built from the cards above, tagged like any other
   if (!is.null(state)) {
     n_cards <- length(card_list)
-    card_list <- sv_derive_from_state(card_list, state, sv_derive_preview_builder(cdisc))
+    card_list <- sv_derive_from_state(card_list, state, sv_derive_preview_builder(cdisc), skip_lazy = TRUE)
     if (length(card_list) > n_cards) card_list <- sv_cdisc_finalize(card_list, cdisc)
   }
 
@@ -242,7 +242,7 @@ sideview <- function(...,
   ui <- sideview_ui(card_list, title = title, gadget = TRUE,
                     theme = sv_resolve_theme(theme, rstudio = TRUE), state = state, view = view,
                     access = access)
-  server <- sideview_server(card_list, gadget = TRUE, run_env = env, cdisc = cdisc)
+  server <- sideview_server(card_list, gadget = TRUE, run_env = env, cdisc = cdisc, state = state)
   app <- shiny::shinyApp(ui = ui, server = server)
   
   # Attach cards metadata

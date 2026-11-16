@@ -25,7 +25,7 @@
 #' @noRd
 sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_fn, console_fn,
                                  gadget = FALSE, lifecycle = NULL, run_env = globalenv(),
-                                 module = FALSE, cdisc = "auto") {
+                                 module = FALSE, cdisc = "auto", state = NULL) {
   # One mutable store is the single source of truth for the cards.
   card_store <- sv_card_store(sv_normalize_cards(cards))
   # The cards as they are now (a module changes them while it runs).
@@ -905,6 +905,20 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
   derive_build <- function(req, store) {
     sv_derive_card(req, store, con_env, lazy_or_preview = lazy_or_preview, card_full = card_full, cdisc = cdisc)
   }
+  # Gadget: the derived cards of a restored state that read lazy tables are built here, on whole tables,
+  # and added once the page is up (sideview() left them out: its card list has only previews).
+  if (!isTRUE(module) && !is.null(state)) {
+    have <- current_cards()
+    built <- sv_derive_from_state(have, state, derive_build)
+    built <- built[seq_along(built) > length(have)]
+    for (card in built) card_store$add(card)
+    if (length(built)) {
+      payloads <- lapply(built, function(cd) sv_card_payload(cd, NULL))
+      session$onFlushed(function() {
+        for (p in payloads) dispatch_message("sideview_card_add", list(card = p))
+      }, once = TRUE)
+    }
+  }
   invisible(list(store = card_store, send = dispatch_message, forget = forget, ctl = ctl,
                  derive_build = derive_build))
 }
@@ -946,7 +960,8 @@ sideview_server <- function(cards = list(),
                             console_fn = sv_send_to_console,
                             gadget = FALSE,
                             run_env = parent.frame(),
-                            cdisc = "auto") {
+                            cdisc = "auto",
+                            state = NULL) {
   force(run_env) # parent.frame() is lazy: resolve it while the caller is on the stack
   cdisc <- sv_cdisc_check_arg(cdisc)
   dots <- list(...)
@@ -963,7 +978,8 @@ sideview_server <- function(cards = list(),
   lifecycle <- sv_new_lifecycle()
   function(input, output, session) {
     sideview_server_impl(input, output, session, cards, llm_fn, insert_fn, console_fn,
-                         gadget = gadget, lifecycle = lifecycle, run_env = run_env, cdisc = cdisc)
+                         gadget = gadget, lifecycle = lifecycle, run_env = run_env, cdisc = cdisc,
+                         state = state)
   }
 }
 

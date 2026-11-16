@@ -875,21 +875,48 @@ test_that("derive add and forget resolve CDISC tags again and broadcast what mov
     # the derived card carries its kept card's tag, and a later resolve does not wipe it
     expect_identical(d$cdisc$domain, "AE")
     supp_id <- px$ctl$store$get("suppae")$id
-    # removing the original AE card removes the derived card with it, so SUPPAE's parent is not the
-    # derived card (the proxy path resolves tags again and broadcasts what moved)
+    n0 <- length(upd())
+    # removing the original AE card takes the derived card with it; the proxy path broadcasts once, and
+    # SUPPAE has no parent card any more
     sv_remove_card(px, "ae")
     expect_false(px$ctl$store$has("ae_unmatched_dm"))
-    expect_false(identical(px$ctl$store$get("suppae")$cdisc$parent_card, d$id))
-    # forgetting a derived card (the browser dropped it) resolves the tags again too
-    sv_add_card(px, ae, "ae")
-    session$setInputs(derive_request = dv_req(id = "r2"))
-    d2 <- px$ctl$store$get("ae_unmatched_dm")
-    expect_identical(d2$cdisc$domain, "AE")
-    n1 <- length(upd())
+    expect_length(upd(), n0 + 1L)
+    expect_true(supp_id %in% names(upd()[[n0 + 1L]]$message$tags))
+    expect_null(upd()[[n0 + 1L]]$message$tags[[supp_id]]$parent_card)
+    expect_null(px$ctl$store$get("suppae")$cdisc$parent_card)
+  })
+})
+
+test_that("derive_forget resolves CDISC tags again and broadcasts the parent that moved", {
+  ae <- data.frame(STUDYID = "S", USUBJID = c("S1", "S2", "S3"), AESEQ = 1:3, AETERM = c("a", "b", "c"),
+                   AEDECOD = "x", stringsAsFactors = FALSE)
+  dm <- data.frame(STUDYID = "S", USUBJID = c("S1", "S2"), AGE = 1:2, stringsAsFactors = FALSE)
+  supp <- data.frame(STUDYID = "S", RDOMAIN = "AE", USUBJID = c("S1", "S2"), IDVAR = "AESEQ",
+                     IDVARVAL = c("1", "2"), QNAM = "AETRTEM", QVAL = "Y", stringsAsFactors = FALSE)
+  shiny::testServer(sideviewServer, args = list(id = "cv", cards = list(ae = ae, dm = dm, suppae = supp)), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    upd <- function() msgs(session, "sideview_cdisc_update")
+    session$setInputs(derive_request = dv_req(args = list(by = dv_by(), side = "x")))
+    store <- px$ctl$store
+    supp_id <- store$get("suppae")$id
+    ae_id <- store$get("ae")$id
+    d_id <- store$get("ae_unmatched_dm")$id
+    # put the derived card ahead of its input, so it is the first AE card and SUPPAE's parent (the store
+    # keeps insertion order, and the resolver takes the first card of the parent domain)
+    ae_card <- store$get("ae")
+    store$remove("ae")
+    store$add(ae_card)
+    sv_module_refinalize(px$ctl)
+    expect_identical(store$get("suppae")$cdisc$parent_card, d_id)
+    n0 <- length(upd())
     session$setInputs(derive_forget = list(name = "ae_unmatched_dm"))
-    expect_false(px$ctl$store$has("ae_unmatched_dm"))
-    expect_gte(length(upd()), n1)
-    expect_identical(px$ctl$store$get("suppae")$cdisc$parent_card, px$ctl$store$get("ae")$id)
+    expect_false(store$has("ae_unmatched_dm"))
+    expect_length(upd(), n0 + 1L)
+    tags <- upd()[[n0 + 1L]]$message$tags
+    expect_identical(names(tags), supp_id)
+    expect_identical(tags[[supp_id]]$parent_card, ae_id)
+    expect_identical(store$get("suppae")$cdisc$parent_card, ae_id)
   })
 })
 
@@ -1067,5 +1094,45 @@ test_that("lazy derived cards: removal cascades and releases tables, replace reb
     sv_remove_card(px, "lae_unmatched_ldm")
     expect_false(px$ctl$store$has("lae_unmatched_ldm_unmatched_lex"))
     expect_true(px$ctl$store$has("lae"))
+  })
+})
+
+test_that("gadget state restore: a derive step on lazy inputs is built on whole tables, not from previews", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  con <- DBI::dbConnect(duckdb::duckdb())
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+  DBI::dbWriteTable(con, "gae", data.frame(USUBJID = sprintf("u%03d", 1:200), stringsAsFactors = FALSE))
+  DBI::dbWriteTable(con, "gdm", data.frame(USUBJID = sprintf("u%03d", 1:197), stringsAsFactors = FALSE))
+  st <- dv_state(list(dv_step1))
+  app <- sideview(ae = dplyr::tbl(con, "gae"), dm = dplyr::tbl(con, "gdm"), state = st, run = FALSE)
+  # the card list has no derived card: from 50-row previews it would be the wrong table
+  expect_identical(vapply(app$cards, function(cd) cd$name, ""), c("ae", "dm"))
+  shiny::testServer(app, {
+    session$flushReact()
+    adds <- Filter(function(m) identical(m$type, "sideview_card_add"), session$userData$custom_messages)
+    hit <- Filter(function(m) identical(m$message$card$name, "ae_unmatched_dm"), adds)
+    expect_length(hit, 1L)
+    expect_identical(hit[[1L]]$message$card$totalRows, 3L)
+  })
+})
+
+test_that("reactive cards=: a re-fire keeps the derived card; dropping an input removes it by cascade", {
+  rv <- shiny::reactiveVal(list(ae = dv_ae, dm = dv_dm))
+  shiny::testServer(sideviewServer, args = list(id = "cv", cards = rv), {
+    px <- session$getReturned()
+    session$flushReact()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    session$setInputs(derive_request = dv_req())
+    expect_true(px$ctl$store$has("ae_unmatched_dm"))
+    rv(list(ae = dv_ae, dm = dv_dm, extra = data.frame(a = 1)))
+    session$flushReact()
+    expect_true(px$ctl$store$has("extra"))
+    expect_true(px$ctl$store$has("ae_unmatched_dm"))
+    rv(list(dm = dv_dm, extra = data.frame(a = 1)))
+    session$flushReact()
+    expect_false(px$ctl$store$has("ae"))
+    expect_false(px$ctl$store$has("ae_unmatched_dm"))
+    expect_true(px$ctl$store$has("dm"))
   })
 })
