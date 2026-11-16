@@ -1582,3 +1582,36 @@ test_that("axe-core finds no violation in the drawer with the derive offer butto
   v <- v[!v$id %in% names(SV_AXE_ACCEPTED), , drop = FALSE]
   expect_equal(nrow(v), 0, info = paste(v$id, v$targets, collapse = "; "))
 })
+
+test_that("list view join check offers the unmatched rows as a button; Enter opens the card and the live region says so", {
+  skip_if_no_browser()
+  app <- sv_start_app(paste0(
+    "local({ dm <- data.frame(STUDYID = 'SV-001', DOMAIN = 'DM', USUBJID = paste0('SV-001-', 1:4), AGE = c(34, 51, 62, 45), stringsAsFactors = FALSE);",
+    "ae <- data.frame(STUDYID = 'SV-001', DOMAIN = 'AE', USUBJID = paste0('SV-001-', c(1:4, 8, 9)), AESEQ = 1:6, stringsAsFactors = FALSE);",
+    "sideview(ae, dm, run = FALSE) })"))
+  b <- sv_open_page(app$url, 1360, 820, wait_for = sv_wait_eng)
+  withr::defer({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) })
+  sv_lv_join_form(b, "ae", "USUBJID", "dm", "USUBJID")
+  sv_js(b, paste0(sv_lv_join_btn("Check join"), ".click(); true"))
+  btn <- "document.querySelector('.sideview-listview [data-sv-join-result] button[data-sv-lv-action=\"derive-open\"]')"
+  expect_true(sv_wait_js(b, sprintf("!!%s", btn), timeout = 60))
+  # one real button, the offer's label as its text, no offer JSON in the DOM, and no duplicate on a re-check
+  expect_equal(sv_js(b, sprintf("%s.textContent", btn)), "ae rows with no match in dm (2)")
+  expect_equal(sv_js(b, sprintf("%s.tagName + %s.type", btn, btn)), "BUTTONbutton")
+  expect_false(grepl("{", sv_js(b, "document.querySelector('.sideview-listview [data-sv-join-result]').innerHTML"), fixed = TRUE))
+  sv_js(b, paste0(sv_lv_join_btn("Check join"), ".click(); true"))
+  expect_true(sv_wait_js(b, sprintf("!!%s", btn), timeout = 60))
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-listview [data-sv-join-result] button[data-sv-lv-action=\"derive-open\"]').length"), 1)
+
+  expect_equal(sv_js(b, sprintf("document.querySelectorAll('.sideview-listview [data-sv-table]').length")), 2)
+  # the keyboard: focus the button and press Enter (and nothing else)
+  sv_js(b, sprintf("%s.focus(); true", btn))
+  expect_true(sv_js(b, sprintf("document.activeElement === %s", btn)))
+  sv_key(b, "Enter", text = "\r")
+  expect_true(sv_wait_js(b, "document.querySelectorAll('.sideview-listview [data-sv-table]').length === 3", timeout = 60))
+  expect_true(sv_js(b, "!!document.querySelector('.sideview-listview [data-sv-table=\"ae_unmatched_dm\"]')"))
+  expect_true(sv_wait_js(b, paste0(sv_eng, ".announceLog.indexOf('Table ae_unmatched_dm added, 2 rows.') >= 0"), timeout = 30))
+  # the polite live region itself ends up with that text
+  expect_true(sv_wait_js(b, "document.querySelector('.sideview-announcer').textContent === 'Table ae_unmatched_dm added, 2 rows.'", timeout = 30))
+  expect_equal(attr(b, "sv_errors")(), character())
+})

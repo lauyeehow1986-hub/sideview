@@ -932,10 +932,37 @@
     j.add.disabled = !(sig !== null && j.resultSig === sig && j.resultOk);
   };
 
-  ListView.prototype.writeJoinResult = function (sentences) {
+  ListView.prototype.writeJoinResult = function (sentences, offers) {
     var j = this.join;
     while (j.result.firstChild) j.result.removeChild(j.result.firstChild);
     sentences.forEach(function (t) { j.result.appendChild(el('p', null, t)); });
+    this.appendOffers(j.result, offers);
+  };
+
+  /**
+   * One real button per derive offer (a check count that can open as a card), after the result text.
+   * The label is text content; the offer stays in the click handler's closure, never in the DOM.
+   * The engine's requestDerive does the work (an open card is found, not duplicated) and its
+   * announcement reaches the shared live region; syncTables() lists the new card.
+   */
+  ListView.prototype.appendOffers = function (host, offers) {
+    var eng = this.engine;
+    if (!host || !Array.isArray(offers) || typeof eng.requestDerive !== 'function') return;
+    var ok = offers.filter(function (o) {
+      return o && typeof o.op === 'string' && Array.isArray(o.inputs) && typeof o.label === 'string';
+    });
+    if (!ok.length) return;
+    var group = el('div', 'sideview-derive-offers sideview-lv-derive-offers');
+    group.setAttribute('role', 'group');
+    group.setAttribute('aria-label', 'Open the rows behind these counts as a card');
+    ok.forEach(function (o) {
+      var b = el('button', 'sideview-btn sideview-derive-btn', o.label);
+      b.type = 'button';
+      b.setAttribute('data-sv-lv-action', 'derive-open');
+      b.addEventListener('click', function () { eng.requestDerive(o); });
+      group.appendChild(b);
+    });
+    host.appendChild(group);
   };
 
   ListView.prototype.onJoinCheck = function () {
@@ -964,7 +991,7 @@
     if (this.joinFormSig() !== sig) return;
     var f = this.readJoin();
     var sentences = global.SideviewPipeline.sayJoin(d, f.table, f.right);
-    this.writeJoinResult(sentences);
+    this.writeJoinResult(sentences, d.derive_offers);
     j.resultSig = sig;
     j.resultOk = !d.error;
     j.add.disabled = !!d.error;
@@ -1326,6 +1353,7 @@
     var sentences = global.SideviewPipeline.saySupp(d, parts[1], parts[2]);
     this.clearSuppResult(found);
     sentences.forEach(function (t) { found.result.appendChild(el('p', null, t)); });
+    this.appendOffers(found.result, d.derive_offers);
     if (fromList) {
       var stale = !!(d.drift && d.drift.stale === true);
       this.engine.announce(stale ? 'Merge needs refreshing.' : sentences[0], { assertive: !!d.error });
