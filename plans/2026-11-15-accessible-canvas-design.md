@@ -121,8 +121,9 @@ canvas owns the keyboard (`ownsKeyboard()`).
   text; at `sv-narrow` the drawer stays a bottom sheet and scrolls rather than covering the AI bar.
 - **Card growth on switch flip (my call):** CSS only, no inline geometry writes. Cards the user sized
   (`freezeCardSize` / `sv-sized`) keep their size and scroll inside. Neighbours are not moved automatically
-  (cards may overlap after growth; auto-arrange is there for that). Saved positions and workspace state are
-  untouched, so switching off gives back the exact old layout.
+  (cards may overlap after growth). Changed 2026-11-16 at the user's request: switching on arranges the cards
+  when any overlap, and switching off puts back every card the user has not moved since, so the exact old layout
+  returns. Workspace state is untouched.
 - **Contrast theme:** a high-contrast token set for light and dark (`.sv-access` overrides `--sv-*`), with text
   >= 7:1 and splines, borders, ports and the focus ring >= 4.5:1 against their background. When on, it overrides
   colours from `theme =` (a custom bslib theme may not meet these ratios); the light/dark mode still follows the

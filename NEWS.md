@@ -8,6 +8,7 @@ merge time.
 
 ## Accessible canvas switch
 
+* Switching it on arranges the cards when the larger text makes them overlap; switching it off puts every card you have not moved since back where it was.
 * `sideview()`, `sideview_ui()` and `sideviewUI()` take `access = FALSE`, set for a session by
   `options(sideview.access = TRUE)`. The widget has no `access` argument: use
   `sideview_widget(..., options = list(access = TRUE))`, or the same option, which `sideview_widget()` and

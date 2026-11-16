@@ -71,7 +71,7 @@ test_that("the ? switch toggles, announces and keeps focus", {
   click()
   expect_identical(sv_js(b, sprintf("%s.getAttribute('aria-checked')", sel)), "true")
   expect_true(sv_acc_class(b))
-  expect_identical(last_ann(), "Accessible canvas on.")
+  expect_match(last_ann(), "^Accessible canvas on[.]")
   expect_true(sv_js(b, sprintf("document.activeElement === %s", sel)))
   click()
   expect_identical(sv_js(b, sprintf("%s.getAttribute('aria-checked')", sel)), "false")
@@ -1247,4 +1247,22 @@ test_that("widget: switching off in the ? dialog from a header returns focus ins
   expect_identical(sv_js(b, sv_focus_ok_js), "ok")
   expect_true(sv_js(b, paste0(sv_acc_eng, ".ownsKeyboard()")))
   sv_js(b, "localStorage.removeItem('sideview.access')")
+})
+
+test_that("switching on arranges overlapping cards; switching off puts the old positions back", {
+  skip_if_no_browser()
+  b <- sv_acc_open()
+  pos <- "JSON.stringify([...document.querySelectorAll('.sideview-card')].map(c => [parseFloat(c.style.left), parseFloat(c.style.top)]))"
+  overlap <- "(() => { const r = [...document.querySelectorAll('.sideview-card')].map(c => ({x: parseFloat(c.style.left), y: parseFloat(c.style.top), w: c.offsetWidth, h: c.offsetHeight}));
+    for (let i = 0; i < r.length; i++) for (let j = i + 1; j < r.length; j++)
+      if (r[i].x < r[j].x + r[j].w && r[j].x < r[i].x + r[i].w && r[i].y < r[j].y + r[j].h && r[j].y < r[i].y + r[i].h) return true;
+    return false; })()"
+  # pack the cards tightly so the larger access cards must overlap
+  sv_js(b, "(() => { let x = 24; document.querySelectorAll('.sideview-card').forEach(c => { c.style.left = x + 'px'; c.style.top = '120px'; x += c.offsetWidth + 4; }); })()")
+  before <- sv_js(b, pos)
+  sv_js(b, paste0(sv_acc_eng, ".setAccess(true)"))
+  expect_false(sv_js(b, overlap))
+  expect_false(identical(sv_js(b, pos), before))
+  sv_js(b, paste0(sv_acc_eng, ".setAccess(false)"))
+  expect_identical(sv_js(b, pos), before)
 })

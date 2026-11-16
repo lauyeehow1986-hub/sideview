@@ -1945,15 +1945,69 @@ function sendToShiny(name, value) {
     var r0 = fc0 ? fc0.getBoundingClientRect() : null;
     this._accessAnchor = r0 ? { card: fc0, x: r0.left + r0.width / 2, y: r0.top + r0.height / 2 } : null;
     if (this.container.classList) this.container.classList.toggle('sv-access', on);
+    var arranged = this.accessLayout(on);
     var sw = this.container.querySelectorAll('[data-sv-access-switch]');
     for (var i = 0; i < sw.length; i++) sw[i].setAttribute('aria-checked', on ? 'true' : 'false');
-    this.announce(on ? 'Accessible canvas on.' : 'Accessible canvas off.');
+    this.announce(on ? 'Accessible canvas on.' + (arranged ? ' Cards were arranged so they do not overlap.' : '') : 'Accessible canvas off.');
     this.renderAccessKeys();
     var subs = this._accessSubs.slice();
     for (var j = 0; j < subs.length; j++) {
       try { subs[j](on); } catch (e) {}
     }
     return on;
+  };
+
+  // The larger cards of the Accessible canvas can overlap at their saved positions. Switching on, if any two
+  // overlap, the old positions are kept and the cards are arranged; switching off puts back every card the user
+  // has not moved since, so the default layout returns exactly.
+  SideviewEngine.prototype.accessLayout = function (on) {
+    var self = this;
+    if (on) {
+      var els = [];
+      this.cards.forEach(function (meta) {
+        var el = meta.element;
+        if (el && !el.classList.contains('is-maximized') && !el.classList.contains('is-minimized')) els.push(meta);
+      });
+      var box = function (m) {
+        var x = parseFloat(m.element.style.left) || 0, y = parseFloat(m.element.style.top) || 0;
+        return { x: x, y: y, r: x + m.element.offsetWidth, b: y + m.element.offsetHeight };
+      };
+      var overlap = false;
+      for (var i = 0; i < els.length && !overlap; i++) {
+        var a = box(els[i]);
+        for (var j = i + 1; j < els.length; j++) {
+          var c = box(els[j]);
+          if (a.x < c.r && c.x < a.r && a.y < c.b && c.y < a.b) { overlap = true; break; }
+        }
+      }
+      if (!overlap) { this._preAccessLayout = null; return false; }
+      var saved = [];
+      this.cards.forEach(function (meta) {
+        var el = meta.element;
+        if (el) saved.push({ meta: meta, x: parseFloat(el.style.left) || 0, y: parseFloat(el.style.top) || 0 });
+      });
+      this.arrangeCards(false);
+      saved.forEach(function (s) {
+        s.nx = parseFloat(s.meta.element.style.left) || 0;
+        s.ny = parseFloat(s.meta.element.style.top) || 0;
+      });
+      this._preAccessLayout = saved;
+      return true;
+    } else if (this._preAccessLayout) {
+      this._preAccessLayout.forEach(function (s) {
+        var el = s.meta.element;
+        if (!el || !el.isConnected) return;
+        var x = parseFloat(el.style.left) || 0, y = parseFloat(el.style.top) || 0;
+        if (Math.abs(x - s.nx) > 0.5 || Math.abs(y - s.ny) > 0.5) return; // the user moved it
+        el.style.left = s.x + 'px';
+        el.style.top = s.y + 'px';
+        s.meta.x = s.x;
+        s.meta.y = s.y;
+      });
+      this._preAccessLayout = null;
+      this.scheduleConnectorUpdate();
+    }
+    return false;
   };
 
   // Subscribe to switch changes; fn(on) runs after the class has changed. Returns an unsubscribe function.

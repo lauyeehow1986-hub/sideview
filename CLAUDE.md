@@ -208,7 +208,9 @@ rstudio bridge: R/rstudio.R
   - **CSS:** `.sideview-container.sv-access` overrides `--sv-*` with `!important` (so tokens beat inline `theme =`; the
     test-theme.R parser strips `!important`): text 7:1, lines/ports/focus ring 4.5:1, dark and `prefers-color-scheme` blocks
     kept equal. Text is at least 16 px, controls at least 24 x 24, focus ring 3 px + 2 px offset. Layout is CSS only: no
-    inline geometry writes, user-sized cards (`data-sv-user-sized`) keep their size, saved positions are untouched.
+    inline geometry writes for sizes, user-sized cards (`data-sv-user-sized`) keep their size. Switching on, if the grown
+    cards overlap, `accessLayout()` keeps the old positions in `_preAccessLayout` and runs `arrangeCards(false)`;
+    switching off puts back each card the user has not moved since, so the default layout returns.
   - **Splines:** each accepted join gets `data-sv-pat`: the lowest of 0..5 that no live join uses (a key set added in one
     call shares one), else the live join count mod 6. The six dash patterns apply under `sv-access` and `forced-colors`
     only, with `stroke-linecap: butt` (round caps close the 4 px gaps); never `6 6` (suggested) or `4 4` (draft). Arrowheads are marker `<path>`s in
