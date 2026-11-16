@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.8.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.9.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -365,6 +365,53 @@ on the embedded rows; when a card’s rows were cut
 (<code>max_rows</code>) or the card is lazy, the panel says “Preview
 rows”.</p>
 </div>
+</div>
+<div class="section level2">
+<h2 id="rows-behind-the-counts">Rows behind the counts<a class="anchor" aria-label="anchor" href="#rows-behind-the-counts"></a>
+</h2>
+<p>A join check or a SUPP check ends in counts: how many rows have no
+partner, how many fell outside a date window, how many
+<code>SUPP--</code> rows are orphans. In the gadget or a Shiny module
+each count that is not zero comes with a button that opens those rows as
+a card of their own. The card is named for its content (here
+<code>ae_unmatched_dm</code>), reads the two input cards as they were
+loaded, and adds one step to the pipeline, so the generated code
+rebuilds the same rows. A duckdb or Arrow input stays lazy. In the list
+view the same offers are plain buttons.</p>
+<p>The console gives the same rows. A synthetic adverse event table with
+one subject that is not in <code>dm</code>, and a <code>SUPP--</code>
+table with one orphan and one bad <code>IDVARVAL</code>:</p>
+<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">ae2</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/cbind.html" class="external-link">rbind</a></span><span class="op">(</span><span class="va">ae</span>, <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>STUDYID <span class="op">=</span> <span class="va">sid</span>, DOMAIN <span class="op">=</span> <span class="st">"AE"</span>, USUBJID <span class="op">=</span> <span class="st">"SV-001-999"</span>, AESEQ <span class="op">=</span> <span class="fl">1L</span>,</span>
+<span>                            AETERM <span class="op">=</span> <span class="st">"Dizziness"</span>, AESEV <span class="op">=</span> <span class="st">"MILD"</span>, stringsAsFactors <span class="op">=</span> <span class="cn">FALSE</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="fu"><a href="../reference/sv_unmatched.html">sv_unmatched</a></span><span class="op">(</span><span class="va">ae2</span>, <span class="va">dm</span>, <span class="st">"USUBJID"</span><span class="op">)</span></span>
+<span><span class="co">#&gt;   STUDYID DOMAIN    USUBJID AESEQ    AETERM AESEV</span></span>
+<span><span class="co">#&gt; 1  SV-001     AE SV-001-999     1 Dizziness  MILD</span></span>
+<span></span>
+<span><span class="va">suppae2</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/cbind.html" class="external-link">rbind</a></span><span class="op">(</span><span class="va">suppae</span>,</span>
+<span>                 <span class="fu"><a href="https://rdrr.io/r/base/transform.html" class="external-link">transform</a></span><span class="op">(</span><span class="va">suppae</span><span class="op">[</span><span class="fl">1</span>, <span class="op">]</span>, IDVARVAL <span class="op">=</span> <span class="st">"99"</span><span class="op">)</span>,</span>
+<span>                 <span class="fu"><a href="https://rdrr.io/r/base/transform.html" class="external-link">transform</a></span><span class="op">(</span><span class="va">suppae</span><span class="op">[</span><span class="fl">2</span>, <span class="op">]</span>, IDVARVAL <span class="op">=</span> <span class="st">"x"</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="fu"><a href="../reference/sv_supp_orphans.html">sv_supp_orphans</a></span><span class="op">(</span><span class="va">ae</span>, <span class="va">suppae2</span>, rdomain <span class="op">=</span> <span class="st">"AE"</span><span class="op">)</span></span>
+<span><span class="co">#&gt;   STUDYID RDOMAIN    USUBJID IDVAR IDVARVAL    QNAM             QLABEL QVAL</span></span>
+<span><span class="co">#&gt; 1  SV-001      AE SV-001-001 AESEQ       99 AETRTEM Treatment Emergent    Y</span></span>
+<span><span class="fu"><a href="../reference/sv_supp_orphans.html">sv_supp_orphans</a></span><span class="op">(</span><span class="va">ae</span>, <span class="va">suppae2</span>, rdomain <span class="op">=</span> <span class="st">"AE"</span>, what <span class="op">=</span> <span class="st">"bad_idvarval"</span><span class="op">)</span></span>
+<span><span class="co">#&gt;   STUDYID RDOMAIN    USUBJID IDVAR IDVARVAL    QNAM             QLABEL QVAL</span></span>
+<span><span class="co">#&gt; 1  SV-001      AE SV-001-002 AESEQ        x AETRTEM Treatment Emergent    Y</span></span></code></pre></div>
+<p>With a date rule,
+<code>sv_unmatched(x, y, by, rule = ..., what = "outside_window")</code>
+gives the rows that have a key partner but no pair the rule keeps;
+<code>what = "unmatched"</code> gives the rows with no key partner at
+all.</p>
+<p>Notes:</p>
+<ul>
+<li>The rows come from the tables as loaded, not from a pipeline result:
+a filter on the card does not change them.</li>
+<li>In a Shiny module, removing an input removes the cards derived from
+it, and adding the input back brings them back; replacing it rebuilds
+them from the new data.</li>
+<li>The widget has no R, so it offers no buttons; a saved state’s
+derived steps are skipped there.</li>
+</ul>
 </div>
 <div class="section level2">
 <h2 id="what-it-does-not-do">What it does not do<a class="anchor" aria-label="anchor" href="#what-it-does-not-do"></a>

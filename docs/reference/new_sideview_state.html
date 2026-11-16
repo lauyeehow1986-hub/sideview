@@ -9,7 +9,7 @@ card configurations, table join connections, and pipeline script state."><meta p
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.8.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.9.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -68,7 +68,11 @@ card configurations, table join connections, and pipeline script state.</p>
 <dt id="arg-cards">cards<a class="anchor" aria-label="anchor" href="#arg-cards"></a></dt>
 <dd><p>List of card state objects (each specifying <code>id</code>, <code>name</code>, <code>x</code>, <code>y</code>,
 <code>width</code>, <code>height</code>, <code>minimized</code>, <code>sorts</code> and <code>filters</code>; a sort is
-<code>list(col, dir)</code> with <code>dir</code> <code>"asc"</code> or <code>"desc"</code>, a filter is <code>list(col, op, val)</code>).</p></dd>
+<code>list(col, dir)</code> with <code>dir</code> <code>"asc"</code> or <code>"desc"</code>, a filter is <code>list(col, op, val)</code>).
+A card may also carry <code>user_sized = TRUE</code> (optional, since 0.9.0): the user
+resized it, so it keeps its size with the Accessible canvas on. With the
+switch on, a card the user did not resize is saved at its default (switch
+off) size, not the enlarged one.</p></dd>
 
 
 <dt id="arg-connections">connections<a class="anchor" aria-label="anchor" href="#arg-connections"></a></dt>

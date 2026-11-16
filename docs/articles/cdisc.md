@@ -200,6 +200,38 @@ joins. In the widget the check runs in the browser on the embedded rows;
 when a card’s rows were cut (`max_rows`) or the card is lazy, the panel
 says “Preview rows”.
 
+## Rows behind the counts
+
+A join check or a SUPP check ends in counts: how many rows have no
+partner, how many fell outside a date window, how many `SUPP--` rows are
+orphans. In the gadget or a Shiny module each count that is not zero
+comes with a button that opens those rows as a card of their own. The
+card is named for its content (here `ae_unmatched_dm`), reads the two
+input cards as they were loaded, and adds one step to the pipeline, so
+the generated code rebuilds the same rows. A duckdb or Arrow input stays
+lazy. In the list view the same offers are plain buttons.
+
+The console gives the same rows. A synthetic adverse event table with
+one subject that is not in `dm`, and a `SUPP--` table with one orphan
+and one bad `IDVARVAL`:
+
+`ae2`` ``<-`` `[`rbind`](https://rdrr.io/r/base/cbind.html)`(``ae``, `[`data.frame`](https://rdrr.io/r/base/data.frame.html)`(``STUDYID ``=`` ``sid``, DOMAIN ``=`` ``"AE"``, USUBJID ``=`` ``"SV-001-999"``, AESEQ ``=`` ``1L``,`` `` AETERM ``=`` ``"Dizziness"``, AESEV ``=`` ``"MILD"``, stringsAsFactors ``=`` ``FALSE``)``)`` `[`sv_unmatched`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_unmatched.md)`(``ae2``, ``dm``, ``"USUBJID"``)`` ``#> STUDYID DOMAIN USUBJID AESEQ AETERM AESEV`` ``#> 1 SV-001 AE SV-001-999 1 Dizziness MILD`` `` ``suppae2`` ``<-`` `[`rbind`](https://rdrr.io/r/base/cbind.html)`(``suppae``,`` `` `[`transform`](https://rdrr.io/r/base/transform.html)`(``suppae``[``1``, ``]``, IDVARVAL ``=`` ``"99"``)``,`` `` `[`transform`](https://rdrr.io/r/base/transform.html)`(``suppae``[``2``, ``]``, IDVARVAL ``=`` ``"x"``)``)`` `[`sv_supp_orphans`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_orphans.md)`(``ae``, ``suppae2``, rdomain ``=`` ``"AE"``)`` ``#> STUDYID RDOMAIN USUBJID IDVAR IDVARVAL QNAM QLABEL QVAL`` ``#> 1 SV-001 AE SV-001-001 AESEQ 99 AETRTEM Treatment Emergent Y`` `[`sv_supp_orphans`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_orphans.md)`(``ae``, ``suppae2``, rdomain ``=`` ``"AE"``, what ``=`` ``"bad_idvarval"``)`` ``#> STUDYID RDOMAIN USUBJID IDVAR IDVARVAL QNAM QLABEL QVAL`` ``#> 1 SV-001 AE SV-001-002 AESEQ x AETRTEM Treatment Emergent Y`
+
+With a date rule,
+`sv_unmatched(x, y, by, rule = ..., what = "outside_window")` gives the
+rows that have a key partner but no pair the rule keeps;
+`what = "unmatched"` gives the rows with no key partner at all.
+
+Notes:
+
+- The rows come from the tables as loaded, not from a pipeline result: a
+  filter on the card does not change them.
+- In a Shiny module, removing an input removes the cards derived from
+  it, and adding the input back brings them back; replacing it rebuilds
+  them from the new data.
+- The widget has no R, so it offers no buttons; a saved state’s derived
+  steps are skipped there.
+
 ## What it does not do
 
 - The `ig_versions` in the catalogue are approximate, and nothing is

@@ -201,6 +201,40 @@ the code casts a numeric key to the parent's own Arrow type, so an `int64` `AESE
 In the widget the check runs in the browser on the embedded rows; when a card's rows were cut (`max_rows`) or
 the card is lazy, the panel says "Preview rows".
 
+## Rows behind the counts
+
+A join check or a SUPP check ends in counts: how many rows have no partner, how many fell outside a date
+window, how many `SUPP--` rows are orphans. In the gadget or a Shiny module each count that is not zero comes
+with a button that opens those rows as a card of their own. The card is named for its content (here
+`ae_unmatched_dm`), reads the two input cards as they were loaded, and adds one step to the pipeline, so the
+generated code rebuilds the same rows. A duckdb or Arrow input stays lazy. In the list view the same offers
+are plain buttons.
+
+The console gives the same rows. A synthetic adverse event table with one subject that is not in `dm`, and a
+`SUPP--` table with one orphan and one bad `IDVARVAL`:
+
+```{r derived}
+ae2 <- rbind(ae, data.frame(STUDYID = sid, DOMAIN = "AE", USUBJID = "SV-001-999", AESEQ = 1L,
+                            AETERM = "Dizziness", AESEV = "MILD", stringsAsFactors = FALSE))
+sv_unmatched(ae2, dm, "USUBJID")
+
+suppae2 <- rbind(suppae,
+                 transform(suppae[1, ], IDVARVAL = "99"),
+                 transform(suppae[2, ], IDVARVAL = "x"))
+sv_supp_orphans(ae, suppae2, rdomain = "AE")
+sv_supp_orphans(ae, suppae2, rdomain = "AE", what = "bad_idvarval")
+```
+
+With a date rule, `sv_unmatched(x, y, by, rule = ..., what = "outside_window")` gives the rows that have a key
+partner but no pair the rule keeps; `what = "unmatched"` gives the rows with no key partner at all.
+
+Notes:
+
+* The rows come from the tables as loaded, not from a pipeline result: a filter on the card does not change them.
+* In a Shiny module, removing an input removes the cards derived from it, and adding the input back brings them
+  back; replacing it rebuilds them from the new data.
+* The widget has no R, so it offers no buttons; a saved state's derived steps are skipped there.
+
 ## What it does not do
 
 * The `ig_versions` in the catalogue are approximate, and nothing is validated against an implementation

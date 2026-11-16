@@ -12,7 +12,8 @@ sideview_server(
   console_fn = sv_send_to_console,
   gadget = FALSE,
   run_env = parent.frame(),
-  cdisc = "auto"
+  cdisc = "auto",
+  state = NULL
 )
 }
 \arguments{
@@ -42,6 +43,9 @@ vector of domain codes). Here it only controls the \code{domain} column of the
 codebook export. The badges on the canvas come from the cards given to
 \code{\link[=sideview_ui]{sideview_ui()}}, so pass the same \code{cdisc} there (or build the page with
 \code{\link[=sideview]{sideview()}} or \code{\link[=sideviewUI]{sideviewUI()}}, which keep the two in step).}
+
+\item{state}{Optional workspace state (a state object or its JSON text) applied once the first cards arrive;
+derived cards in it are built by R first. See \code{\link[=sv_save_state]{sv_save_state()}}.}
 }
 \value{
 A Shiny server function \verb{function(input, output, session)}.

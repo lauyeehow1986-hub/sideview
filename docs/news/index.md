@@ -1,31 +1,80 @@
 # Changelog
 
-## sideview 0.9.0 (development)
+## sideview 0.10.0 (development)
+
+Derived cards, first part (D1): the rows behind a check count become a
+card of their own. Development version; the release number is decided at
+merge time. Checked with real-browser tests (headless Chrome) and unit
+tests; the manual RStudio pass is still to do.
+
+### Open the rows behind a count
+
+- A join check or a SUPP check offers buttons that open the rows behind
+  its counts as a new card: the rows of either table with no match
+  (`unmatched`), the rows a date rule dropped (`outside_window`), and
+  the SUPP rows with no parent row (`supp_orphans`) or with an
+  `IDVARVAL` that does not convert (`supp_bad_idvarval`). The card is
+  named for what it holds (`ae_unmatched_dm`), sits near its first
+  input, and is built by R from the tables as loaded, so a duckdb or
+  Arrow input stays lazy. The same buttons appear in the list view as
+  real buttons, and the result is announced.
+- `sv_unmatched(x, y, by, rule, side, what)` and
+  `sv_supp_orphans(parent, supp, rdomain, what)` return the same rows
+  from the console.
+- A derived card is one pipeline step (`kind: "derive"`) and its
+  generated R code rebuilds the rows with `dplyr`, so a script
+  reproduces the card. The step is part of workspace state.
+- In a Shiny module, removing an input removes the cards derived from it
+  (their steps stay); replacing an input rebuilds them in place; adding
+  it back brings them back. A state saved with derived cards is restored
+  with them.
+- New inputs `derive_request` and `derive_forget`, new message
+  `sideview_derive_result`, and a `derive_offers` field on the
+  join-check and SUPP-check replies (see CLAUDE.md). The widget has no
+  R: it shows no buttons, and a saved state’s derive steps are skipped
+  with a notice.
+
+## sideview 0.9.0
 
 Accessible canvas: one switch that makes the canvas itself usable by
 keyboard and at low vision. Off by default; with it off the canvas is
 unchanged. Checked with automated WCAG tests (axe, switch on and off)
-and real-browser keyboard tests; the manual script in
-`plans/2026-11-15-access-manual-script.md` (Windows Magnifier, High
-Contrast, Edge, RStudio dialog and Viewer) has not been run yet, and
-Alt+Arrows is not yet verified in RStudio or Edge. The release number is
-decided at merge time.
+and real-browser keyboard tests; a manual pass (Windows Magnifier at
+200% and 400%, High Contrast, Edge, RStudio dialog and Viewer, Alt+Arrow
+card jumps) found no problems. The release number is decided at merge
+time.
 
 ### Accessible canvas switch
 
+- Switching it on arranges the cards when the larger text makes them
+  overlap; switching it off puts every card you have not moved since
+  back where it was.
 - [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md),
-  [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md),
-  [`save_sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/save_sideview.md),
   [`sideview_ui()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_ui.md)
   and
   [`sideviewUI()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewUI.md)
   take `access = FALSE`, set for a session by
-  `options(sideview.access = TRUE)`. It sets the starting state only:
-  the `?` dialog has an “Accessible canvas” switch beside the shortcuts
-  switch, and the browser remembers the choice (`localStorage` key
-  `sideview.access`), which wins over R. The container carries
-  `data-sv-access` and the class `sv-access` while on; the widget takes
-  `options$access`. The choice is not part of workspace state.
+  `options(sideview.access = TRUE)`. The widget has no `access`
+  argument: use `sideview_widget(..., options = list(access = TRUE))`,
+  or the same option, which
+  [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md)
+  and
+  [`save_sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/save_sideview.md)
+  also follow. It sets the starting state only: the `?` dialog has an
+  “Accessible canvas” switch beside the shortcuts switch, and the
+  browser remembers the choice (`localStorage` key `sideview.access`),
+  which wins over R. Each canvas reads its state once when it starts, so
+  switching one of two canvases on a page leaves the other as it is
+  until the next load. The container carries `data-sv-access` and the
+  class `sv-access` while on. The choice is not part of workspace state.
+- Workspace state saved with the switch on keeps the default card sizes
+  (the switch only enlarges cards on screen), so opening it with the
+  switch off gives the same layout. A card the user resized is saved
+  with an optional `user_sized: true` (no schema bump) and keeps its
+  size when the state is opened with the switch on.
+- Switching off never leaves focus on a header or a card body that has
+  lost its Tab stop: focus goes to the canvas, also when the switch is
+  turned off in the `?` dialog.
 
 ### Low vision
 
@@ -35,13 +84,18 @@ decided at merge time.
   control is at least 24 by 24 px on screen, the focus ring is 3 px, and
   a high-contrast colour set (text 7:1, lines and ports 4.5:1) replaces
   the theme colours. Splines are 3 px wide with one of six dash patterns
-  and an arrowhead, so crossing joins can be told apart without colour;
-  suggested joins end in a hollow marker. Badges that used only colour
-  (CDISC, key-check state, discrepancies) carry text.
+  (butt caps, so the gaps stay open) and an arrowhead, so crossing joins
+  can be told apart without colour; suggested joins end in a hollow
+  marker. Badges that used only colour (CDISC, key-check state,
+  discrepancies) carry text.
 - Windows High Contrast (`forced-colors: active`) and
   `prefers-contrast: more` are followed even with the switch off: system
   colours for splines, ports, borders and the focus ring, stronger
   borders under more contrast.
+- One change applies with the switch off too: the key names in the
+  search dialog’s hint (`.sideview-search-hint kbd`) now use the text
+  colour (`--sv-text`) rather than the hint’s muted colour, for
+  contrast.
 - The axe matrix now also runs with the switch on (light and dark, three
   sizes, canvas, drawer tabs, AI bar, filter popover, `?` and search
   dialogs) with no accepted rules, so `target-size` passes there. The
@@ -50,16 +104,17 @@ decided at merge time.
 
 ### Keyboard on the canvas
 
-- With the switch on, each card is one Tab stop (reading order), a
-  column header is a roving stop inside the focused card, and the view
-  follows focus so the item is never under the drawer, AI bar or
-  minimap. On a card: Arrows move it 20 px, Shift+Arrows 100 px (one
-  `sideview_card_moved` per pause, announced “AE moved.”), Alt+Arrows
-  focus the nearest card, Enter goes to the first header,
-  PageUp/PageDown/Home/End scroll the table. On a column header:
-  Left/Right, Esc, `C` to start connecting (Enter completes the join as
-  a click does: one `column_mapped`, one undoable step), Delete to
-  remove a join (a menu when there are several), `J` to jump to the
+- With the switch on, each card is a Tab stop (reading order). Inside it
+  Tab reaches the card’s buttons, one roving column header and the table
+  body (a region named “ rows”, for scrolling with the keys below), then
+  the next card, and the view follows focus so the item is never under
+  the drawer, AI bar or minimap. On a card: Arrows move it 20 px,
+  Shift+Arrows 100 px (one `sideview_card_moved` per pause, announced
+  “AE moved.”), Alt+Arrows focus the nearest card, Enter goes to the
+  first header, PageUp/PageDown/Home/End scroll the table. On a column
+  header: Left/Right, Esc, `C` to start connecting (Enter completes the
+  join as a click does: one `column_mapped`, one undoable step), Delete
+  to remove a join (a menu when there are several), `J` to jump to the
   joined column. These keys work with the shortcuts switch off and never
   fire while typing. They are listed in the `?` dialog while the switch
   is on.

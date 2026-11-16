@@ -33,7 +33,11 @@ new_sideview_state(
   List of card state objects (each specifying `id`, `name`, `x`, `y`,
   `width`, `height`, `minimized`, `sorts` and `filters`; a sort is
   `list(col, dir)` with `dir` `"asc"` or `"desc"`, a filter is
-  `list(col, op, val)`).
+  `list(col, op, val)`). A card may also carry `user_sized = TRUE`
+  (optional, since 0.9.0): the user resized it, so it keeps its size
+  with the Accessible canvas on. With the switch on, a card the user did
+  not resize is saved at its default (switch off) size, not the enlarged
+  one.
 
 - connections:
 

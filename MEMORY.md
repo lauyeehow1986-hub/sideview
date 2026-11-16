@@ -13,7 +13,7 @@ list view and the console, not only on the canvas.
 | A | Text-first access (list view, `sv_describe()`, announcements, table ARIA) | done, 0.8.0 (PRs #13-#17, #18 minors) |
 | C | Accessibility testing (axe-core, AX-tree tests, NVDA script, CI a11y job) | done, 0.8.0 (PR #12, NVDA fixes #19) |
 | B | Keyboard and low vision (access switch) | done, 0.9.0 (PR #20, version bump #22) |
-| D | Unmatched / dropped rows as cards; stack two tables and compare columns; compare data cuts by key | **in progress: spec approved 2026-11-16; D1 plan written, awaiting user review** (`plans/2026-11-16-derived-cards-design.md`, `plans/2026-11-16-derived-cards-d1-implementation.md`, branch `d/spec`; D1 to be built on `d/d1-derived-cards`); D2/D3 plans after D1 lands; PRs D1 derived cards + unmatched rows, D2 stack, D3 compare data cuts; target 0.10.0 |
+| D | Unmatched / dropped rows as cards; stack two tables and compare columns; compare data cuts by key | **in progress: D1 (derived cards, unmatched / outside-window / SUPP orphan / bad-IDVARVAL rows) implemented on `d/d1-derived-cards`, not pushed; manual RStudio checks to do by the user (see the 2026-11-17 entry)**; spec approved 2026-11-16 (`plans/2026-11-16-derived-cards-design.md`, `plans/2026-11-16-derived-cards-d1-implementation.md`); D2/D3 plans after D1 lands; PRs D1 derived cards + unmatched rows, D2 stack, D3 compare data cuts; target 0.10.0 |
 | E | `metatools::combine_supp()` option (SUPP/ADSL merges only); `dm` import and export; `pointblank` export; `metacore` spec check (labelled "spec check") | not started, after D |
 
 Other pending tasks:
@@ -413,6 +413,14 @@ Each sub-project gets its own spec, plan and build, in this order:
 
 
 ## Log
+
+### 2026-11-17 - Derived cards, D1 (branch `d/d1-derived-cards`, not pushed)
+- **Change:** the rows behind a join check or SUPP check open as a derived card: ops `unmatched`, `outside_window`, `supp_orphans`, `supp_bad_idvarval`; R builds the card (`R/derive.R`, `sv_derived_source()` in `R/lazy.R`, lazy inputs stay lazy), the browser adds one `derive` pipeline step whose composed code is the twin of the R builder; console `sv_unmatched()` and `sv_supp_orphans()`; list-view buttons; module cascade / rebuild / re-add; state restore. Wire names and rules are in CLAUDE.md ("Derived cards"). Docs: NEWS 0.10.0 (development), README bullet, a "Rows behind the counts" section in `vignettes/articles/cdisc.Rmd` (synthetic data, no screenshots; screenshots come with D3). `sideview_server()` gained the missing `@param state`.
+- **Verified (Tasks 1-9, focused filters, `Rscript` 4.5.2, counts from the task reports):** derive 188, derive-code 1180, pipeline 802, supp 230, module 352, state 153, card-store 31, cdisc 431, diagnostics 5123, app 307 (all FAIL 0). Real Chrome via chromote (`NOT_CRAN=true`): layout-browser 967, a11y-browser 1082, computer-use-gui (mock DOM) 246, all FAIL 0. Controller checkpoint after Task 6 (non-browser, no test-lazy.R): 608 passed at 40764e7. Each task was reviewed; Important findings were fixed and re-reviewed.
+- **Verified in this task (docs):** `pkgdown::check_pkgdown()` clean; `devtools::document()`; `devtools::check(document = FALSE, args = "--no-manual", env_vars = c(NOT_CRAN = "false"))` (browser suites skip, as on CRAN, 55 min): 0 errors, 0 warnings, 2 NOTEs (both environmental: "unable to verify current time" and the `NULL` check-directory note). A first check run with `NOT_CRAN=true` (browser suites) hung in the tests step with no CPU use after 52 min and was stopped; its result is NOT claimed. The full `devtools::test()` with the browser suites was not re-run on this branch.
+- **NOT verified / to do by the user:** RStudio dialog, Viewer pane and external browser for the new buttons and derived cards; the gadget with a lazy (duckdb / Arrow) input restored from `sideview(state =)` (the client must accept `sideview_card_add` at the first flush, and the restored lazy derived card must appear); the widget (a saved page with derive steps shows the no-R toast). Edge, Magnifier and High Contrast were not run for derived cards. The doc statements above are about what the code does, from reading it and from the tests.
+- **Version:** DESCRIPTION stays 0.9.0; the 0.9.0 era bumped it in a separate "chore: bump version" commit at merge time, so the NEWS heading says 0.10.0 (development) and the bump is left for the release.
+
 
 ### 2026-11-14 - Task 17: NVDA script written, pass not run (2026-11-14)
 - `plans/2026-11-14-nvda-script.md` (15 tasks) and `tests/testthat/helper-nvda.R` (synthetic DM/AE/SUPPAE/labs fixture) are committed. The launch snippet builds a shiny.appobj.
@@ -1199,3 +1207,28 @@ Each sub-project gets its own spec, plan and build, in this order:
 ## Accessible canvas: RStudio pass and arrange on switch-on (2026-11-16)
 - RStudio dialog and Viewer pane, with Alt+Arrow there: reported OK by the user. All manual passes are done; `JUMP_MODS` stays `alt`.
 - Change at the user's request (38d1e9e): switching on arranges overlapping cards; switching off puts back every card not moved since. Tests: access-browser, a11y-browser, layout-browser, 2354 passed. Full suite not re-run after it.
+
+## D1 known gaps (deferred minors, from the SDD ledger, 2026-11-17)
+
+None of these blocks D1; none is fixed. Source: `.superpowers/sdd/2026-11-16-derived-cards-d1-implementation/progress.md`.
+
+- Parked minors: T7 must compare generated code to the rule branch (sv_join_rule_pairs, not join_by) for every shape x side; list-form `by` ({x,y} pairs from the canvas) and lazy "needs duckdb" error untested -> cover in T5/T3; sv_derive_name for supp ops uses args$supp, falling back to last input (inputs = [parent, supp] so last input is the supp).
+- Task 2: minor (deferred): rdomain=NULL picks first RDOMAIN of in-memory supp (T5 always sends rdomain); sv_derive_rows rejects NULL rdomain even if plan$rdomain_col FALSE; CM test only proves CMSEQ error; counts not compared to sv_lazy_supp_check directly.
+- Task 3: minor (deferred): sv_lazy_env() per console sv_unmatched() call leaks a duckdb connection (R/derive.R:34)
+- Task 3: minor (deferred): sv_lazy_derived_tbl with key=NULL returns tbl with live cleanup nobody releases; doc note
+- Task 3: minor (deferred): sv_card_is_lazy TRUE for derived source before arrow-availability check
+- Task 3: minor (deferred): args$con_env smuggled via args, undocumented
+- Task 3: minor (deferred, check in Task 5/6): sv_lazy_release does not evict con_env$tbls[[key]]; callers must evict
+- Task 3: minor (deferred): cleanup test does not exercise placing an uncached Arrow table
+- Task 3: note: test-lazy-browser.R has 2 failures (list paging shows ellipsis) seen in the implementer's run; check on a clean base before final review
+- Task 4: minor (deferred): no test of offers on lazy card or NA-key; weak expect_lte(length(o),4); rdomain=NULL leaves null element
+- Task 4: note: counts describe the 50-row preview when lazy_or_preview falls back; check in Task 5 that the built card uses the same basis
+- Task 5: minor (deferred): sv_derive_validate unused (asked in fix round anyway); key kinds on preview for lazy (asked in fix round); payload built after store add (asked in fix round)
+- Task 5: minor (deferred): no dedupe by request_id (retries make _2,_3 and temp tables); derived-of-derived: forget of inner releases tables the outer SQL uses (decision 6 engine removes dependants; needs test in Task 6); no tests for non-syntactic cols / NA keys via derive handler / n==offer n from real offer; $ partial matching on req fields (use [[exact=TRUE]]); no basis marker on derived card after fallback; sv_derive_name make.names changes the exact name in the taken-name error
+- Task 6: manual check owed (user, RStudio): gadget client accepts card_add at first flush for lazy-input derive steps
+- Task 6: minor (deferred): swallowed build errors for lazy derive step at first flush (no toast); unbounded derive steps per state; all[-seq_along(cards)] fragile; forged-args test lacks junk args with valid inputs; step skipped silently if name exists
+- Task 7: minor (deferred): _kindBusy on pipeline instance; mixed-type rule keys twin gap; unknown IDVAR counted orphan vs R stop; window offset kindOf assumes ins[0] on canvas; my key twin eval only for no-rule; no evaluated duckdb+arrow mixed pair
+- Task 8: minor (deferred): repeated error toasts when _deriveFailed resets on unrelated card add; startup announcement for gadget lazy-restore card_add; gadget first-flush card_add + widget no-R toast not browser-verified; replace-failed-rebuild test asserts no-danger-toast not exactly-one; undo/redo via engine calls not UI keys
+- Task 8: minor (deferred): race test uses fixed Sys.sleep(3); 30s derivePending sweep drops a legitimately slow lazy derive (late reply gets no step, dup click possible); _rRemoved has no reset path in applyState/clearOperations/step removal (stale skip after failed-rebuild replace then good replace)
+- Task 9: minor (deferred): list-view test compares label to literal not drawer; SUPP buttons untested; weak "{" DOM check; no focus-after-Enter assert; no list-view CSS/axe for derive buttons; duplicate open zooms hidden canvas card in list view
+- Behaviours worth knowing (not defects): an R-removed derived card sets `_rRemoved` and is not asked for again until an input leaves and returns; `derivePending` is swept after 30 s; derive offers are R-only (no widget buttons).

@@ -85,6 +85,8 @@ fct_recode, or auto-cleanup rules.
   : Detect Exact Matches, Discrepancies, and Fuzzy Near-Matches
 - [`sv_join_diagnostics()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_join_diagnostics.md)
   : Join Diagnostics
+- [`sv_unmatched()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_unmatched.md)
+  : Rows That Have No Partner in a Join
 - [`sv_code_recode()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_code_recode.md)
   : Generate tidyverse Code for Categorical Recoding and Discrepancy
   Crosswalks
@@ -172,3 +174,5 @@ Recognise SDTM, SEND and ADaM datasets.
   [`sv_supp_key_type()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_check.md)
   [`sv_supp_check_json()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_check.md)
   : Check a SUPP– merge
+- [`sv_supp_orphans()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_orphans.md)
+  : Rows of a SUPP Table That the Merge Check Counts as Orphans or Bad

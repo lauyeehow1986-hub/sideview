@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.8.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.9.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -183,7 +183,10 @@ dialog, or start with it on.</p>
 <code class="sourceCode R"><span><span class="co"># for one call</span></span>
 <span><span class="fu"><a href="../reference/sideview.html">sideview</a></span><span class="op">(</span><span class="va">patients</span>, <span class="va">visits</span>, access <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span>
 <span></span>
-<span><span class="co"># for the whole session</span></span>
+<span><span class="co"># an htmlwidget (sideview_widget() has no access argument)</span></span>
+<span><span class="fu"><a href="../reference/sideview_widget.html">sideview_widget</a></span><span class="op">(</span><span class="va">patients</span>, <span class="va">visits</span>, options <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>access <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># for the whole session, the widget and save_sideview() included</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/options.html" class="external-link">options</a></span><span class="op">(</span>sideview.access <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span></code></pre></div>
 <p>The argument or option only sets the starting state. The switch in
 the <code>?</code> dialog changes it, and the browser remembers that
@@ -196,10 +199,12 @@ control is at least 24 by 24 px, the focus ring is 3 px, and a
 high-contrast colour set replaces the theme colours. Joins are 3 px wide
 with a dash pattern and an arrowhead each, so crossing joins can be told
 apart without colour.</li>
-<li>Each card is one Tab stop, in reading order. On a card, Arrows move
-it 20 px (Shift+Arrows 100 px), Alt+Arrows focus the nearest card, Enter
-goes to its first column header, and PageUp, PageDown, Home and End
-scroll its table. The view follows focus.</li>
+<li>Each card is a Tab stop, in reading order. Inside a card, Tab
+reaches its buttons, one column header and its table body (“patients
+rows”), then the next card. On a card, Arrows move it 20 px
+(Shift+Arrows 100 px), Alt+Arrows focus the nearest card, Enter goes to
+its first column header, and PageUp, PageDown, Home and End scroll its
+table. The view follows focus.</li>
 <li>On a column header, Left and Right move along the columns and Esc
 goes back to the card. <code>C</code> starts a join and Enter completes
 it on the column you have moved to (Esc cancels), Delete removes a join

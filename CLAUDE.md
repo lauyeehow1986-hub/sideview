@@ -49,7 +49,7 @@ rstudio bridge: R/rstudio.R
   `sideview_join_diagnostics`, `sideview_derive_result` (`{id, error}`: a refused `derive_request`; success is a `sideview_card_add` with `request_id`), `sideview_column_profile`, `sideview_supp_check` (`{id, ...check}` from `sv_supp_check()`, or `{id, error}`; carries `ns` in module mode), `sideview_codebook_saved` (module: carries `csv`, the file text, plus `filename`; the browser downloads it),
   `sideview_state_saved`, `sideview_state_loaded`,
   `sideview_cdisc_update` (module: `{tags: {<card_id>: tag | null}}`, the badges only; an unknown card id is ignored quietly),
-  `sideview_card_add` (the first population on `sideview_ready` carries `initial: true`), `sideview_card_replace`, `sideview_card_remove`, `sideview_state_set`, `sideview_highlight`,
+  `sideview_card_add` (the first population on `sideview_ready` carries `initial: true`; a derived card's payload carries `derived: {op, inputs, args}` and the message `request_id`, the id of the `derive_request` it answers), `sideview_card_replace`, `sideview_card_remove`, `sideview_state_set`, `sideview_highlight`,
   `sideview_llm` (module without `llm_fn`: hide the AI bar and Copilot tab),
   `sideview_toast` (`{text, type, id?, card?}`: a notice from R, e.g. the lazy-to-preview fallback; a toast with the same `id` is updated in place, as for codebook progress; `card` is the id of the card the notice is about: the browser then sets that card's `data-rows-basis` to `preview`, as for a lost link).
 - `sideview_code_update` carries `source`: `event` (echo of a client step; ignored), `auto_clean`
@@ -88,7 +88,9 @@ rstudio bridge: R/rstudio.R
 - **Join diagnostics:** `cdisc_notes` (list of strings, maybe empty) is an R-only field of the
   `sideview_join_diagnostics` reply, added by the `join_diagnostics_request` handler and shown under a "CDISC"
   heading after the warnings; the widget's browser-computed diagnostics never carry it, and the twins below
-  do not produce it. `sv_join_diagnostics()` (R/diagnostics.R) and `SideviewPipeline.joinDiagnostics()`
+  do not produce it. `derive_offers` is the same kind of R-only field, on this reply and on `sideview_supp_check`: a list of
+  `{op, inputs, args, n, label}` for the "open these rows as a card" buttons (`sv_derive_offers_join()` / `sv_derive_offers_supp()`,
+  offers with `n == 0` and key-type clashes dropped; the SUPP plan is left out, R recomputes it). The widget never has it. `sv_join_diagnostics()` (R/diagnostics.R) and `SideviewPipeline.joinDiagnostics()`
   (sv-pipeline.js) are twins with the same snake_case fields; `test-diagnostics.R` checks parity and that row
   counts equal dplyr (NA matches NA, as `na_matches = "na"`). The gadget asks R (`join_diagnostics_request`,
   full data); the widget computes in the browser. Change both together. The date-rule check is a third twin:
@@ -111,6 +113,40 @@ rstudio bridge: R/rstudio.R
   `sv_supp_ws` / `SUPP_WS` (never `\s`/`trim()`), and generated `grepl()` uses `perl = TRUE`; `abs(x) > 1e308` is bad.
   An Arrow int64/uint64 key is always a double key (as duckdb BIGINT). Clashes with columns made by earlier chain
   steps are caught in the browser (`columnsBefore()`), not by the code guard. Change a twin together with the others.
+- **Derived cards (D1):** the rows behind a check count as a card of their own. Ops (`sv_derive_ops`): `unmatched`
+  and `outside_window` (join check; `args` = `{by, rule?, side}`), `supp_orphans` and `supp_bad_idvarval` (SUPP check;
+  `args` = `{rdomain?}`, the plan is R's). `sv_unmatched()` and `sv_supp_orphans()` are the console forms; all of them
+  and the canvas builder call `sv_derive_rows()`, so the rows agree. The client sends `derive_request`
+  (`{id, op, inputs, args, name?}`); `sv_derive_validate()` / `sv_derive_clean()` check it against the R store (inputs
+  must be store names, args off the allowlist are dropped), and a refusal is `sideview_derive_result {id, error}` with
+  nothing changed. Success is `sideview_card_add` with `request_id`. `derive_forget {name}` tells R the browser dropped
+  a derived card (honoured only for a card with `derived`).
+  - **Inputs as loaded:** a derived card is built from its input cards as they are in the R store (the data loaded,
+    before the pipeline's own steps), never from a pipeline result. A lazy input stays lazy (`sv_derived_source()`
+    in `R/lazy.R`, one tbl on the session connection); `source` is still never serialised.
+  - **Code twin:** the pipeline step is `{kind: 'derive', key, table, op, inputs, args}` (`deriveStep()`),
+    composed by `deriveExpr()` in sv-pipeline.js. The R builder and the composed code are twins:
+    `test-derive-code.R` evaluates the generated code on the inputs and compares it with `sv_derive_rows()` for every
+    op, side, rule shape and backend. Change both together.
+  - **Liveness is computed, not stored:** `deriveLive(step)` is true when the step is enabled and both inputs are on
+    the canvas or written by another live derive step; a derived card without a live step is dropped. `deriveFor(name)`
+    finds the live step. `compose()` writes producers first.
+  - **Reconcile loop** (`reconcileDerived()`, run on every card or step change): drops derived cards whose step is gone,
+    and for each live step whose card is missing sends a `derive_request` (R builds it again). One request per card in
+    flight (`derivePending`, swept after 30 s, so a very slow lazy build can be asked twice); a refused request marks the
+    card `_deriveFailed` until the card set changes. A card R removed (cascade or failed rebuild) sets `_rRemoved`: no
+    request goes out until an input has left the canvas and come back.
+  - **Module:** removing an input removes its derived cards first (steps kept); replacing an input rebuilds them in
+    place under the same name (`card_replace`; a failed rebuild removes the card and its dependants, one toast); adding
+    an input back lets the browser re-add the card through the reconcile loop. State with derive steps is built before
+    it reaches the canvas (`sv_derive_from_state()`, `sv_module_add_derived()`); a step that cannot be built is skipped.
+  - **Gadget:** `sideview(state =)` builds the derived cards of in-memory inputs up front; with `skip_lazy = TRUE` a step
+    that reads a lazy card waits for the browser's reconcile loop. The gadget shares one `sideview_card_add` path
+    with module mode. The CDISC finalize skips derived cards (they get no tag).
+  - **Widget:** no R, so no offers, no buttons; a saved state's derive steps stay in the file, are skipped in the code
+    and one toast says so.
+  - The list view shows the same offers as real buttons (`appendOffers()`, `data-sv-lv-action="derive-open"`); a
+    duplicate open zooms the existing card and announces it.
 - **Column inspector / codebook:** same twin rule. `sv_column_profile()` / `sv_codebook()` (R/codebook.R) and
   `SideviewPipeline.columnProfile()` / `codebookRow()` / `codebookCsv()` (sv-pipeline.js); `test-codebook.R`
   checks the fields, the issue texts and that the JS CSV is byte-equal to `write.csv(sv_codebook(...))`.

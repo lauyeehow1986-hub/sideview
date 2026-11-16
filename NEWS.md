@@ -1,3 +1,26 @@
+# sideview 0.10.0 (development)
+
+Derived cards, first part (D1): the rows behind a check count become a card of their own. Development version; the
+release number is decided at merge time. Checked with real-browser tests (headless Chrome) and unit tests; the manual
+RStudio pass is still to do.
+
+## Open the rows behind a count
+
+* A join check or a SUPP check offers buttons that open the rows behind its counts as a new card: the rows of either
+  table with no match (`unmatched`), the rows a date rule dropped (`outside_window`), and the SUPP rows with no parent
+  row (`supp_orphans`) or with an `IDVARVAL` that does not convert (`supp_bad_idvarval`). The card is named for what it
+  holds (`ae_unmatched_dm`), sits near its first input, and is built by R from the tables as loaded, so a duckdb or
+  Arrow input stays lazy. The same buttons appear in the list view as real buttons, and the result is announced.
+* `sv_unmatched(x, y, by, rule, side, what)` and `sv_supp_orphans(parent, supp, rdomain, what)` return the same rows
+  from the console.
+* A derived card is one pipeline step (`kind: "derive"`) and its generated R code rebuilds the rows with `dplyr`, so
+  a script reproduces the card. The step is part of workspace state.
+* In a Shiny module, removing an input removes the cards derived from it (their steps stay); replacing an input
+  rebuilds them in place; adding it back brings them back. A state saved with derived cards is restored with them.
+* New inputs `derive_request` and `derive_forget`, new message `sideview_derive_result`, and a `derive_offers` field on
+  the join-check and SUPP-check replies (see CLAUDE.md). The widget has no R: it shows no buttons, and a saved state's
+  derive steps are skipped with a notice.
+
 # sideview 0.9.0
 
 Accessible canvas: one switch that makes the canvas itself usable by keyboard and at low vision. Off by default; with it

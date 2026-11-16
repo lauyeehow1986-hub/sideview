@@ -83,7 +83,7 @@ If you can see the screen, at least in part, or cannot use a mouse, you
 can use the canvas itself. Turn on the **Accessible canvas** switch:
 press `?` and use the switch in the dialog, or start with it on.
 
-`# for one call`` `[`sideview`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)`(``patients``, ``visits``, access ``=`` ``TRUE``)`` `` ``# for the whole session`` `[`options`](https://rdrr.io/r/base/options.html)`(``sideview.access ``=`` ``TRUE``)`
+`# for one call`` `[`sideview`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)`(``patients``, ``visits``, access ``=`` ``TRUE``)`` `` ``# an htmlwidget (sideview_widget() has no access argument)`` `[`sideview_widget`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md)`(``patients``, ``visits``, options ``=`` `[`list`](https://rdrr.io/r/base/list.html)`(``access ``=`` ``TRUE``)``)`` `` ``# for the whole session, the widget and save_sideview() included`` `[`options`](https://rdrr.io/r/base/options.html)`(``sideview.access ``=`` ``TRUE``)`
 
 The argument or option only sets the starting state. The switch in the
 `?` dialog changes it, and the browser remembers that choice, which wins
@@ -96,10 +96,12 @@ With the switch on:
   colour set replaces the theme colours. Joins are 3 px wide with a dash
   pattern and an arrowhead each, so crossing joins can be told apart
   without colour.
-- Each card is one Tab stop, in reading order. On a card, Arrows move it
-  20 px (Shift+Arrows 100 px), Alt+Arrows focus the nearest card, Enter
-  goes to its first column header, and PageUp, PageDown, Home and End
-  scroll its table. The view follows focus.
+- Each card is a Tab stop, in reading order. Inside a card, Tab reaches
+  its buttons, one column header and its table body (“patients rows”),
+  then the next card. On a card, Arrows move it 20 px (Shift+Arrows 100
+  px), Alt+Arrows focus the nearest card, Enter goes to its first column
+  header, and PageUp, PageDown, Home and End scroll its table. The view
+  follows focus.
 - On a column header, Left and Right move along the columns and Esc goes
   back to the card. `C` starts a join and Enter completes it on the
   column you have moved to (Esc cancels), Delete removes a join (a small

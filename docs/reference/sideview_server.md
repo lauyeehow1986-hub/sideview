@@ -18,7 +18,8 @@ sideview_server(
   console_fn = sv_send_to_console,
   gadget = FALSE,
   run_env = parent.frame(),
-  cdisc = "auto"
+  cdisc = "auto",
+  state = NULL
 )
 ```
 
@@ -74,6 +75,13 @@ sideview_server(
   or
   [`sideviewUI()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewUI.md),
   which keep the two in step).
+
+- state:
+
+  Optional workspace state (a state object or its JSON text) applied
+  once the first cards arrive; derived cards in it are built by R first.
+  See
+  [`sv_save_state()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_save_state.md).
 
 ## Value
 

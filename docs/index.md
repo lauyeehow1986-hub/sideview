@@ -71,6 +71,14 @@ Or install the development version from GitHub:
   date rule (a window of days, between, nearest before or after,
   overlaps). The join check shows the rows the rule dropped, and
   **Strict** adds dplyr’s `relationship` and `unmatched` checks.
+- **Rows Behind the Counts**: A join check or a SUPP check offers
+  buttons that open the unmatched, outside-the-window, orphan or
+  bad-`IDVARVAL` rows as a card of their own, with code that rebuilds
+  them
+  ([`sv_unmatched()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_unmatched.md),
+  [`sv_supp_orphans()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_orphans.md)
+  in the console). Works with lazy `arrow` and `duckdb` tables and in
+  the list view.
 - **Composable Pipeline**: Every sort, filter, join, rename, recode,
   mutate, reshape or summarise becomes a step you can toggle, reorder or
   delete, with undo/redo and a `%>%` / `|>` choice. Sorts and filters

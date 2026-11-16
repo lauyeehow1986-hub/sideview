@@ -15,7 +15,7 @@ and RStudio console execution (send_console)."><meta property="og:image" content
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.8.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.9.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -61,7 +61,8 @@ and RStudio console execution (<code>send_console</code>).</p>
 <span>  console_fn <span class="op">=</span> <span class="va">sv_send_to_console</span>,</span>
 <span>  gadget <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  run_env <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/sys.parent.html" class="external-link">parent.frame</a></span><span class="op">(</span><span class="op">)</span>,</span>
-<span>  cdisc <span class="op">=</span> <span class="st">"auto"</span></span>
+<span>  cdisc <span class="op">=</span> <span class="st">"auto"</span>,</span>
+<span>  state <span class="op">=</span> <span class="cn">NULL</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -110,6 +111,11 @@ vector of domain codes). Here it only controls the <code>domain</code> column of
 codebook export. The badges on the canvas come from the cards given to
 <code><a href="sideview_ui.html">sideview_ui()</a></code>, so pass the same <code>cdisc</code> there (or build the page with
 <code><a href="sideview.html">sideview()</a></code> or <code><a href="sideviewUI.html">sideviewUI()</a></code>, which keep the two in step).</p></dd>
+
+
+<dt id="arg-state">state<a class="anchor" aria-label="anchor" href="#arg-state"></a></dt>
+<dd><p>Optional workspace state (a state object or its JSON text) applied once the first cards arrive;
+derived cards in it are built by R first. See <code><a href="sv_save_state.html">sv_save_state()</a></code>.</p></dd>
 
 </dl></div>
     <div class="section level2">
