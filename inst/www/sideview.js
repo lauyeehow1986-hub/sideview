@@ -802,7 +802,10 @@ function sendToShiny(name, value) {
     this.pipeline = new global.SideviewPipeline.Pipeline({
       pipe: this.options.pipe,
       onChange: function (_p, label) {
-        if (label === 'undo' || label === 'redo') self.forgetSuppChecks(null);
+        if (label === 'undo' || label === 'redo') {
+          self.forgetSuppChecks(null);
+          self.syncSplinesToJoins();
+        }
         self.announceStepChange(label);
         self.renderPipeline();
         // a join check result is not a change of the work; everything else is
@@ -4595,6 +4598,51 @@ function sendToShiny(name, value) {
     pruneHitPaths(this);
   };
 
+  // Undo and redo change the join steps, not the canvas: take the splines of a key the steps no longer
+  // have off the canvas, and draw again the ones they have back. R is not told (as dropConnectionVisually).
+  // Only a pipeline made of join steps is followed: replaced by code (AI, Copilot) it has no keys to read.
+  SideviewEngine.prototype.syncSplinesToJoins = function () {
+    var self = this;
+    var steps = this.pipeline.steps || [];
+    if (steps.some(function (s) { return s.kind === 'custom'; })) return;
+    var want = {};
+    steps.forEach(function (s) {
+      if (s.kind !== 'join') return;
+      (s.by || []).forEach(function (p) { want[JSON.stringify([s.table, s.right, p.left, p.right])] = s; });
+    });
+    var have = {};
+    this.connections.slice().forEach(function (c) {
+      var k = JSON.stringify([c.fromTable, c.toTable, c.fromCol, c.toCol]);
+      if (!want[k]) self.dropConnectionVisually(c); else have[k] = true;
+    });
+    Object.keys(want).forEach(function (k) {
+      if (have[k]) return;
+      var a = JSON.parse(k);
+      var from = self.findPortElement(a[0], a[2]);
+      var to = self.findPortElement(a[1], a[3]);
+      if (!from || !to) return;
+      var fromCard = from.closest('.sideview-card'), toCard = to.closest('.sideview-card');
+      self._connSeq = (self._connSeq || 0) + 1;
+      var connId = 'conn_' + Date.now() + '_' + self._connSeq;
+      var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('class', 'sideview-connector-path');
+      path.dataset.connId = connId;
+      self.decorateAccepted(path, self.nextJoinPattern());
+      var titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      titleEl.textContent = 'Click to disconnect ' + a[2] + ' ↔ ' + a[3];
+      path.appendChild(titleEl);
+      self.svg.appendChild(path);
+      attachHitPath(self, path);
+      self.connections.push({
+        id: connId, path: path,
+        fromCard: fromCard.dataset.cardId, fromTable: a[0], fromCol: a[2], fromElement: from,
+        toCard: toCard.dataset.cardId, toTable: a[1], toCol: a[3], toElement: to,
+        type: want[k].type || 'left_join'
+      });
+    });
+    this.updateConnectors();
+  };
+
   // What a refresh or removal invalidates: join checks and column profiles are rebuilt on demand.
   SideviewEngine.prototype.resetDataCaches = function () {
     this.pipeline.clearJoinChecks();
@@ -6903,7 +6951,7 @@ function sendToShiny(name, value) {
    */
   SideviewEngine.prototype.applyState = function (state, opts) {
     var self = this;
-    var out = { restored: [], missing: [] };
+    var out = { restored: [], missing: [], derived: [] };
     if (!state || typeof state !== 'object') return out;
     var byName = {};
     this.cards.forEach(function (card) { byName[card.name] = card; });
@@ -6920,6 +6968,7 @@ function sendToShiny(name, value) {
       if (!card || !card.element) {
         if (derivedNames[String(s.name)]) {
           self._pendingGeo[String(s.name)] = s;
+          out.derived.push(String(s.name));
           // at start, R may still be sending the derived cards it built: wait for them before asking again
           if (!self._constructed) self._deriveSkip[String(s.name)] = true;
         } else {
@@ -7057,6 +7106,8 @@ function sendToShiny(name, value) {
 
   function stateSummary(out) {
     var msg = 'Restored ' + out.restored.length + ' card' + (out.restored.length === 1 ? '' : 's');
+    var nd = (out.derived || []).length;
+    if (nd) msg += '; ' + nd + ' derived table' + (nd === 1 ? '' : 's') + ' to rebuild';
     if (out.missing.length) msg += '; not on this canvas: ' + out.missing.join(', ');
     return msg;
   }

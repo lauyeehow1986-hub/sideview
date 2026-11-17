@@ -3256,3 +3256,31 @@ test_that("module: replacing a SUPP card updates the plan of its derived card, s
   expect_equal(sv_dv_card_n(b), 3)
   expect_equal(attr(b, "sv_errors")(), character())
 })
+
+# --- Undo and redo keep the splines in line with the join steps ---------------------
+
+test_that("undoing a connection takes its spline off the canvas and the saved state; redo draws it back", {
+  skip_if_no_browser()
+  b <- sv_shared_page()
+  r <- sv_js(b, paste0("(async () => {", sv_pipeline_helpers_js, "
+    sv.clearOperations(true); await sleep(300);
+    const pat = ", sv_card_js("patients"), ", labs = ", sv_card_js("labs"), ";
+    const n = () => ({ conns: sv.getState().connections.length, paths: document.querySelectorAll('.sideview-connector-path').length });
+    fire(pat.querySelector('.sideview-col-port[data-col-name=\"patient_id\"]')); await sleep(150);
+    fire(labs.querySelector('.sideview-col-port[data-col-name=\"patient_id\"]')); await sleep(500);
+    const connected = n();
+    sv.undoPipeline(); await sleep(300);
+    const undone = n();
+    sv.redoPipeline(); await sleep(300);
+    const redone = n();
+    sv.clearOperations(true); await sleep(300);
+    return { connected, undone, redone };
+  })()"))
+  expect_equal(r$connected$conns, 1)
+  expect_equal(r$connected$paths, 1)
+  expect_equal(r$undone$conns, 0)
+  expect_equal(r$undone$paths, 0)
+  expect_equal(r$redone$conns, 1)
+  expect_equal(r$redone$paths, 1)
+  expect_length(attr(b, "sv_errors")(), 0)
+})
