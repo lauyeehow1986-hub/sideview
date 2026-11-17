@@ -13,13 +13,13 @@ list view and the console, not only on the canvas.
 | A | Text-first access (list view, `sv_describe()`, announcements, table ARIA) | done, 0.8.0 (PRs #13-#17, #18 minors) |
 | C | Accessibility testing (axe-core, AX-tree tests, NVDA script, CI a11y job) | done, 0.8.0 (PR #12, NVDA fixes #19) |
 | B | Keyboard and low vision (access switch) | done, 0.9.0 (PR #20, version bump #22) |
-| D | Unmatched / dropped rows as cards; stack two tables and compare columns; compare data cuts by key | **in progress: D1 (derived cards, unmatched / outside-window / SUPP orphan / bad-IDVARVAL rows) implemented on `d/d1-derived-cards`, not pushed; manual RStudio checks to do by the user (see the 2026-11-17 entry)**; spec approved 2026-11-16 (`plans/2026-11-16-derived-cards-design.md`, `plans/2026-11-16-derived-cards-d1-implementation.md`); D2/D3 plans after D1 lands; PRs D1 derived cards + unmatched rows, D2 stack, D3 compare data cuts; target 0.10.0 |
+| D | Unmatched / dropped rows as cards; stack two tables and compare columns; compare data cuts by key | **D1 done, on `main` (42256d2; docs PR #23, a11y test fix PR #24)**; D2 (stack) and D3 (compare data cuts) get their own plans next; spec `plans/2026-11-16-derived-cards-design.md`, D1 plan `plans/2026-11-16-derived-cards-d1-implementation.md`; version bump to 0.10.0 waits for D2 and D3 |
 | E | `metatools::combine_supp()` option (SUPP/ADSL merges only); `dm` import and export; `pointblank` export; `metacore` spec check (labelled "spec check") | not started, after D |
 
 Other pending tasks:
 - [x] CI workflow was invalid since the a11y job (steps context in job env): fixed in PR #21 (2026-11-16).
-- [ ] First real CI run on `main` (`e483d83`): check results; the arrow 26 / duckdb 2.0 tz-aware gt/gte filter
-      failure (`test-lazy.R:1101`) may show up now.
+- [x] First real CI run on `main`: the only failure was the a11y job (drawer fade flake, fixed in PR #24); the arrow 26 / duckdb 2.0 tz filter failure (`test-lazy.R:1101`) is still unchecked on current CI.
+      Read main's CI after #24 (run 43989999137) before relying on it.
 - [ ] CRAN submission of 0.9.0: local `devtools::check()` `--as-cran` and the full suite first; needs the user's go-ahead.
 - [ ] Manual-script gaps for B: checks 2 and 14-19 not walked one by one; High Contrast Night sky not confirmed.
 - [ ] Backlog for B: visible hint/toast when `C` starts a connect; a "dismiss suggestions" control.
@@ -27,6 +27,12 @@ Other pending tasks:
 - [ ] Unscheduled backlog (see "Backlog" below): table version diff overlaps D's data-cut compare; validation rules
       (pointblank) overlap E; PHI/PII column tagging; Quarto/R-script pipeline export; very wide tables (column virtualisation untested).
 
+
+### 2026-11-17 - D1 manual checks and the a11y CI fix
+- **Change:** D1 manual checks run with the user in RStudio (R 4.5.1), Viewer pane, Edge (external browser), the built-in browser, and a saved widget page. PR #24: the derive-offers axe test waited for nothing while the drawer faded in (200 ms), so axe read contrast against partial opacity; the test now waits for opacity 1 and no running animations. The a11y CI job had been failing on `main` since 0.9.0 (3 then 4 failures); only 1 reproduced locally, so the other 3 are unconfirmed until CI on main.
+- **Verified (passed):** dialog: join check, both offers (singular and plural), derived card, pipeline derive step and code, undo/redo, state Save then Open restores the derived card and clears undo, Cancel, Done (returns the code string, runs). Viewer pane: narrow layout, bottom-sheet drawer, offers and derive. External browser (Edge): derive works, Cancel ends the app. Widget with no R: opening a state with a derive step shows the info toast "Derived tables are not shown in a saved page; their steps stay in the generated code.", no derived card, step kept, no offers. Lazy duckdb inputs in the gadget: join check, both offers, derived card (S9/c, S9/d), restore from state resolves the derive step, no console errors. Local a11y suite 1083 passed, 0 failed after the fix.
+- **Open observations (not fixed):** (1) undoing a connection leaves its spline and entry in the saved state, so the type-mismatch toast returns on Open (probably older than D1, unverified). (2) "Restored N cards" counts only the original cards, not the derived one. (3) RStudio restarted on its own after browser-mode runs. (4) Parked from the D1 review: undo-after-replace of a stale SUPP plan.
+- **Next:** D2 (stack) then D3 (compare data cuts) each get a plan; 0.10.0 bump after D3; E not started.
 
 ---
 
