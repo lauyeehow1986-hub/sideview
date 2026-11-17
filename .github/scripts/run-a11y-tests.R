@@ -16,6 +16,9 @@ for (f in files) {
   missing_tool <- grepl("Chrome not found|axe-core not found|not installed", skips)
   message(sprintf("%s: %d passed, %d failed, %d skipped, %d errors", f,
                   sum(df$passed), sum(df$failed), sum(df$skipped), sum(df$error)))
+  for (t in res) for (e in t$results) if (inherits(e, "expectation_failure") || inherits(e, "expectation_error"))
+    message("FAILED [", t$test, "]: ", substr(gsub("
+", " | ", conditionMessage(e)), 1, 700))
   if (sum(df$failed) > 0 || any(df$error)) bad <- c(bad, paste0(f, ": failed expectations or errors"))
   if (sum(df$passed) == 0) bad <- c(bad, paste0(f, ": 0 passed expectations"))
   if (any(missing_tool)) bad <- c(bad, paste0(f, ": skipped for a missing tool: ", paste(unique(skips[missing_tool]), collapse = "; ")))
