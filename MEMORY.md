@@ -13,7 +13,7 @@ list view and the console, not only on the canvas.
 | A | Text-first access (list view, `sv_describe()`, announcements, table ARIA) | done, 0.8.0 (PRs #13-#17, #18 minors) |
 | C | Accessibility testing (axe-core, AX-tree tests, NVDA script, CI a11y job) | done, 0.8.0 (PR #12, NVDA fixes #19) |
 | B | Keyboard and low vision (access switch) | done, 0.9.0 (PR #20, version bump #22) |
-| D | Unmatched / dropped rows as cards; stack two tables and compare columns; compare data cuts by key | **D1 done, on `main` (42256d2; docs PR #23, a11y test fix PR #24)**; D2 (stack) and D3 (compare data cuts) get their own plans next; spec `plans/2026-11-16-derived-cards-design.md`, D1 plan `plans/2026-11-16-derived-cards-d1-implementation.md`; version bump to 0.10.0 waits for D2 and D3 |
+| D | Unmatched / dropped rows as cards; stack two tables and compare columns; compare data cuts by key | **D1 done, on `main` (42256d2; docs PR #23, a11y test fix PR #24)**; D2 (stack) has build notes in `plans/2026-11-17-d2-stack-design.md` (ready to plan; build after the weekly reset, on Opus), D3 (compare data cuts) gets its plan next; spec `plans/2026-11-16-derived-cards-design.md`, D1 plan `plans/2026-11-16-derived-cards-d1-implementation.md`; version bump to 0.10.0 waits for D2 and D3 |
 | E | `metatools::combine_supp()` option (SUPP/ADSL merges only); `dm` import and export; `pointblank` export; `metacore` spec check (labelled "spec check") | not started, after D |
 
 Other pending tasks:
@@ -33,6 +33,7 @@ Other pending tasks:
 - **Verified (passed):** dialog: join check, both offers (singular and plural), derived card, pipeline derive step and code, undo/redo, state Save then Open restores the derived card and clears undo, Cancel, Done (returns the code string, runs). Viewer pane: narrow layout, bottom-sheet drawer, offers and derive. External browser (Edge): derive works, Cancel ends the app. Widget with no R: opening a state with a derive step shows the info toast "Derived tables are not shown in a saved page; their steps stay in the generated code.", no derived card, step kept, no offers. Lazy duckdb inputs in the gadget: join check, both offers, derived card (S9/c, S9/d), restore from state resolves the derive step, no console errors. Local a11y suite 1083 passed, 0 failed after the fix.
 - **Open observations (not fixed):** (1) undoing a connection leaves its spline and entry in the saved state, so the type-mismatch toast returns on Open (probably older than D1, unverified). (2) "Restored N cards" counts only the original cards, not the derived one. (3) RStudio restarted on its own after browser-mode runs. (4) Parked from the D1 review: undo-after-replace of a stale SUPP plan.
 - **Next:** D2 (stack) then D3 (compare data cuts) each get a plan; 0.10.0 bump after D3; E not started.
+- **2026-11-17 later:** main CI green after #28 (a11y, macOS, Windows, ubuntu x3, pkgdown); the arrow 26 / duckdb 2.0 `test-lazy.R:1101` failure did not show. PR #29 (merged) fixed observations (1) and (2): undo/redo now sync splines to the join steps (`syncSplinesToJoins`), and the Restored toast names derived tables to rebuild; real-browser test in `test-layout-browser.R`. Local cleanup done (merged branches, `C:srcchk*`). D2 build notes written.
 
 ---
 
