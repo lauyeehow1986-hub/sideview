@@ -1578,6 +1578,8 @@ test_that("axe-core finds no violation in the drawer with the derive offer butto
   expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-step-diag.is-ok, .sideview-step-diag.is-warn')", timeout = 60))
   sv_js(b, "document.querySelector('.sideview-drawer').classList.remove('collapsed'); document.querySelector('.sideview-drawer-tab[data-tab=discrepancy]').click(); true")
   expect_true(sv_wait_js(b, "(() => { const x = document.querySelector('[data-action=\"derive-open\"]'); if (!x) return false; x.scrollIntoView({block: 'center'}); const r = x.getBoundingClientRect(); const h = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return !!h && (h === x || x.contains(h)); })()", timeout = 60))
+  # the drawer fades in over 200 ms; axe reads contrast against the partial opacity, so wait it out
+  expect_true(sv_wait_js(b, "getComputedStyle(document.querySelector('.sideview-drawer')).opacity === '1' && document.querySelector('.sideview-drawer').getAnimations().length === 0", timeout = 30))
   v <- sv_axe_run(b)
   v <- v[!v$id %in% names(SV_AXE_ACCEPTED), , drop = FALSE]
   expect_equal(nrow(v), 0, info = paste(v$id, v$targets, collapse = "; "))
