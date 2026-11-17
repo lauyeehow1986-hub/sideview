@@ -3180,6 +3180,13 @@ html.sv-standalone body {
 .sideview-container .sideview-inspect-pick select {
   width: 100%;
   min-width: 0;
+  font-family: var(--sv-font);
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-sm);
+  background: var(--sv-surface);
+  color: var(--sv-text);
 }
 
 .sideview-container .sideview-inspect-body {
