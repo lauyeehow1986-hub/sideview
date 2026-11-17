@@ -44,7 +44,7 @@
 <code>sv_unmatched(x, y, by, rule, side, what)</code> and <code>sv_supp_orphans(parent, supp, rdomain, what)</code> return the same rows from the console.</li>
 <li>A derived card is one pipeline step (<code>kind: "derive"</code>) and its generated R code rebuilds the rows with <code>dplyr</code>, so a script reproduces the card. The step is part of workspace state.</li>
 <li>In a Shiny module, removing an input removes the cards derived from it (their steps stay); replacing an input rebuilds them in place; adding it back brings them back. A state saved with derived cards is restored with them.</li>
-<li>New inputs <code>derive_request</code> and <code>derive_forget</code>, new message <code>sideview_derive_result</code>, and a <code>derive_offers</code> field on the join-check and SUPP-check replies (see CLAUDE.md). The widget has no R: it shows no buttons, and a saved state’s derive steps are skipped with a notice.</li>
+<li>New inputs <code>derive_request</code> and <code>derive_forget</code>, new message <code>sideview_derive_result</code>, and a <code>derive_offers</code> field on the join-check and SUPP-check replies (see CLAUDE.md). The widget has no R: it shows no buttons, and a saved state’s derive steps stay in the code (when both inputs are there) but the tables are not shown, with a notice.</li>
 </ul></div>
 </div>
     <div class="section level2">

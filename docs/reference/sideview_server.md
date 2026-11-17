@@ -78,10 +78,12 @@ sideview_server(
 
 - state:
 
-  Optional workspace state (a state object or its JSON text) applied
-  once the first cards arrive; derived cards in it are built by R first.
-  See
-  [`sv_save_state()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_save_state.md).
+  Optional workspace state (a `sideview_state` list, as
+  [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)
+  passes it). The gadget uses it to build, on whole tables, the derived
+  cards that read lazy inputs;
+  [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)
+  embeds the state itself.
 
 ## Value
 

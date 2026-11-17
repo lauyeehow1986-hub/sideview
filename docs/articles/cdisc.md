@@ -230,7 +230,7 @@ Notes:
   it, and adding the input back brings them back; replacing it rebuilds
   them from the new data.
 - The widget has no R, so it offers no buttons; a saved state’s derived
-  steps are skipped there.
+  steps stay in its code but the derived tables are not shown there.
 
 ## What it does not do
 
