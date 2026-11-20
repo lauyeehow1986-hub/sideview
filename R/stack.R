@@ -119,8 +119,23 @@ sv_stack_fix_cols <- function(fixes, action) {
   fixes[keep]
 }
 
-sv_stack_plan <- function(tables, fixes = list(), id_col = NULL) {
-  inputs <- names(tables)
+# The plan of a stack. A lazy (duckdb / Arrow) input goes to sv_lazy_stack_plan(), the same plan from 0 rows
+# and one aggregated query per input; `con_env` is the session connection it may use.
+sv_stack_plan <- function(tables, fixes = list(), id_col = NULL, con_env = NULL) {
+  if (any(vapply(tables, sv_is_lazy_input, NA))) return(sv_lazy_stack_plan(tables, fixes, id_col, con_env))
+  na_fun <- function(reqs) {
+    vapply(reqs, function(r) {
+      v <- sv_stack_cast(r$x, r$from, r$to, r$zone)
+      as.integer(sum(is.na(v) & !is.na(r$x)))
+    }, 1L)
+  }
+  sv_stack_plan_core(tables, names(tables), fixes, id_col, na_fun, function() sum(vapply(tables, nrow, 1L)))
+}
+
+# The plan from `tables`: the inputs themselves, or 0-row samples of them (types, labels, zones and factor
+# levels are all it reads). `na_fun(reqs)` gives the NA count of each cast cell `list(i, src, from, to, zone, x)`
+# (`src` is the column's name in input `i` before any rename), `n_rows_fun()` the row count.
+sv_stack_plan_core <- function(tables, inputs, fixes, id_col, na_fun, n_rows_fun) {
   n_in <- length(inputs)
   for (nm in inputs) {
     for (cn in names(tables[[nm]])) {
@@ -179,8 +194,9 @@ sv_stack_plan <- function(tables, fixes = list(), id_col = NULL) {
   }
 
   plan <- list(inputs = inputs, id_col = id_col,
-               n_rows = sum(vapply(tables, nrow, 1L)),
+               n_rows = NA_integer_,
                columns = list(), kept_labels = character(), tz = list())
+  reqs <- list()
   for (cn in all_names) {
     xs <- lapply(tables, function(t) if (cn %in% names(t)) t[[cn]] else NULL)
     present <- !vapply(xs, is.null, NA)
@@ -205,25 +221,30 @@ sv_stack_plan <- function(tables, fixes = list(), id_col = NULL) {
     }, "")
     kept_zone <- unname(zones[!is.na(zones)][1])
     cast <- ifelse(is.na(types) | types == target, NA_character_, target)
-    na <- vapply(seq_len(n_in), function(i) {
-      if (!present[i]) return(NA_integer_)
-      if (is.na(cast[i])) return(0L)
-      v <- sv_stack_cast(xs[[i]], types[i], target, if (is.na(zones[i])) NULL else zones[i])
-      sum(is.na(v) & !is.na(xs[[i]]))
-    }, 1L)
+    rename_from <- unname(vapply(inputs, function(nm) renamed[[cn]][nm] %||% NA_character_, ""))
+    na <- ifelse(present, 0L, NA_integer_)
+    for (i in which(present & !is.na(cast))) {
+      reqs[[length(reqs) + 1L]] <- list(
+        i = i, ci = length(plan$columns) + 1L, src = if (is.na(rename_from[i])) cn else rename_from[i],
+        from = unname(types[i]), to = target, zone = if (is.na(zones[i])) NULL else zones[i], x = xs[[i]])
+    }
     col <- list(name = cn, types = unname(types), labels = unname(labels), zones = unname(zones),
                 target = target, targets = cand, cast = unname(cast),
-                rename_from = unname(vapply(inputs, function(nm) renamed[[cn]][nm] %||% NA_character_, "")),
+                rename_from = rename_from,
                 near_miss_of = unname(near[[cn]]), na = unname(na), status = character())
     if (target == "fct") {
       lv <- lapply(px, levels)
       col$levels <- unique(unlist(lv, use.names = FALSE))
       col$levels_differ <- length(unique(lv)) > 1L
+      col$ordered <- length(px) > 0L && all(vapply(px, is.ordered, NA))
     }
     if (!is.na(kept_zone)) plan$tz[[cn]] <- kept_zone
     if (!all(is.na(labels))) plan$kept_labels[[cn]] <- labels[!is.na(labels)][1]
     plan$columns[[length(plan$columns) + 1L]] <- col
   }
+  vals <- na_fun(reqs)
+  for (k in seq_along(reqs)) plan$columns[[reqs[[k]]$ci]]$na[reqs[[k]]$i] <- vals[k]
+  plan$n_rows <- n_rows_fun()
   for (i in seq_along(plan$columns)) {
     plan$columns[[i]]$status <- sv_say_stack_status(plan$columns[[i]], plan)
   }
@@ -267,7 +288,10 @@ sv_stack_check <- function(..., cast = NULL, rename = NULL) {
   }
   if (length(dots) < 2L || length(dots) > 8L) stop("Stack 2 to 8 tables.", call. = FALSE)
   if (anyDuplicated(nms)) stop("Each table needs its own name.", call. = FALSE)
-  if (!all(vapply(dots, is.data.frame, NA))) stop("Every table must be a data frame.", call. = FALSE)
+  if (!all(vapply(dots, function(t) is.data.frame(t) || sv_is_lazy_input(t), NA))) {
+    stop("Every table must be a data frame, a duckdb table or an Arrow table.", call. = FALSE)
+  }
+  kinds <- vapply(dots, function(t) if (is.data.frame(t)) NA_character_ else sv_lazy_origin(t), "", USE.NAMES = FALSE)
   fixes <- c(
     lapply(seq_along(cast), function(i) list(column = names(cast)[i], action = "cast", to = unname(cast[[i]]))),
     lapply(seq_along(rename), function(i) list(column = names(rename)[i], action = "rename", to = unname(rename[[i]]))))
@@ -279,7 +303,7 @@ sv_stack_check <- function(..., cast = NULL, rename = NULL) {
   tab$Status <- vapply(plan$columns, function(c) paste(c$status, collapse = "; "), "")
   plan$table <- tab
   plan$text <- sv_say_stack_text(plan)
-  plan$code <- sv_stack_code(plan, refs, rep(NA_character_, length(refs)))$code
+  plan$code <- sv_stack_code(plan, refs, kinds)$code
   structure(plan, class = "sv_stack_check")
 }
 
@@ -377,8 +401,8 @@ sv_stack_cast_code <- function(x, from, to, zone = "") {
 # input, `kinds` is NA, "duckdb" or "arrow" per input. The in-memory form is one expression with no pipe:
 # nested bind_rows(), a mutate() per cast input, rename() inside the argument, and a label mutate() on top.
 sv_stack_code <- function(plan, refs, kinds) {
-  if (any(!is.na(kinds))) stop("Stacking duckdb or Arrow tables is not available yet.", call. = FALSE)
   q <- function(s) encodeString(s, quote = "\"")
+  if (any(!is.na(kinds))) return(sv_stack_code_lazy(plan, refs, kinds))
   args <- vapply(seq_along(plan$inputs), function(i) {
     ref <- refs[i]
     ren <- Filter(function(col) !is.na(col$rename_from[i]), plan$columns)
@@ -409,6 +433,43 @@ sv_stack_code <- function(plan, refs, kinds) {
   list(code = code, kind = NA_character_)
 }
 
+# The lazy form of the code (decision 9): every input goes onto one duckdb connection, is given the id column,
+# its casts and typed NAs for the columns it lacks, is put in stack order, and the inputs are joined by nested
+# union_all(). A duckdb input stays where it is; an Arrow input is moved with to_duckdb() (compute() makes a
+# real table, as a view can be collected before the query runs); a data frame is copied in with copy_to() or,
+# with no duckdb input, made an Arrow table first. The casts are the expressions sv_lazy_stack() runs, printed.
+# No labels are written: a lazy card carries them from the plan. `kind` is always "duckdb".
+sv_stack_code_lazy <- function(plan, refs, kinds) {
+  q <- function(s) encodeString(s, quote = "\"")
+  duck <- which(!is.na(kinds) & kinds == "duckdb")
+  duck_ref <- if (length(duck)) refs[duck[1L]] else NULL
+  show <- function(e) paste(rlang::expr_deparse(e, width = Inf), collapse = " ")
+  parts <- vapply(seq_along(plan$inputs), function(i) {
+    ref <- refs[i]
+    placed <- if (is.na(kinds[i])) {
+      if (is.null(duck_ref)) paste0("arrow::to_duckdb(arrow::arrow_table(", ref, "))")
+      else paste0("dplyr::copy_to(dbplyr::remote_con(", duck_ref, "), ", ref, ", name = ",
+                  q(paste0("sideview_", plan$inputs[i], "_", i)), ", overwrite = TRUE)")
+    } else if (kinds[i] == "arrow") {
+      if (is.null(duck_ref)) paste0("arrow::to_duckdb(", ref, ")")
+      else paste0("dplyr::compute(arrow::to_duckdb(", ref, ", con = dbplyr::remote_con(", duck_ref, ")))")
+    } else ref
+    p <- sv_stack_lazy_parts(plan, i)
+    if (length(p$rename)) {
+      pairs <- vapply(names(p$rename), function(n) paste0(sv_escape_ident(n), " = ", sv_escape_ident(p$rename[[n]])), "")
+      placed <- paste0("dplyr::rename(", placed, ", ", paste(pairs, collapse = ", "), ")")
+    }
+    sets <- vapply(names(p$sets), function(n) {
+      e <- p$sets[[n]]
+      paste0(sv_escape_ident(n), " = ", if (is.character(e)) q(e) else show(e))
+    }, "")
+    cols <- paste0("c(", paste(q(p$cols), collapse = ", "), ")")
+    paste0("dplyr::select(dplyr::mutate(", placed, ", ", paste(sets, collapse = ", "), "), dplyr::all_of(", cols, "))")
+  }, "")
+  code <- Reduce(function(a, b) paste0("dplyr::union_all(", a, ", ", b, ")"), parts, right = TRUE)
+  list(code = code, kind = "duckdb")
+}
+
 #' Stack tables
 #'
 #' Puts 2 to 8 tables one under another, with `bind_rows()` and the type decisions of
@@ -433,6 +494,10 @@ sv_stack <- function(..., check = NULL) {
   if (!inherits(check, "sv_stack_check") || !identical(check$inputs, names(tables))) {
     stop("`check` was made for other tables.", call. = FALSE)
   }
-  if (!all(vapply(tables, is.data.frame, NA))) stop("Every table must be a data frame.", call. = FALSE)
+  if (!all(vapply(tables, function(t) is.data.frame(t) || sv_is_lazy_input(t), NA))) {
+    stop("Every table must be a data frame, a duckdb table or an Arrow table.", call. = FALSE)
+  }
+  # a duckdb or Arrow input gives a lazy table: one union_all on a duckdb connection, never collected
+  if (any(vapply(tables, sv_is_lazy_input, NA))) return(sv_lazy_stack(tables, check, sv_lazy_env()))
   sv_stack_rows(tables, check)
 }
