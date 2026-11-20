@@ -281,3 +281,56 @@ test_that("the module path carries derive_offers on both replies", {
     expect_length(last("sideview_supp_check")$derive_offers, 2L)
   })
 })
+
+stack_store <- function(tags = NULL) {
+  w1 <- data.frame(AGE = c(34, 51), RACE = c("a", "b"), stringsAsFactors = FALSE)
+  attr(w1$RACE, "label") <- "Race"
+  w2 <- data.frame(AGE = c("29", "x", "40"), RACE = c("c", "d", "e"), stringsAsFactors = FALSE)
+  w3 <- data.frame(AGE = 60, RACE = "f", source = "own", stringsAsFactors = FALSE)
+  cards <- list(sv_normalize(w1, name = "wave1"), sv_normalize(w2, name = "wave2"), sv_normalize(w3, name = "wave3"))
+  for (i in seq_along(tags)) cards[[i]]$cdisc <- if (is.na(tags[i])) NULL else list(domain = tags[i])
+  sv_card_store(cards)
+}
+
+test_that("stack derive card: name, rows, tag, args", {
+  req <- list(op = "stack", inputs = list("wave1", "wave2"), args = list(fixes = list()))
+  card <- sv_derive_card(req, stack_store(c("AE", "AE")), NULL)
+  expect_equal(card$name, "wave1_stacked")
+  expect_equal(card$dims[1], 5L)
+  expect_equal(card$derived$args$plan$id_col, "source")
+  expect_equal(card$col_labels[["RACE"]], "Race")
+  expect_equal(card$cdisc$domain, "AE")
+  expect_equal(card$derived$op, "stack")
+  expect_null(sv_derive_card(req, stack_store(c("AE", "DM")), NULL)$cdisc)
+  expect_null(sv_derive_card(req, stack_store(c("AE", NA)), NULL)$cdisc)
+  # a rebuild from the stored recipe gives the same rows
+  store <- stack_store()
+  card <- sv_derive_card(list(op = "stack", inputs = list("wave1", "wave2", "wave3"),
+                              args = list(fixes = list(list(column = "AGE", action = "cast", to = "chr")))),
+                         store, NULL)
+  expect_equal(card$derived$args$plan$id_col, "source_2")
+  again <- sv_derive_card(sv_derive_request_of(card), store, NULL)
+  expect_equal(again$data, card$data)
+})
+
+test_that("stack requests are cleaned", {
+  store <- stack_store()
+  before <- store$names()
+  req <- function(inputs, args = list()) list(op = "stack", inputs = as.list(inputs), args = args)
+  expect_error(sv_derive_clean(req("wave1"), store), "A stack needs 2 to 8 tables.")
+  expect_error(sv_derive_clean(req(rep("wave1", 9)), store), "A stack needs 2 to 8 tables.")
+  expect_error(sv_derive_clean(req(c("wave1", "wave1")), store), "A table can be stacked only once.")
+  expect_error(sv_derive_clean(req(c("wave1", "nope")), store), "Not in the canvas: nope")
+  expect_error(sv_derive_clean(req(c("wave1", "wave2"),
+    list(fixes = list(list(column = "AGE", action = "cast", to = "chr", extra = "x")))), store))
+  expect_error(sv_derive_clean(req(c("wave1", "wave2"), list(fixes = list(list(column = "AGE")))), store))
+  expect_error(sv_derive_clean(req(c("wave1", "wave3"), list(id_col = "source")), store), "source is a column of wave3.")
+  expect_error(sv_derive_clean(list(op = "unmatched", inputs = list("wave1", "wave2", "wave3")), store),
+               "two input tables")
+  expect_equal(store$names(), before)
+  ok <- sv_derive_clean(req(c("wave1", "wave2"), list(id_col = "src", junk = 1)), store)
+  expect_equal(ok$args$id_col, "src")
+  expect_null(ok$args$junk)
+  expect_null(sv_derive_validate(req(c("wave1", "wave2")), store))
+  expect_match(sv_derive_validate(req("wave1"), store), "A stack needs")
+})

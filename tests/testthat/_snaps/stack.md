@@ -9,4 +9,5 @@
           AGE   num   chr type differs -> as.character
           SEX   chr   chr                           ok
          SITE     -   int  only in wave2 (NA in wave1)
+      dplyr::bind_rows(wave1 = dplyr::mutate(wave1, AGE = as.character(AGE)), wave2 = wave2, .id = "source")
 

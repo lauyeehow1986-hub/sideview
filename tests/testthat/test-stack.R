@@ -129,3 +129,132 @@ test_that("print shows the table", {
   wave2 <- data.frame(AGE = c("3", "4"), SEX = c("F", "F"), SITE = 1:2)
   expect_snapshot(print(sv_stack_check(wave1, wave2)))
 })
+
+stack_waves <- function() {
+  w1 <- data.frame(AGE = c(34, 51), RACE = c("a", "b"), stringsAsFactors = FALSE)
+  attr(w1$RACE, "label") <- "Race"
+  w2 <- data.frame(AGE = c("29", "x", "40"), RACE = c("c", "d", "e"), SITE = 1:3, stringsAsFactors = FALSE)
+  w3 <- data.frame(AGE = 60, RACE = "f", stringsAsFactors = FALSE)
+  list(wave1 = w1, wave2 = w2, wave3 = w3)
+}
+
+test_that("rows equal bind_rows and the sum of inputs", {
+  w <- stack_waves()
+  wave1 <- w$wave1; wave2 <- w$wave2; wave3 <- w$wave3
+  res <- sv_stack(wave1, wave2, wave3)
+  expect_equal(nrow(res), nrow(wave1) + nrow(wave2) + nrow(wave3))
+  expect_equal(unique(res$source), c("wave1", "wave2", "wave3"))
+  expect_equal(names(res), c("source", "AGE", "RACE", "SITE"))
+  # AGE becomes chr (num + chr)
+  exp <- dplyr::bind_rows(wave1 = dplyr::mutate(wave1, AGE = as.character(AGE)), wave2 = wave2,
+                          wave3 = dplyr::mutate(wave3, AGE = as.character(AGE)), .id = "source")
+  strip <- function(d) { for (n in names(d)) attr(d[[n]], "label") <- NULL; d }
+  expect_equal(strip(res), strip(exp))
+})
+
+test_that("id column avoids taken names", {
+  a <- data.frame(source = 1, x = 1); b <- data.frame(source = 2, source_2 = 3, x = 2)
+  res <- sv_stack(a, b)
+  expect_equal(names(res)[1], "source_3")
+  expect_equal(res$source, c(1, 2))
+  expect_equal(res$source_3, c("a", "b"))
+  expect_match(sv_stack_check(a, b)$code, ".id = \"source_3\"", fixed = TRUE)
+})
+
+test_that("zero-row input and all-NA logical column", {
+  a <- data.frame(V = c("x", "y"), stringsAsFactors = FALSE)
+  b <- data.frame(V = logical(0))
+  res <- sv_stack(a, b)
+  expect_equal(nrow(res), 2L)
+  expect_equal(res$V, c("x", "y"))
+  chk <- sv_stack_check(a, b)
+  expect_equal(chk$columns[[1]]$status, "type differs -> as.character")
+  expect_equal(sum(chk$columns[[1]]$na, na.rm = TRUE), 0)
+  c1 <- data.frame(V = NA); c2 <- data.frame(V = "z", stringsAsFactors = FALSE)
+  expect_equal(sv_stack(c1, c2)$V, c(NA, "z"))
+  expect_equal(sum(sv_stack_check(c1, c2)$columns[[1]]$na, na.rm = TRUE), 0)
+  got <- eval(parse(text = sv_stack_check(a, b)$code), envir = list2env(list(a = a, b = b), parent = baseenv()))
+  expect_equal(got, sv_stack(a, b))
+})
+
+test_that("labels survive in the result", {
+  w <- stack_waves()
+  wave1 <- w$wave1; wave2 <- w$wave2
+  res <- sv_stack(wave1, wave2)
+  expect_equal(attr(res$RACE, "label"), "Race")
+  expect_null(attr(res$AGE, "label"))
+})
+
+test_that("in-memory code parses, runs with dplyr only and rebuilds", {
+  wave1 <- stack_waves()$wave1
+  wave2 <- stack_waves()$wave2
+  chk <- sv_stack_check(wave1, wave2, cast = c(AGE = "chr"))
+  code <- chk$code
+  expect_parses(code)
+  expect_false(grepl("sv_|%>%|\\|>", code))
+  got <- eval(parse(text = code), envir = list2env(list(wave1 = wave1, wave2 = wave2), parent = baseenv()))
+  expect_equal(got, sv_stack(wave1, wave2, check = chk))
+  expect_equal(attr(got$RACE, "label"), "Race")
+  expect_error(sv_stack(wave1, wave2, check = sv_stack_check(wave1, stack_waves()$wave3)), "was made for other tables")
+})
+
+test_that("code rebuilds across types, renames, zones and awkward names", {
+  d <- as.Date(c("2024-01-02", NA))
+  p <- as.POSIXct(c("2024-01-02 00:00:00", "2024-03-04 10:30:00"), tz = "Asia/Singapore")
+  `wave 2` <- data.frame(Age = c("1", "x"), `visit date` = d, L = c(TRUE, NA),
+                         stringsAsFactors = FALSE, check.names = FALSE)
+  attr(`wave 2`$Age, "label") <- "Age \"quoted\" \\ café"
+  wave3 <- data.frame(AGE = c(1.5, NaN), `visit date` = p, L = c("TRUE", "no"), N = c(1e5, 2.5),
+                      F = factor(c("u", "v")), stringsAsFactors = FALSE, check.names = FALSE)
+  env <- list2env(list(`wave 2` = `wave 2`, wave3 = wave3), parent = baseenv())
+  chk <- sv_stack_check(`wave 2`, wave3, rename = c(Age = "AGE"))
+  expect_parses(chk$code)
+  got <- eval(parse(text = chk$code), envir = env)
+  expect_equal(got, sv_stack(`wave 2`, wave3, check = chk))
+  expect_equal(attr(got$AGE, "label"), "Age \"quoted\" \\ café")
+  expect_equal(got$source, c("wave.2", "wave.2", "wave3", "wave3"))
+  chk2 <- sv_stack_check(`wave 2`, wave3, rename = c(Age = "AGE"), cast = c(`visit date` = "chr", L = "lgl"))
+  got2 <- eval(parse(text = chk2$code), envir = env)
+  expect_equal(got2, sv_stack(`wave 2`, wave3, check = chk2))
+})
+
+test_that("cast code agrees with sv_stack_cast on odd values", {
+  run <- function(chk, ...) eval(parse(text = chk$code), envir = list2env(list(...), parent = baseenv()))
+  x <- c("12", " 12 ", "\t12", "1e5", "0x1A", "Inf", "", "1e999", "2147483648", "-3", "1.5", NA)
+  a <- data.frame(V = x, stringsAsFactors = FALSE)
+  for (pair in list(c("num", 1.5), c("int", 1L), c("lgl", TRUE))) {
+    b <- data.frame(V = switch(pair[[1]], num = 1.5, int = 1L, lgl = TRUE))
+    chk <- sv_stack_check(a, b, cast = c(V = pair[[1]]))
+    expect_equal(run(chk, a = a, b = b), sv_stack(a, b, check = chk), info = pair[[1]])
+    expect_gt(sum(chk$columns[[1]]$na, na.rm = TRUE), 0)
+  }
+  num <- data.frame(V = c(0, 1, 2, NaN, 2.5, 3e9, NA))
+  for (to in c("int", "lgl", "chr")) {
+    one <- data.frame(V = switch(to, int = 1L, lgl = TRUE, chr = "a", stringsAsFactors = FALSE))
+    chk <- sv_stack_check(num, one, cast = c(V = to))
+    expect_equal(run(chk, num = num, one = one), sv_stack(num, one, check = chk), info = to)
+  }
+  tt <- data.frame(V = as.POSIXct("2024-01-01 00:00:00", tz = "UTC")); dd <- data.frame(V = as.Date("2024-02-01"))
+  chk <- sv_stack_check(tt, dd, cast = c(V = "chr"))
+  expect_equal(run(chk, tt = tt, dd = dd)$V, c("2024-01-01 00:00:00", "2024-02-01"))
+  expect_equal(run(chk, tt = tt, dd = dd), sv_stack(tt, dd, check = chk))
+  chk <- sv_stack_check(dd, tt)
+  expect_equal(run(chk, tt = tt, dd = dd), sv_stack(dd, tt, check = chk))
+})
+
+test_that("check validates that cast and rename are named", {
+  w <- stack_waves()
+  wave1 <- w$wave1; wave2 <- w$wave2
+  expect_error(sv_stack_check(wave1, wave2, cast = "chr"), "`cast` must be a named character vector")
+  expect_error(sv_stack_check(wave1, wave2, rename = c("AGE")), "`rename` must be a named character vector")
+  expect_error(sv_stack_check(wave1, wave2, cast = c(AGE = NA)), "`cast` must be a named character vector")
+})
+
+test_that("rename direction: the name is the near-miss, the value its partner", {
+  a <- data.frame(AGE = 1); b <- data.frame(Age = 2)
+  chk <- sv_stack_check(a, b, rename = c(Age = "AGE"))
+  expect_equal(names(sv_stack(a, b, check = chk)), c("source", "AGE"))
+  # lenient: either spelling may be the one renamed; the value is the name that is kept
+  expect_equal(names(sv_stack(a, b, check = sv_stack_check(a, b, rename = c(AGE = "Age")))), c("source", "Age"))
+  expect_error(sv_stack_check(a, b, rename = c(Age = "RACE")), "is not a near-miss")
+})

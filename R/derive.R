@@ -1,7 +1,7 @@
 # Derived rows: the rows behind a join-check or SUPP-check count, as a table. The console
 # (sv_unmatched()) and the canvas card builder both call sv_derive_rows(), so the rows agree.
 
-sv_derive_ops <- c("unmatched", "outside_window", "supp_orphans", "supp_bad_idvarval")
+sv_derive_ops <- c("unmatched", "outside_window", "supp_orphans", "supp_bad_idvarval", "stack")
 
 # `by` as a list of {x, y} column pairs: from a character vector (as dplyr takes it) or already a list.
 sv_derive_by_pairs <- function(by) {
@@ -17,6 +17,13 @@ sv_derive_by_pairs <- function(by) {
 sv_derive_rows <- function(op, tables, args) {
   if (!op %in% sv_derive_ops) stop(sprintf("Unknown derive op: %s", op), call. = FALSE)
   if (op %in% c("supp_orphans", "supp_bad_idvarval")) return(sv_derive_supp_rows(op, tables, args))
+  if (identical(op, "stack")) {
+    if (any(vapply(tables, sv_is_lazy_input, logical(1)))) {
+      stop("Stacking duckdb or Arrow tables is not available yet.", call. = FALSE)
+    }
+    plan <- args$plan %||% sv_stack_plan(tables, args$fixes, args$id_col)
+    return(sv_stack_rows(tables, plan))
+  }
   if (length(tables) != 2L) stop("A derived table needs two input tables.", call. = FALSE)
   if (any(vapply(tables, sv_is_lazy_input, logical(1)))) {
     if (!sv_has_duckdb()) stop("Unmatched rows of a duckdb or Arrow table need duckdb.", call. = FALSE)
@@ -88,6 +95,16 @@ sv_derive_name <- function(op, inputs, args, taken, name = NULL) {
   if (!is.null(name)) {
     nm <- make.names(name)
     if (nm %in% taken) stop(sprintf("A table named %s is already on the canvas.", nm), call. = FALSE)
+    return(nm)
+  }
+  if (identical(op, "stack")) {
+    base <- make.names(paste0(inputs[1L], "_stacked"))
+    nm <- base
+    i <- 2L
+    while (nm %in% taken) {
+      nm <- make.names(paste0(base, "_", i))
+      i <- i + 1L
+    }
     return(nm)
   }
   kept_i <- if (identical(args$side, "y")) 2L else 1L
@@ -331,6 +348,59 @@ sv_derive_clean_by <- function(by) {
   })
 }
 
+# The stack request: `fixes` and `id_col` are the only args read. Each fix has exactly column, action and to
+# (to may be missing for keep). The plan is run here so a bad fix is refused with its message, and kept in the
+# args for the card. Stacks read whole in-memory tables; a duckdb or Arrow input is refused until the lazy branch.
+sv_derive_clean_stack <- function(req, inputs, store) {
+  cards <- lapply(inputs, store$get)
+  if (!all(vapply(cards, function(cd) is.data.frame(cd$data), NA))) {
+    stop("A derived table needs tables as inputs.", call. = FALSE)
+  }
+  if (any(vapply(cards, sv_card_is_lazy, NA))) {
+    stop("Stacking duckdb or Arrow tables is not available yet.", call. = FALSE)
+  }
+  name <- sv_field(req, "name")
+  if (!is.null(name)) {
+    name <- sv_derive_scalar(name, 200L)
+    if (is.null(name)) stop("The table name must be one non-empty string.", call. = FALSE)
+  }
+  raw <- sv_field(req, "args")
+  if (!is.list(raw)) raw <- list()
+  fixes_in <- sv_field(raw, "fixes")
+  if (is.data.frame(fixes_in)) fixes_in <- lapply(seq_len(nrow(fixes_in)), function(i) as.list(fixes_in[i, , drop = FALSE]))
+  if (is.null(fixes_in)) fixes_in <- list()
+  if (!is.list(fixes_in)) stop("Fixes must be a list.", call. = FALSE)
+  if (length(fixes_in) > 500L) stop("Too many fixes.", call. = FALSE)
+  fixes <- lapply(unname(fixes_in), function(f) {
+    bad <- !is.list(f) || !all(c("column", "action") %in% names(f)) ||
+      length(setdiff(names(f), c("column", "action", "to"))) > 0L
+    if (bad) stop("Each fix has a column, an action and a target.", call. = FALSE)
+    col <- sv_derive_scalar(sv_field(f, "column"), 200L)
+    act <- sv_derive_scalar(sv_field(f, "action"), 20L)
+    to <- sv_field(f, "to")
+    if (!is.null(to)) to <- sv_derive_scalar(to, 200L)
+    if (is.null(col) || is.null(act) || !act %in% c("cast", "rename", "keep") ||
+        (is.null(to) && !identical(act, "keep")) ||
+        (!is.null(sv_field(f, "to")) && is.null(to))) {
+      stop("Each fix has a column, an action and a target.", call. = FALSE)
+    }
+    list(column = col, action = act, to = to)
+  })
+  id_col <- sv_field(raw, "id_col")
+  if (!is.null(id_col)) {
+    id_col <- sv_derive_scalar(id_col, 200L)
+    if (is.null(id_col)) stop("The id column must be one non-empty string.", call. = FALSE)
+    for (i in seq_along(inputs)) {
+      if (id_col %in% names(cards[[i]]$data)) stop(sprintf("%s is a column of %s.", id_col, inputs[i]), call. = FALSE)
+    }
+  }
+  tables <- stats::setNames(lapply(cards, function(cd) cd$data), inputs)
+  plan <- sv_stack_plan(tables, fixes, id_col)
+  args <- list(fixes = fixes, plan = plan)
+  if (!is.null(id_col)) args$id_col <- id_col
+  list(op = "stack", inputs = inputs, args = args, name = name)
+}
+
 # Check a request against the store and return the clean request, `list(op, inputs, args, name)`
 # (stops with a message on anything wrong). `args` holds only what the op reads. `con_env`, when given,
 # lets a lazy input answer its column types from a 0-row query.
@@ -340,13 +410,19 @@ sv_derive_clean <- function(req, store, con_env = NULL) {
   if (is.null(op) || !op %in% sv_derive_ops) stop("Unknown derive op.", call. = FALSE)
   inputs <- sv_field(req, "inputs")
   if (is.list(inputs)) inputs <- unlist(inputs, use.names = FALSE)
-  if (!is.character(inputs) || length(inputs) != 2L || anyNA(inputs)) {
+  is_stack <- identical(op, "stack")
+  if (!is.character(inputs) || anyNA(inputs)) stop("A derived table needs two input tables.", call. = FALSE)
+  if (is_stack) {
+    if (length(inputs) < 2L || length(inputs) > 8L) stop("A stack needs 2 to 8 tables.", call. = FALSE)
+    if (anyDuplicated(inputs)) stop("A table can be stacked only once.", call. = FALSE)
+  } else if (length(inputs) != 2L) {
     stop("A derived table needs two input tables.", call. = FALSE)
   }
   inputs <- unname(inputs)
   for (nm in inputs) {
     if (!store$has(nm)) stop(sprintf("Not in the canvas: %s", substr(nm, 1L, 100L)), call. = FALSE)
   }
+  if (is_stack) return(sv_derive_clean_stack(req, inputs, store))
   cx <- store$get(inputs[1L])
   cy <- store$get(inputs[2L])
   if (!is.data.frame(cx$data) || !is.data.frame(cy$data)) stop("A derived table needs tables as inputs.", call. = FALSE)
@@ -438,6 +514,21 @@ sv_derive_card <- function(req, store, con_env, lazy_or_preview = NULL, card_ful
   op <- clean$op
   inputs <- clean$inputs
   args <- clean$args
+  if (identical(op, "stack")) {
+    cards <- lapply(inputs, store$get)
+    nm <- sv_derive_name(op, inputs, args, store$names(), clean$name)
+    plan <- args$plan
+    rows <- sv_stack_rows(stats::setNames(lapply(cards, function(cd) cd$data), inputs), plan)
+    card <- new_sideview_card(name = nm, type = "grid", data = rows,
+                              derived = list(op = op, inputs = inputs,
+                                             args = list(fixes = args$fixes, id_col = plan$id_col, plan = plan)))
+    if (length(plan$kept_labels)) card$col_labels <- as.list(plan$kept_labels)
+    tags <- lapply(cards, function(cd) cd$cdisc)
+    doms <- vapply(tags, function(t) if (is.null(t) || is.null(t$domain)) NA_character_ else as.character(t$domain), "")
+    same <- !anyNA(doms) && length(unique(doms)) == 1L
+    card$cdisc <- if (isFALSE(cdisc) || !same) NULL else tags[[1L]]
+    return(card)
+  }
   cx <- store$get(inputs[1L])
   cy <- store$get(inputs[2L])
   if (is.null(lazy_or_preview)) {

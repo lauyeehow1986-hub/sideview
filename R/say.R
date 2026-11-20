@@ -263,7 +263,8 @@ sv_say_stack_status <- function(col, plan) {
   fn <- c(lgl = "as.logical", int = "as.integer", num = "as.numeric", chr = "as.character",
           date = "as.Date", dttm = "as.POSIXct")
   if (any(!is.na(col$cast)) && !identical(col$target, "fct")) {
-    out <- c(out, paste0("type differs -> ", fn[[col$target]] %||% "as.character"))
+    tfn <- unname(fn[col$target])[1]
+    out <- c(out, paste0("type differs -> ", if (is.na(tfn)) "as.character" else tfn))
   } else if (identical(col$target, "fct") && isTRUE(col$levels_differ)) {
     out <- c(out, "factor levels joined")
   }

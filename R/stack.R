@@ -59,6 +59,7 @@ sv_stack_cast <- function(x, from, to, zone = NULL) {
       v
     },
     chr = switch(from,
+      # dttm to chr formats each input in its own time zone (the lazy twin must match)
       dttm = format(x, "%Y-%m-%d %H:%M:%S", tz = zone %||% attr(x, "tzone")[1] %||% ""),
       num = as.character(sv_stack_dbl(x)),
       as.character(x)),
@@ -118,7 +119,7 @@ sv_stack_fix_cols <- function(fixes, action) {
   fixes[keep]
 }
 
-sv_stack_plan <- function(tables, fixes = list()) {
+sv_stack_plan <- function(tables, fixes = list(), id_col = NULL) {
   inputs <- names(tables)
   n_in <- length(inputs)
   for (nm in inputs) {
@@ -166,11 +167,15 @@ sv_stack_plan <- function(tables, fixes = list()) {
     if (!f$column %in% all_names) stop(sprintf("Not in the stack: %s", f$column), call. = FALSE)
   }
 
-  id_col <- "source"
-  k <- 2L
-  while (id_col %in% all_names) {
-    id_col <- paste0("source_", k)
-    k <- k + 1L
+  if (is.null(id_col)) {
+    id_col <- "source"
+    k <- 2L
+    while (id_col %in% all_names) {
+      id_col <- paste0("source_", k)
+      k <- k + 1L
+    }
+  } else if (id_col %in% all_names) {
+    stop(sprintf("%s is a column of the stack.", id_col), call. = FALSE)
   }
 
   plan <- list(inputs = inputs, id_col = id_col,
@@ -198,7 +203,7 @@ sv_stack_plan <- function(tables, fixes = list()) {
       l <- attr(x, "label")
       if (is.character(l) && length(l) == 1L && !is.na(l) && nzchar(l)) l else NA_character_
     }, "")
-    kept_zone <- zones[!is.na(zones)][1]
+    kept_zone <- unname(zones[!is.na(zones)][1])
     cast <- ifelse(is.na(types) | types == target, NA_character_, target)
     na <- vapply(seq_len(n_in), function(i) {
       if (!present[i]) return(NA_integer_)
@@ -250,19 +255,16 @@ sv_stack_plan <- function(tables, fixes = list()) {
 #' sv_stack_check(wave1, wave2)
 #' sv_stack_check(wave1, wave2, rename = c(Age = "AGE"))
 sv_stack_check <- function(..., cast = NULL, rename = NULL) {
-  dots <- list(...)
-  exprs <- as.list(substitute(list(...)))[-1]
-  if (length(dots) == 1L && sv_is_table_list(dots[[1]])) {
-    dots <- dots[[1]]
-    exprs <- as.list(names(dots))
-  }
-  nms <- names(dots) %||% rep("", length(dots))
-  for (i in seq_along(dots)) {
-    if (!nzchar(nms[i])) {
-      nms[i] <- make.names(sub("^.*\\$", "", deparse(exprs[[i]])[1]))
+  named <- sv_stack_dots(list(...), as.list(substitute(list(...)))[-1])
+  dots <- named$tables
+  nms <- names(dots)
+  refs <- named$refs
+  for (arg in c("cast", "rename")) {
+    v <- get(arg)
+    if (!is.null(v) && (!is.character(v) || anyNA(v) || is.null(names(v)) || any(!nzchar(names(v))))) {
+      stop(sprintf("`%s` must be a named character vector, e.g. c(AGE = \"chr\").", arg), call. = FALSE)
     }
   }
-  names(dots) <- nms
   if (length(dots) < 2L || length(dots) > 8L) stop("Stack 2 to 8 tables.", call. = FALSE)
   if (anyDuplicated(nms)) stop("Each table needs its own name.", call. = FALSE)
   if (!all(vapply(dots, is.data.frame, NA))) stop("Every table must be a data frame.", call. = FALSE)
@@ -277,7 +279,7 @@ sv_stack_check <- function(..., cast = NULL, rename = NULL) {
   tab$Status <- vapply(plan$columns, function(c) paste(c$status, collapse = "; "), "")
   plan$table <- tab
   plan$text <- sv_say_stack_text(plan)
-  plan$code <- ""
+  plan$code <- sv_stack_code(plan, refs, rep(NA_character_, length(refs)))$code
   structure(plan, class = "sv_stack_check")
 }
 
@@ -287,4 +289,150 @@ print.sv_stack_check <- function(x, ...) {
   print(x$table, row.names = FALSE)
   if (nzchar(x$code %||% "")) cat(x$code, "\n", sep = "")
   invisible(x)
+}
+
+# ---- stacked rows and the code that rebuilds them ----
+
+# The named tables and their code references from the `...` of sv_stack_check()/sv_stack(): an
+# unnamed table is named by its expression (as sideview() names it) and that expression is its ref.
+sv_stack_dots <- function(dots, exprs) {
+  refs <- NULL
+  if (length(dots) == 1L && sv_is_table_list(dots[[1]])) {
+    dots <- dots[[1]]
+    refs <- unname(sv_escape_ident(names(dots)))
+    exprs <- as.list(names(dots))
+  }
+  nms <- names(dots) %||% rep("", length(dots))
+  if (is.null(refs)) refs <- vapply(exprs, function(e) paste(deparse(e, backtick = TRUE), collapse = " "), "")
+  for (i in seq_along(dots)) {
+    if (!nzchar(nms[i])) {
+      nms[i] <- make.names(sub("^.*\\$", "", deparse(exprs[[i]])[1]))
+    }
+  }
+  names(dots) <- nms
+  list(tables = dots, refs = unname(refs))
+}
+
+# The stacked data frame of `tables` (named, in plan order) under `plan`: renames, casts, bind_rows(.id =)
+# and the kept labels (bind_rows() drops them).
+sv_stack_rows <- function(tables, plan) {
+  inputs <- plan$inputs
+  if (!identical(names(tables), inputs)) stop("The plan was made for other tables.", call. = FALSE)
+  parts <- lapply(seq_along(inputs), function(i) {
+    d <- tables[[i]]
+    for (col in plan$columns) {
+      from <- col$rename_from[i]
+      if (!is.na(from)) names(d)[names(d) == from] <- col$name
+    }
+    for (col in plan$columns) {
+      if (is.na(col$cast[i])) next
+      zone <- if (identical(col$target, "dttm")) plan$tz[[col$name]] else col$zones[i]
+      if (length(zone) && is.na(zone)) zone <- NULL
+      d[[col$name]] <- sv_stack_cast(d[[col$name]], col$types[i], col$target, zone)
+    }
+    d
+  })
+  names(parts) <- inputs
+  out <- do.call(dplyr::bind_rows, c(parts, list(.id = plan$id_col)))
+  for (cn in names(plan$kept_labels)) attr(out[[cn]], "label") <- plan$kept_labels[[cn]]
+  out
+}
+
+# The in-memory code for one cast (the twin of sv_stack_cast(); dplyr and base R only). `x` is the
+# column as written in the code, `zone` the zone a dttm is shown in. Task 4's JS twin writes the same text.
+sv_stack_cast_code <- function(x, from, to, zone = "") {
+  q <- function(s) encodeString(s, quote = "\"")
+  num_of_chr <- function(re) {
+    paste0("suppressWarnings(as.numeric(replace(", x, ", !grepl(", q(re), ", ", x, ", perl = TRUE), NA)))")
+  }
+  whole <- function(v) {
+    paste0("(function(v) as.integer(ifelse(!is.na(v) & v == trunc(v) & abs(v) <= 2147483647, v, NA)))(", v, ")")
+  }
+  switch(to,
+    lgl = if (from == "chr") {
+      paste0("ifelse(", x, " == \"TRUE\", TRUE, ifelse(", x, " == \"FALSE\", FALSE, NA))")
+    } else {
+      paste0("ifelse(as.numeric(", x, ") %in% c(0, 1), as.numeric(", x, ") == 1, NA)")
+    },
+    int = if (from == "lgl") paste0("as.integer(", x, ")")
+          else if (from == "chr") whole(num_of_chr(sv_supp_int_re))
+          else whole(paste0("as.numeric(", x, ")")),
+    num = if (from == "chr") {
+      paste0("(function(v) replace(v, abs(v) > 1e308, NA))(", num_of_chr(sv_supp_dbl_re), ")")
+    } else paste0("as.numeric(", x, ")"),
+    chr = if (from == "dttm") {
+      # each input is formatted in its own time zone, as sv_stack_cast() does
+      paste0("format(", x, ", \"%Y-%m-%d %H:%M:%S\", tz = ", q(zone), ")")
+    } else paste0("as.character(", x, ")"),
+    date = if (from == "dttm") paste0("as.Date(", x, ", tz = \"UTC\")") else {
+      paste0("as.Date(replace(", x, ", !grepl(", q("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"), ", ", x,
+             "), NA), format = \"%Y-%m-%d\")")
+    },
+    dttm = paste0("as.POSIXct(", x, ", tz = ", q(zone), ")"),
+    fct = paste0("factor(as.character(", x, "))"),
+    stop(sprintf("Cannot cast to %s.", to), call. = FALSE))
+}
+
+# The code that rebuilds the stack (decision 9): `list(code, kind)`. `refs` is the R reference of each
+# input, `kinds` is NA, "duckdb" or "arrow" per input. The in-memory form is one expression with no pipe:
+# nested bind_rows(), a mutate() per cast input, rename() inside the argument, and a label mutate() on top.
+sv_stack_code <- function(plan, refs, kinds) {
+  if (any(!is.na(kinds))) stop("Stacking duckdb or Arrow tables is not available yet.", call. = FALSE)
+  q <- function(s) encodeString(s, quote = "\"")
+  args <- vapply(seq_along(plan$inputs), function(i) {
+    ref <- refs[i]
+    ren <- Filter(function(col) !is.na(col$rename_from[i]), plan$columns)
+    if (length(ren)) {
+      pairs <- vapply(ren, function(col) paste0(sv_escape_ident(col$name), " = ", sv_escape_ident(col$rename_from[i])), "")
+      ref <- paste0("dplyr::rename(", ref, ", ", paste(pairs, collapse = ", "), ")")
+    }
+    cst <- Filter(function(col) !is.na(col$cast[i]), plan$columns)
+    if (length(cst)) {
+      sets <- vapply(cst, function(col) {
+        zone <- if (identical(col$target, "dttm")) plan$tz[[col$name]] else col$zones[i]
+        if (!length(zone) || is.na(zone)) zone <- if (identical(col$target, "dttm")) "UTC" else ""
+        paste0(sv_escape_ident(col$name), " = ",
+               sv_stack_cast_code(sv_escape_ident(col$name), col$types[i], col$target, zone))
+      }, "")
+      ref <- paste0("dplyr::mutate(", ref, ", ", paste(sets, collapse = ", "), ")")
+    }
+    paste0(sv_escape_ident(plan$inputs[i]), " = ", ref)
+  }, "")
+  code <- paste0("dplyr::bind_rows(", paste(args, collapse = ", "), ", .id = ", q(plan$id_col), ")")
+  if (length(plan$kept_labels)) {
+    sets <- vapply(names(plan$kept_labels), function(cn) {
+      id <- sv_escape_ident(cn)
+      paste0(id, " = structure(", id, ", label = ", q(plan$kept_labels[[cn]]), ")")
+    }, "")
+    code <- paste0("dplyr::mutate(", code, ", ", paste(sets, collapse = ", "), ")")
+  }
+  list(code = code, kind = NA_character_)
+}
+
+#' Stack tables
+#'
+#' Puts 2 to 8 tables one under another, with `bind_rows()` and the type decisions of
+#' [sv_stack_check()]: a column whose type differs is cast to the type the check shows (or the one
+#' you chose), a value that cannot be cast becomes `NA`, and nothing is rounded silently. A column
+#' `source` (or `source_2`, ... when taken) holds each row's table name. Columns appear in order of
+#' first appearance; labels are kept (the first table's label for a column, else the first label met).
+#'
+#' @param ... Two or more data frames, named or not (an unnamed table is named by its expression).
+#' @param check A [sv_stack_check()] made for the same tables, holding the fixes (casts and renames)
+#'   to apply. When `NULL`, the check is made with no fixes.
+#' @return A data frame with exactly the sum of the inputs' rows.
+#' @export
+#' @examples
+#' wave1 <- data.frame(AGE = c(34, 51), SEX = c("F", "M"))
+#' wave2 <- data.frame(AGE = c("29", "40"), SEX = c("M", "M"))
+#' sv_stack(wave1, wave2)
+sv_stack <- function(..., check = NULL) {
+  named <- sv_stack_dots(list(...), as.list(substitute(list(...)))[-1])
+  tables <- named$tables
+  if (is.null(check)) check <- sv_stack_check(...)
+  if (!inherits(check, "sv_stack_check") || !identical(check$inputs, names(tables))) {
+    stop("`check` was made for other tables.", call. = FALSE)
+  }
+  if (!all(vapply(tables, is.data.frame, NA))) stop("Every table must be a data frame.", call. = FALSE)
+  sv_stack_rows(tables, check)
 }
