@@ -4255,12 +4255,20 @@ function sendToShiny(name, value) {
     return JSON.stringify(v);
   }
 
-  // The args that make two derived tables the same one: side, RDOMAIN, key pairs and the rule.
+  // A stack's fixes in one order (the order they were ticked in does not make another table).
+  function sortedFixes(fixes) {
+    var k = function (f) { return f ? JSON.stringify([String(f.action), String(f.column), String(f.to)]) : ''; };
+    return asArray(fixes).slice().sort(function (a, b) { return k(a) < k(b) ? -1 : k(a) > k(b) ? 1 : 0; });
+  }
+
+  // The args that make two derived tables the same one: side, RDOMAIN, key pairs, the rule, a stack's fixes and its
+  // id column (R stores the default id column, source, which a request leaves out).
   function deriveArgsKey(args) {
     args = args || {};
     var by = asArray(args.by).map(function (p) { return p ? String(p.x) + '\u0001' + String(p.y) : ''; });
+    var idCol = args.id_col && String(args.id_col) !== 'source' ? String(args.id_col) : null;
     return JSON.stringify([args.side || null, args.rdomain || null, by, stableJson(args.rule),
-      stableJson(asArray(args.fixes).length ? args.fixes : null), args.id_col || null]);
+      stableJson(asArray(args.fixes).length ? sortedFixes(args.fixes) : null), idCol]);
   }
 
   /** The name of a derived card that already holds what `rec` ({op, inputs, args}) would build, or null. */
@@ -4505,6 +4513,14 @@ function sendToShiny(name, value) {
         // asked for by a step that is gone since (undo, a cleared or opened workspace): the late card goes, no step comes back
         this.dropDerivedCard(name);
         return;
+      }
+    } else if (has && d.op === 'stack' && d.args && P) {
+      // a stack step from an opened state, rebuilt by R from the data as they are now: the step takes R's plan, or
+      // $code() would be written from the saved one (a SUPP or join step keeps its args, as before)
+      var dstep = this.pipeline.steps.filter(function (s) { return s.kind === 'derive' && s.table === name; })[0];
+      if (dstep && dstep.op === 'stack') {
+        var fresh = P.deriveStep(name, 'stack', asArray(d.inputs).length ? d.inputs : dstep.inputs, d.args);
+        this.pipeline.refit(dstep.id, { inputs: fresh.inputs, args: fresh.args, key: fresh.key });
       }
     }
     var meta = this.cardMetaByName(name);
@@ -7492,7 +7508,9 @@ function sendToShiny(name, value) {
     var st = this.stackState();
     tables = asArray(tables).map(String);
     fixes = asArray(fixes);
-    var id = JSON.stringify([tables, fixes]);
+    // a short sequence id (R caps ids at 200 characters): only the reply to the latest request is drawn
+    this._stackSeq = (this._stackSeq || 0) + 1;
+    var id = 'sk' + this._stackSeq + '_' + Date.now().toString(36);
     st.latest = id;
     st.pending = true;
     st.error = null;
@@ -7530,7 +7548,7 @@ function sendToShiny(name, value) {
     var st = this.stackState();
     if (!st.reply || st.pending || st.picked.length < 2) return false;
     return this.requestDerive({
-      op: 'stack', inputs: st.picked.slice(), args: { fixes: st.fixes.slice() },
+      op: 'stack', inputs: st.picked.slice(), args: { fixes: sortedFixes(st.fixes) },
       n: st.reply.n_rows, label: String(st.reply.open_label || 'Open stacked card')
     });
   };
@@ -7598,7 +7616,10 @@ function sendToShiny(name, value) {
         self.stackSetFix(t.getAttribute('data-stack-cast'), 'cast', t.value, t.value === t.getAttribute('data-default'));
         self.stackRecheck();
       } else if (t.hasAttribute('data-stack-rename')) {
-        self.stackSetFix(t.getAttribute('data-stack-rename'), 'rename', t.getAttribute('data-to'), !t.checked);
+        var from = t.getAttribute('data-stack-rename');
+        self.stackSetFix(from, 'rename', t.getAttribute('data-to'), !t.checked);
+        // once X is renamed it is no longer a column of its own: a cast picked for X would be stale
+        if (t.checked) st.fixes = st.fixes.filter(function (f) { return !(f.action === 'cast' && f.column === from); });
         self.stackRecheck();
       }
     });

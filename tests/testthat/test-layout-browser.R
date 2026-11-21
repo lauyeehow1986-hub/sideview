@@ -3344,6 +3344,48 @@ test_that("Stack tab: pick, check, open", {
   expect_equal(attr(b, "sv_errors")(), character())
 })
 
+test_that("Stack tab: eight long names get a reply", {
+  skip_if_no_browser()
+  nm <- sprintf("visit_wave_long_name_%02d", 1:8)
+  app <- sv_start_app(paste0("local({ ",
+    paste(sprintf("%s <- data.frame(id = %dL, age = %d)", nm, 1:8, 30 + 1:8), collapse = "; "),
+    "; sideview(", paste(nm, collapse = ", "), ", run = FALSE) })"))
+  b <- sv_open_page(app$url, 1400, 900)
+  withr::defer(try(b$close(), silent = TRUE))
+  withr::defer(try(app$proc$kill(), silent = TRUE))
+  sv_stk_open_tab(b)
+  for (n in nm) sv_stk_click(b, sprintf("[data-stack-pick=%s]", n))
+  eng <- "document.querySelector('.sideview-container')._sideviewInstance"
+  expect_equal(unlist(sv_js(b, sprintf("%s._stack.picked", eng))), nm)
+  sv_stk_click(b, "[data-stack-action=check]")
+  # the request id is short whatever the names: R answers, and the pane is not left on "Checking"
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-stack-table')", timeout = 60))
+  expect_false(isTRUE(sv_js(b, sprintf("%s._stack.pending", eng))))
+  expect_lte(nchar(sv_js(b, sprintf("%s._stack.latest", eng))), 40)
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("Stack tab: ticking a rename drops the cast picked for the renamed column", {
+  skip_if_no_browser()
+  app <- sv_start_app(sv_stk_app)
+  b <- sv_open_page(app$url, 1400, 900)
+  withr::defer(try(b$close(), silent = TRUE))
+  withr::defer(try(app$proc$kill(), silent = TRUE))
+  sv_stk_open_tab(b)
+  sv_stk_pick_check(b)
+  eng <- "document.querySelector('.sideview-container')._sideviewInstance"
+  from <- sv_js(b, "document.querySelector('[data-stack-rename]').getAttribute('data-stack-rename')")
+  sv_js(b, sprintf("(() => { %s._stack.fixes.push({column: %s, action: 'cast', to: 'chr'}); return true; })()", eng,
+                   jsonlite::toJSON(from, auto_unbox = TRUE)))
+  sv_stk_click(b, "[data-stack-rename]")
+  expect_true(sv_wait_js(b, "document.querySelector('[data-stack-rename]') && document.querySelector('[data-stack-rename]').checked", timeout = 60))
+  fx <- sv_js(b, sprintf("JSON.stringify(%s._stack.fixes)", eng))
+  fx <- jsonlite::fromJSON(fx, simplifyDataFrame = FALSE)
+  expect_true(any(vapply(fx, function(f) f$action == "rename" && f$column == from, NA)))
+  expect_false(any(vapply(fx, function(f) f$action == "cast" && f$column == from, NA)))
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
 test_that("Stack tab: a hostile table name is literal text and a removed card leaves the picks", {
   skip_if_no_browser()
   app <- sv_start_app(paste0(
