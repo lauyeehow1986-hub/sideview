@@ -8207,7 +8207,7 @@ function sendToShiny(name, value) {
 
   var STEP_KIND_WORDS = {
     join: 'Join', filter: 'Filter', arrange: 'Sort', mutate: 'Mutate', recode: 'Recode',
-    summarise: 'Summarise', pivot: 'Reshape', supp: 'SUPP merge', derive: 'Derived table', custom: 'Custom'
+    summarise: 'Summarise', pivot: 'Reshape', supp: 'SUPP merge', derive: 'Derived table', stack: 'Stack', custom: 'Custom'
   };
 
   // "Join step added. 3 steps." / "Undone. 2 steps." / "Redone. 3 steps."
@@ -8222,7 +8222,7 @@ function sendToShiny(name, value) {
   // Called from the pipeline's change emit: say what changed, by diffing the step list.
   SideviewEngine.prototype.announceStepChange = function (label) {
     var steps = (this.pipeline && this.pipeline.steps) || [];
-    var now = steps.map(function (s) { return { id: s.id, kind: s.kind }; });
+    var now = steps.map(function (s) { return { id: s.id, kind: s.kind === 'derive' && s.op === 'stack' ? 'stack' : s.kind }; });
     var prev = this._annSteps;
     this._annSteps = now;
     if (label === 'checks' || label === 'pipe' || label === 'tables' || label === 'load' || label === 'refresh') return;

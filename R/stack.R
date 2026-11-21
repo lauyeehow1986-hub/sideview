@@ -195,7 +195,7 @@ sv_stack_plan_core <- function(tables, inputs, fixes, id_col, na_fun, n_rows_fun
 
   plan <- list(inputs = inputs, id_col = id_col,
                n_rows = NA_integer_,
-               columns = list(), kept_labels = character(), tz = list())
+               columns = list(), kept_labels = list(), tz = list())
   reqs <- list()
   for (cn in all_names) {
     xs <- lapply(tables, function(t) if (cn %in% names(t)) t[[cn]] else NULL)
@@ -239,7 +239,7 @@ sv_stack_plan_core <- function(tables, inputs, fixes, id_col, na_fun, n_rows_fun
       col$ordered <- length(px) > 0L && all(vapply(px, is.ordered, NA))
     }
     if (!is.na(kept_zone)) plan$tz[[cn]] <- kept_zone
-    if (!all(is.na(labels))) plan$kept_labels[[cn]] <- labels[!is.na(labels)][1]
+    if (!all(is.na(labels))) plan$kept_labels[[cn]] <- unname(labels[!is.na(labels)][1])
     plan$columns[[length(plan$columns) + 1L]] <- col
   }
   vals <- na_fun(reqs)
@@ -443,7 +443,7 @@ sv_stack_code_lazy <- function(plan, refs, kinds) {
   q <- function(s) encodeString(s, quote = "\"")
   duck <- which(!is.na(kinds) & kinds == "duckdb")
   duck_ref <- if (length(duck)) refs[duck[1L]] else NULL
-  show <- function(e) paste(rlang::expr_deparse(e, width = Inf), collapse = " ")
+  show <- sv_stack_show
   parts <- vapply(seq_along(plan$inputs), function(i) {
     ref <- refs[i]
     placed <- if (is.na(kinds[i])) {

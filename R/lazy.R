@@ -2135,6 +2135,9 @@ sv_lazy_place_n <- function(tables, con_env) {
 # A SQL fragment as an R call, so that an expression holding it prints as code that runs
 sv_stack_sql <- function(text) rlang::call2(quote(dbplyr::sql), text)
 
+# An expression as one line of code
+sv_stack_show <- function(e) paste(rlang::expr_deparse(e, width = Inf), collapse = " ")
+
 # An identifier quoted for SQL, the way DBI::dbQuoteIdentifier() does
 sv_stack_qid <- function(name) paste0("\"", gsub("\"", "\"\"", name, fixed = TRUE), "\"")
 
@@ -2340,7 +2343,20 @@ sv_lazy_stack_plan <- function(tables, fixes = list(), id_col = NULL, con_env = 
     }
     out
   }
-  sv_stack_plan_core(samples, inputs, fixes, id_col, na_fun, function() sv_lazy_count(sum(counts)))
+  plan <- sv_stack_plan_core(samples, inputs, fixes, id_col, na_fun, function() sv_lazy_count(sum(counts)))
+  # The text of every dttm-to-chr cast (the zone's offset tree is long), so the browser writes the same code without
+  # rebuilding the tree: `tz_text[i]` is input i's cast of this column, NA where it has none.
+  for (k in seq_along(plan$columns)) {
+    col <- plan$columns[[k]]
+    tt <- rep(NA_character_, length(inputs))
+    for (i in seq_along(inputs)) {
+      if (!is.na(col$types[i]) && !is.na(col$cast[i]) && identical(col$types[i], "dttm") && identical(col$cast[i], "chr")) {
+        tt[i] <- sv_stack_show(sv_stack_lazy_cast(col$name, "dttm", "chr", col$zones[i]))
+      }
+    }
+    if (any(!is.na(tt))) plan$columns[[k]]$tz_text <- tt
+  }
+  plan
 }
 
 #' The stack of lazy tables, as one duckdb `union_all()`

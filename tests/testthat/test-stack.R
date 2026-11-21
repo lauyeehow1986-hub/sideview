@@ -258,3 +258,114 @@ test_that("rename direction: the name is the near-miss, the value its partner", 
   expect_equal(names(sv_stack(a, b, check = sv_stack_check(a, b, rename = c(AGE = "Age")))), c("source", "Age"))
   expect_error(sv_stack_check(a, b, rename = c(Age = "RACE")), "is not a near-miss")
 })
+
+# ---- D2 task 4: the JS pipeline writes the same code as sv_stack_code() ----
+
+# Three inputs that between them need every cast target, a rename, a missing column in each form, a kept label,
+# awkward names and two zones (one with daylight saving time). `visit` and `Visit` are a near-miss pair.
+stk_js_tables <- function() {
+  w1 <- data.frame(A = c(TRUE, NA), B = 1:2, C = c(1.5, 2), D = as.Date(c("2024-01-02", NA)),
+                   E = as.POSIXct(c("2024-01-02 03:04:05", NA), tz = "Asia/Singapore"),
+                   F = c("12", "x"), G = c("7", "7.5"), H = c("TRUE", "no"), I = c("2024-01-02", "2024-13-45"),
+                   J = c(1, 2.5), K = c(0L, 2L), L = as.Date(c("2024-02-03", "2024-02-04")),
+                   M = as.POSIXct(c("2024-03-04 10:30:00", "2024-03-05 00:00:00"), tz = "UTC"),
+                   N = factor(c("a", "b")), O = factor(c("a", "b")), only1 = c(TRUE, FALSE),
+                   P = c(1, NaN), Visit = as.Date(c("2024-01-01", "2024-01-02")),
+                   stringsAsFactors = FALSE)
+  w1[["my col"]] <- c(1.5, NA)
+  w1[["a\"b"]] <- c(1L, 2L)
+  attr(w1$A, "label") <- "Flag \"quoted\" \\ café"
+  w2 <- data.frame(A = 1:2, B = c(1.5, NA), C = c("a", "b"), D = c("2024-01-01", "b"),
+                   E = c("2024-05-06 07:08:09", "z"), F = c(1.5, 2), G = 1:2, H = c(TRUE, NA),
+                   I = as.Date(c("2024-07-08", NA)), J = 1:2, K = c(TRUE, FALSE),
+                   L = as.POSIXct(c("2024-08-09 10:11:12", NA), tz = "UTC"),
+                   M = as.Date(c("2024-09-10", "2024-09-11")), N = c("x", "y"), O = factor(c("c", "a")),
+                   P = c(2.5, 3), visit = as.Date(c("2024-01-03", "2024-01-04")), stringsAsFactors = FALSE)
+  w2[["my col"]] <- c("u", "v")
+  w2[["a\"b"]] <- c(3L, 4L)
+  w3 <- data.frame(A = 3L, E = as.POSIXct("2024-07-01 12:00:00", tz = "America/New_York"), P = 4L,
+                   extra = c(TRUE), only3 = as.Date("2024-01-05"), stringsAsFactors = FALSE)
+  list(w1 = w1, `wave 2` = w2, w3 = w3)
+}
+
+stk_js_fixes <- function() {
+  list(cast = c(F = "num", G = "int", H = "lgl", I = "date", J = "int", K = "lgl", M = "date", N = "chr",
+                P = "chr"),
+       rename = c(visit = "Visit"))
+}
+
+# The code the browser composes for a stack step: plan, the inputs and what kind each is (NA: a data frame).
+stk_js_code <- function(plan, inputs, refs, kinds) {
+  meta <- stats::setNames(lapply(seq_along(inputs), function(i) {
+    list(lazy = if (is.na(kinds[i])) NULL else kinds[i], codeRef = refs[i])
+  }), inputs)
+  res <- run_pipeline_js(sprintf("
+    const p = new P.Pipeline();
+    p.setTables(%s);
+    out = p.deriveExpr({kind: 'derive', op: 'stack', table: 'out', inputs: %s, args: {plan: %s}});",
+    dc_json_stack(meta), dc_json_stack(as.list(inputs)), dc_json_stack(plan)))
+  res
+}
+
+dc_json_stack <- function(x) jsonlite::toJSON(x, auto_unbox = TRUE, null = "null", na = "null", digits = NA)
+
+test_that("R and JS write the same stack code", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("DBI")
+  skip_if_not_installed("stringr")
+  tb <- stk_js_tables()
+  fx <- stk_js_fixes()
+  fixes <- c(lapply(seq_along(fx$cast), function(i) list(column = names(fx$cast)[i], action = "cast", to = unname(fx$cast[[i]]))),
+             lapply(seq_along(fx$rename), function(i) list(column = names(fx$rename)[i], action = "rename", to = unname(fx$rename[[i]]))))
+  inputs <- names(tb)
+  refs <- unname(sv_escape_ident(inputs))
+  # the plans: in memory (data frames), and with a duckdb input (the lazy plan carries the time text)
+  con <- DBI::dbConnect(duckdb::duckdb())
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+  DBI::dbWriteTable(con, "dk", tb[[2]])
+  mixed <- list(w1 = tb[[1]], `wave 2` = dplyr::tbl(con, "dk"), w3 = tb[[3]])
+  p_mem <- sv_stack_plan(tb, fixes)
+  p_lazy <- sv_stack_plan(mixed, fixes)
+  expect_true(any(vapply(p_lazy$columns, function(c) !is.null(c$tz_text), NA)))
+  expect_true(any(vapply(p_mem$columns, function(c) !is.na(c$cast[1]), NA)))
+  na <- NA_character_
+  cases <- list(
+    list(p_mem, c(na, na, na)),
+    list(p_lazy, c("duckdb", "duckdb", "duckdb")),
+    list(p_lazy, c(na, "duckdb", na)),
+    list(p_lazy, c("arrow", "duckdb", na)),
+    list(p_lazy, c("arrow", "arrow", "arrow")),
+    list(p_lazy, c("arrow", na, na)),
+    list(p_lazy, c(na, "arrow", "duckdb")),
+    list(p_lazy, c("duckdb", na, "arrow")))
+  for (cs in cases) {
+    kinds <- cs[[2]]
+    info <- paste(ifelse(is.na(kinds), "df", kinds), collapse = "/")
+    want <- sv_stack_code(cs[[1]], refs, kinds)
+    got <- stk_js_code(cs[[1]], inputs, refs, kinds)
+    expect_identical(got$code, want$code, info = info)
+    expect_identical(got$kind, if (is.na(want$kind)) NULL else want$kind, info = info)
+    expect_parses(got$code, info)
+  }
+  # a stack of 2 whose id column is source_3, no casts, no labels
+  a <- data.frame(source = 1, source_2 = 2, v = 1)
+  b <- data.frame(source = 3, source_2 = 4, v = 2)
+  p2 <- sv_stack_plan(list(a = a, b = b))
+  expect_equal(p2$id_col, "source_3")
+  expect_identical(stk_js_code(p2, c("a", "b"), c("a", "b"), c(na, na))$code,
+                   sv_stack_code(p2, c("a", "b"), c(na, na))$code)
+  # a lazy plan with no zone to write (all casts but time to text) has no tz_text, and still agrees
+  DBI::dbWriteTable(con, "da", a)
+  p3 <- sv_stack_plan(list(a = dplyr::tbl(con, "da"), b = b))
+  expect_identical(stk_js_code(p3, c("a", "b"), c("a", "b"), c("duckdb", na))$code,
+                   sv_stack_code(p3, c("a", "b"), c("duckdb", na))$code)
+})
+
+test_that("a stack plan is JSON that keeps the labels and the zones", {
+  tb <- stk_js_tables()
+  plan <- sv_stack_plan(tb)
+  j <- jsonlite::fromJSON(as.character(dc_json_stack(plan)), simplifyVector = FALSE)
+  expect_equal(names(j$kept_labels), "A")
+  expect_equal(names(j$tz)[1], "E")
+})

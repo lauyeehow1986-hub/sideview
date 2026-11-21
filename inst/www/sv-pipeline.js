@@ -365,7 +365,9 @@
       case 'recode': return 'recode ' + step.col + ' (' + (step.map || []).length + ' values)';
       case 'summarise': return 'summarise' + ((step.groups || []).length ? ' by ' + step.groups.join(', ') : '');
       case 'custom': return step.label || 'custom code';
-      case 'derive': return 'rows of ' + step.table;
+      case 'derive': return step.op === 'stack'
+        ? 'stack of ' + [].concat(step.inputs || []).join(' + ')
+        : 'rows of ' + step.table;
       case 'supp': return 'merge ' + String(step.supp).toUpperCase() + ' (' + (step.qnams || []).length +
         ' QNAMs on ' + (step.idvars || []).map(function (v) {
           return v.idvar === '' ? 'subject' : v.idvar;
@@ -954,7 +956,8 @@
     var self = this;
     if (!step || step.kind !== 'derive' || step.enabled === false) return false;
     var ins = [].concat(step.inputs || []);
-    if (ins.length !== 2) return false;
+    // a stack has 2 to 8 inputs, every other op exactly 2
+    if (step.op === 'stack' ? (ins.length < 2 || ins.length > 8) : ins.length !== 2) return false;
     // a step that is already being asked about is a cycle: not live
     this._liveBusy = this._liveBusy || [];
     if (this._liveBusy.indexOf(step) >= 0) return false;
@@ -1023,6 +1026,14 @@
     var ins = [].concat(step.inputs || []).map(String);
     var args = step.args || {};
     var op = step.op;
+    if (op === 'stack') {
+      var sp = args.plan;
+      if (!sp || ins.length < 2 || ins.length > 8 || [].concat(sp.inputs || []).length !== ins.length) {
+        return { code: '', kind: null };
+      }
+      var sres = stackCode(sp, ins.map(this.refFor, this), ins.map(this.lazyKind, this));
+      return sres.code ? sres : { code: '', kind: null };
+    }
     if (ins.length !== 2) return { code: '', kind: null };
     if (op === 'supp_orphans' || op === 'supp_bad_idvarval') {
       return { code: deriveSuppCode(this, op, ins, args), kind: null };
@@ -1101,6 +1112,184 @@
     }
     return { code: code, kind: cb.kind };
   };
+
+  // ---- stack: the code that rebuilds a stacked card (twin of sv_stack_code(), R/stack.R and R/lazy.R) ----
+  // The plan (args.plan) is R's own and is never recomputed here; it says every column's types, casts,
+  // zones and renames, and carries the text of each lazy time-to-text cast (`tz_text`: the zone's offset
+  // tree is long, R writes it once). A missing value (R's NA) is null.
+
+  function stackHas(v) { return v !== null && v !== undefined; }
+
+  function stackQid(name) { return '"' + String(name).replace(/"/g, '""') + '"'; }
+
+  function stackSql(text) { return 'dbplyr::sql(' + str(text) + ')'; }
+
+  // The in-memory code of one cast (twin of sv_stack_cast_code()); `x` is the column as written in the code.
+  function stackCastCode(x, from, to, zone) {
+    function numOfChr(re) {
+      return 'suppressWarnings(as.numeric(replace(' + x + ', !grepl(' + str(re) + ', ' + x + ', perl = TRUE), NA)))';
+    }
+    function whole(v) {
+      return '(function(v) as.integer(ifelse(!is.na(v) & v == trunc(v) & abs(v) <= 2147483647, v, NA)))(' + v + ')';
+    }
+    switch (to) {
+      case 'lgl':
+        return from === 'chr'
+          ? 'ifelse(' + x + ' == "TRUE", TRUE, ifelse(' + x + ' == "FALSE", FALSE, NA))'
+          : 'ifelse(as.numeric(' + x + ') %in% c(0, 1), as.numeric(' + x + ') == 1, NA)';
+      case 'int':
+        if (from === 'lgl') return 'as.integer(' + x + ')';
+        return from === 'chr' ? whole(numOfChr(SUPP_INT_RE.source)) : whole('as.numeric(' + x + ')');
+      case 'num':
+        return from === 'chr'
+          ? '(function(v) replace(v, abs(v) > 1e308, NA))(' + numOfChr(SUPP_DBL_RE.source) + ')'
+          : 'as.numeric(' + x + ')';
+      case 'chr':
+        return from === 'dttm'
+          ? 'format(' + x + ', "%Y-%m-%d %H:%M:%S", tz = ' + str(zone) + ')'
+          : 'as.character(' + x + ')';
+      case 'date':
+        return from === 'dttm'
+          ? 'as.Date(' + x + ', tz = "UTC")'
+          : 'as.Date(replace(' + x + ', !grepl(' + str('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') + ', ' + x +
+            '), NA), format = "%Y-%m-%d")';
+      case 'dttm':
+        return 'as.POSIXct(' + x + ', tz = ' + str(zone) + ')';
+      case 'fct':
+        return 'factor(as.character(' + x + '))';
+    }
+    return '';
+  }
+
+  // The lazy cast of one column as deparsed R (twin of sv_stack_lazy_cast(), written as rlang::expr_deparse()
+  // prints it). `tzText` is the plan's text of a time-to-text cast.
+  function stackLazyCast(cn, from, to, tzText) {
+    var x = ident(cn);
+    var q = stackQid(cn);
+    var dbl = stackSql('TRY_CAST(' + q + ' AS DOUBLE)');
+    var matches = function (re) { return 'regexp_matches(' + x + ', ' + str(re) + ')'; };
+    switch (to) {
+      case 'lgl':
+        return from === 'chr'
+          ? 'dplyr::case_when(' + x + ' == "TRUE" ~ TRUE, ' + x + ' == "FALSE" ~ FALSE, .default = NA)'
+          : 'dplyr::case_when(' + x + ' == 0 ~ FALSE, ' + x + ' == 1 ~ TRUE, .default = NA)';
+      case 'int':
+        if (from === 'lgl') return 'as.integer(' + x + ')';
+        if (from === 'chr') {
+          return 'dplyr::if_else(' + matches(SUPP_INT_RE.source) + ' & abs(' + dbl + ') <= 2147483647, ' +
+            stackSql('TRY_CAST(TRY_CAST(' + q + ' AS DOUBLE) AS INTEGER)') + ', NA)';
+        }
+        return 'dplyr::if_else(!isnan(' + x + ') & ' + x + ' == floor(' + x + ') & abs(' + x + ') <= 2147483647, ' +
+          stackSql('TRY_CAST(' + q + ' AS INTEGER)') + ', NA)';
+      case 'num':
+        return from === 'chr'
+          ? 'dplyr::if_else(' + matches(SUPP_DBL_RE.source) + ' & abs(' + dbl + ') <= 1e+308, ' + dbl + ', NA)'
+          : stackSql('CAST(' + q + ' AS DOUBLE)');
+      case 'chr':
+        if (from === 'lgl') return 'if_else(' + x + ', "TRUE", "FALSE")';
+        if (from === 'num') {
+          return 'case_when(isnan(' + x + ') ~ "NaN", isinf(' + x + ') & ' + x + ' > 0 ~ "Inf", isinf(' + x +
+            ') ~ "-Inf", .default = stringr::str_replace(as.character(' + x + '), "\\\\.0$", ""))';
+        }
+        if (from === 'dttm') return stackHas(tzText) ? String(tzText) : null;
+        return 'as.character(' + x + ')';
+      case 'date':
+        return from === 'dttm'
+          ? 'as.Date(' + x + ')'
+          : 'dplyr::if_else(regexp_matches(' + x + ', "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"), ' +
+            stackSql('TRY_CAST(' + q + ' AS DATE)') + ', NA)';
+      case 'dttm':
+        return stackSql('CAST(' + q + ' AS TIMESTAMP)');
+    }
+    return null;
+  }
+
+  // A column that an input lacks, typed so the union reads it as the target type
+  function stackLazyNa(target) {
+    var t = { lgl: 'BOOLEAN', int: 'INTEGER', num: 'DOUBLE', date: 'DATE', dttm: 'TIMESTAMP' }[target] || 'VARCHAR';
+    return stackSql('CAST(NULL AS ' + t + ')');
+  }
+
+  // The code of a stack, `{code, kind}`: `refs` are the R references of the inputs, `kinds` null (in memory),
+  // 'duckdb' or 'arrow' for each. An empty code means the plan cannot be written (a missing piece).
+  function stackCode(plan, refs, kinds) {
+    var cols = [].concat(plan.columns || []);
+    var inputs = [].concat(plan.inputs || []).map(String);
+    var id = String(plan.id_col);
+    var at = function (v, i) { return v && stackHas(v[i]) ? v[i] : null; };
+    var lazy = kinds.some(function (k) { return !!k; });
+    if (!lazy) {
+      var tz = plan.tz && !Array.isArray(plan.tz) ? plan.tz : {};
+      var args = inputs.map(function (nm, i) {
+        var ref = refs[i];
+        var ren = cols.filter(function (c) { return at(c.rename_from, i) !== null; });
+        if (ren.length) {
+          ref = 'dplyr::rename(' + ref + ', ' + ren.map(function (c) {
+            return ident(c.name) + ' = ' + ident(c.rename_from[i]);
+          }).join(', ') + ')';
+        }
+        var cst = cols.filter(function (c) { return at(c.cast, i) !== null; });
+        if (cst.length) {
+          ref = 'dplyr::mutate(' + ref + ', ' + cst.map(function (c) {
+            var zone = c.target === 'dttm' ? tz[c.name] : at(c.zones, i);
+            if (!stackHas(zone)) zone = c.target === 'dttm' ? 'UTC' : '';
+            return ident(c.name) + ' = ' + stackCastCode(ident(c.name), c.types[i], c.target, zone);
+          }).join(', ') + ')';
+        }
+        return ident(nm) + ' = ' + ref;
+      });
+      var code = 'dplyr::bind_rows(' + args.join(', ') + ', .id = ' + str(id) + ')';
+      var labels = plan.kept_labels && !Array.isArray(plan.kept_labels) ? plan.kept_labels : {};
+      var lnames = Object.keys(labels);
+      if (lnames.length) {
+        code = 'dplyr::mutate(' + code + ', ' + lnames.map(function (cn) {
+          return ident(cn) + ' = structure(' + ident(cn) + ', label = ' + str(labels[cn]) + ')';
+        }).join(', ') + ')';
+      }
+      return { code: code, kind: null };
+    }
+    var duckRef = null;
+    kinds.some(function (k, i) { if (k === 'duckdb') { duckRef = refs[i]; return true; } return false; });
+    var bad = false;
+    var parts = inputs.map(function (nm, i) {
+      var ref = refs[i];
+      var placed;
+      if (!kinds[i]) {
+        placed = duckRef === null
+          ? 'arrow::to_duckdb(arrow::arrow_table(' + ref + '))'
+          : 'dplyr::copy_to(dbplyr::remote_con(' + duckRef + '), ' + ref + ', name = ' +
+            str('sideview_' + nm + '_' + (i + 1)) + ', overwrite = TRUE)';
+      } else if (kinds[i] === 'arrow') {
+        placed = duckRef === null
+          ? 'arrow::to_duckdb(' + ref + ')'
+          : 'dplyr::compute(arrow::to_duckdb(' + ref + ', con = dbplyr::remote_con(' + duckRef + ')))';
+      } else placed = ref;
+      var ren = cols.filter(function (c) { return at(c.rename_from, i) !== null; });
+      if (ren.length) {
+        placed = 'dplyr::rename(' + placed + ', ' + ren.map(function (c) {
+          return ident(c.name) + ' = ' + ident(c.rename_from[i]);
+        }).join(', ') + ')';
+      }
+      var sets = [ident(id) + ' = ' + str(nm)];
+      cols.forEach(function (c) {
+        var type = at(c.types, i);
+        var e = null;
+        if (type === null) e = stackLazyNa(c.target);
+        else if (at(c.cast, i) !== null) {
+          e = stackLazyCast(c.name, type, c.target, at(c.tz_text, i));
+          if (e === null) bad = true;
+        } else if (type === 'fct') e = 'as.character(' + ident(c.name) + ')';
+        if (e !== null) sets.push(ident(c.name) + ' = ' + e);
+      });
+      var names = [id].concat(cols.map(function (c) { return c.name; })).map(str);
+      return 'dplyr::select(dplyr::mutate(' + placed + ', ' + sets.join(', ') + '), dplyr::all_of(c(' +
+        names.join(', ') + ')))';
+    });
+    if (bad) return { code: '', kind: null };
+    var out = parts[parts.length - 1];
+    for (var k = parts.length - 2; k >= 0; k--) out = 'dplyr::union_all(' + parts[k] + ', ' + out + ')';
+    return { code: out, kind: 'duckdb' };
+  }
 
   /**
    * One local({...}) block for a SUPP op: the SUPP rows of the check's own steps (RDOMAIN filter, key
