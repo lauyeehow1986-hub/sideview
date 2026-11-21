@@ -30,6 +30,13 @@ sv_derive_rows <- function(op, tables, args) {
   }
   if (op %in% c("compare_added", "compare_removed", "compare_changed")) {
     if (length(tables) != 2L) stop("A derived table needs two input tables.", call. = FALSE)
+    if (any(vapply(tables, sv_is_lazy_input, logical(1)))) {
+      if (!sv_has_duckdb()) stop("Comparing a duckdb or Arrow table needs duckdb.", call. = FALSE)
+      con_env <- if (is.null(args$con_env)) sv_lazy_env() else args$con_env
+      plan <- args$plan %||% sv_compare_plan(tables[[1L]], tables[[2L]], args$by, names(tables)[1L],
+                                             names(tables)[2L], con_env)
+      return(sv_lazy_compare(tables[[1L]], tables[[2L]], plan, con_env, op))
+    }
     plan <- args$plan %||% sv_compare_plan(tables[[1L]], tables[[2L]], args$by, names(tables)[1L], names(tables)[2L])
     return(sv_compare_rows(tables[[1L]], tables[[2L]], plan)[[sub("^compare_", "", op)]])
   }
@@ -481,8 +488,14 @@ sv_compare_clean <- function(old, new, by, store, con_env = NULL, card_full = sv
   if (length(by) > sv_derive_max_pairs) {
     stop(sprintf("A derived table takes at most %d key pairs.", sv_derive_max_pairs), call. = FALSE)
   }
+  # a whole duckdb or Arrow table is never compared from its 50-row preview without a word (as for a stack)
+  if (!sv_has_duckdb() && any(vapply(cards, card_full, NA))) {
+    stop("Comparing a duckdb or Arrow table needs duckdb.", call. = FALSE)
+  }
   tabs <- unname(sv_stack_card_tables(cards, inputs, con_env, card_full))
-  plan <- sv_compare_plan(tabs[[1L]], tabs[[2L]], by, inputs[1L], inputs[2L])
+  plan <- sv_compare_plan(tabs[[1L]], tabs[[2L]], by, inputs[1L], inputs[2L], con_env)
+  # the browser writes lazy code for a lazy card even when the plan came from its preview (a lost link)
+  if (sv_has_duckdb() && any(vapply(cards, sv_card_is_lazy, NA))) plan <- sv_compare_add_tz_text(plan)
   list(inputs = inputs, cards = cards, by = by, plan = plan)
 }
 
@@ -667,12 +680,19 @@ sv_derive_card <- function(req, store, con_env, lazy_or_preview = NULL, card_ful
     cx <- store$get(inputs[1L])
     cy <- store$get(inputs[2L])
     nm <- sv_derive_name(op, inputs, args, store$names(), clean$name)
-    rows <- sv_compare_rows(cx$data, cy$data, args$plan)[[sub("^compare_", "", op)]]
     derived <- list(op = op, inputs = inputs, args = list(by = args$by, plan = args$plan))
-    card <- new_sideview_card(name = nm, type = "grid", data = rows, derived = derived)
+    in_memory <- function() {
+      rows <- sv_compare_rows(cx$data, cy$data, args$plan)[[sub("^compare_", "", op)]]
+      new_sideview_card(name = nm, type = "grid", data = rows, derived = derived)
+    }
+    # a lazy compare card keeps its recipe (sv_lazy_compare() on the session connection), not rows
+    lazy <- function() {
+      lazy_card(sv_derived_source(op, derived$args, stats::setNames(list(cx, cy), inputs)), derived, nm)
+    }
+    card <- if (!is.null(con_env) && sv_has_duckdb()) lazy_or_preview(list(cx, cy), lazy, in_memory) else in_memory()
     src <- switch(op, compare_removed = cx, compare_added = cy, NULL)
     if (!is.null(src)) {
-      lab <- src$col_labels[intersect(names(src$col_labels), names(rows))]
+      lab <- src$col_labels[intersect(names(src$col_labels), names(card$data))]
       if (length(lab)) card$col_labels <- lab
       card$cdisc <- if (isFALSE(cdisc)) NULL else src$cdisc
     }

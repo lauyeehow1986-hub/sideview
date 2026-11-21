@@ -291,8 +291,8 @@ test_that("in-memory code parses, runs with dplyr only and rebuilds", {
   odd2 <- stats::setNames(data.frame(1:2, c(1, 3)), c("visit id", "visit date"))
   r <- check(odd1, odd2, "visit id")
   expect_equal(r$changed$column, "visit date")
-  # the lazy form is not written yet
+  # a lazy input gives the lazy form (test-lazy.R runs it)
   plan <- sv_compare_plan(cmp_cut1(), cmp_cut2(), cmp_keys)
-  expect_error(sv_compare_code(plan, c("a", "b"), c("duckdb", NA), "compare_added"), "not yet written")
+  expect_identical(sv_compare_code(plan, c("a", "b"), c("duckdb", NA), "compare_added")$kind, "duckdb")
   expect_equal(sv_compare_code(plan, c("cut1", "cut2"), c(NA, NA), "compare_added")$kind, NA_character_)
 })

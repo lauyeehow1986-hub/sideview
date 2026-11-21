@@ -7,18 +7,19 @@
 sv_compare(old, new, by = NULL)
 }
 \arguments{
-\item{old, new}{Data frames: the earlier and the later version. Unnamed tables are named by
-their expressions, as \code{\link[=sideview]{sideview()}} names them.}
+\item{old, new}{Data frames, duckdb tables or Arrow tables: the earlier and the later
+version. Unnamed tables are named by their expressions, as \code{\link[=sideview]{sideview()}} names them.}
 
 \item{by}{Names of the key columns, the same in both versions (1 to 20). \code{NULL} suggests a
 key: the first shared column (same name, similar values) with no repeated value in either version, else
-the shared columns together when their combinations are unique, else an error asks for the key.}
+the shared columns together when their combinations are unique, else an error asks for the key. For a
+duckdb or Arrow table the suggestion reads the first 50 rows of each version.}
 }
 \value{
 An object of class \code{sv_compare}: \code{old_name}, \code{new_name}, \code{by}, the row counts \code{n_old},
 \code{n_new}, \code{n_added}, \code{n_removed}, \code{n_changed}, \code{same}, the repeated-key counts, \code{per_column} (changed
-rows per compared column), \code{text} (summary lines) and \code{open} (button labels), plus the data
-frames \code{added}, \code{removed} and \code{changed}, and \code{code}.
+rows per compared column), \code{text} (summary lines) and \code{open} (button labels), plus the tables
+\code{added}, \code{removed} and \code{changed}, and \code{code}.
 }
 \description{
 Compares two cuts of the same table row by row. Rows are matched on the key columns
@@ -36,6 +37,11 @@ value is a change. Key columns of differing kinds are matched as text.
 
 The \code{changed} table has the key columns, then \code{column}, \code{old} and \code{new} (the values as text,
 missing values \code{NA}), ordered by key and then by the column's position in \code{new}.
+
+When either version is a duckdb or Arrow table, both are compared on one duckdb connection
+and nothing is collected: the counts come from queries, and \code{added}, \code{removed} and \code{changed}
+are lazy duckdb tables (in no particular order). Number text can then differ from R's
+(\code{"100000"} for \code{"1e+05"}).
 }
 \examples{
 cut1 <- data.frame(id = 1:4, sev = c("MILD", "MILD", "SEVERE", "MILD"))

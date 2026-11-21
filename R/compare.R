@@ -46,18 +46,31 @@ sv_compare_key <- function(old, new, old_tag = NULL, new_tag = NULL) {
   character(0)
 }
 
-# The plan of a compare (decision 5): a plain list. `old` and `new` are data frames (the lazy branch is added
-# with the lazy compare); it refuses what decision 3 lists.
-sv_compare_plan <- function(old, new, by, old_name = "old", new_name = "new") {
+# The plan of a compare (decision 5): a plain list. `old` and `new` are data frames, duckdb tables or Arrow tables;
+# a lazy input goes to sv_lazy_compare_plan(), the same plan from 0 rows (`con_env` is the session connection it may
+# use). It refuses what decision 3 lists.
+sv_compare_plan <- function(old, new, by, old_name = "old", new_name = "new", con_env = NULL) {
+  by <- sv_compare_by(by, old_name, new_name)
+  if (sv_is_lazy_input(old) || sv_is_lazy_input(new)) {
+    return(sv_lazy_compare_plan(old, new, by, con_env, old_name, new_name))
+  }
+  sv_compare_plan_core(old, new, by, old_name, new_name)
+}
+
+# The names and the key of a compare, checked (decision 3): `by` without repeats.
+sv_compare_by <- function(by, old_name, new_name) {
   if (identical(old_name, new_name)) stop("Pick two different tables.", call. = FALSE)
   if (!is.character(by) || !length(by) || anyNA(by) || any(!nzchar(by))) stop("Pick the key columns.", call. = FALSE)
   by <- unique(by)
   if (length(by) > sv_derive_max_pairs) {
     stop(sprintf("A derived table takes at most %d key pairs.", sv_derive_max_pairs), call. = FALSE)
   }
-  if (sv_is_lazy_input(old) || sv_is_lazy_input(new)) {
-    stop("Comparing a duckdb or Arrow table is not supported here.", call. = FALSE)
-  }
+  by
+}
+
+# The plan from `old` and `new`: data frames, or 0-row samples of them (types, zones and factor levels are all it
+# reads). A key's `tz_text_*` is NA here; sv_compare_add_tz_text() fills it for a lazy plan.
+sv_compare_plan_core <- function(old, new, by, old_name, new_name) {
   tabs <- stats::setNames(list(old, new), c(old_name, new_name))
   for (k in by) {
     for (nm in names(tabs)) {
@@ -72,7 +85,8 @@ sv_compare_plan <- function(old, new, by, old_name = "old", new_name = "new") {
     zo <- old[[k]]; zn <- new[[k]]
     ko <- sv_key_kind(zo); kn <- sv_key_kind(zn)
     list(name = k, kind_old = ko, kind_new = kn, text = !identical(ko, kn),
-         from_old = sv_stack_tname(zo), from_new = sv_stack_tname(zn), zone_old = zone(zo), zone_new = zone(zn))
+         from_old = sv_stack_tname(zo), from_new = sv_stack_tname(zn), zone_old = zone(zo), zone_new = zone(zn),
+         tz_text_old = NA_character_, tz_text_new = NA_character_)
   })
   compared <- list()
   type_changed <- list()
@@ -185,18 +199,31 @@ sv_compare_finish <- function(summary, old_name, new_name) {
 # The R code that rebuilds one compare card (decision 9): `list(code, kind)`. `refs` are the R references of old and
 # new, `kinds` is NA, "duckdb" or "arrow" per input, `op` is "compare_added", "compare_removed" or
 # "compare_changed". The in-memory form is one expression of dplyr calls: no pipe, no helper, no sideview function.
+# The lazy form (either kind not NA) puts both inputs on one duckdb connection as D2's lazy stack code does
+# (sv_lazy_place_code()), writes the casts and conditions sv_lazy_compare() runs, printed, joins the pieces of
+# `_changed` with nested union_all() and has no arrange() (a lazy card has no order). Its kind is "duckdb".
 sv_compare_code <- function(plan, refs, kinds, op) {
-  if (any(!is.na(kinds))) stop("The lazy form of the compare code is not yet written.", call. = FALSE)
   if (!op %in% c("compare_added", "compare_removed", "compare_changed")) {
     stop(sprintf("Unknown compare op: %s", op), call. = FALSE)
   }
+  lazy <- any(!is.na(kinds))
+  kind <- if (lazy) "duckdb" else NA_character_
   q <- function(s) encodeString(s, quote = "\"")
   cv <- function(v) paste0("c(", paste(q(v), collapse = ", "), ")")
   by <- plan$by
-  # the text of a column (D2's cast to chr, a missing value NA, as sv_compare_text() does)
-  text <- function(x, from, zone) {
-    if (is.na(zone)) zone <- ""
+  # the text of a column (D2's cast to chr, a missing value NA, as sv_compare_text() does); `cn` is the plain name
+  text <- function(cn, from, zone) {
+    if (is.null(zone) || isTRUE(is.na(zone))) zone <- ""
+    if (lazy) return(sv_stack_show(sv_compare_lazy_text(cn, from, zone)))
+    x <- sv_escape_ident(cn)
     paste0("replace(", sv_stack_cast_code(x, from, "chr", zone), ", is.na(", x, "), NA_character_)")
+  }
+  if (lazy) {
+    duck <- which(!is.na(kinds) & kinds == "duckdb")
+    duck_ref <- if (length(duck)) refs[duck[1L]] else NULL
+    refs <- vapply(1:2, function(i) {
+      sv_lazy_place_code(refs[i], kinds[i], duck_ref, paste0("sideview_", refs[i], "_", i), keep_views = TRUE)
+    }, "")
   }
   jb <- by
   side <- function(i, ref) {
@@ -206,7 +233,7 @@ sv_compare_code <- function(plan, refs, kinds, op) {
       if (!isTRUE(k$text)) next
       nm <- paste0(".sv_k", j)
       jb[j] <<- nm
-      sets <- c(sets, paste0(nm, " = ", text(sv_escape_ident(k$name),
+      sets <- c(sets, paste0(nm, " = ", text(k$name,
         if (i == 1L) k$from_old else k$from_new, if (i == 1L) k$zone_old else k$zone_new)))
     }
     if (length(sets)) paste0("dplyr::mutate(", ref, ", ", paste(sets, collapse = ", "), ")") else ref
@@ -220,11 +247,11 @@ sv_compare_code <- function(plan, refs, kinds, op) {
   uniq <- function(x) paste0("dplyr::filter(", x, ", dplyr::n() == 1L, .by = ", cv(jb), ")")
   if (identical(op, "compare_added")) {
     code <- drop(paste0("dplyr::anti_join(", uniq(n), ", ", o, ", by = ", cv(jb), ", na_matches = \"na\")"))
-    return(list(code = code, kind = NA_character_))
+    return(list(code = code, kind = kind))
   }
   if (identical(op, "compare_removed")) {
     code <- drop(paste0("dplyr::anti_join(", uniq(o), ", ", n, ", by = ", cv(jb), ", na_matches = \"na\")"))
-    return(list(code = code, kind = NA_character_))
+    return(list(code = code, kind = kind))
   }
   join <- paste0("dplyr::inner_join(", uniq(o), ", ", uniq(n), ", by = ", cv(jb),
                  ", suffix = c(\".old\", \".new\"), na_matches = \"na\")")
@@ -233,26 +260,34 @@ sv_compare_code <- function(plan, refs, kinds, op) {
     if (isTRUE(plan$keys[[j]]$text)) paste0(id, " = ", sv_escape_ident(paste0(by[j], ".new"))) else id
   }, "")
   body <- if (!length(plan$compared)) {
+    na <- if (lazy) sv_stack_show(sv_stack_lazy_na("chr")) else "NA_character_"
     paste0("dplyr::transmute(dplyr::filter(.sv_both, FALSE), ", paste(keys, collapse = ", "),
-           ", column = NA_character_, old = NA_character_, new = NA_character_)")
+           ", column = ", na, ", old = ", na, ", new = ", na, ")")
   } else {
     pieces <- vapply(plan$compared, function(cc) {
-      a <- sv_escape_ident(paste0(cc$name, ".old")); b <- sv_escape_ident(paste0(cc$name, ".new"))
-      ca <- a; cb <- b
-      if (cc$kind %in% "character") { ca <- paste0("as.character(", a, ")"); cb <- paste0("as.character(", b, ")") }
-      cond <- paste0("!(is.na(", a, ") & is.na(", b, ")) & (is.na(", a, ") | is.na(", b, ") | ", ca, " != ", cb, ")")
+      an <- paste0(cc$name, ".old"); bn <- paste0(cc$name, ".new")
+      cond <- if (lazy) sv_stack_show(sv_compare_lazy_cond(cc)) else {
+        a <- sv_escape_ident(an); b <- sv_escape_ident(bn)
+        ca <- a; cb <- b
+        if (cc$kind %in% "character") { ca <- paste0("as.character(", a, ")"); cb <- paste0("as.character(", b, ")") }
+        paste0("!(is.na(", a, ") & is.na(", b, ")) & (is.na(", a, ") | is.na(", b, ") | ", ca, " != ", cb, ")")
+      }
       paste0("dplyr::transmute(dplyr::filter(.sv_both, ", cond, "), ", paste(keys, collapse = ", "),
-             ", column = ", q(cc$name), ", old = ", text(a, cc$from_old, cc$zone_old),
-             ", new = ", text(b, cc$from_new, cc$zone_new), ")")
+             ", column = ", q(cc$name), ", old = ", text(an, cc$from_old, cc$zone_old),
+             ", new = ", text(bn, cc$from_new, cc$zone_new), ")")
     }, "")
-    paste0("dplyr::arrange(dplyr::bind_rows(", paste(pieces, collapse = ", "), "), ",
-           paste(sv_escape_ident(by), collapse = ", "), ")")
+    if (lazy) {
+      Reduce(function(a, b) paste0("dplyr::union_all(", a, ", ", b, ")"), pieces, right = TRUE)
+    } else {
+      paste0("dplyr::arrange(dplyr::bind_rows(", paste(pieces, collapse = ", "), "), ",
+             paste(sv_escape_ident(by), collapse = ", "), ")")
+    }
   }
   code <- paste0("local({
   .sv_both <- ", join, "
   ", body, "
 })")
-  list(code = code, kind = NA_character_)
+  list(code = code, kind = kind)
 }
 
 #' Compare two versions of a table by key
@@ -272,15 +307,21 @@ sv_compare_code <- function(plan, refs, kinds, op) {
 #' The `changed` table has the key columns, then `column`, `old` and `new` (the values as text,
 #' missing values `NA`), ordered by key and then by the column's position in `new`.
 #'
-#' @param old,new Data frames: the earlier and the later version. Unnamed tables are named by
-#'   their expressions, as [sideview()] names them.
+#' When either version is a duckdb or Arrow table, both are compared on one duckdb connection
+#' and nothing is collected: the counts come from queries, and `added`, `removed` and `changed`
+#' are lazy duckdb tables (in no particular order). Number text can then differ from R's
+#' (`"100000"` for `"1e+05"`).
+#'
+#' @param old,new Data frames, duckdb tables or Arrow tables: the earlier and the later
+#'   version. Unnamed tables are named by their expressions, as [sideview()] names them.
 #' @param by Names of the key columns, the same in both versions (1 to 20). `NULL` suggests a
 #'   key: the first shared column (same name, similar values) with no repeated value in either version, else
-#'   the shared columns together when their combinations are unique, else an error asks for the key.
+#'   the shared columns together when their combinations are unique, else an error asks for the key. For a
+#'   duckdb or Arrow table the suggestion reads the first 50 rows of each version.
 #' @return An object of class `sv_compare`: `old_name`, `new_name`, `by`, the row counts `n_old`,
 #'   `n_new`, `n_added`, `n_removed`, `n_changed`, `same`, the repeated-key counts, `per_column` (changed
-#'   rows per compared column), `text` (summary lines) and `open` (button labels), plus the data
-#'   frames `added`, `removed` and `changed`, and `code`.
+#'   rows per compared column), `text` (summary lines) and `open` (button labels), plus the tables
+#'   `added`, `removed` and `changed`, and `code`.
 #' @export
 #' @examples
 #' cut1 <- data.frame(id = 1:4, sev = c("MILD", "MILD", "SEVERE", "MILD"))
@@ -289,20 +330,45 @@ sv_compare_code <- function(plan, refs, kinds, op) {
 sv_compare <- function(old, new, by = NULL) {
   named <- sv_stack_dots(list(old, new), list(substitute(old), substitute(new)))
   old_name <- names(named$tables)[1L]; new_name <- names(named$tables)[2L]
-  if (!is.data.frame(old) || !is.data.frame(new)) stop("Both versions must be data frames.", call. = FALSE)
+  ok <- function(x) is.data.frame(x) || sv_is_lazy_input(x)
+  if (!ok(old) || !ok(new)) {
+    stop("Both versions must be data frames, duckdb tables or Arrow tables.", call. = FALSE)
+  }
   if (identical(old_name, new_name)) stop("Pick two different tables.", call. = FALSE)
-  if (is.null(by)) by <- sv_compare_key(old, new)
-  plan <- sv_compare_plan(old, new, by, old_name, new_name)
-  rows <- sv_compare_rows(old, new, plan)
-  s <- sv_compare_finish(rows$summary, old_name, new_name)
-  # `added`, `removed` and `changed` are the data frames here, so their counts are `n_added` etc.
-  s[c("n_added", "n_removed", "n_changed")] <- s[c("added", "removed", "changed")]
-  s[c("added", "removed", "changed")] <- list(rows$added, rows$removed, rows$changed)
+  lazy <- sv_is_lazy_input(old) || sv_is_lazy_input(new)
+  if (lazy && !sv_has_duckdb()) stop("Comparing a duckdb or Arrow table needs duckdb.", call. = FALSE)
+  if (is.null(by)) {
+    # a lazy version suggests its key from its first 50 rows (a suggestion only: repeats are still counted)
+    peek <- function(x) {
+      if (!sv_is_lazy_input(x)) return(x)
+      as.data.frame(dplyr::collect(utils::head(x, 50L)), stringsAsFactors = FALSE)
+    }
+    by <- sv_compare_key(peek(old), peek(new))
+  }
   refs <- named$refs
+  if (lazy) {
+    # lazy in, lazy out: one duckdb connection, the counts from queries, the three tables never collected
+    con_env <- sv_lazy_env()
+    plan <- sv_compare_plan(old, new, by, old_name, new_name, con_env)
+    summary <- sv_lazy_compare(old, new, plan, con_env)
+    tabs <- lapply(c(added = "compare_added", removed = "compare_removed", changed = "compare_changed"),
+                   function(op) sv_lazy_compare(old, new, plan, con_env, op))
+    kinds <- vapply(list(old, new), function(x) if (sv_is_lazy_input(x)) sv_lazy_origin(x) else NA_character_, "")
+  } else {
+    plan <- sv_compare_plan(old, new, by, old_name, new_name)
+    rows <- sv_compare_rows(old, new, plan)
+    summary <- rows$summary
+    tabs <- rows[c("added", "removed", "changed")]
+    kinds <- c(NA_character_, NA_character_)
+  }
+  s <- sv_compare_finish(summary, old_name, new_name)
+  # `added`, `removed` and `changed` are the tables here, so their counts are `n_added` etc.
+  s[c("n_added", "n_removed", "n_changed")] <- s[c("added", "removed", "changed")]
+  s[c("added", "removed", "changed")] <- unname(tabs)
   s$code <- list(
-    added = sv_compare_code(plan, refs, c(NA, NA), "compare_added")$code,
-    removed = sv_compare_code(plan, refs, c(NA, NA), "compare_removed")$code,
-    changed = sv_compare_code(plan, refs, c(NA, NA), "compare_changed")$code)
+    added = sv_compare_code(plan, refs, kinds, "compare_added")$code,
+    removed = sv_compare_code(plan, refs, kinds, "compare_removed")$code,
+    changed = sv_compare_code(plan, refs, kinds, "compare_changed")$code)
   structure(s, class = "sv_compare")
 }
 
@@ -310,8 +376,9 @@ sv_compare <- function(old, new, by = NULL) {
 print.sv_compare <- function(x, ...) {
   cat(x$text, sep = "\n")
   rows <- function(n) paste0(sv_say_num(n), if (n == 1) " row" else " rows")
-  cat("added: ", rows(nrow(x$added)), "\n", sep = "")
-  cat("removed: ", rows(nrow(x$removed)), "\n", sep = "")
-  cat("changed: ", rows(nrow(x$changed)), "\n", sep = "")
+  # the counts, not nrow(): a lazy table has no row count in R
+  cat("added: ", rows(x$n_added), "\n", sep = "")
+  cat("removed: ", rows(x$n_removed), "\n", sep = "")
+  cat("changed: ", rows(x$changed_values), "\n", sep = "")
   invisible(x)
 }
