@@ -164,3 +164,41 @@ sv_example_app <- function(name = "proxy") {
   if (!nzchar(path) || !file.exists(path)) stop("example app not found: ", name, call. = FALSE)
   normalizePath(path, winslash = "/")
 }
+
+
+# ---- the Stack drawer tab (D2): shared by the layout and a11y browser tests ----
+
+sv_stk_app <- paste0(
+  "local({ wave1 <- data.frame(id = 1:3, age = c(34, 51, 62), Race = c('A', 'B', 'C'), stringsAsFactors = FALSE);",
+  "wave2 <- data.frame(id = 4:5, age = c('45', 'n/a'), RACE = c('A', 'B'), stringsAsFactors = FALSE);",
+  "sideview(wave1, wave2, run = FALSE) })")
+
+# Real mouse click on the centre of the first element matching `sel`.
+sv_stk_click <- function(b, sel) {
+  q <- as.character(jsonlite::toJSON(sel, auto_unbox = TRUE))
+  ok <- sv_wait_js(b, sprintf("(() => { const x = document.querySelector(%s); if (!x || x.disabled) return false;
+    x.scrollIntoView({block: 'center'}); const r = x.getBoundingClientRect();
+    const h = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return !!h && (h === x || x.contains(h) || (!!h.closest('label') && h.closest('label').contains(x))); })()", q), timeout = 30)
+  testthat::expect_true(ok, info = sel)
+  pt <- sv_js(b, sprintf("(() => { const r = document.querySelector(%s).getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()", q))
+  for (type in c("mousePressed", "mouseReleased")) {
+    b$Input$dispatchMouseEvent(type = type, x = pt$x, y = pt$y, button = "left", clickCount = 1)
+  }
+}
+
+sv_stk_open_tab <- function(b) {
+  sv_js(b, "document.querySelector('.sideview-drawer').classList.remove('collapsed'); true")
+  # the drawer fades in over 200 ms: a click in that time can miss
+  testthat::expect_true(sv_wait_js(b, "getComputedStyle(document.querySelector('.sideview-drawer')).opacity === '1' && document.querySelector('.sideview-drawer').getAnimations().length === 0", timeout = 30))
+  sv_stk_click(b, ".sideview-drawer-tab[data-tab=stack]")
+  testthat::expect_true(sv_wait_js(b, "!!document.querySelector('[data-pane=stack] [data-stack-pick]')", timeout = 30))
+}
+
+sv_stk_pick_check <- function(b) {
+  sv_stk_click(b, "[data-stack-pick=wave2]")
+  sv_stk_click(b, "[data-stack-pick=wave1]")
+  sv_stk_click(b, "[data-stack-action=check]")
+  testthat::expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-stack-table')", timeout = 60))
+}

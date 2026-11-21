@@ -117,13 +117,14 @@
 
   var BUILDERS = [
     ['filter', 'Filter'], ['arrange', 'Arrange'], ['mutate', 'Mutate'],
-    ['recode', 'Recode'], ['summarise', 'Summarise']
+    ['recode', 'Recode'], ['summarise', 'Summarise'], ['stack', 'Stack']
   ];
 
   /** One wrapper per builder, each with an h3 the builder's pane is moved under. */
   ListView.prototype.buildTransform = function (body) {
     var self = this;
     BUILDERS.forEach(function (b) {
+      if (b[0] === 'stack' && !self.engine.hasR()) return;
       var wrap = el('div', 'sideview-lv-builder');
       wrap.setAttribute('data-sv-lv-builder', b[0]);
       var h = el('h3', 'sideview-lv-subheading', b[1]);
