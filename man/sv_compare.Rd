@@ -11,7 +11,8 @@ sv_compare(old, new, by = NULL)
 their expressions, as \code{\link[=sideview]{sideview()}} names them.}
 
 \item{by}{Names of the key columns, the same in both versions (1 to 20). \code{NULL} suggests a
-key from the columns the two versions share.}
+key: the first shared column (same name, similar values) with no repeated value in either version, else
+the shared columns together when their combinations are unique, else an error asks for the key.}
 }
 \value{
 An object of class \code{sv_compare}: \code{old_name}, \code{new_name}, \code{by}, the row counts \code{n_old},

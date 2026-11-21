@@ -226,6 +226,17 @@ test_that("key suggestion", {
   expect_equal(sv_compare_key(a, b), "id")
   expect_equal(sv_compare_key(a, data.frame(zz = 1:3)), character(0))
   expect_equal(sv_compare(a, b)$by, "id")
+  # a repeated shared column is not a key: the unique id is
+  r1 <- data.frame(id = 1:30, sev = rep(c("MILD", "SEVERE"), 15), n = 1:30)
+  r2 <- r1; r2$sev[1] <- "X"
+  expect_equal(sv_compare_key(r1, r2), "id")
+  # no single column is unique, a two-column combination is
+  c1 <- data.frame(g = rep(1:10, each = 3), h = rep(1:3, 10), v = rep(c("a", "b"), 15))
+  c2 <- c1; names(c2)[3] <- "w"
+  expect_equal(sv_compare_key(c1, c2), c("g", "h"))
+  # nothing is unique
+  d1 <- data.frame(g = rep(1:10, each = 3), h = rep(1:3, 10))[rep(1:30, 2), ]
+  expect_equal(sv_compare_key(d1, d1), character(0))
 })
 
 test_that("text and labels", {

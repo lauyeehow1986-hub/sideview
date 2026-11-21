@@ -37,7 +37,13 @@ sv_compare_key <- function(old, new, old_tag = NULL, new_tag = NULL) {
     error = function(e) NULL)
   if (is.null(m) || !nrow(m)) return(character(0))
   same <- unique(m$from_col[m$from_col == m$to_col])
-  shared[shared %in% same]
+  cand <- shared[shared %in% same]
+  cand <- cand[!vapply(cand, function(cn) sv_stack_is_list(old[[cn]]) || sv_stack_is_list(new[[cn]]), NA)]
+  # a key must identify rows: the first candidate with no repeated value in either version (NA is a value),
+  # else all candidates together if their combinations are unique in both, else none
+  for (cn in cand) if (!anyDuplicated(old[[cn]]) && !anyDuplicated(new[[cn]])) return(cn)
+  if (length(cand) && !anyDuplicated(old[cand]) && !anyDuplicated(new[cand])) return(cand)
+  character(0)
 }
 
 # The plan of a compare (decision 5): a plain list. `old` and `new` are data frames (the lazy branch is added
@@ -194,7 +200,8 @@ sv_compare_finish <- function(summary, old_name, new_name) {
 #' @param old,new Data frames: the earlier and the later version. Unnamed tables are named by
 #'   their expressions, as [sideview()] names them.
 #' @param by Names of the key columns, the same in both versions (1 to 20). `NULL` suggests a
-#'   key from the columns the two versions share.
+#'   key: the first shared column (same name, similar values) with no repeated value in either version, else
+#'   the shared columns together when their combinations are unique, else an error asks for the key.
 #' @return An object of class `sv_compare`: `old_name`, `new_name`, `by`, the row counts `n_old`,
 #'   `n_new`, `n_added`, `n_removed`, `n_changed`, `same`, the repeated-key counts, `per_column` (changed
 #'   rows per compared column), `text` (summary lines) and `open` (button labels), plus the data
