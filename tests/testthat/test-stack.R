@@ -369,3 +369,31 @@ test_that("a stack plan is JSON that keeps the labels and the zones", {
   expect_equal(names(j$kept_labels), "A")
   expect_equal(names(j$tz)[1], "E")
 })
+
+test_that("a check made before the tables changed is refused", {
+  wave1 <- data.frame(AGE = c(34, 51), SEX = c("F", "M"))
+  wave2 <- data.frame(Age = c("29", "40"), SEX = c("M", "M"))
+  chk <- sv_stack_check(wave1, wave2, rename = c(Age = "AGE"))
+  expect_equal(nrow(sv_stack(wave1, wave2, check = chk)), 4L)
+  msg <- "was made for other data"
+  wave1b <- wave1
+  wave1b$AGE <- as.character(wave1b$AGE)
+  expect_error(local({ wave1 <- wave1b; sv_stack(wave1, wave2, check = chk) }), msg)
+  expect_error(local({ wave1 <- rbind(wave1, wave1); sv_stack(wave1, wave2, check = chk) }), msg)
+  expect_error(local({ wave2$X <- 1; sv_stack(wave1, wave2, check = chk) }), msg)
+  expect_error(local({ names(wave2)[1] <- "age"; sv_stack(wave1, wave2, check = chk) }), msg)
+})
+
+test_that("R and JS quote awkward names and strings the same way", {
+  nms <- c("été", "a\\b", "a`b", "ok_1", ".x", ".1x", "if", "a b")
+  txt <- c("a\001b", "bell\a", "bs\b", "ff\f", "vt\v", "del\x7f", "esc\x1b", "c1\u0085", "tab\t", "q\"\\")
+  js <- run_pipeline_js(sprintf("out = {i: %s.map(P.ident), s: %s.map(P.str)};",
+                                dc_json_stack(as.list(nms)), dc_json_stack(as.list(txt))))
+  expect_equal(unlist(js$i), sv_escape_ident(nms))
+  expect_equal(unlist(js$s), unname(encodeString(txt, quote = "\"")))
+  # and each name reads back as itself
+  q <- sv_escape_ident(nms)
+  for (i in which(nms != "if")) {
+    expect_identical(as.character(parse(text = q[i], keep.source = FALSE)[[1]]), nms[i])
+  }
+})

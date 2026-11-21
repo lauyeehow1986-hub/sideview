@@ -25,9 +25,17 @@ and a \code{Status}), \code{text} (summary lines) and \code{code}.
 Compares the columns of 2 to 8 tables and reports, column by column, what stacking them one
 under another would change: types that differ (and the type they would be cast to), values that
 become \code{NA} in a cast, labels that differ, columns missing from some tables, and near-miss names
-that differ only in case (these are never merged unless you ask with \code{rename}). Nothing is
-rounded or truncated silently: a cast converts a value exactly or gives \code{NA}, and the \code{NA} count
-says how many.
+that differ only in case (these are never merged unless you ask with \code{rename}). A value a cast
+cannot convert becomes \code{NA}, and the \code{NA} count says how many. Some casts change values without
+an \code{NA}: a date-time cast to text drops fractional seconds, a number cast to text keeps 15
+significant digits, and an \code{integer64} column that is cast is read as a double first (digits
+beyond 2^53 are lost). A date-time cast to a date is its UTC date; a date cast to a date-time is
+midnight UTC, shown in the zone the stack keeps.
+}
+\details{
+With a duckdb or Arrow table the check needs duckdb, and runs there: duckdb reads two names
+that differ only in case as one, so such a pair must be merged with \code{rename} (the check says
+so, and \code{\link[=sv_stack]{sv_stack()}} refuses it). duckdb tables carry no labels; Arrow tables do.
 }
 \examples{
 wave1 <- data.frame(AGE = c(34, 51), SEX = c("F", "M"))

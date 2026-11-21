@@ -37,7 +37,15 @@
       .replace(/"/g, '\\"')
       .replace(/\n/g, '\\n')
       .replace(/\r/g, '\\r')
-      .replace(/\t/g, '\\t') + '"';
+      .replace(/\t/g, '\\t')
+      // the other control characters as R's encodeString() writes them: \a \b \f \v, octal, and \u00xx for C1
+      .replace(/[\x00-\x1f\x7f-\x9f]/g, function (c) {
+        var k = c.charCodeAt(0);
+        var named = { 7: '\\a', 8: '\\b', 11: '\\v', 12: '\\f' }[k];
+        if (named) return named;
+        if (k < 0x80) return '\\' + ('00' + k.toString(8)).slice(-3);
+        return '\\u' + ('000' + k.toString(16)).slice(-4);
+      }) + '"';
   }
 
   function isNumberText(v) {

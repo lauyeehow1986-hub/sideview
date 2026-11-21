@@ -7,20 +7,25 @@
 sv_stack(..., check = NULL)
 }
 \arguments{
-\item{...}{Two or more data frames, named or not (an unnamed table is named by its expression).}
+\item{...}{Two or more data frames, duckdb tables or Arrow tables, named or not (an unnamed
+table is named by its expression).}
 
 \item{check}{A \code{\link[=sv_stack_check]{sv_stack_check()}} made for the same tables, holding the fixes (casts and renames)
-to apply. When \code{NULL}, the check is made with no fixes.}
+to apply. When \code{NULL}, the check is made with no fixes. A check made for other tables is
+refused, and so is one made before a data frame's columns, types or row count changed (a duckdb
+or Arrow table is not read again for this: only its name is compared).}
 }
 \value{
-A data frame with exactly the sum of the inputs' rows.
+A data frame with exactly the sum of the inputs' rows; a lazy duckdb table (never
+collected) when an input is a duckdb or Arrow table.
 }
 \description{
 Puts 2 to 8 tables one under another, with \code{bind_rows()} and the type decisions of
 \code{\link[=sv_stack_check]{sv_stack_check()}}: a column whose type differs is cast to the type the check shows (or the one
-you chose), a value that cannot be cast becomes \code{NA}, and nothing is rounded silently. A column
-\code{source} (or \code{source_2}, ... when taken) holds each row's table name. Columns appear in order of
-first appearance; labels are kept (the first table's label for a column, else the first label met).
+you chose), and a value that cannot be cast becomes \code{NA} (see \code{\link[=sv_stack_check]{sv_stack_check()}} for the casts
+that change a value without an \code{NA}). A column \code{source} (or \code{source_2}, ... when taken) holds
+each row's table name. Columns appear in order of first appearance; labels are kept (the first
+table's label for a column, else the first label met).
 }
 \examples{
 wave1 <- data.frame(AGE = c(34, 51), SEX = c("F", "M"))

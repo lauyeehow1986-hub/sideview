@@ -11,11 +11,14 @@ sv_escape_ident <- function(x) {
     reserved <- c("if", "else", "repeat", "while", "function", "for", "in", 
                   "next", "break", "TRUE", "FALSE", "NULL", "Inf", "NaN", 
                   "NA", "NA_integer_", "NA_real_", "NA_complex_", "NA_character_")
-    is_syntactic <- (make.names(name) == name) && !(name %in% reserved)
+    # ASCII letters only, whatever the locale (make.names() takes "été" in a UTF-8 locale): the twin of
+    # isSyntactic() in sv-pipeline.js, so R and the browser write the same code
+    is_syntactic <- (grepl("^([A-Za-z]|[.](?![0-9]))[A-Za-z0-9._]*$", name, perl = TRUE) || name == ".") &&
+      !(name %in% reserved)
     if (is_syntactic) {
       name
     } else {
-      escaped <- gsub("`", "\\\\`", name)
+      escaped <- gsub("`", "\\`", gsub("\\", "\\\\", name, fixed = TRUE), fixed = TRUE)
       sprintf("`%s`", escaped)
     }
   }, FUN.VALUE = character(1), USE.NAMES = FALSE)

@@ -256,9 +256,16 @@ sv_stack_plan_core <- function(tables, inputs, fixes, id_col, na_fun, n_rows_fun
 #' Compares the columns of 2 to 8 tables and reports, column by column, what stacking them one
 #' under another would change: types that differ (and the type they would be cast to), values that
 #' become `NA` in a cast, labels that differ, columns missing from some tables, and near-miss names
-#' that differ only in case (these are never merged unless you ask with `rename`). Nothing is
-#' rounded or truncated silently: a cast converts a value exactly or gives `NA`, and the `NA` count
-#' says how many.
+#' that differ only in case (these are never merged unless you ask with `rename`). A value a cast
+#' cannot convert becomes `NA`, and the `NA` count says how many. Some casts change values without
+#' an `NA`: a date-time cast to text drops fractional seconds, a number cast to text keeps 15
+#' significant digits, and an `integer64` column that is cast is read as a double first (digits
+#' beyond 2^53 are lost). A date-time cast to a date is its UTC date; a date cast to a date-time is
+#' midnight UTC, shown in the zone the stack keeps.
+#'
+#' With a duckdb or Arrow table the check needs duckdb, and runs there: duckdb reads two names
+#' that differ only in case as one, so such a pair must be merged with `rename` (the check says
+#' so, and [sv_stack()] refuses it). duckdb tables carry no labels; Arrow tables do.
 #'
 #' @param ... Two or more data frames. Unnamed tables are named by their expressions, as
 #'   [sideview()] names them.
@@ -470,18 +477,40 @@ sv_stack_code_lazy <- function(plan, refs, kinds) {
   list(code = code, kind = "duckdb")
 }
 
+# TRUE when a data-frame input no longer has the columns (names and types) the check saw, or when the
+# inputs are all data frames and their row count is not the check's. Lazy inputs are not read (that would
+# be a query each): only their table names are compared, by the caller.
+sv_stack_check_stale <- function(tables, check) {
+  for (i in seq_along(tables)) {
+    t <- tables[[i]]
+    if (!is.data.frame(t)) next
+    had <- Filter(function(col) !is.na(col$types[i]), check$columns)
+    want <- stats::setNames(vapply(had, function(col) col$types[i], ""),
+                            vapply(had, function(col) if (is.na(col$rename_from[i])) col$name else col$rename_from[i], ""))
+    now <- vapply(t, sv_stack_tname, "")
+    if (!setequal(names(now), names(want)) || !identical(unname(now[names(want)]), unname(want))) return(TRUE)
+  }
+  all_df <- all(vapply(tables, is.data.frame, NA))
+  all_df && !is.na(check$n_rows %||% NA) && sum(vapply(tables, nrow, 1L)) != check$n_rows
+}
+
 #' Stack tables
 #'
 #' Puts 2 to 8 tables one under another, with `bind_rows()` and the type decisions of
 #' [sv_stack_check()]: a column whose type differs is cast to the type the check shows (or the one
-#' you chose), a value that cannot be cast becomes `NA`, and nothing is rounded silently. A column
-#' `source` (or `source_2`, ... when taken) holds each row's table name. Columns appear in order of
-#' first appearance; labels are kept (the first table's label for a column, else the first label met).
+#' you chose), and a value that cannot be cast becomes `NA` (see [sv_stack_check()] for the casts
+#' that change a value without an `NA`). A column `source` (or `source_2`, ... when taken) holds
+#' each row's table name. Columns appear in order of first appearance; labels are kept (the first
+#' table's label for a column, else the first label met).
 #'
-#' @param ... Two or more data frames, named or not (an unnamed table is named by its expression).
+#' @param ... Two or more data frames, duckdb tables or Arrow tables, named or not (an unnamed
+#'   table is named by its expression).
 #' @param check A [sv_stack_check()] made for the same tables, holding the fixes (casts and renames)
-#'   to apply. When `NULL`, the check is made with no fixes.
-#' @return A data frame with exactly the sum of the inputs' rows.
+#'   to apply. When `NULL`, the check is made with no fixes. A check made for other tables is
+#'   refused, and so is one made before a data frame's columns, types or row count changed (a duckdb
+#'   or Arrow table is not read again for this: only its name is compared).
+#' @return A data frame with exactly the sum of the inputs' rows; a lazy duckdb table (never
+#'   collected) when an input is a duckdb or Arrow table.
 #' @export
 #' @examples
 #' wave1 <- data.frame(AGE = c(34, 51), SEX = c("F", "M"))
@@ -496,6 +525,9 @@ sv_stack <- function(..., check = NULL) {
   }
   if (!all(vapply(tables, function(t) is.data.frame(t) || sv_is_lazy_input(t), NA))) {
     stop("Every table must be a data frame, a duckdb table or an Arrow table.", call. = FALSE)
+  }
+  if (sv_stack_check_stale(tables, check)) {
+    stop("`check` was made for other data: the tables have changed since. Run sv_stack_check() again.", call. = FALSE)
   }
   # a duckdb or Arrow input gives a lazy table: one union_all on a duckdb connection, never collected
   if (any(vapply(tables, sv_is_lazy_input, NA))) return(sv_lazy_stack(tables, check, sv_lazy_env()))
