@@ -335,6 +335,19 @@ test_that("stack requests are cleaned", {
   expect_match(sv_derive_validate(req("wave1"), store), "A stack needs")
 })
 
+test_that("without duckdb a whole lazy card is never stacked from its preview", {
+  store <- stack_store()
+  testthat::local_mocked_bindings(sv_has_duckdb = function() FALSE)
+  whole <- function(cd) identical(cd$name, "wave1")
+  expect_error(sv_stack_clean(c("wave1", "wave2"), list(), store, card_full = whole),
+               "Stacking a duckdb or Arrow table needs duckdb.", fixed = TRUE)
+  expect_match(sv_derive_validate(list(op = "stack", inputs = list("wave1", "wave2")), store, card_full = whole),
+               "needs duckdb", fixed = TRUE)
+  # in-memory cards stack as before
+  expect_equal(sv_stack_clean(c("wave1", "wave2"), list(), store, card_full = function(cd) FALSE)$inputs,
+               c("wave1", "wave2"))
+})
+
 test_that("stack_check_request replies with the columns, counts, text and code; a fix changes the plan; Open adds the card", {
   cards <- stack_store()$names()
   cards <- sv_normalize_cards(list(
@@ -368,6 +381,11 @@ test_that("stack_check_request replies with the columns, counts, text and code; 
     # a refused request is an error reply
     session$setInputs(stack_check_request = list(id = "k3", tables = list("wave1", "nope")))
     expect_match(last("sideview_stack_check")$error, "Not in the canvas")
+    # an id R cannot echo is not dropped silently: no reply (none could reach the pane), a toast that says why
+    n_before <- length(Filter(function(z) identical(z$type, "sideview_stack_check"), session$userData$custom_messages))
+    session$setInputs(stack_check_request = list(id = strrep("x", 201), tables = list("wave1", "wave2")))
+    expect_length(Filter(function(z) identical(z$type, "sideview_stack_check"), session$userData$custom_messages), n_before)
+    expect_match(last("sideview_toast")$text, "request id is missing or longer than 200", fixed = TRUE)
     # Open: the same fixes, through derive_request
     session$setInputs(derive_request = list(id = "d1", op = "stack", inputs = list("wave1", "wave2"),
       args = list(fixes = list(list(column = "AGE", action = "cast", to = "num")))))

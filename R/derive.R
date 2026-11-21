@@ -412,8 +412,14 @@ sv_stack_clean <- function(tables, fixes, store, id_col = NULL, con_env = NULL, 
       if (id_col %in% names(cards[[i]]$data)) stop(sprintf("%s is a column of %s.", id_col, inputs[i]), call. = FALSE)
     }
   }
+  # a whole duckdb or Arrow table is never stacked from its 50-row preview without a word (as sv_derive_rows() says)
+  if (!sv_has_duckdb() && any(vapply(cards, card_full, NA))) {
+    stop("Stacking a duckdb or Arrow table needs duckdb.", call. = FALSE)
+  }
   tabs <- sv_stack_card_tables(cards, inputs, con_env, card_full)
   plan <- sv_stack_plan(tabs, fixes, id_col, con_env)
+  # the browser writes lazy code for a lazy card even when the plan came from its preview (a lost link)
+  if (sv_has_duckdb() && any(vapply(cards, sv_card_is_lazy, NA))) plan <- sv_stack_add_tz_text(plan)
   list(inputs = inputs, cards = cards, fixes = fixes, id_col = id_col, plan = plan)
 }
 
@@ -500,12 +506,19 @@ sv_derive_clean <- function(req, store, con_env = NULL, card_full = sv_card_is_l
 
 # NULL when the request is fine, else the message of the first problem (decision 2 and 3 included).
 # The one validation path: the card builder runs the same sv_derive_clean().
-sv_derive_validate <- function(req, store, con_env = NULL) {
+# `card_full` is the server's (a card whose link was lost is read from its preview, as the check was).
+sv_derive_validate <- function(req, store, con_env = NULL, card_full = sv_card_is_lazy) {
+  sv_derive_check(req, store, con_env, card_full)$problem
+}
+
+# The validation and its clean request: `list(problem, clean)`, `problem` NULL when the request is fine. The
+# derive_request handler hands `clean` to sv_derive_card(), so a stack's plan (one query per lazy input) runs once.
+sv_derive_check <- function(req, store, con_env = NULL, card_full = sv_card_is_lazy) {
   tryCatch({
-    clean <- sv_derive_clean(req, store, con_env)
+    clean <- sv_derive_clean(req, store, con_env, card_full)
     if (!is.null(clean$name)) sv_derive_name(clean$op, clean$inputs, clean$args, store$names(), clean$name)
-    NULL
-  }, error = function(e) conditionMessage(e))
+    list(problem = NULL, clean = clean)
+  }, error = function(e) list(problem = conditionMessage(e), clean = NULL))
 }
 
 # The RDOMAIN and the tables a SUPP check runs on, for the merge check and the derived SUPP cards alike (so
@@ -534,8 +547,9 @@ sv_supp_inputs <- function(cp, cs, hint, card_full, con_env) {
 # the preview rows (the same basis the check's counts, and so the offer, were computed on).
 # `cdisc = FALSE` leaves the card untagged.
 sv_derive_card <- function(req, store, con_env, lazy_or_preview = NULL, card_full = sv_card_is_lazy,
-                           cdisc = "auto") {
-  clean <- sv_derive_clean(req, store, con_env, card_full)
+                           cdisc = "auto", clean = NULL) {
+  # `clean`: the request as sv_derive_check() cleaned it, on this store, a moment ago (else it is cleaned here)
+  if (is.null(clean)) clean <- sv_derive_clean(req, store, con_env, card_full)
   op <- clean$op
   inputs <- clean$inputs
   args <- clean$args
@@ -675,6 +689,24 @@ sv_derive_preview_builder <- function(cdisc = "auto") {
 sv_derive_rebuild <- function(card, store, build) {
   others <- unname(Filter(function(cd) !identical(cd$name, card$name), store$all()))
   build(sv_derive_request_of(card), sv_card_store(others))
+}
+
+# A state whose stack steps carry the plans of the cards built from it. The data may have changed since the state
+# was saved and the browser writes a stack's code from its step's plan, so the step takes the plan R just made.
+# Only stack steps: a SUPP or join step keeps its saved args (its card refits when R replaces it).
+sv_derive_state_refresh <- function(state, cards) {
+  steps <- if (is.list(state)) sv_field(sv_field(state, "pipeline"), "steps") else NULL
+  if (!is.list(steps) || !length(steps)) return(state)
+  made <- list()
+  for (cd in cards) if (identical(cd$derived$op, "stack")) made[[cd$name]] <- cd$derived$args
+  for (k in seq_along(steps)) {
+    st <- steps[[k]]
+    if (!is.list(st) || !identical(sv_field(st, "kind"), "derive") || !identical(sv_field(st, "op"), "stack")) next
+    tbl <- sv_derive_scalar(sv_field(st, "table"), 200L)
+    if (is.null(tbl) || is.null(made[[tbl]])) next
+    state$pipeline$steps[[k]]$args <- made[[tbl]]
+  }
+  state
 }
 
 # `cards` with the derived cards of a saved state appended. The state's pipeline holds the derive steps

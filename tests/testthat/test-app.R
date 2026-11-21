@@ -942,6 +942,29 @@ test_that("a failed join falls back to the preview with one toast per card", {
   })
 })
 
+test_that("a stack opens from the previews after a lost link, with one toast per card", {
+  fx <- lazy_server_fixture()
+  shiny::testServer(sideview_server(list(fx$v, fx$w)), {
+    DBI::dbDisconnect(fx$con, shutdown = TRUE)
+    # Open with no Check first: the derive request finds the lost link itself, and is not refused for it
+    session$setInputs(derive_request = list(id = "d1", op = "stack", inputs = list("v", "w"), args = list()))
+    expect_length(msgs_of(session, "sideview_derive_result"), 0)
+    add <- msgs_of(session, "sideview_card_add")
+    expect_length(add, 1)
+    expect_identical(add[[1]]$message$request_id, "d1")
+    expect_equal(add[[1]]$message$card$totalRows, 100)
+    t <- msgs_of(session, "sideview_toast")
+    expect_length(t, 2)
+    expect_true(all(grepl("^Lost the link to [vw]; showing the first 50 rows[.]$", vapply(t, function(m) m$message$text, ""))))
+    # the check after it answers from the previews too, with no new toast
+    session$setInputs(stack_check_request = list(id = "k1", tables = list("v", "w")))
+    r <- msgs_of(session, "sideview_stack_check")
+    expect_null(r[[1]]$message$error)
+    expect_equal(r[[1]]$message$n_rows, 100)
+    expect_length(msgs_of(session, "sideview_toast"), 2)
+  })
+})
+
 test_that("a request-specific error is not a lost link", {
   fx <- lazy_server_fixture()
   shiny::testServer(sideview_server(list(fx$v)), {

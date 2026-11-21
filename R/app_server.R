@@ -394,6 +394,11 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     req <- input$stack_check_request
     if (!is.list(req)) return()
     rid <- sv_derive_scalar(sv_field(req, "id"), 200L)
+    # without its id no reply can reach the pane, which would wait on "Checking" for ever: say so instead
+    if (is.null(rid)) {
+      send_toast("The stack check was refused: its request id is missing or longer than 200 characters.", "warning")
+      return()
+    }
     result <- tryCatch({
       tabs <- sv_field(req, "tables")
       if (is.list(tabs)) tabs <- unlist(tabs, use.names = FALSE)
@@ -900,11 +905,23 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     if (!is.list(req)) return()
     rid <- sv_derive_scalar(sv_field(req, "id"), 200L)
     fail <- function(msg) dispatch_message("sideview_derive_result", list(id = rid, error = msg))
-    problem <- sv_derive_validate(req, card_store, con_env)
-    if (!is.null(problem)) return(fail(problem))
+    # card_full as the stack check has it: a card whose link was lost is read from its preview, not refused
+    # (a link lost since the check is found here, marked and told once, and the request is checked on the preview)
+    check_once <- function() sv_derive_check(req, card_store, con_env, card_full)
+    ins <- sv_field(req, "inputs")
+    ins <- if (is.list(ins) || is.character(ins)) unlist(ins, use.names = FALSE) else character()
+    ins <- Filter(Negate(is.null), lapply(unique(as.character(ins)), function(nm) {
+      if (is.character(nm) && !is.na(nm) && card_store$has(nm)) card_store$get(nm)
+    }))
+    chk <- tryCatch(lazy_or_preview(ins, function() {
+      r <- check_once()
+      if (!is.null(r$problem)) stop(r$problem, call. = FALSE)
+      r
+    }, check_once), error = function(e) list(problem = conditionMessage(e), clean = NULL))
+    if (!is.null(chk$problem)) return(fail(chk$problem))
     prep <- tryCatch({
       card <- sv_derive_card(req, card_store, con_env, lazy_or_preview = lazy_or_preview,
-                             card_full = card_full, cdisc = cdisc)
+                             card_full = card_full, cdisc = cdisc, clean = chk$clean)
       # the payload first: if it cannot be built, nothing has been added
       list(card = card, payload = sv_card_payload(card, if (isTRUE(module)) sv_preview_rows else NULL))
     }, error = function(e) {

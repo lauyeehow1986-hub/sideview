@@ -1200,3 +1200,30 @@ test_that("forged stack requests are refused", {
     expect_identical(px$ctl$store$names(), before)
   })
 })
+
+test_that("a restored stack step takes the plan R makes from the current data", {
+  w1 <- data.frame(AGE = c(34, 51), RACE = c("a", "b"), stringsAsFactors = FALSE)
+  w2 <- data.frame(AGE = c("29", "x", "40"), RACE = c("c", "d", "e"), stringsAsFactors = FALSE)
+  # a plan saved when the data were other: 999 rows
+  stale <- list(kind = "derive", key = "s1", table = "wave1_stacked", op = "stack", inputs = list("wave1", "wave2"),
+                args = list(fixes = list(), plan = list(inputs = list("wave1", "wave2"), n_rows = 999, columns = list())))
+  shiny::testServer(sideviewServer, args = list(id = "cv", cards = list(wave1 = w1, wave2 = w2)), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    sv_set_state(px, dv_state(list(stale)))
+    expect_true(px$ctl$store$has("wave1_stacked"))
+    sent <- msgs(session, "sideview_state_set")
+    st <- jsonlite::fromJSON(sent[[length(sent)]]$message$state, simplifyVector = FALSE)
+    plan <- st$pipeline$steps[[1]]$args$plan
+    expect_equal(plan$n_rows, 5)
+    expect_identical(unlist(plan$inputs), c("wave1", "wave2"))
+    expect_true(length(plan$columns) >= 2L)
+  })
+  # the gadget: the state embedded in the page is refreshed the same way
+  app <- sideview(wave1 = w1, wave2 = w2, state = dv_state(list(stale)), run = FALSE)
+  st2 <- sv_derive_state_refresh(dv_state(list(stale)), app$cards)
+  expect_equal(st2$pipeline$steps[[1]]$args$plan$n_rows, 5)
+  # a SUPP or join step is left as saved
+  other <- sv_derive_state_refresh(dv_state(list(dv_step1)), app$cards)
+  expect_identical(other$pipeline$steps[[1]]$args$side, "x")
+})
