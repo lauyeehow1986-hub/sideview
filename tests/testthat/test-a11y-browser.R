@@ -1636,5 +1636,9 @@ test_that("Stack tab passes axe, every control is named and the open is announce
   expect_true(named)
   sv_stk_click(b, "[data-stack-action=open]")
   expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-card[data-card-name=wave2_stacked]')", timeout = 60))
-  expect_true(sv_wait_js(b, "document.querySelector('.sideview-container')._sideviewInstance.announceLog.some(t => /^Table wave2_stacked added, 5 rows\\.$/.test(t))", timeout = 30))
+  want <- sprintf("Table wave2_stacked added, %d rows.", sv_stk_total_rows())
+  want_js <- as.character(jsonlite::toJSON(want, auto_unbox = TRUE))
+  expect_true(sv_wait_js(b, sprintf("document.querySelector('.sideview-container')._sideviewInstance.announceLog.indexOf(%s) >= 0", want_js), timeout = 30))
+  # and it reaches the live region itself
+  expect_true(sv_wait_js(b, sprintf("document.querySelector('.sideview-announcer').textContent === %s", want_js), timeout = 30))
 })

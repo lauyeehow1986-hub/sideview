@@ -168,10 +168,13 @@ sv_example_app <- function(name = "proxy") {
 
 # ---- the Stack drawer tab (D2): shared by the layout and a11y browser tests ----
 
+sv_stk_wave1 <- "data.frame(id = 1:3, age = c(34, 51, 62), Race = c('A', 'B', 'C'), stringsAsFactors = FALSE)"
+sv_stk_wave2 <- "data.frame(id = 4:5, age = c('45', 'n/a'), RACE = c('A', 'B'), stringsAsFactors = FALSE)"
 sv_stk_app <- paste0(
-  "local({ wave1 <- data.frame(id = 1:3, age = c(34, 51, 62), Race = c('A', 'B', 'C'), stringsAsFactors = FALSE);",
-  "wave2 <- data.frame(id = 4:5, age = c('45', 'n/a'), RACE = c('A', 'B'), stringsAsFactors = FALSE);",
+  "local({ wave1 <- ", sv_stk_wave1, "; wave2 <- ", sv_stk_wave2, ";",
   "sideview(wave1, wave2, run = FALSE) })")
+# Rows of the stack of both fixtures: the sum the new card's badge must show.
+sv_stk_total_rows <- function() nrow(eval(parse(text = sv_stk_wave1))) + nrow(eval(parse(text = sv_stk_wave2)))
 
 # Real mouse click on the centre of the first element matching `sel`.
 sv_stk_click <- function(b, sel) {

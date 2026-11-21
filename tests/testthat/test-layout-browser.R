@@ -3305,8 +3305,10 @@ test_that("Stack tab: pick, check, open", {
   expect_false(sv_js(b, "document.querySelector('[data-stack-rename]').checked"))
   before <- paste(unlist(sv_js(b, "[...document.querySelectorAll('.sideview-stack-text li')].map(x => x.textContent)")), collapse = " | ")
   # change the type of age to num: the check is asked again and the NA count text changes
-  sv_js(b, "(() => { const s = document.querySelector('select[data-stack-cast=age]'); s.value = 'num'; s.dispatchEvent(new Event('change', {bubbles: true})); return true; })()")
+  sv_js(b, "(() => { const s = document.querySelector('select[data-stack-cast=age]'); s.focus(); s.value = 'num'; s.dispatchEvent(new Event('change', {bubbles: true})); return true; })()")
   expect_true(sv_wait_js(b, "(() => { const s = document.querySelector('select[data-stack-cast=age]'); return !!s && s.value === 'num' && /NA/.test([...document.querySelectorAll('.sideview-stack-text li')].map(x => x.textContent).join(' ')); })()", timeout = 60))
+  # the reply re-draws the table, and focus stays on the select that was changed
+  expect_true(sv_wait_js(b, "(() => { const s = document.querySelector('select[data-stack-cast=age]'); return document.activeElement === s; })()", timeout = 15))
   after <- paste(unlist(sv_js(b, "[...document.querySelectorAll('.sideview-stack-text li')].map(x => x.textContent)")), collapse = " | ")
   expect_false(identical(before, after))
   # Open: the card is new, clear of the others, and has the sum of the rows
@@ -3314,7 +3316,11 @@ test_that("Stack tab: pick, check, open", {
   sv_stk_click(b, "[data-stack-action=open]")
   expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-card[data-card-name=wave2_stacked]')", timeout = 60))
   expect_equal(sv_js(b, "document.querySelectorAll('.sideview-card').length"), n0 + 1)
-  expect_equal(sv_js(b, "document.querySelector('.sideview-card[data-card-name=wave2_stacked]').querySelectorAll('tbody tr[data-row-index]').length"), 5)
+  # the badge shows the sum of both inputs' rows (computed from the fixtures)
+  badge <- sv_js(b, "document.querySelector('.sideview-card[data-card-name=wave2_stacked] .sideview-badge-dims').textContent")
+  expect_equal(as.integer(sub("[^0-9].*$", "", badge)), sv_stk_total_rows())
+  # focus is back on Open once the pane has re-rendered for the new card
+  expect_true(sv_wait_js(b, "(() => { const a = document.activeElement; return !!a && a.getAttribute('data-stack-action') === 'open'; })()", timeout = 15))
   overlap <- sv_js(b, "(() => { const r = [...document.querySelectorAll('.sideview-card')].map(c => c.getBoundingClientRect()); let n = 0;
     for (let i = 0; i < r.length; i++) for (let j = i + 1; j < r.length; j++) {
       const a = r[i], c = r[j]; if (a.left < c.right - 0.5 && c.left < a.right - 0.5 && a.top < c.bottom - 0.5 && c.top < a.bottom - 0.5) n++; }

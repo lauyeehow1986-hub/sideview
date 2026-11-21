@@ -7448,7 +7448,29 @@ function sendToShiny(name, value) {
       this.stackReset();
     }
     var pane = this.paneNode('stack');
-    if (pane && pane.querySelector('.sideview-stack') && this.stackStale(pane)) this.renderStackBuilder(pane);
+    if (pane && pane.querySelector('.sideview-stack') && this.stackStale(pane)) {
+      var key = this.stackFocusKey(pane);
+      this.renderStackBuilder(pane);
+      this.stackRestoreFocus(pane, key);
+    }
+  };
+
+  /** The data-stack-key of the focused control inside the Stack pane, else null (focus is elsewhere). */
+  SideviewEngine.prototype.stackFocusKey = function (pane) {
+    var a = document.activeElement;
+    if (!pane || !a || !pane.contains(a) || !a.getAttribute) return null;
+    return a.getAttribute('data-stack-key') || (a.hasAttribute('data-stack-pick') ? 'pick:' + a.getAttribute('data-stack-pick') : null);
+  };
+
+  /** Put focus back after a re-render; falls back to the Check button when the control is gone. */
+  SideviewEngine.prototype.stackRestoreFocus = function (pane, key) {
+    if (!key) return;
+    var els = pane.querySelectorAll('[data-stack-key],[data-stack-pick]');
+    var back = Array.prototype.filter.call(els, function (el) {
+      var k = el.getAttribute('data-stack-key') || 'pick:' + el.getAttribute('data-stack-pick');
+      return k === key;
+    })[0] || pane.querySelector('[data-stack-action="check"]');
+    if (back && !back.disabled) { try { back.focus({ preventScroll: true }); } catch (e) { back.focus(); } }
   };
 
   SideviewEngine.prototype.stackStale = function (pane) {
@@ -7665,8 +7687,9 @@ function sendToShiny(name, value) {
     var box = pane && pane.querySelector('[data-stack-result]');
     if (!box) return;
     var st = this.stackState();
-    var want = this._stackFocus;
-    this._stackFocus = null;
+    var want = this._stackFocus || (box.contains(document.activeElement) ? this.stackFocusKey(pane) : null);
+    // keep the wanted key until the reply has been drawn: the pending render has no controls
+    if (!st.pending) this._stackFocus = null;
     box.innerHTML = this.stackResultHtml();
     var check = pane.querySelector('[data-stack-action="check"]');
     if (check) check.disabled = st.picked.length < 2;
@@ -7674,7 +7697,8 @@ function sendToShiny(name, value) {
       var back = Array.prototype.filter.call(box.querySelectorAll('[data-stack-key]'), function (el) {
         return el.getAttribute('data-stack-key') === want;
       })[0];
-      if (back) { try { back.focus({ preventScroll: true }); } catch (e) { back.focus(); } }
+      if (!back && !st.pending) back = pane.querySelector('[data-stack-action="check"]');
+      if (back && !back.disabled) { try { back.focus({ preventScroll: true }); } catch (e) { back.focus(); } }
     }
   };
 
