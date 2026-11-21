@@ -166,11 +166,17 @@ sv_compare_rows <- function(old, new, plan) {
   per_column <- stats::setNames(vapply(ch, function(v) as.integer(sum(v)), 1L, USE.NAMES = FALSE), nms)
   n_changed <- as.integer(sum(any_ch))
 
-  # keys that repeat in either version, in order of first appearance in old, then new
+  # keys that repeat in either version; the sample is the first 5 in sorted order over the join columns, left to
+  # right (numbers by value, text and factors by C-locale bytes, NA last), as the lazy twin's arrange() in duckdb
   dups <- function(x) dplyr::distinct(dplyr::filter(x[jb], dplyr::n() > 1L, .by = dplyr::all_of(jb)))
   rep_keys <- dplyr::distinct(dplyr::bind_rows(dups(o), dups(n)))
   rows_in <- function(x) nrow(dplyr::semi_join(x, rep_keys, by = jb, na_matches = "na"))
-  sample <- lapply(seq_len(min(5L, nrow(rep_keys))), function(r) {
+  ord_cols <- lapply(jb, function(cn) {
+    v <- rep_keys[[cn]]
+    if (is.factor(v)) as.character(v) else v
+  })
+  ord <- do.call(order, c(unname(ord_cols), list(na.last = TRUE, method = "radix")))
+  sample <- lapply(utils::head(ord, 5L), function(r) {
     stats::setNames(lapply(seq_along(by), function(i) {
       v <- rep_keys[[jb[i]]][r]
       if (is.factor(v)) as.character(v) else v
@@ -296,7 +302,7 @@ sv_compare_code <- function(plan, refs, kinds, op) {
 #' (`NA` matches `NA`) and reported as added (only in `new`), removed (only in `old`),
 #' changed (matched, with a different value in a column) or the same. A key that repeats in
 #' either version leaves all its rows, in both versions, out of every count and table; the
-#' summary reports it as a warning with up to 5 sample keys.
+#' summary reports it as a warning with up to 5 sample keys, the first in sorted order.
 #'
 #' Compared columns are those in both versions with the same type kind, so an integer column
 #' equals a double column of the same values and a factor equals a character column. A column

@@ -2653,7 +2653,14 @@ sv_lazy_compare <- function(old, new, plan, con_env, op = NULL) {
   n_rep <- count(rep_keys)
   sample <- list()
   if (n_rep > 0) {
-    got <- as.data.frame(dplyr::collect(utils::head(dplyr::arrange(rep_keys, !!!rlang::syms(jb)), 5L)),
+    # the first 5 in sorted order, as the in-memory twin: duckdb sorts text by bytes and NULL last; a factor key
+    # (a duckdb ENUM) sorts by its text, not by its level order
+    ord <- lapply(seq_along(jb), function(j) {
+      k <- plan$keys[[j]]
+      s <- rlang::sym(jb[j])
+      if (!isTRUE(k$text) && any(c(k$from_old, k$from_new) %in% "fct")) rlang::expr(as.character(!!s)) else s
+    })
+    got <- as.data.frame(dplyr::collect(utils::head(dplyr::arrange(rep_keys, !!!ord), 5L)),
                          stringsAsFactors = FALSE)
     zones <- attr(placed$tbls$old, "sv_tz", exact = TRUE)
     sample <- lapply(seq_len(nrow(got)), function(r) {

@@ -2572,8 +2572,9 @@ test_that("a near-miss name left apart is refused lazily, and merges", {
 
 # ---- D3: lazy compare (two versions of a duckdb / Arrow table, by key) ----
 # Known deviation (decision 7, D2's): number text can read "1e+05" in R and "100000" in duckdb, so `old` and `new`
-# of a numeric column are compared after as.numeric(). A lazy card has no order: the twins compare rows sorted, and
-# the repeated-key sample as a set.
+# of a numeric column are compared after as.numeric(). A lazy card has no order: the twins compare rows sorted. The
+# repeated-key sample is the first 5 repeated keys in sorted order (numbers by value, text by C-locale bytes, NA
+# last) in both twins, so it is compared in order.
 
 # Rows as plain, comparable values: stk_norm() with every number a double, and the text of a numeric column's
 # changed values read back as a number (so "1e+05" and "100000" agree).
@@ -2591,7 +2592,7 @@ cmp_norm <- function(df, num_cols = character(0)) {
   stk_norm(df)
 }
 
-# The repeated-key sample as a sorted set of plain values
+# The repeated-key sample as plain values, in its order
 cmp_sample <- function(s) {
   if (!length(s)) return(list())
   keys <- vapply(s, function(k) paste(vapply(k, function(v) {
@@ -2600,7 +2601,7 @@ cmp_sample <- function(s) {
     if (is.integer(v)) v <- as.numeric(v)
     if (is.na(v)) "<NA>" else as.character(v)
   }, ""), collapse = "|"), "")
-  sort(keys)
+  unname(keys)
 }
 
 # The lazy compare of `old` and `new` (as `kinds`) against the in-memory compare of the data frames: the plan, every
@@ -2743,6 +2744,37 @@ test_that("lazy keys: NA, repeats and differing kinds", {
   expect_identical(names(ad), names(new))
 })
 
+test_that("the repeated-key sample is the first 5 repeated keys in sorted order", {
+  both <- list(c("duckdb", "duckdb"), c("arrow", "arrow"))
+  # 8 repeated numeric keys, first seen out of order, one of them NA (sorted last); the sample is the 5 smallest
+  old <- data.frame(k = c(9, 9, 3, 3, 7, 7, NA, NA, 5, 5, 2, 2, 4), v = 1:13)
+  new <- data.frame(k = c(8, 8, 1, 1, 4, 6), v = 1:6)
+  mem <- sv_compare_rows(old, new, sv_compare_plan(old, new, "k"))$summary
+  expect_equal(mem$repeated_keys, 8L)
+  expect_identical(cmp_sample(mem$repeated_sample), c("1", "2", "3", "5", "7"))
+  for (kinds in both) cmp_expect_same(old, new, "k", kinds, paste("numeric", paste(kinds, collapse = "/")))
+  # a two-column key: text by C-locale bytes (capitals first), then the number, NA last
+  old <- data.frame(id = c("b", "b", "B", "B", "a", "a", "a", "a", "Z", "Z", "s1", "s1"),
+                    seq = c(2L, 2L, 1L, 1L, NA, NA, 1L, 1L, 3L, 3L, 1L, 1L), v = 1:12)
+  new <- data.frame(id = c("a", "q"), seq = c(1L, 1L), v = c(5L, 0L))
+  mem <- sv_compare_rows(old, new, sv_compare_plan(old, new, c("id", "seq")))$summary
+  expect_identical(cmp_sample(mem$repeated_sample), c("B|1", "Z|3", "a|1", "a|<NA>", "b|2"))
+  for (kinds in both) cmp_expect_same(old, new, c("id", "seq"), kinds, paste("two keys", paste(kinds, collapse = "/")))
+  # keys of differing kinds join on text, so they sort as text ("10" before "2")
+  old <- data.frame(k = c(10L, 10L, 2L, 2L, 3L, 3L, 1L, 1L, 20L, 20L, 5L, 5L), v = 1:12)
+  new <- data.frame(k = c("1", "4"), v = c(1L, 0L))
+  mem <- sv_compare_rows(old, new, sv_compare_plan(old, new, "k"))$summary
+  expect_identical(cmp_sample(mem$repeated_sample), c("1", "10", "2", "20", "3"))
+  for (kinds in both) cmp_expect_same(old, new, "k", kinds, paste("text key", paste(kinds, collapse = "/")))
+  # a factor key sorts by its text, not by its levels
+  lv <- rev(letters[1:6])
+  old <- data.frame(k = factor(c("c", "c", "a", "a", "f", "f", "b", "b", "e", "e", "d", "d"), levels = lv), v = 1:12)
+  new <- data.frame(k = factor(c("a", "b"), levels = lv), v = c(1L, 0L))
+  mem <- sv_compare_rows(old, new, sv_compare_plan(old, new, "k"))$summary
+  expect_identical(cmp_sample(mem$repeated_sample), c("a", "b", "c", "d", "e"))
+  for (kinds in both) cmp_expect_same(old, new, "k", kinds, paste("factor", paste(kinds, collapse = "/")))
+})
+
 test_that("date-times become text in their zone", {
   t1 <- as.POSIXct("2024-01-01 10:00:00", tz = "Asia/Singapore") + c(0, 3600, 7200)
   old <- data.frame(id = 1:3, t = t1)
@@ -2819,7 +2851,7 @@ test_that("lazy compare is never collected", {
   expect_lt(max(sizes, 0L), 100L)
 })
 
-test_that("two duckdb connections are refused", {
+test_that("compare: two duckdb connections are refused", {
   stk_need("duckdb")
   c1 <- DBI::dbConnect(duckdb::duckdb())
   c2 <- DBI::dbConnect(duckdb::duckdb())

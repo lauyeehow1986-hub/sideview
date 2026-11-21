@@ -26,7 +26,7 @@ Compares two cuts of the same table row by row. Rows are matched on the key colu
 (\code{NA} matches \code{NA}) and reported as added (only in \code{new}), removed (only in \code{old}),
 changed (matched, with a different value in a column) or the same. A key that repeats in
 either version leaves all its rows, in both versions, out of every count and table; the
-summary reports it as a warning with up to 5 sample keys.
+summary reports it as a warning with up to 5 sample keys, the first in sorted order.
 }
 \details{
 Compared columns are those in both versions with the same type kind, so an integer column
