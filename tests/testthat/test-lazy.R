@@ -2900,3 +2900,57 @@ test_that("zero-row lazy version", {
   expect_length(r$lazy$compared, 0L)
   expect_equal(r$lazy$per_column, stats::setNames(integer(0), character(0)))
 })
+
+test_that("compare_request answers a lazy card from queries and matches the in-memory reply", {
+  stk_need("duckdb")
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  con <- sv_lazy_con(e)
+  n <- 3000L
+  a <- data.frame(id = seq_len(n), v = as.character(seq_len(n)), x = seq_len(n) / 2)
+  b <- data.frame(id = seq_len(n) + 100L, v = as.character(seq_len(n) + 100L), x = (seq_len(n) + 100L) / 2)
+  b$x[1:10] <- 0
+  DBI::dbWriteTable(con, "ca", a)
+  DBI::dbWriteTable(con, "cb", b)
+  ta <- dplyr::tbl(con, "ca")
+  tb <- dplyr::tbl(con, "cb")
+  reply <- function(app, old, new) {
+    out <- NULL
+    shiny::testServer(app, {
+      session$setInputs(compare_request = list(id = "z1", old = old, new = new, by = list("id")))
+      m <- Filter(function(z) identical(z$type, "sideview_compare"), session$userData$custom_messages)
+      out <<- m[[length(m)]]$message
+    })
+    out
+  }
+  want <- reply(sideview(ca = a, cb = b, run = FALSE), "ca", "cb")
+  expect_null(want$error)
+  sizes <- integer(0)
+  real_collect <- dplyr::collect
+  testthat::local_mocked_bindings(
+    collect = function(x, ...) {
+      out <- real_collect(x, ...)
+      if (is.data.frame(out)) sizes <<- c(sizes, nrow(out))
+      out
+    },
+    .package = "dplyr"
+  )
+  fields <- c("by", "n_old", "n_new", "added", "removed", "changed", "same", "repeated_keys", "per_column",
+              "changed_values", "compared", "text", "open")
+  for (app in list(sideview(ca = ta, cb = tb, run = FALSE),   # both lazy
+                   sideview(ca = a, cb = tb, run = FALSE))) { # a data frame and a lazy card
+    r <- reply(app, "ca", "cb")
+    expect_null(r$error)
+    expect_equal(r[fields], want[fields])
+    expect_length(r$code_preview, 3L)
+    for (cd in r$code_preview) {
+      expect_true(is.character(cd) && length(cd) == 1L)
+      expect_false(inherits(try(parse(text = cd), silent = TRUE), "try-error"))
+    }
+  }
+  # the lazy code is the duckdb form, and no whole table came back (previews and samples only)
+  r <- reply(sideview(ca = ta, cb = tb, run = FALSE), "ca", "cb")
+  expect_match(r$code_preview$added, "duckdb|copy_to|to_duckdb|ca", ignore.case = TRUE)
+  expect_true(length(sizes) > 0L)
+  expect_lt(max(sizes), n)
+})

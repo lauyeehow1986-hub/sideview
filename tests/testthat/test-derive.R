@@ -454,6 +454,22 @@ test_that("compare_request replies with the key, counts, text and code; Open add
   })
 })
 
+test_that("compare_request with no compared column sends per_column as {} and compared as []", {
+  cards <- sv_normalize_cards(list(k1 = data.frame(id = 1:3), k2 = data.frame(id = 2:4)))
+  shiny::testServer(sideview_server(cards), {
+    session$setInputs(compare_request = list(id = "n1", old = "k1", new = "k2", by = list("id")))
+    m <- Filter(function(z) identical(z$type, "sideview_compare"), session$userData$custom_messages)
+    r <- m[[length(m)]]$message
+    expect_null(r$error)
+    expect_equal(c(r$added, r$removed, r$changed, r$same), c(1L, 1L, 0L, 2L))
+    expect_identical(as.character(shiny:::toJSON(r$per_column)), "{}")
+    expect_identical(as.character(shiny:::toJSON(r$compared)), "[]")
+    json <- as.character(shiny:::toJSON(r))
+    expect_match(json, "\"per_column\":{}", fixed = TRUE)
+    expect_match(json, "\"compared\":[]", fixed = TRUE)
+  })
+})
+
 compare_store <- function(tags = NULL) {
   c1 <- data.frame(id = 1:4, sev = c("MILD", "MILD", "SEVERE", "MILD"), stringsAsFactors = FALSE)
   attr(c1$sev, "label") <- "Severity"
