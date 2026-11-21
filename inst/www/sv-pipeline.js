@@ -373,9 +373,15 @@
       case 'recode': return 'recode ' + step.col + ' (' + (step.map || []).length + ' values)';
       case 'summarise': return 'summarise' + ((step.groups || []).length ? ' by ' + step.groups.join(', ') : '');
       case 'custom': return step.label || 'custom code';
-      case 'derive': return step.op === 'stack'
-        ? 'stack of ' + [].concat(step.inputs || []).join(' + ')
-        : 'rows of ' + step.table;
+      case 'derive': {
+        var dins = [].concat(step.inputs || []);
+        if (step.op === 'stack') return 'stack of ' + dins.join(' + ');
+        // a compare's inputs are [old, new]
+        if (step.op === 'compare_added') return 'added rows of ' + dins[1] + ' vs ' + dins[0];
+        if (step.op === 'compare_removed') return 'removed rows of ' + dins[0] + ' vs ' + dins[1];
+        if (step.op === 'compare_changed') return 'changed values of ' + dins[1] + ' vs ' + dins[0];
+        return 'rows of ' + step.table;
+      }
       case 'supp': return 'merge ' + String(step.supp).toUpperCase() + ' (' + (step.qnams || []).length +
         ' QNAMs on ' + (step.idvars || []).map(function (v) {
           return v.idvar === '' ? 'subject' : v.idvar;
@@ -1043,6 +1049,11 @@
       return sres.code ? sres : { code: '', kind: null };
     }
     if (ins.length !== 2) return { code: '', kind: null };
+    if (COMPARE_OPS[op]) {
+      if (!args.plan) return { code: '', kind: null };
+      var cres = compareCode(args.plan, ins.map(this.refFor, this), ins.map(this.lazyKind, this), op);
+      return cres.code ? cres : { code: '', kind: null };
+    }
     if (op === 'supp_orphans' || op === 'supp_bad_idvarval') {
       return { code: deriveSuppCode(this, op, ins, args), kind: null };
     }
@@ -1297,6 +1308,121 @@
     var out = parts[parts.length - 1];
     for (var k = parts.length - 2; k >= 0; k--) out = 'dplyr::union_all(' + parts[k] + ', ' + out + ')';
     return { code: out, kind: 'duckdb' };
+  }
+
+  // ---- compare: the code that rebuilds a compare card (twin of sv_compare_code(), R/compare.R and R/lazy.R) ----
+  // The plan (args.plan) is R's own: the key and compared columns with their types and zones, and for a lazy
+  // compare the text of each time-to-text cast (`tz_text_old` / `tz_text_new`). A missing value is null.
+
+  var COMPARE_OPS = { compare_added: 1, compare_removed: 1, compare_changed: 1 };
+
+  // The code of one compare card, `{code, kind}`: `refs` are the R references of old and new, `kinds` null (in
+  // memory), 'duckdb' or 'arrow' for each. An empty code means the plan cannot be written (a missing piece).
+  function compareCode(plan, refs, kinds, op) {
+    var by = [].concat(plan.by || []).map(String);
+    var keys = [].concat(plan.keys || []);
+    var compared = [].concat(plan.compared || []);
+    if (!by.length || keys.length !== by.length) return { code: '', kind: null };
+    var lazy = kinds.some(function (k) { return !!k; });
+    var kind = lazy ? 'duckdb' : null;
+    var cv = function (v) { return 'c(' + v.map(str).join(', ') + ')'; };
+    var bad = false;
+    // the text of a column: D2's cast to chr, a missing value NA (sv_compare_text()); `cn` is the plain name
+    var text = function (cn, from, zone, tzText) {
+      if (!stackHas(zone)) zone = '';
+      if (lazy) {
+        if (from === 'dttm') {
+          if (!stackHas(tzText)) { bad = true; return ''; }
+          return String(tzText);
+        }
+        var e = stackLazyCast(cn, from, 'chr', null);
+        if (e === null) { bad = true; return ''; }
+        return from === 'num' ? 'dplyr::if_else(isnan(' + ident(cn) + '), NA_character_, ' + e + ')' : e;
+      }
+      var x = ident(cn);
+      return 'replace(' + stackCastCode(x, from, 'chr', zone) + ', is.na(' + x + '), NA_character_)';
+    };
+    if (lazy) {
+      var duckRef = null;
+      kinds.some(function (k, i) { if (k === 'duckdb') { duckRef = refs[i]; return true; } return false; });
+      var keep = ', auto_disconnect = FALSE';
+      refs = refs.map(function (ref, i) {
+        if (!kinds[i]) {
+          return duckRef === null
+            ? 'arrow::to_duckdb(arrow::arrow_table(' + ref + ')' + keep + ')'
+            : 'dplyr::copy_to(dbplyr::remote_con(' + duckRef + '), ' + ref + ', name = ' +
+              str('sideview_' + ref + '_' + (i + 1)) + ', overwrite = TRUE)';
+        }
+        if (kinds[i] === 'arrow') {
+          return duckRef === null
+            ? 'arrow::to_duckdb(' + ref + keep + ')'
+            : 'dplyr::compute(arrow::to_duckdb(' + ref + ', con = dbplyr::remote_con(' + duckRef + ')))';
+        }
+        return ref;
+      });
+    }
+    var jb = by.slice();
+    var side = function (i, ref) {
+      var sets = [];
+      keys.forEach(function (k, j) {
+        if (k.text !== true) return;
+        var nm = '.sv_k' + (j + 1);
+        jb[j] = nm;
+        sets.push(nm + ' = ' + (i === 0
+          ? text(k.name, k.from_old, k.zone_old, k.tz_text_old)
+          : text(k.name, k.from_new, k.zone_new, k.tz_text_new)));
+      });
+      return sets.length ? 'dplyr::mutate(' + ref + ', ' + sets.join(', ') + ')' : ref;
+    };
+    var o = side(0, refs[0]);
+    var n = side(1, refs[1]);
+    var extra = jb.filter(function (v, j) { return v !== by[j]; });
+    var drop = function (x) { return extra.length ? 'dplyr::select(' + x + ', -c(' + extra.join(', ') + '))' : x; };
+    var uniq = function (x) { return 'dplyr::filter(' + x + ', dplyr::n() == 1L, .by = ' + cv(jb) + ')'; };
+    var code;
+    if (op === 'compare_added') {
+      code = drop('dplyr::anti_join(' + uniq(n) + ', ' + o + ', by = ' + cv(jb) + ', na_matches = "na")');
+    } else if (op === 'compare_removed') {
+      code = drop('dplyr::anti_join(' + uniq(o) + ', ' + n + ', by = ' + cv(jb) + ', na_matches = "na")');
+    } else {
+      var join = 'dplyr::inner_join(' + uniq(o) + ', ' + uniq(n) + ', by = ' + cv(jb) +
+        ', suffix = c(".old", ".new"), na_matches = "na")';
+      var kcols = by.map(function (b, j) {
+        return keys[j].text === true ? ident(b) + ' = ' + ident(b + '.new') : ident(b);
+      }).join(', ');
+      var body;
+      if (!compared.length) {
+        var na = lazy ? stackLazyNa('chr') : 'NA_character_';
+        body = 'dplyr::transmute(dplyr::filter(.sv_both, FALSE), ' + kcols + ', column = ' + na + ', old = ' + na +
+          ', new = ' + na + ')';
+      } else {
+        var pieces = compared.map(function (cc) {
+          var an = cc.name + '.old';
+          var bn = cc.name + '.new';
+          var a = ident(an);
+          var b = ident(bn);
+          var ca = a;
+          var cb = b;
+          if (cc.kind === 'character') { ca = 'as.character(' + a + ')'; cb = 'as.character(' + b + ')'; }
+          // missing: NA, or lazily NaN too for a double (duckdb says NaN is not NULL)
+          var ma = lazy && cc.from_old === 'num' ? '(is.na(' + a + ') | isnan(' + a + '))' : 'is.na(' + a + ')';
+          var mb = lazy && cc.from_new === 'num' ? '(is.na(' + b + ') | isnan(' + b + '))' : 'is.na(' + b + ')';
+          var cond = '!(' + ma + ' & ' + mb + ') & (' + ma + ' | ' + mb + ' | ' + ca + ' != ' + cb + ')';
+          return 'dplyr::transmute(dplyr::filter(.sv_both, ' + cond + '), ' + kcols + ', column = ' + str(cc.name) +
+            ', old = ' + text(an, cc.from_old, cc.zone_old, cc.tz_text_old) +
+            ', new = ' + text(bn, cc.from_new, cc.zone_new, cc.tz_text_new) + ')';
+        });
+        if (lazy) {
+          body = pieces[pieces.length - 1];
+          for (var k = pieces.length - 2; k >= 0; k--) body = 'dplyr::union_all(' + pieces[k] + ', ' + body + ')';
+        } else {
+          body = 'dplyr::arrange(dplyr::bind_rows(' + pieces.join(', ') + '), ' + by.map(ident).join(', ') + ')';
+        }
+      }
+      code = 'local({\n  .sv_both <- ' + join + '\n  ' + body + '\n})';
+    }
+    if (bad) return { code: '', kind: null };
+    return { code: code, kind: kind };
   }
 
   /**

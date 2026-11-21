@@ -4496,6 +4496,9 @@ function sendToShiny(name, value) {
     }
   };
 
+  // the derive ops whose step is written from R's plan, so a card R rebuilt refits its step's args
+  var REFIT_DERIVE_OPS = { stack: 1, compare_added: 1, compare_removed: 1, compare_changed: 1 };
+
   /** A derived card came from R: its derive step (when this browser asked), its saved place, the announcement. */
   SideviewEngine.prototype.derivedArrived = function (data, pend, known) {
     var P = global.SideviewPipeline;
@@ -4514,12 +4517,12 @@ function sendToShiny(name, value) {
         this.dropDerivedCard(name);
         return;
       }
-    } else if (has && d.op === 'stack' && d.args && P) {
-      // a stack step from an opened state, rebuilt by R from the data as they are now: the step takes R's plan, or
-      // $code() would be written from the saved one (a SUPP or join step keeps its args, as before)
+    } else if (has && REFIT_DERIVE_OPS[d.op] && d.args && P) {
+      // a stack or compare step from an opened state, rebuilt by R from the data as they are now: the step takes
+      // R's plan, or $code() would be written from the saved one (a SUPP or join step keeps its args, as before)
       var dstep = this.pipeline.steps.filter(function (s) { return s.kind === 'derive' && s.table === name; })[0];
-      if (dstep && dstep.op === 'stack') {
-        var fresh = P.deriveStep(name, 'stack', asArray(d.inputs).length ? d.inputs : dstep.inputs, d.args);
+      if (dstep && dstep.op === d.op) {
+        var fresh = P.deriveStep(name, d.op, asArray(d.inputs).length ? d.inputs : dstep.inputs, d.args);
         this.pipeline.refit(dstep.id, { inputs: fresh.inputs, args: fresh.args, key: fresh.key });
       }
     }
@@ -8526,8 +8529,17 @@ function sendToShiny(name, value) {
 
   var STEP_KIND_WORDS = {
     join: 'Join', filter: 'Filter', arrange: 'Sort', mutate: 'Mutate', recode: 'Recode',
-    summarise: 'Summarise', pivot: 'Reshape', supp: 'SUPP merge', derive: 'Derived table', stack: 'Stack', custom: 'Custom'
+    summarise: 'Summarise', pivot: 'Reshape', supp: 'SUPP merge', derive: 'Derived table', stack: 'Stack',
+    compare: 'Compare', custom: 'Custom'
   };
+
+  // The announced kind of a step: a stack or compare derive step has its own word
+  function stepKindWord(s) {
+    if (s.kind !== 'derive') return s.kind;
+    if (s.op === 'stack') return 'stack';
+    if (/^compare_/.test(String(s.op))) return 'compare';
+    return s.kind;
+  }
 
   // "Join step added. 3 steps." / "Undone. 2 steps." / "Redone. 3 steps."
   SideviewEngine.prototype.stepAnnouncement = function (kind, verb, count) {
@@ -8541,7 +8553,7 @@ function sendToShiny(name, value) {
   // Called from the pipeline's change emit: say what changed, by diffing the step list.
   SideviewEngine.prototype.announceStepChange = function (label) {
     var steps = (this.pipeline && this.pipeline.steps) || [];
-    var now = steps.map(function (s) { return { id: s.id, kind: s.kind === 'derive' && s.op === 'stack' ? 'stack' : s.kind }; });
+    var now = steps.map(function (s) { return { id: s.id, kind: stepKindWord(s) }; });
     var prev = this._annSteps;
     this._annSteps = now;
     if (label === 'checks' || label === 'pipe' || label === 'tables' || label === 'load' || label === 'refresh') return;

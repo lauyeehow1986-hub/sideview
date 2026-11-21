@@ -462,3 +462,62 @@ test_that("compare requests are cleaned", {
   expect_equal(names(cl), c("inputs", "cards", "by", "plan"))
   expect_equal(cl$by, "id")
 })
+
+# A saved workspace (as the browser writes it) whose pipeline holds `steps`
+compare_state <- function(steps) {
+  sv_state_from_json(jsonlite::toJSON(
+    list(version = "0.3.0", cards = list(), pipeline = list(steps = steps)),
+    auto_unbox = TRUE, null = "null", na = "null", digits = NA))
+}
+
+compare_step <- function(op, table, plan = NULL) {
+  list(kind = "derive", key = paste0("k_", op), table = table, op = op, inputs = list("cut1", "cut2"),
+       args = c(list(by = list("id")), if (!is.null(plan)) list(plan = plan)))
+}
+
+test_that("state refresh refits compare args", {
+  store <- compare_store()
+  req <- function(op) list(op = op, inputs = list("cut1", "cut2"), args = list(by = list("id")))
+  cards <- c(store$all(), list(sv_derive_card(req("compare_changed"), store, NULL),
+                               sv_derive_card(req("compare_added"), store, NULL)))
+  # a plan saved when the data were other: no compared column, a key that is gone
+  stale <- list(by = "old_id", keys = list(), compared = list(), type_changed = list(),
+                only_old = list(), only_new = list(), lazy = FALSE)
+  st <- compare_state(list(compare_step("compare_changed", "cut2_changed", stale),
+                           compare_step("compare_added", "cut2_added", stale),
+                           compare_step("compare_removed", "cut1_removed", stale)))
+  out <- sv_derive_state_refresh(st, cards)
+  fresh <- cards[[3]]$derived$args
+  expect_identical(out$pipeline$steps[[1]]$args, fresh)
+  expect_equal(out$pipeline$steps[[1]]$args$plan$by, "id")
+  expect_equal(out$pipeline$steps[[1]]$args$plan$compared[[1]]$name, "sev")
+  expect_identical(out$pipeline$steps[[2]]$args, cards[[4]]$derived$args)
+  # a step with no card of its name keeps what was saved
+  expect_equal(out$pipeline$steps[[3]]$args$plan$by, "old_id")
+  # a card of the step's name made by another op does not refit it
+  wrong <- cards[[3]]
+  wrong$name <- "cut1_removed"
+  wrong$derived$op <- "compare_added"
+  out2 <- sv_derive_state_refresh(st, c(cards, list(wrong)))
+  expect_equal(out2$pipeline$steps[[3]]$args$plan$by, "old_id")
+})
+
+test_that("a saved state rebuilds the compare cards", {
+  store <- compare_store()
+  req <- function(op) list(op = op, inputs = list("cut1", "cut2"), args = list(by = list("id")))
+  before <- lapply(c("compare_added", "compare_removed", "compare_changed"), function(op) {
+    sv_derive_card(req(op), store, NULL)
+  })
+  steps <- lapply(before, function(cd) {
+    list(kind = "derive", key = paste0("k_", cd$derived$op), table = cd$name, op = cd$derived$op,
+         inputs = as.list(cd$derived$inputs), args = cd$derived$args)
+  })
+  st <- compare_state(steps)
+  out <- sv_derive_from_state(compare_store()$all(), st)
+  expect_length(out, 5L)
+  built <- unname(out[3:5])
+  expect_identical(vapply(built, function(cd) cd$name, ""), vapply(before, function(cd) cd$name, ""))
+  expect_identical(lapply(built, function(cd) cd$dims), lapply(before, function(cd) cd$dims))
+  expect_identical(lapply(built, function(cd) cd$derived$op), lapply(before, function(cd) cd$derived$op))
+  for (i in 1:3) expect_equal(built[[i]]$data, before[[i]]$data, ignore_attr = TRUE)
+})

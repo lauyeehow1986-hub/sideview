@@ -296,3 +296,93 @@ test_that("in-memory code parses, runs with dplyr only and rebuilds", {
   expect_identical(sv_compare_code(plan, c("a", "b"), c("duckdb", NA), "compare_added")$kind, "duckdb")
   expect_equal(sv_compare_code(plan, c("cut1", "cut2"), c(NA, NA), "compare_added")$kind, NA_character_)
 })
+
+# ---- D3 task 4: the JS pipeline writes the same compare code as sv_compare_code() ----
+
+cmp_json <- function(x) jsonlite::toJSON(x, auto_unbox = TRUE, null = "null", na = "null", digits = NA)
+
+# The code the browser composes for one compare step: `kinds` NA (a data frame), "duckdb" or "arrow" per input.
+cmp_js_code <- function(plan, inputs, refs, kinds, op) {
+  meta <- stats::setNames(lapply(1:2, function(i) {
+    list(lazy = if (is.na(kinds[i])) NULL else kinds[i], codeRef = refs[i])
+  }), inputs)
+  run_pipeline_js(sprintf("
+    const p = new P.Pipeline();
+    p.setTables(%s);
+    out = p.deriveExpr({kind: 'derive', op: %s, table: 'out', inputs: %s, args: {by: %s, plan: %s}});",
+    cmp_json(meta), cmp_json(op), cmp_json(as.list(inputs)), cmp_json(plan$by), cmp_json(plan)))
+}
+
+test_that("R and JS write the same compare code", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("DBI")
+  t0 <- as.POSIXct("2024-03-10 01:30:00", tz = "UTC") + c(0, 3600)
+  # every compared kind and text cast: number (NaN), integer, logical, Date, date-time in two zones, factor, text
+  wide_old <- data.frame(id = 1:2, n = c(1.5, NaN), i = 1:2, l = c(TRUE, NA), d = as.Date("2024-01-01") + 0:1,
+                         t = t0, z = t0, f = factor(c("a", "b")), s = c("x", "y"), stringsAsFactors = FALSE)
+  wide_new <- wide_old
+  attr(wide_new$z, "tzone") <- "America/New_York"
+  wide_new$f <- c("a", "c")
+  # a date-time key against a text key: a text key with a zone
+  tk_old <- data.frame(t = t0, v = 1:2)
+  tk_new <- data.frame(t = c("2024-03-10 01:30:00", "x"), v = 1:2, stringsAsFactors = FALSE)
+  odd1 <- stats::setNames(data.frame(1:2, c(1, 2), c("a", "b")), c("visit id", "visit date", "a\"b"))
+  odd2 <- stats::setNames(data.frame(1:2, c(1, 3), c("a", "c")), c("visit id", "visit date", "a\"b"))
+  fixtures <- list(
+    plain = list(wide_old, wide_new, "id", c("cut1", "cut2")),
+    two_keys = list(cmp_cut1(), cmp_cut2(), cmp_keys, c("cut1", "cut2")),
+    kinds_key = list(data.frame(USUBJID = c("S1", "S2"), AESEQ = c(1L, 2L), v = c("a", "b")),
+                     data.frame(USUBJID = c("S1", "S3"), AESEQ = c("1", "1"), v = c("z", "c")),
+                     c("USUBJID", "AESEQ"), c("cut1", "cut2")),
+    no_compared = list(data.frame(id = 1:3), data.frame(id = 2:4), "id", c("cut1", "cut2")),
+    dttm_key = list(tk_old, tk_new, "t", c("cut1", "cut2")),
+    factor = list(data.frame(id = 1:3, f = factor(c("a", "b", "c"))), data.frame(id = 1:3, f = c("a", "x", "c")),
+                  "id", c("cut1", "cut2")),
+    odd = list(odd1, odd2, "visit id", c("cut1", "wave 2")))
+  con <- DBI::dbConnect(duckdb::duckdb())
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+  e <- sv_lazy_env()
+  on.exit(sv_lazy_close(e), add = TRUE)
+  na <- NA_character_
+  pairs <- list(c(na, na), c("duckdb", "duckdb"), c("arrow", "arrow"), c(na, "duckdb"), c("arrow", na))
+  ops <- c("compare_added", "compare_removed", "compare_changed")
+  n_checked <- 0L
+  for (fname in names(fixtures)) {
+    f <- fixtures[[fname]]
+    inputs <- f[[4]]
+    refs <- unname(sv_escape_ident(inputs))
+    DBI::dbWriteTable(con, paste0("cmp_", fname), f[[2]], overwrite = TRUE)
+    p_mem <- sv_compare_plan(f[[1]], f[[2]], f[[3]], inputs[1], inputs[2])
+    p_lazy <- sv_compare_plan(f[[1]], dplyr::tbl(con, paste0("cmp_", fname)), f[[3]], inputs[1], inputs[2], con_env = e)
+    expect_true(isTRUE(p_lazy$lazy), info = fname)
+    for (kinds in pairs) {
+      plan <- if (all(is.na(kinds))) p_mem else p_lazy
+      for (op in ops) {
+        info <- paste(fname, paste(ifelse(is.na(kinds), "df", kinds), collapse = "/"), op)
+        want <- sv_compare_code(plan, refs, kinds, op)
+        got <- cmp_js_code(plan, inputs, refs, kinds, op)
+        expect_identical(got$code, want$code, info = info)
+        expect_identical(got$kind, if (is.na(want$kind)) NULL else want$kind, info = info)
+        expect_parses(got$code, info)
+        n_checked <- n_checked + 1L
+      }
+    }
+  }
+  expect_equal(n_checked, length(fixtures) * length(pairs) * length(ops))
+  # the date-time text in the lazy plan is what the JS writes, as R gives it
+  p <- sv_compare_plan(tk_old, dplyr::tbl(con, "cmp_dttm_key"), "t", "cut1", "cut2", con_env = e)
+  expect_false(is.na(p$keys[[1]]$tz_text_old))
+  expect_match(cmp_js_code(p, c("cut1", "cut2"), c("cut1", "cut2"), c(na, "duckdb"), "compare_changed")$code,
+               p$keys[[1]]$tz_text_old, fixed = TRUE)
+  # no plan, or one input: no code
+  none <- run_pipeline_js("
+    const p = new P.Pipeline();
+    p.setTables({ a: { lazy: null, codeRef: 'a' }, b: { lazy: null, codeRef: 'b' } });
+    out = [p.deriveExpr({kind: 'derive', op: 'compare_added', table: 'o', inputs: ['a', 'b'], args: {by: ['id']}}),
+           p.deriveExpr({kind: 'derive', op: 'compare_changed', table: 'o', inputs: ['a'], args: {by: ['id'], plan: {by: 'id', keys: [], compared: []}}})];")
+  for (r in none) {
+    expect_identical(r$code, "")
+    expect_null(r$kind)
+  }
+})

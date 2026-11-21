@@ -1871,3 +1871,84 @@ test_that("undo and redo of a stack step, and a state round trip, keep args.plan
   expect_true(out$same)
   expect_match(out$code, "^stk <- dplyr::mutate\\(dplyr::bind_rows")
 })
+
+# ---- compare steps (D3 task 4) ----
+
+compare_pipe_js <- function(extra = "") {
+  cut1 <- data.frame(id = 1:4, sev = c("MILD", "MILD", "SEVERE", "MILD"), stringsAsFactors = FALSE)
+  cut2 <- data.frame(id = 2:5, sev = c("MILD", "MODERATE", "SEVERE", "MILD"), stringsAsFactors = FALSE)
+  plan <- sv_compare_plan(cut1, cut2, "id", "cut1", "cut2")
+  paste0(sprintf("
+    const plan = %s;
+    const p = new P.Pipeline();
+    p.setPipe('%%>%%');
+    p.setTables({ cut1: { lazy: null, codeRef: 'cut1' }, cut2: { lazy: null, codeRef: 'cut2' } });
+    const added = P.deriveStep('cut2_added', 'compare_added', ['cut1', 'cut2'], { by: 'id', plan: plan });
+    const removed = P.deriveStep('cut1_removed', 'compare_removed', ['cut1', 'cut2'], { by: 'id', plan: plan });
+    const changed = P.deriveStep('cut2_changed', 'compare_changed', ['cut1', 'cut2'], { by: 'id', plan: plan });
+    p.add(added);
+    p.add(removed);
+    p.add(changed);
+  ", jsonlite::toJSON(plan, auto_unbox = TRUE, null = "null", na = "null", digits = NA)), extra)
+}
+
+test_that("the three compare steps of a pair are live, written first in the order added, and say what they hold", {
+  out <- run_pipeline_js(compare_pipe_js("
+    p.add({kind: 'filter', table: 'cut2_changed', conds: ['column == \"sev\"'], condCols: ['column']});
+    p.add({kind: 'filter', table: 'cut1', conds: ['id > 1'], condCols: ['id']});
+    const composed = p.compose();
+    const live = [added, removed, changed].map(s => p.deriveLive(s));
+    const labels = [added, removed, changed].map(s => p.describe(s));
+    const kinds = ['cut2_added', 'cut1_removed', 'cut2_changed'].map(n => p.lazyKind(n));
+    p.setTables({ cut1: { lazy: null, codeRef: 'cut1' } });
+    out = { composed: composed, live: live, labels: labels, kinds: kinds,
+            liveGone: [added, removed, changed].map(s => p.deriveLive(s)), codeGone: p.compose() };
+  "))
+  expect_identical(unlist(out$live), c(TRUE, TRUE, TRUE))
+  expect_identical(unlist(out$liveGone), c(FALSE, FALSE, FALSE))
+  expect_identical(unlist(out$labels), c("added rows of cut2 vs cut1", "removed rows of cut1 vs cut2",
+                                         "changed values of cut2 vs cut1"))
+  expect_true(all(vapply(out$kinds, is.null, NA)))
+  expect_false(grepl("_added <-|_removed <-|_changed <-", out$codeGone))
+  parts <- strsplit(out$composed, "\n\n", fixed = TRUE)[[1]]
+  expect_match(parts[1], "^cut2_added <- dplyr::anti_join\\(")
+  expect_match(parts[2], "^cut1_removed <- dplyr::anti_join\\(")
+  expect_match(parts[3], "^cut2_changed <- local\\(\\{")
+  expect_true(any(grepl("^cut2_changed %>%", parts[-(1:3)])))
+  expect_true(any(grepl("^cut1 %>%", parts[-(1:3)])))
+  expect_parses(out$composed)
+  cut1 <- data.frame(id = 1:4, sev = c("MILD", "MILD", "SEVERE", "MILD"), stringsAsFactors = FALSE)
+  cut2 <- data.frame(id = 2:5, sev = c("MILD", "MODERATE", "SEVERE", "MILD"), stringsAsFactors = FALSE)
+  env <- list2env(list(cut1 = cut1, cut2 = cut2), parent = globalenv())
+  eval(parse(text = out$composed), env)
+  r <- sv_compare(cut1, cut2, by = "id")
+  expect_equal(env$cut2_added, r$added, ignore_attr = TRUE)
+  expect_equal(env$cut1_removed, r$removed, ignore_attr = TRUE)
+  expect_equal(nrow(r$changed), 2L)
+  expect_equal(as.data.frame(env$cut2_changed), as.data.frame(r$changed), ignore_attr = TRUE)
+})
+
+test_that("undo and redo of compare steps, and a state round trip, keep args.plan", {
+  out <- run_pipeline_js(compare_pipe_js("
+    const before = p.steps.map(s => JSON.stringify(s.args));
+    const code = p.compose();
+    p.undo();
+    const undone = p.steps.map(s => s.op);
+    p.redo();
+    const redone = p.steps.map(s => JSON.stringify(s.args));
+    const json = JSON.stringify(p.toJSON());
+    const q = new P.Pipeline();
+    q.setTables({ cut1: { lazy: null, codeRef: 'cut1' }, cut2: { lazy: null, codeRef: 'cut2' } });
+    q.load(JSON.parse(json));
+    out = { before: before, undone: undone, redone: redone, ops: p.steps.map(s => s.op),
+            loaded: q.steps.map(s => JSON.stringify(s.args)), plan: q.steps[2].args.plan,
+            same: q.compose() === code };
+  "))
+  expect_identical(unlist(out$undone), c("compare_added", "compare_removed"))
+  expect_identical(unlist(out$ops), c("compare_added", "compare_removed", "compare_changed"))
+  expect_identical(out$redone, out$before)
+  expect_identical(out$loaded, out$before)
+  expect_identical(out$plan$by, "id")
+  expect_identical(out$plan$compared[[1]]$name, "sev")
+  expect_true(out$same)
+})

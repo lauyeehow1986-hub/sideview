@@ -355,3 +355,58 @@ test_that("stack code with two inputs and no fixes rebuilds the card", {
     dc_expect(fx, dc_compose(fx, list(list(card)))[[1]], card, paste(ik, collapse = "/"))
   }
 })
+
+# ---- compare (D3 task 4): the pipeline's code rebuilds the three compare cards ----
+
+# Two cuts with a key that is NA on both sides (it matches) and a key repeated in the old cut only (left out of
+# every card); compared columns of every kind: text, number with NA, logical, Date and factor.
+dc_compare_tables <- function() {
+  cut1 <- data.frame(USUBJID = c("S1", "S1", "S2", "S3", "S4", NA, "S7", "S7"),
+                     AESEQ = c(1L, 2L, 1L, 1L, 1L, 1L, 1L, 1L),
+                     AESEV = c("MILD", "MILD", "SEVERE", "MILD", "MILD", "MILD", "MILD", "SEVERE"),
+                     AEDY = c(3, 5, 7, NA, 11, 2, 1, 1), AESER = c(TRUE, FALSE, NA, TRUE, FALSE, TRUE, TRUE, TRUE),
+                     AESTDT = as.Date("2024-01-01") + 0:7, ARM = factor(c("A", "B", "A", "B", "A", "B", "A", "A")),
+                     ONLY1 = 1:8, stringsAsFactors = FALSE)
+  cut2 <- data.frame(USUBJID = c("S1", "S1", "S2", "S3", "S5", NA, "S7"),
+                     AESEQ = c(1L, 2L, 1L, 1L, 1L, 1L, 1L),
+                     AESEV = c("MODERATE", "MILD", "SEVERE", "SEVERE", "MILD", "MODERATE", "MILD"),
+                     AEDY = c(3, 5, 8, 9, 20, 2, 1), AESER = c(TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, TRUE),
+                     AESTDT = as.Date("2024-01-01") + c(0, 1, 2, 9, 4, 5, 6), ARM = c("A", "B", "B", "B", "A", "B", "A"),
+                     ONLY2 = letters[1:7], stringsAsFactors = FALSE)
+  list(cut1 = cut1, cut2 = cut2)
+}
+
+test_that("compare code rebuilds the cards", {
+  ops <- c("compare_added", "compare_removed", "compare_changed")
+  tb <- dc_compare_tables()
+  K <- list("USUBJID", "AESEQ")
+  # non-syntactic names: the card `wave 2`, the key `visit id`, the column `visit date`
+  odd1 <- stats::setNames(data.frame(c(1L, 2L, NA, 4L), as.Date("2024-01-01") + 0:3, c("a", "b", "c", "d")),
+                          c("visit id", "visit date", "note"))
+  odd2 <- stats::setNames(data.frame(c(2L, NA, 4L, 5L), as.Date("2024-01-01") + c(1, 9, 3, 4), c("b", "x", "d", "e")),
+                          c("visit id", "visit date", "note"))
+  odd <- list(cut1 = odd1, `wave 2` = odd2)
+  for (ik in dc_input_kinds) {
+    for (case in list(list(tb, K), list(odd, list("visit id")))) {
+      tabs <- case[[1]]
+      info <- paste(paste(ik, collapse = "/"), names(tabs)[2])
+      fx <- dc_fixture(tabs, ik)
+      cards <- lapply(ops, function(op) dc_card(fx, op, names(tabs), list(by = case[[2]])))
+      res <- dc_compose(fx, lapply(cards, list))
+      for (i in seq_along(ops)) {
+        dc_expect(fx, res[[i]], cards[[i]], paste(info, ops[i]))
+        if (all(ik == "df")) expect_null(res[[i]]$kind) else expect_identical(res[[i]]$kind, "duckdb", info = info)
+      }
+      # the fixture exercises the NA key and the repeated key
+      if (identical(names(tabs)[2], "cut2")) {
+        rows <- lapply(cards, function(cd) dc_norm(dc_rows(fx, cd)))
+        expect_equal(nrow(rows[[1]]), 1L, info = info)
+        expect_equal(nrow(rows[[2]]), 1L, info = info)
+        expect_true(any(is.na(rows[[3]]$USUBJID)), info = info)
+        expect_false(any(c(rows[[1]]$USUBJID, rows[[2]]$USUBJID, rows[[3]]$USUBJID) %in% "S7"), info = info)
+      } else {
+        expect_true("visit date" %in% dc_norm(dc_rows(fx, cards[[3]]))$column, info = info)
+      }
+    }
+  }
+})

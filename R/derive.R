@@ -791,20 +791,29 @@ sv_derive_rebuild <- function(card, store, build) {
   build(sv_derive_request_of(card), sv_card_store(others))
 }
 
-# A state whose stack steps carry the plans of the cards built from it. The data may have changed since the state
-# was saved and the browser writes a stack's code from its step's plan, so the step takes the plan R just made.
-# Only stack steps: a SUPP or join step keeps its saved args (its card refits when R replaces it).
+# The derive ops whose browser code is written from the step's plan (R's, never recomputed in the browser)
+sv_derive_plan_ops <- c("stack", "compare_added", "compare_removed", "compare_changed")
+
+# A state whose stack and compare steps carry the plans of the cards built from it. The data may have changed since
+# the state was saved and the browser writes their code from the step's plan, so the step takes the plan R just
+# made, from the card of its name and op. A SUPP or join step keeps its saved args (its card refits when R replaces
+# it).
 sv_derive_state_refresh <- function(state, cards) {
   steps <- if (is.list(state)) sv_field(sv_field(state, "pipeline"), "steps") else NULL
   if (!is.list(steps) || !length(steps)) return(state)
   made <- list()
-  for (cd in cards) if (identical(cd$derived$op, "stack")) made[[cd$name]] <- cd$derived$args
+  for (cd in cards) {
+    op <- cd$derived$op
+    if (is.character(op) && length(op) == 1L && op %in% sv_derive_plan_ops) made[[cd$name]] <- cd$derived
+  }
   for (k in seq_along(steps)) {
     st <- steps[[k]]
-    if (!is.list(st) || !identical(sv_field(st, "kind"), "derive") || !identical(sv_field(st, "op"), "stack")) next
+    if (!is.list(st) || !identical(sv_field(st, "kind"), "derive")) next
+    op <- sv_field(st, "op")
+    if (!is.character(op) || length(op) != 1L || !op %in% sv_derive_plan_ops) next
     tbl <- sv_derive_scalar(sv_field(st, "table"), 200L)
-    if (is.null(tbl) || is.null(made[[tbl]])) next
-    state$pipeline$steps[[k]]$args <- made[[tbl]]
+    if (is.null(tbl) || is.null(made[[tbl]]) || !identical(made[[tbl]]$op, op)) next
+    state$pipeline$steps[[k]]$args <- made[[tbl]]$args
   }
   state
 }
