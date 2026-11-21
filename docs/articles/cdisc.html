@@ -415,6 +415,85 @@ there.</li>
 </ul>
 </div>
 <div class="section level2">
+<h2 id="stacking-tables">Stacking tables<a class="anchor" aria-label="anchor" href="#stacking-tables"></a>
+</h2>
+<p>Visits that arrive as separate files (one per wave, one per site)
+have to be stacked before they are analysed, and the columns rarely line
+up: <code>AGE</code> is numeric in one file and text in the next, a
+column is spelt <code>Age</code> in one table and <code>AGE</code> in
+another. <code><a href="../reference/sv_stack_check.html">sv_stack_check()</a></code> compares the columns of 2 to 8
+tables and says, for each column, its type in every table, its label,
+and what a stack would do with it. A synthetic two-wave example:</p>
+<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">wave1</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>USUBJID <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"S-01"</span>, <span class="st">"S-02"</span><span class="op">)</span>, AGE <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">34</span>, <span class="fl">51</span><span class="op">)</span>, SEX <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"F"</span>, <span class="st">"M"</span><span class="op">)</span>,</span>
+<span>                    stringsAsFactors <span class="op">=</span> <span class="cn">FALSE</span><span class="op">)</span></span>
+<span><span class="va">wave2</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>USUBJID <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"S-03"</span>, <span class="st">"S-04"</span><span class="op">)</span>, Age <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"29"</span>, <span class="st">"40"</span><span class="op">)</span>, SEX <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"M"</span>, <span class="st">"M"</span><span class="op">)</span>,</span>
+<span>                    stringsAsFactors <span class="op">=</span> <span class="cn">FALSE</span><span class="op">)</span></span>
+<span><span class="fu"><a href="../reference/sv_stack_check.html">sv_stack_check</a></span><span class="op">(</span><span class="va">wave1</span>, <span class="va">wave2</span><span class="op">)</span></span>
+<span><span class="co">#&gt; Stack 2 tables: 4 rows, 5 columns.</span></span>
+<span><span class="co">#&gt; 1 near-miss name left apart.</span></span>
+<span><span class="co">#&gt;   Column wave1 wave2                      Status</span></span>
+<span><span class="co">#&gt;  USUBJID   chr   chr                          ok</span></span>
+<span><span class="co">#&gt;      AGE   num     - only in wave1 (NA in wave2)</span></span>
+<span><span class="co">#&gt;      SEX   chr   chr                          ok</span></span>
+<span><span class="co">#&gt;      Age     -   chr   near-miss for AGE? (case)</span></span>
+<span><span class="co">#&gt; dplyr::bind_rows(wave1 = wave1, wave2 = wave2, .id = "source")</span></span></code></pre></div>
+<p>Here <code>Age</code> in <code>wave2</code> is a near miss for
+<code>AGE</code> in <code>wave1</code>, so the check offers to rename
+it; the check says so and changes nothing until you choose. A type that
+differs is cast to the type the check shows (or the one you choose), a
+value that cannot be cast becomes <code>NA</code> and is counted, and
+the stacked table has exactly the sum of the rows. A <code>source</code>
+column holds each row’s table name.</p>
+<div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">chk</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/sv_stack_check.html">sv_stack_check</a></span><span class="op">(</span><span class="va">wave1</span>, <span class="va">wave2</span>, rename <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>Age <span class="op">=</span> <span class="st">"AGE"</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="fu"><a href="../reference/sv_stack.html">sv_stack</a></span><span class="op">(</span><span class="va">wave1</span>, <span class="va">wave2</span>, check <span class="op">=</span> <span class="va">chk</span><span class="op">)</span></span>
+<span><span class="co">#&gt;   source USUBJID AGE SEX</span></span>
+<span><span class="co">#&gt; 1  wave1    S-01  34   F</span></span>
+<span><span class="co">#&gt; 2  wave1    S-02  51   M</span></span>
+<span><span class="co">#&gt; 3  wave2    S-03  29   M</span></span>
+<span><span class="co">#&gt; 4  wave2    S-04  40   M</span></span></code></pre></div>
+<p>On the canvas, the <strong>Stack</strong> tab of the drawer (and the
+Stack builder of the list view) does the same: pick two or more tables,
+press <strong>Check</strong>, change a fix if you want one, and press
+<strong>Open</strong> to add the stacked table as a card named after the
+first table you ticked (<code>wave1_stacked</code> when
+<code>wave1</code> is ticked first). The generated code rebuilds the
+table with <code><a href="https://dplyr.tidyverse.org/reference/bind_rows.html" class="external-link">dplyr::bind_rows()</a></code>, so a script reproduces the
+card; R builds the card itself from the same plan, and the code R writes
+is byte-equal to the code the browser writes. A duckdb or Arrow input
+stays lazy: the stack is one <code>union_all</code> on a duckdb
+connection and is never collected.</p>
+<p>Dates and times: a date-time cast to a date is its UTC date, and a
+date cast to a date-time is midnight UTC, shown in the zone the stack
+keeps. A table in memory and a duckdb or Arrow table give the same
+values.</p>
+<p>Limits to know:</p>
+<ul>
+<li>Some casts change values without counting an <code>NA</code>: a
+date-time cast to text drops fractional seconds, a number cast to text
+keeps 15 significant digits, and an <code>integer64</code> column that
+is cast is read as a double first, so digits beyond 2^53 are lost.</li>
+<li>Stacking a duckdb or Arrow table needs the duckdb package; without
+it the check and <strong>Open</strong> say so.</li>
+<li>duckdb reads two names that differ only in case (<code>AGE</code>,
+<code>Age</code>) as one name, so a duckdb or Arrow stack with such a
+pair left apart is refused: tick <strong>Rename</strong> to merge them,
+or rename one first.</li>
+<li>The code for a lazy table whose columns are date-times cast to text
+writes the time zone of the session that made it
+(<code><a href="https://rdrr.io/r/base/timezones.html" class="external-link">Sys.timezone()</a></code>), so code generated on another machine can
+differ in the zone only.</li>
+<li>A number cast to text is written by R as <code>"1e+05"</code> where
+a duckdb stack writes <code>"100000"</code>; whole numbers in ordinary
+ranges agree, very large or small ones may not.</li>
+<li>A duckdb table carries no column labels, so its columns have none in
+the stack; an Arrow table keeps its labels.</li>
+<li>The widget has no R: it shows no Stack tab, and a saved state’s
+stack step stays in the code but the table is not shown there.</li>
+</ul>
+</div>
+<div class="section level2">
 <h2 id="what-it-does-not-do">What it does not do<a class="anchor" aria-label="anchor" href="#what-it-does-not-do"></a>
 </h2>
 <ul>

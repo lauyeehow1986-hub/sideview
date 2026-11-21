@@ -3503,6 +3503,7 @@ function sendToShiny(name, value) {
     this.pipeline.setTables(meta);
     // a card came or went: the Merge into buttons name their targets on the canvas
     this.refreshSuppButtons();
+    this.stackCardsChanged();
     if (this.listView) this.listView.syncTables();
     this.reconcileDerived();
   };
@@ -4254,11 +4255,20 @@ function sendToShiny(name, value) {
     return JSON.stringify(v);
   }
 
-  // The args that make two derived tables the same one: side, RDOMAIN, key pairs and the rule.
+  // A stack's fixes in one order (the order they were ticked in does not make another table).
+  function sortedFixes(fixes) {
+    var k = function (f) { return f ? JSON.stringify([String(f.action), String(f.column), String(f.to)]) : ''; };
+    return asArray(fixes).slice().sort(function (a, b) { return k(a) < k(b) ? -1 : k(a) > k(b) ? 1 : 0; });
+  }
+
+  // The args that make two derived tables the same one: side, RDOMAIN, key pairs, the rule, a stack's fixes and its
+  // id column (R stores the default id column, source, which a request leaves out).
   function deriveArgsKey(args) {
     args = args || {};
     var by = asArray(args.by).map(function (p) { return p ? String(p.x) + '\u0001' + String(p.y) : ''; });
-    return JSON.stringify([args.side || null, args.rdomain || null, by, stableJson(args.rule)]);
+    var idCol = args.id_col && String(args.id_col) !== 'source' ? String(args.id_col) : null;
+    return JSON.stringify([args.side || null, args.rdomain || null, by, stableJson(args.rule),
+      stableJson(asArray(args.fixes).length ? sortedFixes(args.fixes) : null), idCol]);
   }
 
   /** The name of a derived card that already holds what `rec` ({op, inputs, args}) would build, or null. */
@@ -4503,6 +4513,14 @@ function sendToShiny(name, value) {
         // asked for by a step that is gone since (undo, a cleared or opened workspace): the late card goes, no step comes back
         this.dropDerivedCard(name);
         return;
+      }
+    } else if (has && d.op === 'stack' && d.args && P) {
+      // a stack step from an opened state, rebuilt by R from the data as they are now: the step takes R's plan, or
+      // $code() would be written from the saved one (a SUPP or join step keeps its args, as before)
+      var dstep = this.pipeline.steps.filter(function (s) { return s.kind === 'derive' && s.table === name; })[0];
+      if (dstep && dstep.op === 'stack') {
+        var fresh = P.deriveStep(name, 'stack', asArray(d.inputs).length ? d.inputs : dstep.inputs, d.args);
+        this.pipeline.refit(dstep.id, { inputs: fresh.inputs, args: fresh.args, key: fresh.key });
       }
     }
     var meta = this.cardMetaByName(name);
@@ -5114,7 +5132,14 @@ function sendToShiny(name, value) {
     { id: 'discrepancy', label: 'Discrepancy' },
     { id: 'chat', label: 'Copilot' }
   ];
-  var BUILDER_TABS = { filter: 1, arrange: 1, mutate: 1, recode: 1, summarise: 1 };
+  var BUILDER_TABS = { filter: 1, arrange: 1, mutate: 1, recode: 1, summarise: 1, stack: 1 };
+  // Stack is R's check: its tab exists only when an R session backs the engine
+  function drawerTabsFor(engine) {
+    if (!engine.hasR()) return DRAWER_TABS;
+    var out = DRAWER_TABS.slice();
+    out.splice(6, 0, { id: 'stack', label: 'Stack' });
+    return out;
+  }
   var TAB_ALIASES = { join: 'pipeline', copilot: 'chat' };
 
   function arrangeKey(table) { return JSON.stringify(['arrange', table]); }
@@ -5126,14 +5151,14 @@ function sendToShiny(name, value) {
     var tabs = drawer.querySelector('.sideview-drawer-tabs');
     if (tabs) {
       tabs.setAttribute('role', 'tablist');
-      tabs.innerHTML = DRAWER_TABS.map(function (t, i) {
+      tabs.innerHTML = drawerTabsFor(this).map(function (t, i) {
         return '<button type="button" class="sideview-drawer-tab' + (i === 0 ? ' active' : '') +
           '" data-tab="' + t.id + '" role="tab" aria-selected="' + (i === 0) + '">' + t.label + '</button>';
       }).join('');
     }
     var content = drawer.querySelector('.sideview-drawer-content');
     if (!content) return;
-    DRAWER_TABS.forEach(function (t) {
+    drawerTabsFor(this).forEach(function (t) {
       if (content.querySelector('[data-pane="' + t.id + '"]')) return;
       var pane = document.createElement('div');
       pane.className = 'sideview-tab-pane sideview-' + t.id + '-pane' + (BUILDER_TABS[t.id] ? ' sideview-builder-pane' : '');
@@ -7200,6 +7225,7 @@ function sendToShiny(name, value) {
 
   /** Does a builder show other tables than the cards now on the canvas? */
   SideviewEngine.prototype.builderStale = function (pane) {
+    if (pane.querySelector('[data-builder="stack"]')) return this.stackStale(pane);
     var sel = pane.querySelector('select[data-field="table"]');
     var names = this.tableSchemas().map(function (t) { return t.name; });
     if (!names.length) return !!sel;
@@ -7319,6 +7345,7 @@ function sendToShiny(name, value) {
   SideviewEngine.prototype.renderBuilder = function (kind, keepTable, preserve) {
     var pane = this.paneNode(kind);
     if (!pane) return;
+    if (kind === 'stack') { this.renderStackBuilder(pane); return; }
     var saved = null, focusAt = null;
     if (preserve) {
       saved = [];
@@ -7401,6 +7428,298 @@ function sendToShiny(name, value) {
       });
       var back = focusAt && byKey[focusAt.f + '#' + focusAt.n];
       if (back) { try { back.focus({ preventScroll: true }); } catch (e) { back.focus(); } }
+    }
+  };
+
+  // ---- Stack tab (D2): pick 2 to 8 cards, check their columns in R, open the stacked card ----
+  // State lives on the engine (this._stack), so a re-render, a tab switch or movePanes() keeps it.
+  var STACK_MAX = 8;
+
+  SideviewEngine.prototype.stackState = function () {
+    return this._stack || (this._stack = { picked: [], fixes: [], reply: null, latest: null, error: null, pending: false });
+  };
+
+  /** A change of the picked cards drops the fixes and what an earlier reply said. */
+  SideviewEngine.prototype.stackReset = function () {
+    var st = this.stackState();
+    st.fixes = [];
+    st.reply = null;
+    st.error = null;
+    st.latest = null;
+    st.pending = false;
+  };
+
+  SideviewEngine.prototype.stackCardNames = function () {
+    return this.tableSchemas().map(function (t) { return t.name; });
+  };
+
+  /** A card came or went: a picked card that left drops out and the reply with it; the picker follows the cards. */
+  SideviewEngine.prototype.stackCardsChanged = function () {
+    if (!this._stack) return;
+    var st = this._stack;
+    var names = this.stackCardNames();
+    var kept = st.picked.filter(function (n) { return names.indexOf(n) >= 0; });
+    if (kept.length !== st.picked.length) {
+      st.picked = kept;
+      this.stackReset();
+    }
+    var pane = this.paneNode('stack');
+    if (pane && pane.querySelector('.sideview-stack') && this.stackStale(pane)) {
+      var key = this.stackFocusKey(pane);
+      this.renderStackBuilder(pane);
+      this.stackRestoreFocus(pane, key);
+    }
+  };
+
+  /** The data-stack-key of the focused control inside the Stack pane, else null (focus is elsewhere). */
+  SideviewEngine.prototype.stackFocusKey = function (pane) {
+    var a = document.activeElement;
+    if (!pane || !a || !pane.contains(a) || !a.getAttribute) return null;
+    return a.getAttribute('data-stack-key') || (a.hasAttribute('data-stack-pick') ? 'pick:' + a.getAttribute('data-stack-pick') : null);
+  };
+
+  /** Put focus back after a re-render; falls back to the Check button when the control is gone. */
+  SideviewEngine.prototype.stackRestoreFocus = function (pane, key) {
+    if (!key) return;
+    var els = pane.querySelectorAll('[data-stack-key],[data-stack-pick]');
+    var back = Array.prototype.filter.call(els, function (el) {
+      var k = el.getAttribute('data-stack-key') || 'pick:' + el.getAttribute('data-stack-pick');
+      return k === key;
+    })[0] || pane.querySelector('[data-stack-action="check"]');
+    if (back && !back.disabled) { try { back.focus({ preventScroll: true }); } catch (e) { back.focus(); } }
+  };
+
+  SideviewEngine.prototype.stackStale = function (pane) {
+    var b = pane.querySelector('.sideview-stack');
+    var have = b ? b.getAttribute('data-cards') : null;
+    return have === null || have !== JSON.stringify(this.stackCardNames());
+  };
+
+  function stackFixKey(column, action) { return JSON.stringify([action, column]); }
+
+  SideviewEngine.prototype.stackSetFix = function (column, action, to, isDefault) {
+    var st = this.stackState();
+    var key = stackFixKey(column, action);
+    st.fixes = st.fixes.filter(function (f) { return stackFixKey(f.column, f.action) !== key; });
+    if (!isDefault) st.fixes.push({ column: column, action: action, to: to });
+  };
+
+  SideviewEngine.prototype.requestStackCheck = function (tables, fixes) {
+    var st = this.stackState();
+    tables = asArray(tables).map(String);
+    fixes = asArray(fixes);
+    // a short sequence id (R caps ids at 200 characters): only the reply to the latest request is drawn
+    this._stackSeq = (this._stackSeq || 0) + 1;
+    var id = 'sk' + this._stackSeq + '_' + Date.now().toString(36);
+    st.latest = id;
+    st.pending = true;
+    st.error = null;
+    if (!this.send('stack_check_request', { id: id, tables: tables, fixes: fixes })) {
+      st.pending = false;
+      st.latest = null;
+      this.showToast('The R session is not connected.', 'warning');
+      this.renderStackResult();
+      return null;
+    }
+    this.renderStackResult();
+    return id;
+  };
+
+  /** A sideview_stack_check reply; one that is not for the latest request is ignored. */
+  SideviewEngine.prototype.onStackCheck = function (data) {
+    var st = this._stack;
+    if (!st || !data || data.id === undefined || data.id === null || String(data.id) !== st.latest) return;
+    st.pending = false;
+    if (data.error) {
+      st.reply = null;
+      st.error = String(data.error);
+      this.renderStackResult();
+      this.announce(st.error, { assertive: true });
+      return;
+    }
+    st.error = null;
+    st.reply = data;
+    this.renderStackResult();
+    var lines = asArray(data.text);
+    if (lines.length) this.announce(String(lines[0]), { coalesce: 'stack-check' });
+  };
+
+  SideviewEngine.prototype.stackOpen = function () {
+    var st = this.stackState();
+    if (!st.reply || st.pending || st.picked.length < 2) return false;
+    return this.requestDerive({
+      op: 'stack', inputs: st.picked.slice(), args: { fixes: sortedFixes(st.fixes) },
+      n: st.reply.n_rows, label: String(st.reply.open_label || 'Open stacked card')
+    });
+  };
+
+  SideviewEngine.prototype.stackId = function (part) {
+    return (typeof this.options.ns === 'string' ? this.options.ns : '') + 'sv-stack-' + part;
+  };
+
+  SideviewEngine.prototype.stackPickHtml = function (names) {
+    var st = this.stackState();
+    var full = st.picked.length >= STACK_MAX;
+    var cards = names.map(function (n) {
+      var on = st.picked.indexOf(n) >= 0;
+      return '<li class="sideview-stack-card"><label><input type="checkbox" data-stack-pick="' + escapeHtml(n) + '"' +
+        (on ? ' checked' : '') + (!on && full ? ' disabled' : '') + ' /> <span>' + escapeHtml(n) + '</span></label></li>';
+    }).join('');
+    var order = st.picked.map(function (n) { return '<li>' + escapeHtml(n) + '</li>'; }).join('');
+    var hintId = this.stackId('hint');
+    return '<fieldset class="sideview-stack-picker"><legend>Tables to stack</legend>' +
+      '<ul class="sideview-stack-cards">' + cards + '</ul></fieldset>' +
+      '<div class="sideview-stack-order-box"><span class="sideview-builder-hint" id="' + hintId + '">' +
+      (st.picked.length ? 'Stack order, first on top:' : 'Tick 2 to ' + STACK_MAX + ' tables. The order you tick them is the stack order.') +
+      '</span>' + (order ? '<ol class="sideview-stack-order" aria-labelledby="' + hintId + '">' + order + '</ol>' : '') + '</div>';
+  };
+
+  SideviewEngine.prototype.renderStackBuilder = function (pane) {
+    var st = this.stackState();
+    var names = this.stackCardNames();
+    var kept = st.picked.filter(function (n) { return names.indexOf(n) >= 0; });
+    if (kept.length !== st.picked.length) { st.picked = kept; this.stackReset(); }
+    if (names.length < 2) {
+      pane.innerHTML = '<p class="sideview-drawer-desc">Add at least two tables to the canvas to stack them.</p>';
+      return;
+    }
+    pane.innerHTML = '<div class="sideview-builder sideview-stack" data-builder="stack" data-cards="' +
+      escapeHtml(JSON.stringify(names)) + '">' + this.stackPickHtml(names) +
+      '<div class="sideview-builder-actions sideview-stack-actions"><button type="button" class="sideview-btn sideview-btn-primary" ' +
+      'data-stack-action="check"' + (st.picked.length < 2 ? ' disabled' : '') + '>Check columns</button></div>' +
+      '<div class="sideview-stack-result" data-stack-result></div></div>';
+    this.wireStackPane(pane);
+    this.renderStackResult();
+  };
+
+  SideviewEngine.prototype.wireStackPane = function (pane) {
+    if (pane._svStackWired) return;
+    pane._svStackWired = true;
+    var self = this;
+    pane.addEventListener('change', function (e) {
+      var t = e.target;
+      if (!t || !t.getAttribute) return;
+      var st = self.stackState();
+      if (t.hasAttribute('data-stack-pick')) {
+        var n = t.getAttribute('data-stack-pick');
+        st.picked = st.picked.filter(function (x) { return x !== n; });
+        if (t.checked && st.picked.length < STACK_MAX) st.picked.push(n);
+        self.stackReset();
+        self.renderStackBuilder(pane);
+        var again = Array.prototype.filter.call(pane.querySelectorAll('[data-stack-pick]'), function (c) {
+          return c.getAttribute('data-stack-pick') === n;
+        })[0];
+        if (again) again.focus();
+        return;
+      }
+      if (t.hasAttribute('data-stack-cast')) {
+        self.stackSetFix(t.getAttribute('data-stack-cast'), 'cast', t.value, t.value === t.getAttribute('data-default'));
+        self.stackRecheck();
+      } else if (t.hasAttribute('data-stack-rename')) {
+        var from = t.getAttribute('data-stack-rename');
+        self.stackSetFix(from, 'rename', t.getAttribute('data-to'), !t.checked);
+        // once X is renamed it is no longer a column of its own: a cast picked for X would be stale
+        if (t.checked) st.fixes = st.fixes.filter(function (f) { return !(f.action === 'cast' && f.column === from); });
+        self.stackRecheck();
+      }
+    });
+    pane.addEventListener('click', function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest('[data-stack-action]') : null;
+      if (!btn || btn.disabled) return;
+      var st = self.stackState();
+      var act = btn.getAttribute('data-stack-action');
+      if (act === 'check') self.requestStackCheck(st.picked, st.fixes);
+      else if (act === 'open') self.stackOpen();
+      else if (act === 'clear') { st.fixes = []; self.stackRecheck(); }
+    });
+  };
+
+  /** A fix changed: ask again, so the counts always match what Open builds. */
+  SideviewEngine.prototype.stackRecheck = function () {
+    var st = this.stackState();
+    var a = document.activeElement;
+    var k = a && a.getAttribute ? a.getAttribute('data-stack-key') : null;
+    this._stackFocus = k || null;
+    this.requestStackCheck(st.picked, st.fixes);
+  };
+
+  SideviewEngine.prototype.stackResultHtml = function () {
+    var st = this.stackState();
+    var out = '';
+    if (st.pending) out += '<p class="sideview-builder-hint" role="status">Checking the columns in R.</p>';
+    if (st.error) {
+      out += '<p class="sideview-stack-error" role="alert">' + escapeHtml(st.error) + '</p>';
+      if (st.fixes.length) {
+        out += '<button type="button" class="sideview-btn" data-stack-action="clear" data-stack-key="clear">Clear my changes</button>';
+      }
+    }
+    var r = st.reply;
+    if (!r) return out;
+    var tables = st.picked;
+    var head = '<tr><th scope="col">Column</th>' + tables.map(function (t) { return '<th scope="col">' + escapeHtml(t) + '</th>'; }).join('') +
+      '<th scope="col">Status</th></tr>';
+    var rows = asArray(r.columns).map(function (c) {
+      var name = String(c.name);
+      var cells = asArray(c.table);
+      var cellHtml = tables.map(function (t, i) {
+        return '<td>' + escapeHtml(cells[i] === undefined || cells[i] === null ? '-' : cells[i]) + '</td>';
+      }).join('');
+      var status = asArray(c.status).map(function (s) { return '<li>' + escapeHtml(s) + '</li>'; }).join('');
+      var extra = '';
+      var targets = asArray(c.targets);
+      if (targets.length > 1) {
+        extra += '<label class="sideview-stack-fixfield">Type of ' + escapeHtml(name) + ' <select data-stack-cast="' + escapeHtml(name) +
+          '" data-default="' + escapeHtml(targets[0]) + '" data-stack-key="' + escapeHtml(stackFixKey(name, 'cast')) + '">' +
+          targets.map(function (t) {
+            return '<option value="' + escapeHtml(t) + '"' + (t === c.target ? ' selected' : '') + '>' + escapeHtml(t) + '</option>';
+          }).join('') + '</select></label>';
+      }
+      if (typeof c.near_miss_of === 'string' && c.near_miss_of) {
+        extra += '<label class="sideview-stack-fixfield sideview-stack-check"><input type="checkbox" data-stack-rename="' + escapeHtml(name) +
+          '" data-to="' + escapeHtml(c.near_miss_of) + '" data-stack-key="' + escapeHtml(stackFixKey(name, 'rename')) + '" /> Rename ' +
+          escapeHtml(name) + ' to ' + escapeHtml(c.near_miss_of) + '</label>';
+      }
+      var seen = {};
+      asArray(c.rename_from).forEach(function (from) {
+        if (typeof from !== 'string' || !from || seen[from]) return;
+        seen[from] = 1;
+        extra += '<label class="sideview-stack-fixfield sideview-stack-check"><input type="checkbox" checked data-stack-rename="' + escapeHtml(from) +
+          '" data-to="' + escapeHtml(name) + '" data-stack-key="' + escapeHtml(stackFixKey(from, 'rename')) + '" /> Rename ' +
+          escapeHtml(from) + ' to ' + escapeHtml(name) + '</label>';
+      });
+      return '<tr><th scope="row">' + escapeHtml(name) + '</th>' + cellHtml + '<td>' +
+        (status ? '<ul class="sideview-stack-status">' + status + '</ul>' : '') + extra + '</td></tr>';
+    }).join('');
+    out += '<div class="sideview-stack-scroll" role="region" aria-label="Stack column comparison" tabindex="0">' +
+      '<table class="sideview-stack-table"><caption>Columns of the stack, in order</caption><thead>' + head + '</thead><tbody>' + rows + '</tbody></table></div>';
+    var lines = asArray(r.text).map(function (t) { return '<li>' + escapeHtml(t) + '</li>'; }).join('');
+    if (lines) out += '<ul class="sideview-stack-text">' + lines + '</ul>';
+    if (r.code_preview) {
+      out += '<div class="sideview-stack-code" role="region" aria-label="R code preview" tabindex="0"><pre>' +
+        escapeHtml(asArray(r.code_preview).join('\n')) + '</pre></div>';
+    }
+    out += '<div class="sideview-builder-actions"><button type="button" class="sideview-btn sideview-btn-primary" data-stack-action="open" data-stack-key="open"' +
+      (st.pending ? ' disabled' : '') + '>' + escapeHtml(r.open_label || 'Open stacked card') + '</button></div>';
+    return out;
+  };
+
+  SideviewEngine.prototype.renderStackResult = function () {
+    var pane = this.paneNode('stack');
+    var box = pane && pane.querySelector('[data-stack-result]');
+    if (!box) return;
+    var st = this.stackState();
+    var want = this._stackFocus || (box.contains(document.activeElement) ? this.stackFocusKey(pane) : null);
+    // keep the wanted key until the reply has been drawn: the pending render has no controls
+    if (!st.pending) this._stackFocus = null;
+    box.innerHTML = this.stackResultHtml();
+    var check = pane.querySelector('[data-stack-action="check"]');
+    if (check) check.disabled = st.picked.length < 2;
+    if (want) {
+      var back = Array.prototype.filter.call(box.querySelectorAll('[data-stack-key]'), function (el) {
+        return el.getAttribute('data-stack-key') === want;
+      })[0];
+      if (!back && !st.pending) back = pane.querySelector('[data-stack-action="check"]');
+      if (back && !back.disabled) { try { back.focus({ preventScroll: true }); } catch (e) { back.focus(); } }
     }
   };
 
@@ -8207,7 +8526,7 @@ function sendToShiny(name, value) {
 
   var STEP_KIND_WORDS = {
     join: 'Join', filter: 'Filter', arrange: 'Sort', mutate: 'Mutate', recode: 'Recode',
-    summarise: 'Summarise', pivot: 'Reshape', supp: 'SUPP merge', derive: 'Derived table', custom: 'Custom'
+    summarise: 'Summarise', pivot: 'Reshape', supp: 'SUPP merge', derive: 'Derived table', stack: 'Stack', custom: 'Custom'
   };
 
   // "Join step added. 3 steps." / "Undone. 2 steps." / "Redone. 3 steps."
@@ -8222,7 +8541,7 @@ function sendToShiny(name, value) {
   // Called from the pipeline's change emit: say what changed, by diffing the step list.
   SideviewEngine.prototype.announceStepChange = function (label) {
     var steps = (this.pipeline && this.pipeline.steps) || [];
-    var now = steps.map(function (s) { return { id: s.id, kind: s.kind }; });
+    var now = steps.map(function (s) { return { id: s.id, kind: s.kind === 'derive' && s.op === 'stack' ? 'stack' : s.kind }; });
     var prev = this._annSteps;
     this._annSteps = now;
     if (label === 'checks' || label === 'pipe' || label === 'tables' || label === 'load' || label === 'refresh') return;
@@ -8547,6 +8866,10 @@ function sendToShiny(name, value) {
     // Join diagnostics computed in R on the full data (reply to join_diagnostics_request)
     self.onMessage('sideview_supp_check', function (data) {
       self.onSuppCheck(data);
+    });
+
+    self.onMessage('sideview_stack_check', function (data) {
+      self.onStackCheck(data);
     });
 
     self.onMessage('sideview_join_diagnostics', function (data) {

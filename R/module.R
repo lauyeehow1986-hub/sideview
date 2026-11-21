@@ -106,7 +106,7 @@ sideviewServer <- function(id, cards = list(), state = NULL, llm_fn = NULL, cdis
 
     if (!is.null(state)) {
       state <- sv_module_state(state)
-      sv_module_add_derived(proxy, state)
+      state <- sv_module_add_derived(proxy, state)
       ctl$emit("sideview_state_set", list(state = sv_state_json(state)))
     }
     if (is.function(cards)) {
@@ -220,7 +220,7 @@ sv_remove_card <- function(proxy, name) {
 sv_set_state <- function(proxy, state) {
   sv_check_proxy(proxy)
   state <- sv_module_state(state)
-  sv_module_add_derived(proxy, state)
+  state <- sv_module_add_derived(proxy, state)
   json <- sv_state_json(state)
   proxy$ctl$emit("sideview_state_set", list(state = json))
   invisible(proxy)
@@ -322,13 +322,13 @@ sv_initial_cards <- function(cards, id) {
 }
 
 # The derived cards of a state, built before the state reaches the canvas (a derive step needs its table to exist).
-# Cards already on the canvas under that name are left alone.
+# Cards already on the canvas under that name are left alone. Returns the state with its stack plans refreshed.
 sv_module_add_derived <- function(proxy, state) {
   ctl <- proxy$ctl
   cards <- unname(ctl$store$all())
   all <- sv_derive_from_state(cards, state, ctl$derive_build)
   for (card in all[-seq_along(cards)]) sv_proxy_add(proxy, card)
-  invisible(proxy)
+  sv_derive_state_refresh(state, all)
 }
 
 sv_module_state <- function(state) {

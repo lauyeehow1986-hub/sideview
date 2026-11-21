@@ -2208,3 +2208,364 @@ test_that("derive validation judges lazy key kinds from a 0-row query (D1 task 5
   expect_null(sv_derive_validate(req("id", "id"), store, con_env))
   expect_match(sv_derive_validate(req("grp", "id"), store, con_env), "dplyr will refuse", fixed = TRUE)
 })
+
+# ---- D2: lazy stack (duckdb / Arrow tables stacked with one union_all) ----
+# Known deviation (see sv_lazy_text_expr()): a num cast to chr reads "1e+05" in R and "100000" in duckdb, so the
+# fixtures use whole numbers and ordinary decimals.
+
+stk_need <- function(kinds) {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("DBI")
+  skip_if_not_installed("stringr")
+  if ("arrow" %in% kinds) skip_if_not_installed("arrow")
+}
+
+# The input objects of a stack: one shared duckdb connection, data frames, or Arrow tables.
+stk_objs <- function(tables, kinds, env = parent.frame()) {
+  stk_need(kinds)
+  con <- NULL
+  out <- list()
+  for (i in seq_along(tables)) {
+    nm <- names(tables)[i]
+    out[[nm]] <- switch(kinds[[i]],
+      df = tables[[i]],
+      arrow = arrow::arrow_table(tables[[i]]),
+      duckdb = {
+        if (is.null(con)) {
+          con <- DBI::dbConnect(duckdb::duckdb())
+          withr::defer(DBI::dbDisconnect(con, shutdown = TRUE), envir = env)
+        }
+        DBI::dbWriteTable(con, nm, tables[[i]])
+        dplyr::tbl(con, nm)
+      })
+  }
+  out
+}
+
+# Rows as plain, comparable values (no labels, a factor as text, a time as seconds), sorted.
+stk_norm <- function(df) {
+  df <- as.data.frame(dplyr::collect(df), stringsAsFactors = FALSE)
+  for (cn in names(df)) {
+    attr(df[[cn]], "label") <- NULL  # a lazy table carries no labels: the card takes them from the plan
+    if (is.factor(df[[cn]])) df[[cn]] <- as.character(df[[cn]])
+    if (inherits(df[[cn]], "POSIXct")) df[[cn]] <- as.numeric(df[[cn]])
+  }
+  df <- dplyr::arrange(df, dplyr::across(dplyr::everything()))
+  rownames(df) <- NULL
+  df
+}
+
+stk_cols <- function(chk) {
+  lapply(chk$columns, function(c) c[c("name", "types", "target", "targets", "cast", "na", "status")])
+}
+
+# Lazy and in-memory stack of the same tables (all of them data frames for the in-memory side).
+stk_expect_same <- function(tables, kinds, cast = NULL, rename = NULL, info = "") {
+  # labels live in memory only: a duckdb input has none
+  for (i in seq_along(tables)) if (kinds[[i]] == "duckdb") for (cn in names(tables[[i]])) attr(tables[[i]][[cn]], "label") <- NULL
+  objs <- stk_objs(tables, kinds, env = parent.frame())
+  want_chk <- sv_stack_check(tables, cast = cast, rename = rename)
+  chk <- sv_stack_check(objs, cast = cast, rename = rename)
+  want <- sv_stack(tables, check = want_chk)
+  got <- sv_stack(objs, check = chk)
+  expect_true(inherits(got, "tbl_lazy"), info = info)
+  expect_equal(stk_norm(got), stk_norm(want), tolerance = 1e-12, info = info)
+  expect_equal(as.numeric(dplyr::pull(dplyr::count(got), "n")), nrow(want), info = info)
+  expect_equal(names(dplyr::collect(utils::head(got, 0L))), names(want), info = info)
+  expect_equal(stk_cols(chk), stk_cols(want_chk), info = info)
+  expect_equal(chk$kept_labels, want_chk$kept_labels, info = info)
+  expect_equal(chk$n_rows, want_chk$n_rows, info = info)
+  invisible(list(got = got, want = want, chk = chk, want_chk = want_chk, objs = objs))
+}
+
+stk_tables <- function() {
+  a <- data.frame(id = 1:4, age = c(34, 51, NA, 60), sex = c("F", "M", "F", NA),
+                  visit = as.Date(c("2024-01-02", "2024-02-03", NA, "2024-03-04")),
+                  wt = c(60.5, 72, 80.25, NA), flag = c(TRUE, FALSE, NA, TRUE), stringsAsFactors = FALSE)
+  attr(a$age, "label") <- "Age in years"
+  b <- data.frame(id = c("5", "6", "7x"), age = 1:3, sex = c("M", "M", "F"),
+                  visit = as.POSIXct(c("2024-04-01 08:30:00", "2024-04-02 00:00:00", NA), tz = "UTC"),
+                  note = c("n1", NA, "n3"), stringsAsFactors = FALSE)
+  c3 <- data.frame(id = 8:9, age = c(70, 71), sex = c("F", "F"),
+                   visit = as.Date(c("2024-05-01", "2024-05-02")), note = c("a", "b"),
+                   flag = c(FALSE, FALSE), grp = factor(c("g1", "g2")), stringsAsFactors = FALSE)
+  list(w1 = a, w2 = b, w3 = c3)
+}
+
+test_that("lazy stack equals in-memory stack", {
+  tb <- stk_tables()
+  sets <- list(list(c("duckdb", "duckdb"), 2), list(c("arrow", "arrow"), 2), list(c("df", "duckdb"), 2),
+               list(c("arrow", "df", "duckdb"), 3))
+  for (s in sets) {
+    stk_expect_same(tb[seq_len(s[[2]])], s[[1]], info = paste(s[[1]], collapse = "/"))
+  }
+  # a chosen type, and a rename that merges a near-miss, agree too
+  stk_expect_same(tb[1:2], c("duckdb", "arrow"), cast = c(age = "chr"), info = "cast fix")
+  t2 <- tb[1:2]
+  names(t2$w2)[names(t2$w2) == "age"] <- "Age"
+  stk_expect_same(t2, c("arrow", "duckdb"), rename = c(Age = "age"), info = "rename fix")
+})
+
+stk_pair <- function(subject, partner, to, kinds = c("duckdb", "duckdb"), info = "") {
+  # the partner holds the target type so that `to` is offered; the cast fix chooses it
+  tabs <- list(p = data.frame(V = partner, stringsAsFactors = FALSE),
+               s = data.frame(V = subject, stringsAsFactors = FALSE))
+  stk_expect_same(tabs, kinds, cast = c(V = to), info = info)
+}
+
+test_that("each cast rule agrees lazily", {
+  chr_num <- c("12", " 12 ", "\t12", "1e5", "0x1A", "Inf", "", "1e999", NA, "5.", ".5", "+3", "-.5e-2",
+               "1E5", "1e+3", "1d3", "1,5", "\f7\v")
+  chr_int <- c("12", " 12 ", "\t12", "1e5", "0x1A", "Inf", "", "2147483647", "2147483648", "-2147483647",
+               "+5", "12.0", NA, "99999999999999999999")
+  num_int <- c(1, 2.5, NaN, 3e9, NA, 2147483647, 2147483648, -2147483647, Inf, -Inf, 0)
+  ny <- as.POSIXct(c("2024-03-10 01:30:00", "2024-07-04 00:00:00", "2024-11-03 23:59:59", NA), tz = "America/New_York")
+  utc <- as.POSIXct(c("2024-01-01 00:00:00", "2024-06-30 23:59:59.75", NA), tz = "UTC")
+  for (k in list(c("duckdb", "duckdb"), c("arrow", "df"))) {
+    kk <- paste(k, collapse = "/")
+    stk_pair(chr_num, 1.5, "num", k, paste("chr->num", kk))
+    stk_pair(chr_int, 1L, "int", k, paste("chr->int", kk))
+    stk_pair(num_int, 1L, "int", k, paste("num->int", kk))
+    stk_pair(c(0, 1, 2, NaN, NA, 0.5, -0), TRUE, "lgl", k, paste("num->lgl", kk))
+    stk_pair(c(0L, 1L, 2L, NA), TRUE, "lgl", k, paste("int->lgl", kk))
+    stk_pair(c("TRUE", "FALSE", "true", "T", "", NA, " TRUE"), TRUE, "lgl", k, paste("chr->lgl", kk))
+    stk_pair(c(TRUE, FALSE, NA), 1L, "int", k, paste("lgl->int", kk))
+    stk_pair(c(TRUE, FALSE, NA), 1.5, "num", k, paste("lgl->num", kk))
+    stk_pair(c(1L, NA, -7L), 1.5, "num", k, paste("int->num", kk))
+    stk_pair(c(TRUE, FALSE, NA), "a", "chr", k, paste("lgl->chr", kk))
+    stk_pair(c(1L, NA, -7L), "a", "chr", k, paste("int->chr", kk))
+    stk_pair(c(1, 2.5, NaN, Inf, -Inf, NA, 100.25, 42, -0.5), "a", "chr", k, paste("num->chr", kk))
+    stk_pair(as.Date(c("2024-01-01", NA, "1999-12-31")), "a", "chr", k, paste("date->chr", kk))
+    stk_pair(utc, "a", "chr", k, paste("dttm->chr utc", kk))
+    stk_pair(as.Date(c("2024-01-01", NA)), 1.5, "chr", k, paste("date->chr 2", kk))
+    stk_pair(ny, as.Date("2024-01-01"), "date", k, paste("dttm->date", kk))
+    stk_pair(c("2024-02-29", "2024-02-30", "2024-2-9", "2024-01-01 ", NA, "2024-13-01", "x"),
+             as.Date("2024-01-01"), "date", k, paste("chr->date", kk))
+    stk_pair(as.Date(c("2024-01-01", NA)), as.POSIXct("2024-01-01 10:00:00", tz = "UTC"), "dttm", k,
+             paste("date->dttm", kk))
+  }
+  # a time in New York to text: its own zone, by the in-memory rule (df holds the zone; Arrow keeps it)
+  for (k in list(c("arrow", "df"), c("df", "arrow"))) {
+    stk_pair(ny, "a", "chr", k, paste("dttm->chr ny", paste(k, collapse = "/")))
+  }
+})
+
+test_that("NaN and Inf in casts agree", {
+  x <- c(NaN, Inf, -Inf, 1, 2.5, NA, 0)
+  for (to in c("int", "chr", "lgl")) {
+    partner <- switch(to, int = 1L, chr = "a", lgl = TRUE)
+    r <- stk_pair(x, partner, to, c("duckdb", "duckdb"), paste("num ->", to))
+    expect_equal(r$chk$columns[[1]]$na[2], r$want_chk$columns[[1]]$na[2])
+  }
+  # NaN is missing, so it is not counted: only Inf, -Inf and 2.5 fail to become an integer
+  r <- stk_pair(x, 1L, "int", c("duckdb", "duckdb"))
+  expect_equal(r$chk$columns[[1]]$na[2], 3L)
+})
+
+test_that("time zones and factors survive", {
+  stk_need("arrow")
+  ny <- data.frame(id = 1:2, t = as.POSIXct(c("2024-03-10 08:30:00", "2024-07-04 09:00:00"), tz = "America/New_York"),
+                   stringsAsFactors = FALSE)
+  tk <- data.frame(id = 3:4, t = as.POSIXct(c("2024-03-10 08:30:00", "2024-07-04 09:00:00"), tz = "Asia/Tokyo"),
+                   stringsAsFactors = FALSE)
+  objs <- stk_objs(list(a = ny, b = tk), c("arrow", "df"))
+  chk <- sv_stack_check(objs)
+  expect_match(chk$columns[[2]]$status[1], "time zone differs")
+  got <- sv_stack(objs, check = chk)
+  expect_equal(unname(attr(got, "sv_tz")[["t"]]), "America/New_York")
+  want <- sv_stack(a = ny, b = tk)
+  expect_equal(sort(as.numeric(dplyr::collect(got)$t)), sort(as.numeric(want$t)))
+  req <- list(sort = list(col = "t", dir = "asc"), limit = 10L)
+  expect_equal(sv_lazy_rows_window(got, req)$columns$t, sv_rows_window(want, req)$columns$t)
+  sv_lazy_release(got, list(con = NULL))
+
+  # two factor inputs: the union of levels, in bind_rows() order, sorting by level
+  f1 <- data.frame(id = 1:3, g = factor(c("b", "a", NA), levels = c("b", "a")))
+  f2 <- data.frame(id = 4:6, g = factor(c("c", "a", "b"), levels = c("c", "b", "a")))
+  for (k in list(c("arrow", "arrow"), c("duckdb", "arrow"), c("df", "duckdb"))) {
+    objs <- stk_objs(list(f1 = f1, f2 = f2), k)
+    chk <- sv_stack_check(objs)
+    expect_equal(chk$columns[[2]]$target, "fct")
+    got <- sv_stack(objs, check = chk)
+    want <- sv_stack(f1 = f1, f2 = f2)
+    expect_equal(attr(got, "sv_factors")$g$levels, levels(want$g))
+    for (dir in c("asc", "desc")) {
+      req <- list(sort = list(col = "g", dir = dir), limit = 20L)
+      expect_equal(sv_lazy_rows_window(got, req)$columns, sv_rows_window(want, req)$columns,
+                   info = paste(k, collapse = "/"))
+    }
+    sv_lazy_release(got, list(con = NULL))
+  }
+})
+
+test_that("lazy stack is never collected", {
+  stk_need("arrow")
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  con <- sv_lazy_con(e)
+  n <- 3000L
+  a <- data.frame(id = seq_len(n), v = as.character(seq_len(n)), x = seq_len(n) / 2)
+  b <- data.frame(id = seq_len(n) + n, v = seq_len(n), x = seq_len(n))
+  DBI::dbWriteTable(con, "ga", a)
+  DBI::dbWriteTable(con, "gb", b)
+  sizes <- integer(0)
+  real_collect <- dplyr::collect
+  testthat::local_mocked_bindings(
+    collect = function(x, ...) {
+      out <- real_collect(x, ...)
+      if (is.data.frame(out)) sizes <<- c(sizes, nrow(out))
+      out
+    },
+    .package = "dplyr"
+  )
+  tabs <- list(ga = dplyr::tbl(con, "ga"), gb = dplyr::tbl(con, "gb"), gc = arrow::arrow_table(b))
+  chk <- sv_stack_check(tabs)
+  expect_equal(chk$n_rows, 3L * n)
+  expect_equal(chk$columns[[2]]$na[2], 0L)
+  tb <- sv_stack(tabs, check = chk)
+  expect_equal(as.numeric(dplyr::pull(dplyr::count(tb), "n")), 3 * n)
+  w <- sv_lazy_rows_window(tb, list(limit = 10L))
+  expect_equal(w$total, 3 * n)
+  # the card build: the derived card keeps a recipe, the rows are never collected whole
+  store <- sv_card_store(sv_normalize_cards(list(ga = tabs$ga, gb = tabs$gb)))
+  card <- sv_derive_card(list(op = "stack", inputs = list("ga", "gb"), args = list()), store, e)
+  expect_true(isTRUE(card$is_lazy))
+  expect_identical(card$derived$op, "stack")
+  expect_equal(card$dims[1], 2 * n)
+  expect_s3_class(card$source, "sv_derived_source")
+  expect_lt(max(sizes, 0L), 100L)
+})
+
+test_that("two duckdb connections are refused", {
+  stk_need("duckdb")
+  c1 <- DBI::dbConnect(duckdb::duckdb())
+  c2 <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer({ DBI::dbDisconnect(c1, shutdown = TRUE); DBI::dbDisconnect(c2, shutdown = TRUE) })
+  DBI::dbWriteTable(c1, "a", data.frame(v = 1:2))
+  DBI::dbWriteTable(c2, "b", data.frame(v = 3:4))
+  a <- dplyr::tbl(c1, "a")
+  b <- dplyr::tbl(c2, "b")
+  expect_error(sv_stack_check(a, b), class = "sv_lazy_cross_con")
+  expect_error(sv_stack_check(a, b), "stack", fixed = TRUE)
+  expect_error(sv_stack(a, b), class = "sv_lazy_cross_con")
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  expect_error(sv_lazy_place_n(list(a = a, b = b), e), class = "sv_lazy_cross_con")
+  # one connection with a data frame: fine, and the placement is undone
+  pl <- sv_lazy_place_n(list(a = a, d = data.frame(v = 9L)), e)
+  expect_length(pl$tbls, 2L)
+  expect_identical(pl$con, c1)
+  pl$cleanup()
+})
+
+test_that("zero-row lazy input and an all-NA column", {
+  empty <- data.frame(id = integer(0), v = logical(0), stringsAsFactors = FALSE)
+  full <- data.frame(id = 1:3, v = c("x", NA, "z"), stringsAsFactors = FALSE)
+  allna <- data.frame(id = 4:5, v = c(NA, NA))
+  for (k in list(c("duckdb", "duckdb"), c("arrow", "duckdb"), c("duckdb", "arrow"))) {
+    kk <- paste(k, collapse = "/")
+    r <- stk_expect_same(list(e = empty, f = full), k, info = paste("empty", kk))
+    expect_equal(r$chk$n_rows, 3L)
+    expect_equal(r$chk$columns[[2]]$na, c(0L, 0L))
+    expect_equal(r$chk$columns[[2]]$status, "type differs -> as.character")
+    r <- stk_expect_same(list(n = allna, f = full), k, info = paste("all NA", kk))
+    expect_equal(r$chk$columns[[2]]$status, "type differs -> as.character")
+    expect_equal(r$chk$columns[[2]]$na, c(0L, 0L))
+  }
+  r <- stk_expect_same(list(e = empty, f = empty), c("duckdb", "duckdb"), info = "both empty")
+  expect_equal(r$chk$n_rows, 0L)
+})
+
+test_that("the lazy code rebuilds the lazy stack (every placement form)", {
+  stk_need("arrow")
+  tb <- stk_tables()
+  tb$w1$wt <- NULL
+  sets <- list(c("duckdb", "duckdb"), c("arrow", "duckdb"), c("df", "duckdb"), c("arrow", "df"),
+               c("arrow", "arrow"), c("df", "arrow", "duckdb"))
+  for (k in sets) {
+    kk <- paste(k, collapse = "/")
+    n <- length(k)
+    objs <- stk_objs(tb[seq_len(n)], k)
+    # refs: the objects' names in the evaluation environment
+    env <- list2env(stats::setNames(objs, paste0("o", seq_len(n))), parent = globalenv())
+    args <- stats::setNames(lapply(seq_len(n), function(i) as.name(paste0("o", i))), names(objs))
+    chk <- eval(as.call(c(list(as.name("sv_stack_check")), args)), env)
+    expect_parses(chk$code, kk)
+    expect_false(grepl("collect(", chk$code, fixed = TRUE), info = kk)
+    expect_true(grepl("dplyr::union_all(", chk$code, fixed = TRUE), info = kk)
+    got <- eval(parse(text = chk$code), env)
+    want <- sv_stack(tb[seq_len(n)])
+    expect_equal(stk_norm(got), stk_norm(want), tolerance = 1e-12, info = kk)
+    kinds <- vapply(objs, function(o) {
+      if (inherits(o, "tbl_lazy")) "duckdb" else if (is.data.frame(o)) NA_character_ else "arrow"
+    }, "")
+    expect_identical(sv_stack_code(chk, paste0("o", seq_len(n)), kinds)$kind, "duckdb")
+  }
+})
+
+test_that("a lazy derived stack card follows its recipe", {
+  stk_need("arrow")
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  con <- sv_lazy_con(e)
+  DBI::dbWriteTable(con, "r1", data.frame(id = 1:3, v = c(1.5, 2, NA)))
+  DBI::dbWriteTable(con, "r2", data.frame(id = c("4", "x"), v = c(3L, 4L), extra = c("e", "f")))
+  store <- sv_card_store(sv_normalize_cards(list(r1 = dplyr::tbl(con, "r1"), r2 = dplyr::tbl(con, "r2"))))
+  card <- sv_derive_card(list(op = "stack", inputs = list("r1", "r2"),
+                              args = list(fixes = list(list(column = "id", action = "cast", to = "chr")))),
+                         store, e)
+  expect_true(isTRUE(card$is_lazy))
+  tb <- sv_lazy_tbl(card$source, e, card$id)
+  got <- stk_norm(tb)
+  want <- stk_norm(data.frame(source = c("r1", "r1", "r1", "r2", "r2"), id = c("1", "2", "3", "4", "x"),
+                              v = c(1.5, 2, NA, 3, 4), extra = c(NA, NA, NA, "e", "f"), stringsAsFactors = FALSE))
+  expect_equal(got, want)
+  expect_equal(card$derived$args$id_col, "source")
+  expect_equal(card$derived$args$plan$n_rows, 5)
+  sv_lazy_release(tb, e)
+  expect_true(all(c("r1", "r2") %in% DBI::dbListTables(con)))
+})
+
+test_that("a zone-aware Arrow time and a date agree lazily, both ways", {
+  stk_need("arrow")
+  # 20:00 UTC is the next day in Singapore: the date is the UTC date, in memory and lazily
+  sg <- as.POSIXct(c("2024-01-01 20:00:00", "2024-06-30 15:59:59", NA), tz = "UTC")
+  attr(sg, "tzone") <- "Asia/Singapore"
+  for (k in list(c("df", "arrow"), c("arrow", "arrow"), c("duckdb", "arrow"))) {
+    kk <- paste(k, collapse = "/")
+    r <- stk_pair(sg, as.Date("2024-01-01"), "date", k, paste("sg dttm->date", kk))
+    expect_equal(sort(r$want$V), as.Date(c("2024-01-01", "2024-01-01", "2024-06-30")), info = kk)
+    # a date into a Singapore time: midnight UTC, shown in the kept zone
+    r <- stk_pair(as.Date(c("2024-01-02", NA)), sg[1], "dttm", rev(k), paste("sg date->dttm", kk))
+    expect_true(1704153600 %in% as.numeric(r$want$V), info = kk)
+  }
+  # the code of the check rebuilds the same rows
+  p <- arrow::arrow_table(data.frame(V = as.Date("2024-01-01")))
+  s <- arrow::arrow_table(data.frame(V = sg))
+  chk <- sv_stack_check(p = p, s = s, cast = c(V = "date"))
+  expect_parses(chk$code, "sg code")
+  got <- eval(parse(text = chk$code), list2env(list(p = p, s = s), parent = globalenv()))
+  want <- sv_stack(p = data.frame(V = as.Date("2024-01-01")), s = data.frame(V = sg),
+                   check = sv_stack_check(p = data.frame(V = as.Date("2024-01-01")), s = data.frame(V = sg),
+                                          cast = c(V = "date")))
+  expect_equal(stk_norm(got), stk_norm(want))
+})
+
+test_that("a near-miss name left apart is refused lazily, and merges", {
+  # duckdb reads AGE and Age as one name (it would rename one to Age_1), so a lazy stack refuses to keep them apart
+  w1 <- data.frame(id = 1:2, AGE = c(34, 51))
+  w2 <- data.frame(id = 3:4, Age = c("29", "40"))
+  expect_identical(names(sv_stack(w1 = w1, w2 = w2)), c("source", "id", "AGE", "Age"))
+  for (k in list(c("duckdb", "duckdb"), c("arrow", "arrow"), c("df", "duckdb"), c("arrow", "duckdb"))) {
+    kk <- paste(k, collapse = "/")
+    objs <- stk_objs(list(w1 = w1, w2 = w2), k)
+    chk <- sv_stack_check(objs)
+    expect_identical(chk$case_clash, c("AGE", "Age"), info = kk)
+    expect_true(any(grepl("duckdb reads AGE and Age as one name", sv_say_stack_text(chk), fixed = TRUE)), info = kk)
+    expect_error(sv_stack(objs, check = chk), "AGE and Age as one name", fixed = TRUE)
+    # merged, the lazy stack equals the in-memory one
+    r <- stk_expect_same(list(w1 = w1, w2 = w2), k, rename = c(Age = "AGE"), info = paste("merged", kk))
+    expect_null(r$chk$case_clash)
+  }
+})

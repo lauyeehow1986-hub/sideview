@@ -281,3 +281,116 @@ test_that("the module path carries derive_offers on both replies", {
     expect_length(last("sideview_supp_check")$derive_offers, 2L)
   })
 })
+
+stack_store <- function(tags = NULL) {
+  w1 <- data.frame(AGE = c(34, 51), RACE = c("a", "b"), stringsAsFactors = FALSE)
+  attr(w1$RACE, "label") <- "Race"
+  w2 <- data.frame(AGE = c("29", "x", "40"), RACE = c("c", "d", "e"), stringsAsFactors = FALSE)
+  w3 <- data.frame(AGE = 60, RACE = "f", source = "own", stringsAsFactors = FALSE)
+  cards <- list(sv_normalize(w1, name = "wave1"), sv_normalize(w2, name = "wave2"), sv_normalize(w3, name = "wave3"))
+  for (i in seq_along(tags)) cards[[i]]$cdisc <- if (is.na(tags[i])) NULL else list(domain = tags[i])
+  sv_card_store(cards)
+}
+
+test_that("stack derive card: name, rows, tag, args", {
+  req <- list(op = "stack", inputs = list("wave1", "wave2"), args = list(fixes = list()))
+  card <- sv_derive_card(req, stack_store(c("AE", "AE")), NULL)
+  expect_equal(card$name, "wave1_stacked")
+  expect_equal(card$dims[1], 5L)
+  expect_equal(card$derived$args$plan$id_col, "source")
+  expect_equal(card$col_labels[["RACE"]], "Race")
+  expect_equal(card$cdisc$domain, "AE")
+  expect_equal(card$derived$op, "stack")
+  expect_null(sv_derive_card(req, stack_store(c("AE", "DM")), NULL)$cdisc)
+  expect_null(sv_derive_card(req, stack_store(c("AE", NA)), NULL)$cdisc)
+  # a rebuild from the stored recipe gives the same rows
+  store <- stack_store()
+  card <- sv_derive_card(list(op = "stack", inputs = list("wave1", "wave2", "wave3"),
+                              args = list(fixes = list(list(column = "AGE", action = "cast", to = "chr")))),
+                         store, NULL)
+  expect_equal(card$derived$args$plan$id_col, "source_2")
+  again <- sv_derive_card(sv_derive_request_of(card), store, NULL)
+  expect_equal(again$data, card$data)
+})
+
+test_that("stack requests are cleaned", {
+  store <- stack_store()
+  before <- store$names()
+  req <- function(inputs, args = list()) list(op = "stack", inputs = as.list(inputs), args = args)
+  expect_error(sv_derive_clean(req("wave1"), store), "A stack needs 2 to 8 tables.")
+  expect_error(sv_derive_clean(req(rep("wave1", 9)), store), "A stack needs 2 to 8 tables.")
+  expect_error(sv_derive_clean(req(c("wave1", "wave1")), store), "A table can be stacked only once.")
+  expect_error(sv_derive_clean(req(c("wave1", "nope")), store), "Not in the canvas: nope")
+  expect_error(sv_derive_clean(req(c("wave1", "wave2"),
+    list(fixes = list(list(column = "AGE", action = "cast", to = "chr", extra = "x")))), store))
+  expect_error(sv_derive_clean(req(c("wave1", "wave2"), list(fixes = list(list(column = "AGE")))), store))
+  expect_error(sv_derive_clean(req(c("wave1", "wave3"), list(id_col = "source")), store), "source is a column of wave3.")
+  expect_error(sv_derive_clean(list(op = "unmatched", inputs = list("wave1", "wave2", "wave3")), store),
+               "two input tables")
+  expect_equal(store$names(), before)
+  ok <- sv_derive_clean(req(c("wave1", "wave2"), list(id_col = "src", junk = 1)), store)
+  expect_equal(ok$args$id_col, "src")
+  expect_null(ok$args$junk)
+  expect_null(sv_derive_validate(req(c("wave1", "wave2")), store))
+  expect_match(sv_derive_validate(req("wave1"), store), "A stack needs")
+})
+
+test_that("without duckdb a whole lazy card is never stacked from its preview", {
+  store <- stack_store()
+  testthat::local_mocked_bindings(sv_has_duckdb = function() FALSE)
+  whole <- function(cd) identical(cd$name, "wave1")
+  expect_error(sv_stack_clean(c("wave1", "wave2"), list(), store, card_full = whole),
+               "Stacking a duckdb or Arrow table needs duckdb.", fixed = TRUE)
+  expect_match(sv_derive_validate(list(op = "stack", inputs = list("wave1", "wave2")), store, card_full = whole),
+               "needs duckdb", fixed = TRUE)
+  # in-memory cards stack as before
+  expect_equal(sv_stack_clean(c("wave1", "wave2"), list(), store, card_full = function(cd) FALSE)$inputs,
+               c("wave1", "wave2"))
+})
+
+test_that("stack_check_request replies with the columns, counts, text and code; a fix changes the plan; Open adds the card", {
+  cards <- stack_store()$names()
+  cards <- sv_normalize_cards(list(
+    wave1 = data.frame(AGE = c(34, 51), RACE = c("a", "b"), stringsAsFactors = FALSE),
+    wave2 = data.frame(AGE = c("29", "x", "40"), RACE = c("c", "d", "e"), stringsAsFactors = FALSE)))
+  shiny::testServer(sideview_server(cards), {
+    last <- function(type) {
+      m <- Filter(function(z) identical(z$type, type), session$userData$custom_messages)
+      m[[length(m)]]$message
+    }
+    session$setInputs(stack_check_request = list(id = "k1", tables = list("wave1", "wave2")))
+    r <- last("sideview_stack_check")
+    expect_identical(r$id, "k1")
+    expect_null(r$error)
+    expect_equal(r$n_rows, 5L)
+    expect_identical(r$id_col, "source")
+    age <- r$columns[[which(vapply(r$columns, function(c) c$name, "") == "AGE")]]
+    expect_identical(unlist(age$table), c("num", "chr"))
+    expect_identical(age$target, "chr")
+    expect_true(length(r$text) >= 1L)
+    expect_match(r$open_label, "Open stacked card (5 rows", fixed = TRUE)
+    expect_identical(r$name, "wave1_stacked")
+    expect_false(inherits(try(parse(text = r$code_preview), silent = TRUE), "try-error"))
+    # a cast fix changes the target and the NA count
+    session$setInputs(stack_check_request = list(id = "k2", tables = list("wave1", "wave2"),
+      fixes = list(list(column = "AGE", action = "cast", to = "num"))))
+    r2 <- last("sideview_stack_check")
+    age2 <- r2$columns[[which(vapply(r2$columns, function(c) c$name, "") == "AGE")]]
+    expect_identical(age2$target, "num")
+    expect_identical(sum(unlist(age2$na), na.rm = TRUE), 1L)
+    # a refused request is an error reply
+    session$setInputs(stack_check_request = list(id = "k3", tables = list("wave1", "nope")))
+    expect_match(last("sideview_stack_check")$error, "Not in the canvas")
+    # an id R cannot echo is not dropped silently: no reply (none could reach the pane), a toast that says why
+    n_before <- length(Filter(function(z) identical(z$type, "sideview_stack_check"), session$userData$custom_messages))
+    session$setInputs(stack_check_request = list(id = strrep("x", 201), tables = list("wave1", "wave2")))
+    expect_length(Filter(function(z) identical(z$type, "sideview_stack_check"), session$userData$custom_messages), n_before)
+    expect_match(last("sideview_toast")$text, "request id is missing or longer than 200", fixed = TRUE)
+    # Open: the same fixes, through derive_request
+    session$setInputs(derive_request = list(id = "d1", op = "stack", inputs = list("wave1", "wave2"),
+      args = list(fixes = list(list(column = "AGE", action = "cast", to = "num")))))
+    m <- Filter(function(z) identical(z$type, "sideview_card_add"), session$userData$custom_messages)
+    card <- m[[length(m)]]$message$card
+    expect_identical(card$totalRows, r2$n_rows)
+  })
+})

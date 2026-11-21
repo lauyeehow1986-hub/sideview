@@ -403,8 +403,10 @@ sv_lazy_bigint <- function(x) dplyr::sql(sprintf("CAST(%.0f AS BIGINT)", x))
 #' @param range Optional `c(min, max)` of the column in microseconds; the offsets
 #'   the data cannot reach are then left out of the expression, which is much
 #'   cheaper to evaluate for a zone with daylight saving time.
+#' @param seconds `TRUE` for the stack's text, `format(x, "%Y-%m-%d %H:%M:%S")`: always the time, whole
+#'   seconds (the fraction is cut).
 #' @noRd
-sv_lazy_tz_text_expr <- function(sym, tz, range = NULL) {
+sv_lazy_tz_text_expr <- function(sym, tz, range = NULL, seconds = FALSE) {
   seg <- sv_lazy_tz_segments(tz)
   if (!is.null(range) && length(seg$starts) && all(is.finite(range))) {
     # only the transitions the data can reach
@@ -421,6 +423,7 @@ sv_lazy_tz_text_expr <- function(sym, tz, range = NULL) {
     rlang::expr(if_else(!!us < !!sv_lazy_bigint(seg$starts[m] * 1e6), !!pick(i, m), !!pick(m + 1L, j)))
   }
   off <- pick(1L, length(seg$offsets))
+  if (isTRUE(seconds)) return(rlang::expr(strftime(make_timestamp(!!us + !!off), "%Y-%m-%d %H:%M:%S")))
   full <- rlang::expr(strftime(make_timestamp(!!us + !!off), "%Y-%m-%d %H:%M:%S.%f"))
   # trailing zeros and the bare dot of the fraction go, then a time of 00:00:00 (R shows the date alone)
   rlang::expr(regexp_replace(rtrim(rtrim(!!full, "0"), "."), " 00:00:00$", ""))
@@ -1847,7 +1850,7 @@ sv_lazy_histogram <- function(fin, lo, hi, n_fin, bins) {
 }
 
 # Names that only exist inside the SQL translation of the verbs above.
-utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc", "cast", "nx", "ny", "fx", "fy", "trim", "regexp_replace", "regexp_full_match", "quantile_cont", "isfinite", "isnan", "isinf", "n", "rtrim", "sd", "lower", "epoch_us", "make_timestamp", "strftime", ".sv_v", ".sv_t", ".sv_f", ".sv_k", ".sv_n", ".sv_bin", ".sv_rn", ".sv_rk", ".rx", ".ry", ".sv_cx", ".sv_cy", ".sv_first", ".sv_near", "n_distinct", "days", "USUBJID", "upper", "coalesce"))
+utils::globalVariables(c(".sv_row", ".sv_rank", ".sv_na", ".sv_key", "row_number", "if_else", "case_when", "contains", "desc", "cast", "nx", "ny", "fx", "fy", "trim", "regexp_replace", "regexp_matches", "regexp_full_match", "quantile_cont", "isfinite", "isnan", "isinf", "n", "rtrim", "sd", "lower", "epoch_us", "make_timestamp", "strftime", ".sv_v", ".sv_t", ".sv_f", ".sv_k", ".sv_n", ".sv_bin", ".sv_rn", ".sv_rk", ".rx", ".ry", ".sv_cx", ".sv_cy", ".sv_first", ".sv_near", "n_distinct", "days", "USUBJID", "upper", "coalesce"))
 
 #' The one place CDISC detection queries a lazy table
 #'
@@ -2046,6 +2049,13 @@ sv_derived_source <- function(op, args, inputs) {
 #' @noRd
 sv_lazy_derived_tbl <- function(source, con_env, key = NULL) {
   inputs <- source$inputs
+  if (identical(source$op, "stack")) {
+    # N inputs, read as sv_derive_clean_stack() read them, one duckdb union_all (see sv_lazy_stack())
+    tabs <- sv_stack_card_tables(unname(inputs), names(inputs), con_env)
+    tbl <- sv_lazy_stack(tabs, source$args$plan, con_env)
+    if (!is.null(key)) con_env$tbls[[key]] <- tbl
+    return(tbl)
+  }
   tbls <- lapply(inputs, function(card) {
     if (sv_card_is_lazy(card)) sv_lazy_tbl(card$source, con_env, card$id) else card$data
   })
@@ -2059,4 +2069,345 @@ sv_lazy_derived_tbl <- function(source, con_env, key = NULL) {
   tbl <- sv_lazy_unmatched(tbls[[1L]], tbls[[2L]], args, con_env)
   if (!is.null(key)) con_env$tbls[[key]] <- tbl
   tbl
+}
+
+# ---- D2: stacking lazy tables (duckdb / Arrow) as one union_all ----
+
+#' Put N tables on one duckdb connection for a stack
+#'
+#' `sv_lazy_place()`'s rules for any number of inputs: a duckdb input stays where it is, all of them must
+#' be on one connection (else `sv_lazy_cross_con`), a table on another database is refused
+#' (`sv_lazy_not_duckdb`), and with no duckdb input the private connection of `con_env` is used. An Arrow
+#' input is handed over with `to_duckdb()` (dictionary columns decoded first), a data frame is registered
+#' under a temporary name. Nothing is collected. `cleanup()` removes whatever was added to the connection;
+#' it also runs here if placing a later table fails.
+#' @param tables A named list of data frames, duckdb tbls or Arrow objects.
+#' @param con_env An environment from `sv_lazy_env()`.
+#' @return `list(tbls, con, cleanup)`: the tbls (same names), the shared connection, an undo function.
+#' @noRd
+sv_lazy_place_n <- function(tables, con_env) {
+  origin <- vapply(tables, sv_lazy_origin, "")
+  for (src in tables) {
+    if (inherits(src, "tbl_lazy") && !inherits(src, "tbl_duckdb_connection")) {
+      rlang::abort("The stack needs duckdb tables; this table is on another database.",
+                   class = "sv_lazy_not_duckdb")
+    }
+  }
+  duck <- which(origin == "duckdb")
+  cons <- lapply(tables[duck], dbplyr::remote_con)
+  if (length(cons) > 1L && !all(vapply(cons[-1L], function(cn) identical(cn, cons[[1L]]), NA))) {
+    rlang::abort("These tables are on different duckdb connections; stack unavailable.",
+                 class = "sv_lazy_cross_con")
+  }
+  con <- if (length(duck)) cons[[1L]] else sv_lazy_con(con_env)
+
+  undo <- list()
+  cleanup <- function() {
+    todo <- rev(undo)
+    undo <<- list()
+    for (f in todo) f()
+    invisible(NULL)
+  }
+  ok <- FALSE
+  on.exit(if (!ok) cleanup(), add = TRUE)
+
+  tbls <- lapply(seq_along(tables), function(i) {
+    src <- tables[[i]]
+    switch(origin[[i]],
+      duckdb = src,
+      arrow = {
+        tbl <- arrow::to_duckdb(sv_lazy_decode_dictionaries(src), con = con, auto_disconnect = FALSE)
+        name <- dbplyr::remote_name(tbl)
+        undo[[length(undo) + 1L]] <<- function() sv_lazy_detach_arrow(con, name)
+        sv_lazy_with_zones(tbl, sv_lazy_zones(src))
+      },
+      df = {
+        a <- sv_lazy_attach(as.data.frame(src), con)
+        undo[[length(undo) + 1L]] <<- function() sv_lazy_detach(con, a$name)
+        sv_lazy_with_zones(a$tbl, sv_lazy_zones(src))
+      })
+  })
+  names(tbls) <- names(tables)
+  ok <- TRUE
+  list(tbls = tbls, con = con, cleanup = cleanup)
+}
+
+# A SQL fragment as an R call, so that an expression holding it prints as code that runs
+sv_stack_sql <- function(text) rlang::call2(quote(dbplyr::sql), text)
+
+# An expression as one line of code
+sv_stack_show <- function(e) paste(rlang::expr_deparse(e, width = Inf), collapse = " ")
+
+# An identifier quoted for SQL, the way DBI::dbQuoteIdentifier() does
+sv_stack_qid <- function(name) paste0("\"", gsub("\"", "\"\"", name, fixed = TRUE), "\"")
+
+# Raw SQL objects inside an expression (from the tz helpers) as dbplyr::sql() calls
+sv_stack_sql_calls <- function(e) {
+  if (inherits(e, "sql")) return(sv_stack_sql(as.character(e)))
+  if (is.call(e)) return(as.call(lapply(as.list(e), sv_stack_sql_calls)))
+  e
+}
+
+# Which casts can give NA from a value (the others never do, so the NA count needs no query)
+sv_stack_cast_can_na <- function(from, to) {
+  switch(to,
+    lgl = from %in% c("int", "num", "chr"),
+    int = from %in% c("num", "chr"),
+    num = identical(from, "chr"),
+    date = identical(from, "chr"),
+    FALSE)
+}
+
+# The zone a dttm column is written in: its own, else the session's
+sv_stack_zone <- function(zone) {
+  if (length(zone) && !is.na(zone) && nzchar(zone)) return(zone)
+  tz <- tryCatch(Sys.timezone(), error = function(e) NA_character_)
+  if (is.na(tz) || !nzchar(tz)) "UTC" else tz
+}
+
+#' One lazy cast as an expression (decision 3's table, in SQL)
+#'
+#' The lazy twin of `sv_stack_cast()`: a value converts exactly or gives `NA`. Written once, as a language
+#' object that `sv_lazy_stack()` evaluates inside `mutate()` and that `sv_stack_code()` prints as code
+#' (`rlang::expr_deparse()`). Where dbplyr has no exact translation the SQL is a `dbplyr::sql()` call:
+#' `as.numeric()` is NUMERIC (DECIMAL(18,3)) there and a plain `CAST` errors on bad text, so text is read
+#' with `TRY_CAST` behind the same regular expression and range guard as in R. NaN is missing, so it is
+#' kept out of every guard with `isnan()` (duckdb says `NaN = NaN`).
+#' @param cn The column name as the table has it.
+#' @param from,to Type names (decision 1).
+#' @param zone The zone of a `dttm` column that becomes text.
+#' @noRd
+sv_stack_lazy_cast <- function(cn, from, to, zone = "") {
+  x <- rlang::sym(cn)
+  q <- sv_stack_qid(cn)
+  dbl <- sv_stack_sql(sprintf("TRY_CAST(%s AS DOUBLE)", q))
+  matches <- function(re) rlang::expr(regexp_matches(!!x, !!re))
+  switch(to,
+    lgl = if (from == "chr") {
+      rlang::expr(dplyr::case_when(!!x == "TRUE" ~ TRUE, !!x == "FALSE" ~ FALSE, .default = NA))
+    } else {
+      rlang::expr(dplyr::case_when(!!x == 0 ~ FALSE, !!x == 1 ~ TRUE, .default = NA))
+    },
+    int = switch(from,
+      lgl = rlang::expr(as.integer(!!x)),
+      chr = rlang::expr(dplyr::if_else(
+        !!matches(sv_supp_int_re) & abs(!!dbl) <= 2147483647,
+        !!sv_stack_sql(sprintf("TRY_CAST(TRY_CAST(%s AS DOUBLE) AS INTEGER)", q)), NA)),
+      rlang::expr(dplyr::if_else(
+        !isnan(!!x) & !!x == floor(!!x) & abs(!!x) <= 2147483647,
+        !!sv_stack_sql(sprintf("TRY_CAST(%s AS INTEGER)", q)), NA))),
+    num = if (from == "chr") {
+      rlang::expr(dplyr::if_else(!!matches(sv_supp_dbl_re) & abs(!!dbl) <= 1e308, !!dbl, NA))
+    } else sv_stack_sql(sprintf("CAST(%s AS DOUBLE)", q)),
+    chr = switch(from,
+      lgl = sv_lazy_text_expr(x, "logical"),
+      num = sv_lazy_text_expr(x, "double"),
+      dttm = sv_stack_sql_calls(sv_lazy_tz_text_expr(x, sv_stack_zone(zone), seconds = TRUE)),
+      rlang::expr(as.character(!!x))),
+    date = if (from == "dttm") {
+      # the UTC date, as in memory; CAST(TIMESTAMPTZ AS DATE) needs ICU, epoch_us() does not
+      sv_stack_sql(sprintf("CAST(make_timestamp(epoch_us(%s)) AS DATE)", q))
+    } else {
+      rlang::expr(dplyr::if_else(regexp_matches(!!x, "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"),
+                                 !!sv_stack_sql(sprintf("TRY_CAST(%s AS DATE)", q)), NA))
+    },
+    dttm = sv_stack_sql(sprintf("CAST(%s AS TIMESTAMP)", q)),
+    stop(sprintf("Cannot cast to %s.", to), call. = FALSE))
+}
+
+# A missing column, typed so that the union reads it as the target type
+sv_stack_lazy_na <- function(target) {
+  sv_stack_sql(sprintf("CAST(NULL AS %s)", switch(target, lgl = "BOOLEAN", int = "INTEGER", num = "DOUBLE",
+                                                  date = "DATE", dttm = "TIMESTAMP", "VARCHAR")))
+}
+
+#' What one input of a lazy stack needs: renames, columns to set, columns in stack order
+#' @return `list(rename, sets, cols)`; `rename` maps a new name to the old one, `sets` is a named list of
+#'   expressions (the id column first), `cols` the columns, in stack order.
+#' @noRd
+sv_stack_lazy_parts <- function(plan, i) {
+  rename <- list()
+  sets <- list()
+  sets[[plan$id_col]] <- plan$inputs[i]
+  for (col in plan$columns) {
+    from <- col$rename_from[i]
+    if (!is.na(from)) rename[[col$name]] <- from
+    type <- col$types[i]
+    if (is.na(type)) {
+      sets[[col$name]] <- sv_stack_lazy_na(col$target)
+    } else if (!is.na(col$cast[i])) {
+      sets[[col$name]] <- sv_stack_lazy_cast(col$name, type, col$target, col$zones[i])
+    } else if (identical(type, "fct")) {
+      # a dictionary / enum input: as text, so inputs with different levels union
+      sets[[col$name]] <- rlang::expr(as.character(!!rlang::sym(col$name)))
+    }
+  }
+  list(rename = rename, sets = sets, cols = c(plan$id_col, vapply(plan$columns, function(c) c$name, "")))
+}
+
+# Apply `sv_stack_lazy_parts()` to a tbl
+sv_stack_lazy_apply <- function(tbl, parts) {
+  if (length(parts$rename)) {
+    tbl <- dplyr::rename(tbl, !!!lapply(parts$rename, rlang::sym))
+  }
+  tbl <- dplyr::mutate(tbl, !!!parts$sets)
+  dplyr::select(tbl, dplyr::all_of(parts$cols))
+}
+
+# A 0-row data frame of an input: its types as R sees them, with the factor levels, zones and labels put back
+sv_lazy_stack_sample <- function(src, tbl) {
+  z <- as.data.frame(dplyr::collect(utils::head(tbl, 0L)), stringsAsFactors = FALSE)
+  factors <- attr(src, "sv_factors", exact = TRUE)
+  if (is.null(factors) && identical(sv_lazy_origin(src), "arrow")) factors <- sv_lazy_factors(src)
+  for (cn in intersect(names(factors), names(z))) {
+    f <- factors[[cn]]
+    z[[cn]] <- factor(character(0), levels = f$levels %||% character(0), ordered = isTRUE(f$ordered))
+  }
+  zones <- attr(tbl, "sv_tz", exact = TRUE) %||% attr(src, "sv_tz", exact = TRUE)
+  for (cn in names(z)) {
+    if (inherits(z[[cn]], "POSIXct")) attr(z[[cn]], "tzone") <- sv_lazy_zone_for(zones, cn)
+  }
+  # an Arrow table keeps a column's label in its R metadata; a duckdb table has none
+  if (inherits(src, "ArrowTabular")) {
+    lab <- tryCatch(as.data.frame(utils::head(src, 0L)), error = function(e) NULL)
+    for (cn in intersect(names(lab), names(z))) {
+      l <- attr(lab[[cn]], "label")
+      if (!is.null(l)) attr(z[[cn]], "label") <- l
+    }
+  }
+  z
+}
+
+# A 0-row sample of a data frame, with its labels (`[` drops them)
+sv_stack_zero_df <- function(df) {
+  z <- df[0L, , drop = FALSE]
+  for (cn in names(df)) {
+    l <- attr(df[[cn]], "label")
+    if (!is.null(l)) attr(z[[cn]], "label") <- l
+  }
+  z
+}
+
+#' The plan of a stack with a lazy input
+#'
+#' The twin of `sv_stack_plan()` for any mix of data frames, duckdb tables and Arrow tables: the same
+#' return value. Types, zones, factor levels and labels come from 0 rows (`head(0)`) and the Arrow schema;
+#' the row count and the NA counts of the casts come from one aggregated query per lazy input, run on one
+#' connection (`sv_lazy_place_n()`). Nothing is collected. A data frame input counts in R.
+#' @inheritParams sv_stack_plan
+#' @param con_env An environment from `sv_lazy_env()`; when omitted a private connection is opened for this
+#'   call and closed again.
+#' @noRd
+sv_lazy_stack_plan <- function(tables, fixes = list(), id_col = NULL, con_env = NULL) {
+  if (is.null(con_env)) {
+    con_env <- sv_lazy_env()
+    on.exit(sv_lazy_close(con_env), add = TRUE)
+  }
+  inputs <- names(tables)
+  is_lazy <- vapply(tables, sv_is_lazy_input, NA)
+  placed <- sv_lazy_place_n(tables[is_lazy], con_env)
+  on.exit(placed$cleanup(), add = TRUE, after = FALSE)
+  samples <- lapply(inputs, function(nm) {
+    if (is_lazy[[nm]]) sv_lazy_stack_sample(tables[[nm]], placed$tbls[[nm]]) else sv_stack_zero_df(tables[[nm]])
+  })
+  names(samples) <- inputs
+  counts <- rep(0, length(inputs))
+  na_fun <- function(reqs) {
+    out <- integer(length(reqs))
+    for (i in seq_along(inputs)) {
+      mine <- which(vapply(reqs, function(r) r$i == i, NA))
+      if (!is_lazy[[i]]) {
+        counts[i] <<- nrow(tables[[i]])
+        for (k in mine) {
+          r <- reqs[[k]]
+          x <- tables[[i]][[r$src]]
+          v <- sv_stack_cast(x, r$from, r$to, r$zone)
+          out[k] <- sum(is.na(v) & !is.na(x))
+        }
+        next
+      }
+      sums <- list()
+      for (k in mine) {
+        r <- reqs[[k]]
+        if (!sv_stack_cast_can_na(r$from, r$to)) next
+        x <- rlang::sym(r$src)
+        cond <- rlang::expr(is.na(!!sv_stack_lazy_cast(r$src, r$from, r$to, r$zone)) & !is.na(!!x))
+        if (identical(r$from, "num")) cond <- rlang::expr(!!cond & !isnan(!!x))
+        sums[[paste0("na", k)]] <- rlang::expr(sum(dplyr::if_else(!!cond, 1L, 0L), na.rm = TRUE))
+      }
+      res <- dplyr::collect(dplyr::summarise(placed$tbls[[inputs[i]]], .sv_n = dplyr::n(), !!!sums))
+      counts[i] <<- as.numeric(res$.sv_n[1L])
+      for (nm in names(sums)) {
+        v <- as.integer(res[[nm]][1L])
+        out[as.integer(sub("^na", "", nm))] <- if (is.na(v)) 0L else v
+      }
+    }
+    out
+  }
+  plan <- sv_stack_plan_core(samples, inputs, fixes, id_col, na_fun, function() sv_lazy_count(sum(counts)))
+  plan <- sv_stack_add_tz_text(plan)
+  clash <- sv_stack_case_clash(plan)
+  if (length(clash)) plan$case_clash <- clash
+  plan
+}
+
+# The text of every dttm-to-chr cast (the zone's offset tree is long), so the browser writes the same lazy code without
+# rebuilding the tree: `tz_text[i]` is input i's cast of this column, NA where it has none. Pure R: an in-memory plan of
+# lazy cards (the lost-link preview) gets it too, so the browser can always write the lazy code.
+sv_stack_add_tz_text <- function(plan) {
+  inputs <- plan$inputs
+  for (k in seq_along(plan$columns)) {
+    col <- plan$columns[[k]]
+    tt <- rep(NA_character_, length(inputs))
+    for (i in seq_along(inputs)) {
+      if (!is.na(col$types[i]) && !is.na(col$cast[i]) && identical(col$types[i], "dttm") && identical(col$cast[i], "chr")) {
+        tt[i] <- sv_stack_show(sv_stack_lazy_cast(col$name, "dttm", "chr", col$zones[i]))
+      }
+    }
+    if (any(!is.na(tt))) plan$columns[[k]]$tz_text <- tt
+  }
+  plan
+}
+
+# The names of a lazy stack that differ only in case (`AGE` and `Age` left apart): duckdb reads them as one name and
+# would rename one to `Age_1`, so a lazy stack refuses them. Empty when there are none.
+sv_stack_case_clash <- function(plan) {
+  nms <- c(plan$id_col, vapply(plan$columns, function(c) c$name, ""))
+  low <- tolower(nms)
+  nms[low %in% low[duplicated(low)]]
+}
+
+#' The stack of lazy tables, as one duckdb `union_all()`
+#'
+#' Every input is placed on one connection (`sv_lazy_place_n()`), given the id column, its casts and typed
+#' NAs for the columns it lacks (`sv_stack_lazy_parts()`), put in stack order, and the inputs are joined by
+#' nested `union_all()`. Nothing is collected. The result carries the zones (`sv_tz`: the first zone kept for
+#' each time column), the factor columns with their union of levels (`sv_factors`) and `sv_cleanup`, which
+#' undoes the placement (`sv_lazy_release()` runs it).
+#' @param tables A named list of data frames, duckdb tbls or Arrow objects, in plan order.
+#' @param plan From `sv_stack_plan()` / `sv_lazy_stack_plan()`.
+#' @param con_env An environment from `sv_lazy_env()`.
+#' @noRd
+sv_lazy_stack <- function(tables, plan, con_env) {
+  if (!identical(names(tables), plan$inputs)) stop("The plan was made for other tables.", call. = FALSE)
+  clash <- sv_stack_case_clash(plan)
+  if (length(clash)) stop(sv_say_stack_case_clash(clash), call. = FALSE)
+  placed <- sv_lazy_place_n(tables, con_env)
+  ok <- FALSE
+  on.exit(if (!ok) placed$cleanup(), add = TRUE)
+  parts <- lapply(seq_along(tables), function(i) {
+    sv_stack_lazy_apply(placed$tbls[[i]], sv_stack_lazy_parts(plan, i))
+  })
+  out <- Reduce(function(a, b) dplyr::union_all(a, b), parts, right = TRUE)
+  tz <- vapply(names(plan$tz), function(cn) sv_stack_zone(plan$tz[[cn]]), "")
+  if (length(tz)) attr(out, "sv_tz") <- tz
+  factors <- list()
+  for (col in plan$columns) {
+    if (!identical(col$target, "fct")) next
+    factors[[col$name]] <- list(ordered = isTRUE(col$ordered), levels = col$levels)
+  }
+  if (length(factors)) attr(out, "sv_factors") <- factors
+  attr(out, "sv_cleanup") <- placed$cleanup
+  ok <- TRUE
+  out
 }

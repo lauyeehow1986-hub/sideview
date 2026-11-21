@@ -38,7 +38,7 @@ rstudio bridge: R/rstudio.R
   `column_renamed`, `clear_operations`, `discrepancy_check`, `request_suggested_mappings`,
   `apply_auto_clean`, `run_ai_prompt`, `send_copilot_chat`, `inject_script`, `send_console`,
   `send_console_and_exit`, `eval_env`, `sideview_card_moved`, `sideview_highlight_changed`,
-  `sideview_rows_request`, `join_diagnostics_request`, `derive_request` (`{id, op, inputs, args, name?}`: validated by `sv_derive_clean()`, inputs are store names, args off the allowlist dropped, the SUPP plan is R's own), `derive_forget` (`{name}`: only a card with `derived`), `column_profile_request`, `supp_check_request` (`{id, parent, supp, plan?, rdomain?}`; `rdomain` is a hint R takes only if it is in the SUPP card's tag `rdomains` or the card has no tags; module: routed by `ns`, the client only names cards in the R store), `codebook_export`,
+  `sideview_rows_request`, `join_diagnostics_request`, `derive_request` (`{id, op, inputs, args, name?}`: validated by `sv_derive_clean()`, inputs are store names, args off the allowlist dropped, the SUPP plan is R's own), `derive_forget` (`{name}`: only a card with `derived`), `stack_check_request` (`{id, tables, fixes?}`: `tables` are 2 to 8 store names, each once; cleaned with `derive_request`'s stack rules by one helper, `sv_stack_clean()`; a refusal changes nothing), `column_profile_request`, `supp_check_request` (`{id, parent, supp, plan?, rdomain?}`; `rdomain` is a hint R takes only if it is in the SUPP card's tag `rdomains` or the card has no tags; module: routed by `ns`, the client only names cards in the R store), `codebook_export`,
   `state_save`, `state_open_request`, `sideview_ready` (module: the canvas is on the page, R sends its cards),
   `sideview_snapshot` (module: `{code, pipeline, state, cards}`, pipeline/state as JSON text, debounced 300 ms),
   `sideview_done`, `sideview_cancel`,
@@ -46,7 +46,7 @@ rstudio bridge: R/rstudio.R
 - Custom messages (R → client): `sideview_code_update`, `sideview_discrepancies`,
   `sideview_suggested_mappings` (candidates carry `group`, e.g. `"cdisc:adae~ae"`, and `kind`, `"trace"|"subject"|"visit"`, both null for heuristic rows; a group is drawn as dashed paths with class `sideview-spline-suggested-cdisc` and accepted as one join by `addConnections()`: one undo step, one `column_mapped` per key), `sideview_copilot_reply`, `sideview_inject_result`,
   `sideview_console_result`, `sideview_eval_result`, `sideview_rows`, `sideview_ai_status`,
-  `sideview_join_diagnostics`, `sideview_derive_result` (`{id, error}`: a refused `derive_request`; success is a `sideview_card_add` with `request_id`), `sideview_column_profile`, `sideview_supp_check` (`{id, ...check}` from `sv_supp_check()`, or `{id, error}`; carries `ns` in module mode), `sideview_codebook_saved` (module: carries `csv`, the file text, plus `filename`; the browser downloads it),
+  `sideview_join_diagnostics`, `sideview_derive_result` (`{id, error}`: a refused `derive_request`; success is a `sideview_card_add` with `request_id`), `sideview_stack_check` (`{id, columns, n_rows, id_col, name, open_label, code_preview, text}` from `sv_stack_plan()`, each column with a `table` cell per input; or `{id, error}`; carries `ns` in module mode), `sideview_column_profile`, `sideview_supp_check` (`{id, ...check}` from `sv_supp_check()`, or `{id, error}`; carries `ns` in module mode), `sideview_codebook_saved` (module: carries `csv`, the file text, plus `filename`; the browser downloads it),
   `sideview_state_saved`, `sideview_state_loaded`,
   `sideview_cdisc_update` (module: `{tags: {<card_id>: tag | null}}`, the badges only; an unknown card id is ignored quietly),
   `sideview_card_add` (the first population on `sideview_ready` carries `initial: true`; a derived card's payload carries `derived: {op, inputs, args}` and the message `request_id`, the id of the `derive_request` it answers), `sideview_card_replace`, `sideview_card_remove`, `sideview_state_set`, `sideview_highlight`,
@@ -113,6 +113,35 @@ rstudio bridge: R/rstudio.R
   `sv_supp_ws` / `SUPP_WS` (never `\s`/`trim()`), and generated `grepl()` uses `perl = TRUE`; `abs(x) > 1e308` is bad.
   An Arrow int64/uint64 key is always a double key (as duckdb BIGINT). Clashes with columns made by earlier chain
   steps are caught in the browser (`columnsBefore()`), not by the code guard. Change a twin together with the others.
+- **Stack (D2):** same twin rule. `sv_stack_check()` / `sv_stack()` (R/stack.R) and the `stack` derive op. The column plan
+  is `sv_stack_plan()` (in memory) and `sv_lazy_stack_plan()` (duckdb / Arrow): twins, held to each other by
+  test-stack.R and test-lazy.R. The rows are `sv_stack_rows()` (in memory) and `sv_lazy_stack()` (one duckdb
+  `union_all`, never collected): twins too, and both tested against each other. The generated code is also a twin:
+  `sv_stack_code()` (R) and `deriveExpr()` for `op: 'stack'` (sv-pipeline.js) are byte-equal (the code pair; R builds
+  the card with `sv_stack_rows()` / `sv_lazy_stack()`, not by running that code); test-derive-code.R evaluates it for
+  every backend. `sv_escape_ident()` / `ident()` and `encodeString()` / `str()` quote names and strings the same way
+  (ASCII-only syntactic names, control characters escaped; test-stack.R). The step is a `derive` step
+  `{op: 'stack', inputs: [2..8], args: {fixes, id_col?, plan}}`; the plan is R's and is embedded verbatim, including
+  `tz_text` (the R-computed DST offset tree for a lazy date-time to text cast: JS never ports time zone rules).
+  `sv_stack_clean()` adds `tz_text` whenever a card is lazy, even when the plan came from a preview, so JS never
+  writes lazy code without it. An opened state's stack steps take the plan R makes from the data as they are then
+  (`sv_derive_state_refresh()`; `derivedArrived()` refits a lazy card's step in the browser). A dttm to date cast is
+  the UTC date and a date to dttm cast midnight UTC on both sides (lazy uses `epoch_us()`: duckdb 1.4.3 has no ICU
+  for `CAST(TIMESTAMPTZ AS DATE)`). duckdb names are case-insensitive, so a lazy plan with `AGE` and `Age` left apart
+  carries `case_clash` and `sv_lazy_stack()` refuses it. Without duckdb a whole lazy card is refused, never stacked
+  from its preview. `deriveArgsKey()` includes the sorted `fixes` and `id_col` (the default `source` counts as none),
+  so two stacks of the same inputs with different fixes are different cards. The wire is `stack_check_request`
+  (`{id, tables, fixes?}`, cleaned by `sv_stack_clean()`; the id is a short sequence, and an id over 200 characters
+  gets a toast, not silence) and `sideview_stack_check`; Open is a `derive_request` with `op: 'stack'` whose plan is
+  made once (`sv_derive_check()` hands validate's clean result to `sv_derive_card()`). Ticking a rename drops the
+  cast picked for the renamed column. The card is named after the first table picked. Known gaps: `Sys.timezone()`
+  is pinned in lazy date-time code; a number cast to text can be `"1e+05"` in R and `"100000"` in duckdb (and keeps
+  15 significant digits in R); a dttm cast to text drops fractional seconds; a cast `integer64` loses digits beyond
+  2^53; none of these is counted as `NA`. duckdb tables carry no labels (Arrow tables do); `tz_text` adds about 20 KB
+  of saved state per date-time column per input; `sv_stack(check =)` compares a lazy input by name only (data frames
+  also by columns, types and row count); `id_col` is not an input to the check, so a user-chosen `id_col` would
+  desync the preview from Open (the browser sends none); Check then Open still plans twice; no lazy stack server
+  test; `sv_stack_clean()` has no unit test for 9 tables or the cast-target whitelist (the handler pre-checks).
 - **Derived cards (D1):** the rows behind a check count as a card of their own. Ops (`sv_derive_ops`): `unmatched`
   and `outside_window` (join check; `args` = `{by, rule?, side}`), `supp_orphans` and `supp_bad_idvarval` (SUPP check;
   `args` = `{rdomain?}`, the plan is R's). `sv_unmatched()` and `sv_supp_orphans()` are the console forms; all of them

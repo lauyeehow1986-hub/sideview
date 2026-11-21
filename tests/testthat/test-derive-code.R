@@ -305,3 +305,53 @@ test_that("building a SUPP card on an Arrow parent leaves no temp table on the c
   expect_setequal(DBI::dbListTables(con), before)
   expect_false(any(grepl("sv_supp_keys_|dbplyr_", DBI::dbListTables(con))))
 })
+
+# ---- stack (D2 task 4): the pipeline's code rebuilds the stacked card ----
+
+dc_stack_tables <- function() {
+  a <- data.frame(id = 1:4, age = c(34, 51, NA, 60), sex = c("F", "M", "F", NA),
+                  visit = as.Date(c("2024-01-02", "2024-02-03", NA, "2024-03-04")),
+                  wt = c(60.5, 72, 80.25, NA), flag = c(TRUE, FALSE, NA, TRUE), stringsAsFactors = FALSE)
+  a[["my col"]] <- c(1.5, 2, NA, 4)
+  attr(a$age, "label") <- "Age \"in\" years"
+  b <- data.frame(id = c("5", "6", "7x"), age = 1:3, sex = c("M", "M", "F"),
+                  visit = as.POSIXct(c("2024-04-01 08:30:00", "2024-04-02 00:00:00", NA), tz = "UTC"),
+                  note = c("n1", NA, "n3"), Flag = c(TRUE, NA, FALSE), stringsAsFactors = FALSE)
+  b[["my col"]] <- c("u", "v", NA)
+  c3 <- data.frame(id = 8:9, age = c(70, 71), sex = c("F", "F"),
+                   visit = as.Date(c("2024-05-01", "2024-05-02")), note = c("a", "b"),
+                   flag = c(FALSE, FALSE), grp = factor(c("g1", "g2")), stringsAsFactors = FALSE)
+  list(w1 = a, `wave 2` = b, w3 = c3)
+}
+
+test_that("stack code rebuilds the card", {
+  tb <- dc_stack_tables()
+  fixes <- list(list(column = "Flag", action = "rename", to = "flag"),
+                list(column = "age", action = "cast", to = "chr"))
+  sets <- list(c("df", "df", "df"), c("duckdb", "duckdb", "duckdb"), c("arrow", "arrow", "arrow"),
+               c("df", "duckdb", "df"), c("arrow", "df", "duckdb"), c("arrow", "df", "df"))
+  for (ik in sets) {
+    info <- paste(ik, collapse = "/")
+    fx <- dc_fixture(tb, ik)
+    card <- dc_card(fx, "stack", names(tb), list(fixes = fixes))
+    res <- dc_compose(fx, list(list(card)))[[1]]
+    dc_expect(fx, res, card, info)
+    if (all(ik == "df")) {
+      expect_null(res$kind)
+      got <- dc_eval(fx, res$code, card$name)
+      expect_identical(attr(got$age, "label"), attr(card$data$age, "label"), info = info)
+      expect_equal(got, card$data, info = info)
+    } else {
+      expect_identical(res$kind, "duckdb", info = info)
+    }
+  }
+})
+
+test_that("stack code with two inputs and no fixes rebuilds the card", {
+  tb <- dc_stack_tables()[c(1, 3)]
+  for (ik in list(c("df", "df"), c("duckdb", "arrow"))) {
+    fx <- dc_fixture(tb, ik)
+    card <- dc_card(fx, "stack", names(tb), list())
+    dc_expect(fx, dc_compose(fx, list(list(card)))[[1]], card, paste(ik, collapse = "/"))
+  }
+})

@@ -3983,3 +3983,164 @@ html.sv-standalone body {
   background: var(--sv-primary-subtle);
   color: var(--sv-primary-text);
 }
+/* Stack tab: pick 2 to 8 cards, check their columns, open the stacked card */
+.sideview-container .sideview-stack {
+  min-width: 0;
+}
+
+.sideview-container .sideview-stack-picker {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--sv-border-light);
+  border-radius: var(--sv-radius-sm);
+  min-width: 0;
+}
+
+.sideview-container .sideview-stack-picker legend {
+  padding: 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sv-text-muted);
+}
+
+.sideview-container .sideview-stack-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sideview-container .sideview-stack-card label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-sm);
+  background: var(--sv-surface);
+  color: var(--sv-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sideview-container .sideview-stack-card label:has(input:checked) {
+  background: var(--sv-primary-subtle);
+  border-color: var(--sv-primary);
+}
+
+.sideview-container .sideview-stack-card label:has(input:focus-visible) {
+  outline: 2px solid var(--sv-focus-ring);
+  outline-offset: 1px;
+}
+
+.sideview-container .sideview-stack-card span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sideview-container .sideview-stack-order {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  font-size: 12px;
+  color: var(--sv-text);
+  overflow-wrap: anywhere;
+}
+
+.sideview-container .sideview-stack-actions {
+  justify-content: flex-start;
+}
+
+.sideview-container .sideview-stack-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sideview-container .sideview-stack-error {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--sv-danger-border);
+  border-radius: var(--sv-radius-sm);
+  background: var(--sv-danger-subtle);
+  color: var(--sv-danger-text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.sideview-container .sideview-stack-scroll,
+.sideview-container .sideview-stack-code {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--sv-border-light);
+  border-radius: var(--sv-radius-sm);
+}
+
+.sideview-container .sideview-stack-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sideview-container .sideview-stack-table caption {
+  padding: 4px 6px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sv-text-muted);
+}
+
+.sideview-container .sideview-stack-table th,
+.sideview-container .sideview-stack-table td {
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--sv-border-light);
+  text-align: left;
+  vertical-align: top;
+}
+
+.sideview-container .sideview-stack-table thead th {
+  background: var(--sv-th-bg);
+  color: var(--sv-text);
+  font-weight: 600;
+}
+
+.sideview-container .sideview-stack-table tbody th {
+  font-weight: 600;
+  color: var(--sv-text);
+  white-space: nowrap;
+}
+
+.sideview-container .sideview-stack-status {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-stack-fixfield {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-stack-text {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-stack-code pre {
+  margin: 0;
+  padding: 6px 8px;
+  font-family: var(--sv-font-mono);
+  font-size: 11px;
+  color: var(--sv-text);
+  background: var(--sv-surface-secondary);
+}

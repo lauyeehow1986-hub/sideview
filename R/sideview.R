@@ -236,6 +236,7 @@ sideview <- function(...,
     n_cards <- length(card_list)
     card_list <- sv_derive_from_state(card_list, state, sv_derive_preview_builder(cdisc), skip_lazy = TRUE)
     if (length(card_list) > n_cards) card_list <- sv_cdisc_finalize(card_list, cdisc)
+    state <- sv_derive_state_refresh(state, card_list)
   }
 
   # Build Shiny application object

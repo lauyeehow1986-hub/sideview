@@ -1159,3 +1159,71 @@ test_that("reactive cards=: a re-fire keeps the derived card; dropping an input 
     expect_true(px$ctl$store$has("dm"))
   })
 })
+
+test_that("forged stack requests are refused", {
+  w1 <- data.frame(AGE = c(34, 51), RACE = c("a", "b"), stringsAsFactors = FALSE)
+  w2 <- data.frame(AGE = c("29", "x", "40"), RACE = c("c", "d", "e"), stringsAsFactors = FALSE)
+  shiny::testServer(sideviewServer, args = list(id = "cv", cards = list(wave1 = w1, wave2 = w2)), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    before <- px$ctl$store$names()
+    n_all <- length(session$userData$custom_messages)
+    i <- 0L
+    refuse <- function(req) {
+      i <<- i + 1L
+      req$id <- paste0("bad", i)
+      session$setInputs(stack_check_request = req)
+      all <- session$userData$custom_messages
+      expect_length(all, n_all + 1L)
+      n_all <<- length(all)
+      r <- all[[length(all)]]
+      expect_identical(r$type, "sideview_stack_check")
+      expect_identical(r$message$id, req$id)
+      expect_true(is.character(r$message$error) && nzchar(r$message$error))
+      expect_null(r$message$columns)
+      expect_identical(r$message$ns, session$ns(""))
+      expect_identical(px$ctl$store$names(), before)
+    }
+    refuse(list(tables = list("Sys.getenv", "wave2")))
+    refuse(list(tables = list("wave1", "nope")))
+    refuse(list(tables = as.list(rep("wave1", 9L))))
+    refuse(list(tables = list("wave1", "wave1")))
+    refuse(list(tables = list("wave1")))
+    refuse(list(tables = list("wave1", "wave2"),
+                fixes = list(list(column = "x; system('id')", action = "cast", to = "chr"))))
+    refuse(list(tables = list("wave1", "wave2"),
+                fixes = rep(list(list(column = "AGE", action = "keep")), 10000L)))
+    # and a good one still answers
+    session$setInputs(stack_check_request = list(id = "ok", tables = list("wave1", "wave2")))
+    all <- session$userData$custom_messages
+    expect_null(all[[length(all)]]$message$error)
+    expect_identical(px$ctl$store$names(), before)
+  })
+})
+
+test_that("a restored stack step takes the plan R makes from the current data", {
+  w1 <- data.frame(AGE = c(34, 51), RACE = c("a", "b"), stringsAsFactors = FALSE)
+  w2 <- data.frame(AGE = c("29", "x", "40"), RACE = c("c", "d", "e"), stringsAsFactors = FALSE)
+  # a plan saved when the data were other: 999 rows
+  stale <- list(kind = "derive", key = "s1", table = "wave1_stacked", op = "stack", inputs = list("wave1", "wave2"),
+                args = list(fixes = list(), plan = list(inputs = list("wave1", "wave2"), n_rows = 999, columns = list())))
+  shiny::testServer(sideviewServer, args = list(id = "cv", cards = list(wave1 = w1, wave2 = w2)), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    sv_set_state(px, dv_state(list(stale)))
+    expect_true(px$ctl$store$has("wave1_stacked"))
+    sent <- msgs(session, "sideview_state_set")
+    st <- jsonlite::fromJSON(sent[[length(sent)]]$message$state, simplifyVector = FALSE)
+    plan <- st$pipeline$steps[[1]]$args$plan
+    expect_equal(plan$n_rows, 5)
+    expect_identical(unlist(plan$inputs), c("wave1", "wave2"))
+    expect_true(length(plan$columns) >= 2L)
+  })
+  # the gadget: the state embedded in the page is refreshed the same way
+  app <- sideview(wave1 = w1, wave2 = w2, state = dv_state(list(stale)), run = FALSE)
+  st2 <- sv_derive_state_refresh(dv_state(list(stale)), app$cards)
+  expect_equal(st2$pipeline$steps[[1]]$args$plan$n_rows, 5)
+  # a SUPP or join step is left as saved
+  other <- sv_derive_state_refresh(dv_state(list(dv_step1)), app$cards)
+  expect_identical(other$pipeline$steps[[1]]$args$side, "x")
+})

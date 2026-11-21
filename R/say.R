@@ -254,3 +254,79 @@ sv_say_derive_offer <- function(op, n, kept, other = NULL) {
     supp_bad_idvarval = paste0("Open ", num, " ", kept, rows, " with a bad IDVARVAL as a card"),
     stop(sprintf("Unknown derive op: %s", op), call. = FALSE))
 }
+
+# The status strings of one stack column (R writes them). `col` is a plan column, `plan` the stack plan.
+sv_say_stack_status <- function(col, plan) {
+  inp <- plan$inputs
+  out <- character()
+  present <- !is.na(col$types)
+  fn <- c(lgl = "as.logical", int = "as.integer", num = "as.numeric", chr = "as.character",
+          date = "as.Date", dttm = "as.POSIXct")
+  if (any(!is.na(col$cast)) && !identical(col$target, "fct")) {
+    tfn <- unname(fn[col$target])[1]
+    out <- c(out, paste0("type differs -> ", if (is.na(tfn)) "as.character" else tfn))
+  } else if (identical(col$target, "fct") && isTRUE(col$levels_differ)) {
+    out <- c(out, "factor levels joined")
+  }
+  labs <- col$labels[!is.na(col$labels)]
+  if (length(unique(labs)) > 1L) {
+    out <- c(out, paste0("label differs (", inp[which(!is.na(col$labels))[1]], " label kept)"))
+  }
+  if (!all(present)) {
+    if (!is.na(col$near_miss_of)) {
+      out <- c(out, paste0("near-miss for ", col$near_miss_of, "? (case)"))
+    } else {
+      out <- c(out, paste0("only in ", paste(inp[present], collapse = ", "),
+                           " (NA in ", paste(inp[!present], collapse = ", "), ")"))
+    }
+  }
+  zn <- col$zones[!is.na(col$zones)]
+  if (length(unique(zn)) > 1L) {
+    out <- c(out, paste0("time zone differs (", inp[which(!is.na(col$zones))[1]], " zone kept)"))
+  }
+  for (i in which(!is.na(col$na) & col$na > 0L)) {
+    out <- c(out, if (col$na[i] == 1L) paste0("1 value in ", inp[i], " becomes NA")
+                  else paste0(sv_say_num(col$na[i]), " values in ", inp[i], " become NA"))
+  }
+  if (!length(out)) "ok" else out
+}
+
+# The number of values a stack's casts turn into NA, and the columns that change type.
+sv_say_stack_counts <- function(plan) {
+  list(na = sum(unlist(lapply(plan$columns, function(c) c$na)), na.rm = TRUE),
+       typed = sum(vapply(plan$columns, function(c) any(!is.na(c$cast)), NA)),
+       near = sum(vapply(plan$columns, function(c) !is.na(c$near_miss_of), NA)))
+}
+
+# The summary lines of a stack check.
+sv_say_stack_text <- function(plan) {
+  n <- sv_say_stack_counts(plan)
+  cols <- length(plan$columns) + 1L
+  out <- paste0("Stack ", length(plan$inputs), " tables: ", sv_say_num(plan$n_rows),
+                if (plan$n_rows == 1) " row, " else " rows, ", sv_say_num(cols),
+                if (cols == 1L) " column." else " columns.")
+  if (n$typed > 0L) {
+    out <- c(out, paste0(sv_say_num(n$typed), if (n$typed == 1L) " column changes type" else " columns change type",
+                         if (n$na > 0) paste0("; ", sv_say_n_values(n$na, "becomes NA", "become NA")), "."))
+  } else if (n$na > 0) {
+    out <- c(out, paste0(sv_say_n_values(n$na, "becomes NA", "become NA"), "."))
+  }
+  if (n$near > 0L) {
+    out <- c(out, paste0(sv_say_num(n$near), if (n$near == 1L) " near-miss name left apart." else " near-miss names left apart."))
+  }
+  if (length(plan$case_clash)) out <- c(out, sv_say_stack_case_clash(plan$case_clash))
+  out
+}
+
+# Why a lazy stack refuses names that differ only in case.
+sv_say_stack_case_clash <- function(clash) {
+  paste0("duckdb reads ", paste(clash, collapse = " and "),
+         " as one name, so a duckdb or Arrow stack cannot keep them apart. Tick Rename to merge them, or rename one first.")
+}
+
+# The label of the Open button of a stack.
+sv_say_stack_open <- function(plan) {
+  n <- sv_say_stack_counts(plan)
+  paste0("Open stacked card (", sv_say_num(plan$n_rows), if (plan$n_rows == 1) " row" else " rows",
+         if (n$na > 0) paste0("; ", sv_say_n_values(n$na, "becomes NA", "become NA")), ")")
+}

@@ -425,7 +425,7 @@ test_that("each drawer tab shows only its own pane and builders render forms", {
     return { tabs: tabs, panes: out };
   })()"))
   expect_setequal(unlist(r$tabs), c("pipeline", "filter", "arrange", "mutate", "recode",
-                                    "summarise", "inspect", "discrepancy", "chat"))
+                                    "summarise", "stack", "inspect", "discrepancy", "chat"))
   for (t in unlist(r$tabs)) {
     p <- r$panes[[t]]
     expect_length(p$shown, 1)
@@ -3283,4 +3283,151 @@ test_that("undoing a connection takes its spline off the canvas and the saved st
   expect_equal(r$redone$conns, 1)
   expect_equal(r$redone$paths, 1)
   expect_length(attr(b, "sv_errors")(), 0)
+})
+
+# ---- the Stack drawer tab (D2, Task 6) ----
+
+test_that("Stack tab: pick, check, open", {
+  skip_if_no_browser()
+  app <- sv_start_app(sv_stk_app)
+  b <- sv_open_page(app$url, 1400, 900)
+  withr::defer(try(b$close(), silent = TRUE))
+  withr::defer(try(app$proc$kill(), silent = TRUE))
+  expect_true(attr(b, "sv_ready"))
+  sv_stk_open_tab(b)
+  expect_equal(sv_js(b, "document.querySelector('.sideview-drawer-tab[data-tab=stack]').textContent"), "Stack")
+  sv_stk_pick_check(b)
+  heads <- unlist(sv_js(b, "[...document.querySelectorAll('.sideview-stack-table thead th')].map(th => th.textContent)"))
+  expect_equal(heads, c("Column", "wave2", "wave1", "Status"))
+  expect_equal(sv_js(b, "document.querySelector('.sideview-stack-table caption').textContent"), "Columns of the stack, in order")
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-stack-table thead th[scope=col]').length"), 4)
+  # a near-miss checkbox is off by default
+  expect_false(sv_js(b, "document.querySelector('[data-stack-rename]').checked"))
+  before <- paste(unlist(sv_js(b, "[...document.querySelectorAll('.sideview-stack-text li')].map(x => x.textContent)")), collapse = " | ")
+  # change the type of age to num: the check is asked again and the NA count text changes
+  sv_js(b, "(() => { const s = document.querySelector('select[data-stack-cast=age]'); s.focus(); s.value = 'num'; s.dispatchEvent(new Event('change', {bubbles: true})); return true; })()")
+  expect_true(sv_wait_js(b, "(() => { const s = document.querySelector('select[data-stack-cast=age]'); return !!s && s.value === 'num' && /NA/.test([...document.querySelectorAll('.sideview-stack-text li')].map(x => x.textContent).join(' ')); })()", timeout = 60))
+  # the reply re-draws the table, and focus stays on the select that was changed
+  expect_true(sv_wait_js(b, "(() => { const s = document.querySelector('select[data-stack-cast=age]'); return document.activeElement === s; })()", timeout = 15))
+  after <- paste(unlist(sv_js(b, "[...document.querySelectorAll('.sideview-stack-text li')].map(x => x.textContent)")), collapse = " | ")
+  expect_false(identical(before, after))
+  # Open: the card is new, clear of the others, and has the sum of the rows
+  n0 <- sv_js(b, "document.querySelectorAll('.sideview-card').length")
+  sv_stk_click(b, "[data-stack-action=open]")
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-card[data-card-name=wave2_stacked]')", timeout = 60))
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-card').length"), n0 + 1)
+  # the badge shows the sum of both inputs' rows (computed from the fixtures)
+  badge <- sv_js(b, "document.querySelector('.sideview-card[data-card-name=wave2_stacked] .sideview-badge-dims').textContent")
+  expect_equal(as.integer(sub("[^0-9].*$", "", badge)), sv_stk_total_rows())
+  # focus is back on Open once the pane has re-rendered for the new card
+  expect_true(sv_wait_js(b, "(() => { const a = document.activeElement; return !!a && a.getAttribute('data-stack-action') === 'open'; })()", timeout = 15))
+  overlap <- sv_js(b, "(() => { const r = [...document.querySelectorAll('.sideview-card')].map(c => c.getBoundingClientRect()); let n = 0;
+    for (let i = 0; i < r.length; i++) for (let j = i + 1; j < r.length; j++) {
+      const a = r[i], c = r[j]; if (a.left < c.right - 0.5 && c.left < a.right - 0.5 && a.top < c.bottom - 0.5 && c.top < a.bottom - 0.5) n++; }
+    return n; })()")
+  expect_equal(overlap, 0)
+  # Open again: it zooms to the card and never makes a second one
+  sv_stk_click(b, "[data-stack-action=open]")
+  Sys.sleep(1)
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-card[data-card-name^=wave2_stacked]').length"), 1)
+  # the pane stays inside the drawer at three sizes
+  for (sz in list(c(1400, 900), c(1024, 700), c(560, 520))) {
+    sv_set_viewport(b, sz[1], sz[2])
+    r <- sv_js(b, "(() => { const p = document.querySelector('[data-pane=stack]'), d = document.querySelector('.sideview-drawer');
+      return { pane: p.scrollWidth - p.clientWidth, drawer: d.scrollWidth - d.clientWidth, right: p.getBoundingClientRect().right - d.getBoundingClientRect().right }; })()")
+    label <- paste(sz, collapse = "x")
+    expect_lte(r$pane, 1, label = paste("pane", label))
+    expect_lte(r$drawer, 1, label = paste("drawer", label))
+    expect_lte(r$right, 1, label = paste("right edge", label))
+  }
+  sv_set_viewport(b, 1400, 900)
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("Stack tab: eight long names get a reply", {
+  skip_if_no_browser()
+  nm <- sprintf("visit_wave_long_name_%02d", 1:8)
+  app <- sv_start_app(paste0("local({ ",
+    paste(sprintf("%s <- data.frame(id = %dL, age = %d)", nm, 1:8, 30 + 1:8), collapse = "; "),
+    "; sideview(", paste(nm, collapse = ", "), ", run = FALSE) })"))
+  b <- sv_open_page(app$url, 1400, 900)
+  withr::defer(try(b$close(), silent = TRUE))
+  withr::defer(try(app$proc$kill(), silent = TRUE))
+  sv_stk_open_tab(b)
+  for (n in nm) sv_stk_click(b, sprintf("[data-stack-pick=%s]", n))
+  eng <- "document.querySelector('.sideview-container')._sideviewInstance"
+  expect_equal(unlist(sv_js(b, sprintf("%s._stack.picked", eng))), nm)
+  sv_stk_click(b, "[data-stack-action=check]")
+  # the request id is short whatever the names: R answers, and the pane is not left on "Checking"
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-stack-table')", timeout = 60))
+  expect_false(isTRUE(sv_js(b, sprintf("%s._stack.pending", eng))))
+  expect_lte(nchar(sv_js(b, sprintf("%s._stack.latest", eng))), 40)
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("Stack tab: ticking a rename drops the cast picked for the renamed column", {
+  skip_if_no_browser()
+  app <- sv_start_app(sv_stk_app)
+  b <- sv_open_page(app$url, 1400, 900)
+  withr::defer(try(b$close(), silent = TRUE))
+  withr::defer(try(app$proc$kill(), silent = TRUE))
+  sv_stk_open_tab(b)
+  sv_stk_pick_check(b)
+  eng <- "document.querySelector('.sideview-container')._sideviewInstance"
+  from <- sv_js(b, "document.querySelector('[data-stack-rename]').getAttribute('data-stack-rename')")
+  sv_js(b, sprintf("(() => { %s._stack.fixes.push({column: %s, action: 'cast', to: 'chr'}); return true; })()", eng,
+                   jsonlite::toJSON(from, auto_unbox = TRUE)))
+  sv_stk_click(b, "[data-stack-rename]")
+  expect_true(sv_wait_js(b, "document.querySelector('[data-stack-rename]') && document.querySelector('[data-stack-rename]').checked", timeout = 60))
+  fx <- sv_js(b, sprintf("JSON.stringify(%s._stack.fixes)", eng))
+  fx <- jsonlite::fromJSON(fx, simplifyDataFrame = FALSE)
+  expect_true(any(vapply(fx, function(f) f$action == "rename" && f$column == from, NA)))
+  expect_false(any(vapply(fx, function(f) f$action == "cast" && f$column == from, NA)))
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("Stack tab: a hostile table name is literal text and a removed card leaves the picks", {
+  skip_if_no_browser()
+  app <- sv_start_app(paste0(
+    "local({ `a<b>\"c` <- data.frame(x = 1:2); w2 <- data.frame(x = 3L); w3 <- data.frame(x = 4L);",
+    "sideview(`a<b>\"c`, w2, w3, run = FALSE) })"))
+  b <- sv_open_page(app$url, 1400, 900)
+  withr::defer(try(b$close(), silent = TRUE))
+  withr::defer(try(app$proc$kill(), silent = TRUE))
+  sv_stk_open_tab(b)
+  expect_true(sv_wait_js(b, "document.querySelectorAll('[data-pane=stack] [data-stack-pick]').length === 3", timeout = 30))
+  expect_equal(sv_js(b, "document.querySelectorAll('[data-pane=stack] .sideview-stack b').length"), 0)
+  sv_stk_click(b, "[data-stack-pick=w2]")
+  sv_stk_click(b, "[data-stack-pick=w3]")
+  eng <- "document.querySelector('.sideview-container')._sideviewInstance"
+  expect_equal(unlist(sv_js(b, sprintf("%s._stack.picked", eng))), c("w2", "w3"))
+  sv_js(b, sprintf("%s.removeCard('w3'); true", eng))
+  expect_equal(unlist(sv_js(b, sprintf("%s._stack.picked", eng))), "w2")
+  expect_true(sv_js(b, "document.querySelector('[data-stack-action=check]').disabled"))
+})
+
+test_that("the saved widget has no Stack tab, and a stack step opens disabled with the derive toast", {
+  skip_if_no_browser()
+  env <- list2env(list(
+    wave1 = data.frame(id = 1:3, age = c(34, 51, 62)),
+    wave2 = data.frame(id = 4:5, age = c(45, 40))))
+  dir <- withr::local_tempdir()
+  file <- file.path(dir, "stack.html")
+  w <- local(sideview_widget(wave1, wave2), envir = env)
+  suppressMessages(save_sideview(w, file, selfcontained = FALSE))
+  url <- paste0("file:///", gsub("\\\\", "/", normalizePath(file)))
+  b <- sv_open_page(url, width = 1400, height = 900,
+                    wait_for = "!!document.querySelector('.sideview-card[data-card-name=\"wave2\"]')")
+  withr::defer(try(b$close(), silent = TRUE))
+  eng <- "document.querySelector('.sideview-container')._sideviewInstance"
+  expect_false(sv_js(b, sprintf("%s.hasR()", eng)))
+  expect_equal(sv_js(b, "document.querySelectorAll('[data-tab=stack], [data-pane=stack]').length"), 0)
+  state <- sv_js(b, sprintf("(() => { const e = %s; e.pipeline.add(SideviewPipeline.deriveStep('wave1_stacked', 'stack', ['wave1', 'wave2'], {fixes: []}), 'derive');
+    return e.getState(); })()", eng))
+  expect_true(!is.null(state))
+  sv_js(b, sprintf("(() => { const e = %s; e.applyState(%s); return true; })()", eng,
+                   jsonlite::toJSON(state, auto_unbox = TRUE, null = "null")))
+  expect_true(sv_wait_js(b, "/Derived tables are not shown/.test(document.querySelector('.sideview-toast-stack').textContent)", timeout = 15))
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-card[data-card-name=wave1_stacked]').length"), 0)
+  expect_equal(sv_js(b, "document.querySelectorAll('[data-tab=stack]').length"), 0)
 })

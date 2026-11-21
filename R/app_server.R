@@ -387,6 +387,57 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     dispatch_message("sideview_supp_check", result)
   }, ignoreInit = FALSE)
 
+  # Stack check: the column check of 2 to 8 cards. The client only names store cards and sends fixes; both go
+  # through sv_stack_clean(), the cleaner derive_request uses too, so the plan is R's own. A refusal is
+  # `{id, error}` and changes nothing.
+  shiny::observeEvent(input$stack_check_request, {
+    req <- input$stack_check_request
+    if (!is.list(req)) return()
+    rid <- sv_derive_scalar(sv_field(req, "id"), 200L)
+    # without its id no reply can reach the pane, which would wait on "Checking" for ever: say so instead
+    if (is.null(rid)) {
+      send_toast("The stack check was refused: its request id is missing or longer than 200 characters.", "warning")
+      return()
+    }
+    result <- tryCatch({
+      tabs <- sv_field(req, "tables")
+      if (is.list(tabs)) tabs <- unlist(tabs, use.names = FALSE)
+      if (!is.character(tabs) || anyNA(tabs) || length(tabs) < 2L || length(tabs) > 8L) {
+        stop("A stack needs 2 to 8 tables.", call. = FALSE)
+      }
+      cards <- Filter(Negate(is.null), lapply(unique(tabs), function(nm) if (card_store$has(nm)) card_store$get(nm)))
+      fixes <- sv_field(req, "fixes")
+      cl <- lazy_or_preview(
+        cards,
+        function() sv_stack_clean(tabs, fixes, card_store, NULL, con_env, card_full),
+        function() sv_stack_clean(tabs, fixes, card_store, NULL, NULL, card_full)
+      )
+      plan <- cl$plan
+      refs <- vapply(cl$cards, function(cd) cd$code_ref %||% sv_escape_ident(cd$name), "")
+      kinds <- vapply(cl$cards, function(cd) {
+        if (!card_full(cd)) return(NA_character_)
+        tryCatch(sv_lazy_origin(cd$source), error = function(e) NA_character_)
+      }, "")
+      cols <- lapply(seq_along(plan$columns), function(k) {
+        col <- plan$columns[[k]]
+        col$table <- vapply(seq_along(plan$inputs), function(i) {
+          if (is.na(col$types[i])) return("-")
+          lab <- col$labels[i]
+          if (is.na(lab)) col$types[i] else paste0(col$types[i], " ", encodeString(lab, quote = "\""))
+        }, "")
+        col$status <- sv_say_stack_status(col, plan)
+        col
+      })
+      list(columns = cols, n_rows = plan$n_rows, id_col = plan$id_col,
+           name = sv_derive_name("stack", cl$inputs, NULL, card_store$names(), NULL),
+           open_label = sv_say_stack_open(plan),
+           code_preview = sv_stack_code(plan, refs, kinds)$code,
+           text = as.list(sv_say_stack_text(plan)))
+    }, error = function(e) list(error = conditionMessage(e)))
+    result$id <- rid
+    dispatch_message("sideview_stack_check", result)
+  }, ignoreInit = FALSE)
+
   # Column inspector: profile one column on the full data (the browser has a preview only).
   shiny::observeEvent(input$column_profile_request, {
     req <- input$column_profile_request
@@ -854,11 +905,23 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     if (!is.list(req)) return()
     rid <- sv_derive_scalar(sv_field(req, "id"), 200L)
     fail <- function(msg) dispatch_message("sideview_derive_result", list(id = rid, error = msg))
-    problem <- sv_derive_validate(req, card_store, con_env)
-    if (!is.null(problem)) return(fail(problem))
+    # card_full as the stack check has it: a card whose link was lost is read from its preview, not refused
+    # (a link lost since the check is found here, marked and told once, and the request is checked on the preview)
+    check_once <- function() sv_derive_check(req, card_store, con_env, card_full)
+    ins <- sv_field(req, "inputs")
+    ins <- if (is.list(ins) || is.character(ins)) unlist(ins, use.names = FALSE) else character()
+    ins <- Filter(Negate(is.null), lapply(unique(as.character(ins)), function(nm) {
+      if (is.character(nm) && !is.na(nm) && card_store$has(nm)) card_store$get(nm)
+    }))
+    chk <- tryCatch(lazy_or_preview(ins, function() {
+      r <- check_once()
+      if (!is.null(r$problem)) stop(r$problem, call. = FALSE)
+      r
+    }, check_once), error = function(e) list(problem = conditionMessage(e), clean = NULL))
+    if (!is.null(chk$problem)) return(fail(chk$problem))
     prep <- tryCatch({
       card <- sv_derive_card(req, card_store, con_env, lazy_or_preview = lazy_or_preview,
-                             card_full = card_full, cdisc = cdisc)
+                             card_full = card_full, cdisc = cdisc, clean = chk$clean)
       # the payload first: if it cannot be built, nothing has been added
       list(card = card, payload = sv_card_payload(card, if (isTRUE(module)) sv_preview_rows else NULL))
     }, error = function(e) {

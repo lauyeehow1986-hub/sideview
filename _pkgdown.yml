@@ -62,6 +62,8 @@ reference:
       - sv_detect_discrepancies
       - sv_join_diagnostics
       - sv_unmatched
+      - sv_stack_check
+      - sv_stack
       - sv_code_recode
       - sv_auto_clean_rules
 

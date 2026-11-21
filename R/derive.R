@@ -1,7 +1,7 @@
 # Derived rows: the rows behind a join-check or SUPP-check count, as a table. The console
 # (sv_unmatched()) and the canvas card builder both call sv_derive_rows(), so the rows agree.
 
-sv_derive_ops <- c("unmatched", "outside_window", "supp_orphans", "supp_bad_idvarval")
+sv_derive_ops <- c("unmatched", "outside_window", "supp_orphans", "supp_bad_idvarval", "stack")
 
 # `by` as a list of {x, y} column pairs: from a character vector (as dplyr takes it) or already a list.
 sv_derive_by_pairs <- function(by) {
@@ -17,6 +17,16 @@ sv_derive_by_pairs <- function(by) {
 sv_derive_rows <- function(op, tables, args) {
   if (!op %in% sv_derive_ops) stop(sprintf("Unknown derive op: %s", op), call. = FALSE)
   if (op %in% c("supp_orphans", "supp_bad_idvarval")) return(sv_derive_supp_rows(op, tables, args))
+  if (identical(op, "stack")) {
+    if (any(vapply(tables, sv_is_lazy_input, logical(1)))) {
+      if (!sv_has_duckdb()) stop("Stacking a duckdb or Arrow table needs duckdb.", call. = FALSE)
+      con_env <- if (is.null(args$con_env)) sv_lazy_env() else args$con_env
+      plan <- args$plan %||% sv_stack_plan(tables, args$fixes, args$id_col, con_env)
+      return(sv_lazy_stack(tables, plan, con_env))
+    }
+    plan <- args$plan %||% sv_stack_plan(tables, args$fixes, args$id_col)
+    return(sv_stack_rows(tables, plan))
+  }
   if (length(tables) != 2L) stop("A derived table needs two input tables.", call. = FALSE)
   if (any(vapply(tables, sv_is_lazy_input, logical(1)))) {
     if (!sv_has_duckdb()) stop("Unmatched rows of a duckdb or Arrow table need duckdb.", call. = FALSE)
@@ -88,6 +98,16 @@ sv_derive_name <- function(op, inputs, args, taken, name = NULL) {
   if (!is.null(name)) {
     nm <- make.names(name)
     if (nm %in% taken) stop(sprintf("A table named %s is already on the canvas.", nm), call. = FALSE)
+    return(nm)
+  }
+  if (identical(op, "stack")) {
+    base <- make.names(paste0(inputs[1L], "_stacked"))
+    nm <- base
+    i <- 2L
+    while (nm %in% taken) {
+      nm <- make.names(paste0(base, "_", i))
+      i <- i + 1L
+    }
     return(nm)
   }
   kept_i <- if (identical(args$side, "y")) 2L else 1L
@@ -331,18 +351,105 @@ sv_derive_clean_by <- function(by) {
   })
 }
 
+# The table each input card of a stack is read as: the whole duckdb tbl of a lazy card `card_full` calls whole (an
+# Arrow card through its cached tbl on the session connection, unless the user's own duckdb tbl is an input: it is
+# then handed over on that connection), else the card's rows in memory. With no `con_env` every card is in memory.
+sv_stack_card_tables <- function(cards, inputs, con_env, card_full = sv_card_is_lazy) {
+  full <- if (is.null(con_env) || !sv_has_duckdb()) rep(FALSE, length(cards)) else vapply(cards, card_full, NA)
+  user_duck <- any(full & vapply(cards, function(cd) inherits(cd$source, "tbl_duckdb_connection"), NA))
+  tabs <- lapply(seq_along(cards), function(i) {
+    cd <- cards[[i]]
+    if (!full[i]) return(cd$data)
+    if (inherits(cd$source, "tbl_duckdb_connection")) return(cd$source)
+    if (user_duck && !inherits(cd$source, "sv_derived_source")) return(cd$source)
+    sv_lazy_tbl(cd$source, con_env, cd$id)
+  })
+  stats::setNames(tabs, inputs)
+}
+
+# The one cleaner of a stack's tables and fixes, for the check request and the derive request alike. `tables` are
+# store names (2 to 8, each once), `fixes` the client's list (each has exactly column, action and to; to may be
+# missing for keep; at most 500). The plan is run here so a bad fix is refused with its message. A lazy card that
+# `card_full` says is whole is read through its duckdb tbl (the plan then comes from 0 rows and one query per input,
+# see sv_lazy_stack_plan()); every other card by its rows in memory. Returns `list(inputs, cards, fixes, id_col, plan)`.
+sv_stack_clean <- function(tables, fixes, store, id_col = NULL, con_env = NULL, card_full = sv_card_is_lazy) {
+  if (is.list(tables)) tables <- unlist(tables, use.names = FALSE)
+  if (!is.character(tables) || anyNA(tables)) stop("A stack needs 2 to 8 tables.", call. = FALSE)
+  if (length(tables) < 2L || length(tables) > 8L) stop("A stack needs 2 to 8 tables.", call. = FALSE)
+  if (anyDuplicated(tables)) stop("A table can be stacked only once.", call. = FALSE)
+  inputs <- unname(tables)
+  for (nm in inputs) {
+    if (!store$has(nm)) stop(sprintf("Not in the canvas: %s", substr(nm, 1L, 100L)), call. = FALSE)
+  }
+  cards <- lapply(inputs, store$get)
+  if (!all(vapply(cards, function(cd) is.data.frame(cd$data), NA))) {
+    stop("A derived table needs tables as inputs.", call. = FALSE)
+  }
+  fixes_in <- fixes
+  if (is.data.frame(fixes_in)) fixes_in <- lapply(seq_len(nrow(fixes_in)), function(i) as.list(fixes_in[i, , drop = FALSE]))
+  if (is.null(fixes_in)) fixes_in <- list()
+  if (!is.list(fixes_in)) stop("Fixes must be a list.", call. = FALSE)
+  if (length(fixes_in) > 500L) stop("Too many fixes.", call. = FALSE)
+  fixes <- lapply(unname(fixes_in), function(f) {
+    bad <- !is.list(f) || !all(c("column", "action") %in% names(f)) ||
+      length(setdiff(names(f), c("column", "action", "to"))) > 0L
+    if (bad) stop("Each fix has a column, an action and a target.", call. = FALSE)
+    col <- sv_derive_scalar(sv_field(f, "column"), 200L)
+    act <- sv_derive_scalar(sv_field(f, "action"), 20L)
+    to <- sv_field(f, "to")
+    if (!is.null(to)) to <- sv_derive_scalar(to, 200L)
+    if (is.null(col) || is.null(act) || !act %in% c("cast", "rename", "keep") ||
+        (is.null(to) && !identical(act, "keep")) ||
+        (!is.null(sv_field(f, "to")) && is.null(to))) {
+      stop("Each fix has a column, an action and a target.", call. = FALSE)
+    }
+    list(column = col, action = act, to = to)
+  })
+  if (!is.null(id_col)) {
+    id_col <- sv_derive_scalar(id_col, 200L)
+    if (is.null(id_col)) stop("The id column must be one non-empty string.", call. = FALSE)
+    for (i in seq_along(inputs)) {
+      if (id_col %in% names(cards[[i]]$data)) stop(sprintf("%s is a column of %s.", id_col, inputs[i]), call. = FALSE)
+    }
+  }
+  # a whole duckdb or Arrow table is never stacked from its 50-row preview without a word (as sv_derive_rows() says)
+  if (!sv_has_duckdb() && any(vapply(cards, card_full, NA))) {
+    stop("Stacking a duckdb or Arrow table needs duckdb.", call. = FALSE)
+  }
+  tabs <- sv_stack_card_tables(cards, inputs, con_env, card_full)
+  plan <- sv_stack_plan(tabs, fixes, id_col, con_env)
+  # the browser writes lazy code for a lazy card even when the plan came from its preview (a lost link)
+  if (sv_has_duckdb() && any(vapply(cards, sv_card_is_lazy, NA))) plan <- sv_stack_add_tz_text(plan)
+  list(inputs = inputs, cards = cards, fixes = fixes, id_col = id_col, plan = plan)
+}
+
+# The stack derive request: `fixes` and `id_col` are the only args read (see sv_stack_clean()).
+sv_derive_clean_stack <- function(req, inputs, store, con_env = NULL, card_full = sv_card_is_lazy) {
+  name <- sv_field(req, "name")
+  if (!is.null(name)) {
+    name <- sv_derive_scalar(name, 200L)
+    if (is.null(name)) stop("The table name must be one non-empty string.", call. = FALSE)
+  }
+  raw <- sv_field(req, "args")
+  if (!is.list(raw)) raw <- list()
+  cl <- sv_stack_clean(inputs, sv_field(raw, "fixes"), store, sv_field(raw, "id_col"), con_env, card_full)
+  args <- list(fixes = cl$fixes, plan = cl$plan)
+  if (!is.null(cl$id_col)) args$id_col <- cl$id_col
+  list(op = "stack", inputs = cl$inputs, args = args, name = name)
+}
+
 # Check a request against the store and return the clean request, `list(op, inputs, args, name)`
 # (stops with a message on anything wrong). `args` holds only what the op reads. `con_env`, when given,
 # lets a lazy input answer its column types from a 0-row query.
-sv_derive_clean <- function(req, store, con_env = NULL) {
+sv_derive_clean <- function(req, store, con_env = NULL, card_full = sv_card_is_lazy) {
   if (!is.list(req)) stop("Not a derive request.", call. = FALSE)
   op <- sv_derive_scalar(sv_field(req, "op"), 40L)
   if (is.null(op) || !op %in% sv_derive_ops) stop("Unknown derive op.", call. = FALSE)
   inputs <- sv_field(req, "inputs")
   if (is.list(inputs)) inputs <- unlist(inputs, use.names = FALSE)
-  if (!is.character(inputs) || length(inputs) != 2L || anyNA(inputs)) {
-    stop("A derived table needs two input tables.", call. = FALSE)
-  }
+  if (!is.character(inputs) || anyNA(inputs)) stop("A derived table needs two input tables.", call. = FALSE)
+  if (identical(op, "stack")) return(sv_derive_clean_stack(req, unname(inputs), store, con_env, card_full))
+  if (length(inputs) != 2L) stop("A derived table needs two input tables.", call. = FALSE)
   inputs <- unname(inputs)
   for (nm in inputs) {
     if (!store$has(nm)) stop(sprintf("Not in the canvas: %s", substr(nm, 1L, 100L)), call. = FALSE)
@@ -399,12 +506,19 @@ sv_derive_clean <- function(req, store, con_env = NULL) {
 
 # NULL when the request is fine, else the message of the first problem (decision 2 and 3 included).
 # The one validation path: the card builder runs the same sv_derive_clean().
-sv_derive_validate <- function(req, store, con_env = NULL) {
+# `card_full` is the server's (a card whose link was lost is read from its preview, as the check was).
+sv_derive_validate <- function(req, store, con_env = NULL, card_full = sv_card_is_lazy) {
+  sv_derive_check(req, store, con_env, card_full)$problem
+}
+
+# The validation and its clean request: `list(problem, clean)`, `problem` NULL when the request is fine. The
+# derive_request handler hands `clean` to sv_derive_card(), so a stack's plan (one query per lazy input) runs once.
+sv_derive_check <- function(req, store, con_env = NULL, card_full = sv_card_is_lazy) {
   tryCatch({
-    clean <- sv_derive_clean(req, store, con_env)
+    clean <- sv_derive_clean(req, store, con_env, card_full)
     if (!is.null(clean$name)) sv_derive_name(clean$op, clean$inputs, clean$args, store$names(), clean$name)
-    NULL
-  }, error = function(e) conditionMessage(e))
+    list(problem = NULL, clean = clean)
+  }, error = function(e) list(problem = conditionMessage(e), clean = NULL))
 }
 
 # The RDOMAIN and the tables a SUPP check runs on, for the merge check and the derived SUPP cards alike (so
@@ -433,18 +547,59 @@ sv_supp_inputs <- function(cp, cs, hint, card_full, con_env) {
 # the preview rows (the same basis the check's counts, and so the offer, were computed on).
 # `cdisc = FALSE` leaves the card untagged.
 sv_derive_card <- function(req, store, con_env, lazy_or_preview = NULL, card_full = sv_card_is_lazy,
-                           cdisc = "auto") {
-  clean <- sv_derive_clean(req, store, con_env)
+                           cdisc = "auto", clean = NULL) {
+  # `clean`: the request as sv_derive_check() cleaned it, on this store, a moment ago (else it is cleaned here)
+  if (is.null(clean)) clean <- sv_derive_clean(req, store, con_env, card_full)
   op <- clean$op
   inputs <- clean$inputs
   args <- clean$args
-  cx <- store$get(inputs[1L])
-  cy <- store$get(inputs[2L])
   if (is.null(lazy_or_preview)) {
     lazy_or_preview <- function(card, f_lazy, f_preview) {
       if (any(vapply(card, card_full, logical(1)))) f_lazy() else f_preview()
     }
   }
+  # A lazy card keeps a recipe, not rows: its tbl is built on the session connection from the input cards
+  # (cached under the card's id), its row count and its first 50 rows are all that is read.
+  lazy_card <- function(src, derived, nm) {
+    id <- generate_card_id()
+    ok <- FALSE
+    on.exit(if (!ok) {
+      # a failed build leaves nothing on the connection and nothing cached under the card id
+      if (!is.null(con_env$tbls[[id]])) {
+        sv_lazy_release(con_env$tbls[[id]], con_env)
+        con_env$tbls[[id]] <- NULL
+      }
+    })
+    tbl <- sv_lazy_tbl(src, con_env, id)
+    n <- sv_lazy_count(dplyr::pull(dplyr::count(tbl), "n"))
+    prev <- as.data.frame(dplyr::collect(utils::head(tbl, 50L)), stringsAsFactors = FALSE)
+    card <- new_sideview_card(id = id, name = nm, type = "grid", data = prev,
+                              dims = c(n, ncol(prev)), is_lazy = TRUE, lazy_source = "duckdb",
+                              source = src, derived = derived)
+    ok <- TRUE
+    card
+  }
+  if (identical(op, "stack")) {
+    cards <- lapply(inputs, store$get)
+    nm <- sv_derive_name(op, inputs, args, store$names(), clean$name)
+    plan <- args$plan
+    derived <- list(op = op, inputs = inputs,
+                    args = list(fixes = args$fixes, id_col = plan$id_col, plan = plan))
+    in_memory <- function() {
+      rows <- sv_stack_rows(stats::setNames(lapply(cards, function(cd) cd$data), inputs), plan)
+      new_sideview_card(name = nm, type = "grid", data = rows, derived = derived)
+    }
+    lazy <- function() lazy_card(sv_derived_source(op, derived$args, stats::setNames(cards, inputs)), derived, nm)
+    card <- if (!is.null(con_env) && sv_has_duckdb()) lazy_or_preview(cards, lazy, in_memory) else in_memory()
+    if (length(plan$kept_labels)) card$col_labels <- as.list(plan$kept_labels)
+    tags <- lapply(cards, function(cd) cd$cdisc)
+    doms <- vapply(tags, function(t) if (is.null(t) || is.null(t$domain)) NA_character_ else as.character(t$domain), "")
+    same <- !anyNA(doms) && length(unique(doms)) == 1L
+    card$cdisc <- if (isFALSE(cdisc) || !same) NULL else tags[[1L]]
+    return(card)
+  }
+  cx <- store$get(inputs[1L])
+  cy <- store$get(inputs[2L])
   cards <- list(cx, cy)
   nm <- sv_derive_name(op, inputs, args, store$names(), clean$name)
   is_supp <- op %in% c("supp_orphans", "supp_bad_idvarval")
@@ -486,27 +641,8 @@ sv_derive_card <- function(req, store, con_env, lazy_or_preview = NULL, card_ful
     rows <- sv_derive_rows(op, stats::setNames(list(cx$data, cy$data), inputs), args)
     new_sideview_card(name = nm, type = "grid", data = rows, derived = derived)
   }
-  lazy <- function() {
-    # the recipe keeps the input cards; the rows are built on the session connection when asked for
-    id <- generate_card_id()
-    src <- sv_derived_source(op, args, stats::setNames(list(cx, cy), inputs))
-    ok <- FALSE
-    on.exit(if (!ok) {
-      # a failed build leaves nothing on the connection and nothing cached under the card id
-      if (!is.null(con_env$tbls[[id]])) {
-        sv_lazy_release(con_env$tbls[[id]], con_env)
-        con_env$tbls[[id]] <- NULL
-      }
-    })
-    tbl <- sv_lazy_tbl(src, con_env, id)
-    n <- sv_lazy_count(dplyr::pull(dplyr::count(tbl), "n"))
-    prev <- as.data.frame(dplyr::collect(utils::head(tbl, 50L)), stringsAsFactors = FALSE)
-    card <- new_sideview_card(id = id, name = nm, type = "grid", data = prev,
-                              dims = c(n, ncol(prev)), is_lazy = TRUE, lazy_source = "duckdb",
-                              source = src, derived = derived)
-    ok <- TRUE
-    card
-  }
+  # the recipe keeps the input cards; the rows are built on the session connection when asked for
+  lazy <- function() lazy_card(sv_derived_source(op, args, stats::setNames(list(cx, cy), inputs)), derived, nm)
   finish(lazy_or_preview(cards, lazy, in_memory))
 }
 
@@ -553,6 +689,24 @@ sv_derive_preview_builder <- function(cdisc = "auto") {
 sv_derive_rebuild <- function(card, store, build) {
   others <- unname(Filter(function(cd) !identical(cd$name, card$name), store$all()))
   build(sv_derive_request_of(card), sv_card_store(others))
+}
+
+# A state whose stack steps carry the plans of the cards built from it. The data may have changed since the state
+# was saved and the browser writes a stack's code from its step's plan, so the step takes the plan R just made.
+# Only stack steps: a SUPP or join step keeps its saved args (its card refits when R replaces it).
+sv_derive_state_refresh <- function(state, cards) {
+  steps <- if (is.list(state)) sv_field(sv_field(state, "pipeline"), "steps") else NULL
+  if (!is.list(steps) || !length(steps)) return(state)
+  made <- list()
+  for (cd in cards) if (identical(cd$derived$op, "stack")) made[[cd$name]] <- cd$derived$args
+  for (k in seq_along(steps)) {
+    st <- steps[[k]]
+    if (!is.list(st) || !identical(sv_field(st, "kind"), "derive") || !identical(sv_field(st, "op"), "stack")) next
+    tbl <- sv_derive_scalar(sv_field(st, "table"), 200L)
+    if (is.null(tbl) || is.null(made[[tbl]])) next
+    state$pipeline$steps[[k]]$args <- made[[tbl]]
+  }
+  state
 }
 
 # `cards` with the derived cards of a saved state appended. The state's pipeline holds the derive steps

@@ -1777,3 +1777,97 @@ test_that("compose writes a producer derive step before its consumer, however th
   }
   expect_identical(unlist(out$order), c("d2", "d1"))
 })
+
+# ---- stack steps (D2 task 4) ----
+
+stack_pipe_js <- function(extra = "") {
+  a <- data.frame(AGE = c(34, 51), RACE = c("a", "b"), stringsAsFactors = FALSE)
+  attr(a$RACE, "label") <- "Race"
+  b <- data.frame(AGE = c("29", "x"), RACE = c("c", "d"), SITE = 1:2, stringsAsFactors = FALSE)
+  d <- data.frame(AGE = 60, RACE = "f", stringsAsFactors = FALSE)
+  plan <- sv_stack_plan(list(a = a, b = b, d = d))
+  paste0(sprintf("
+    const plan = %s;
+    const p = new P.Pipeline();
+    p.setPipe('%%>%%');
+    p.setTables({ a: { lazy: null, codeRef: 'a' }, b: { lazy: null, codeRef: 'b' }, d: { lazy: null, codeRef: 'd' } });
+    const step = P.deriveStep('stk', 'stack', ['a', 'b', 'd'], { fixes: [], id_col: 'source', plan: plan });
+    p.add(step);
+  ", jsonlite::toJSON(plan, auto_unbox = TRUE, null = "null", na = "null", digits = NA)), extra)
+}
+
+test_that("a stack step of 3 inputs is live, is written before the chains, and says what it stacks", {
+  out <- run_pipeline_js(stack_pipe_js("
+    p.add({kind: 'filter', table: 'stk', conds: ['AGE != \"x\"'], condCols: ['AGE']});
+    p.add({kind: 'filter', table: 'a', conds: ['AGE > 1'], condCols: ['AGE']});
+    const composed = p.compose();
+    const live = p.deriveLive(step);
+    p.setTables({ a: { lazy: null, codeRef: 'a' }, b: { lazy: null, codeRef: 'b' } });
+    out = { composed: composed, live: live, liveGone: p.deriveLive(step), codeGone: p.compose(),
+            label: p.describe(step), kind: p.lazyKind('stk') };
+  "))
+  expect_true(out$live)
+  expect_false(out$liveGone)
+  expect_false(grepl("stk <-", out$codeGone, fixed = TRUE))
+  expect_identical(out$label, "stack of a + b + d")
+  expect_null(out$kind)
+  expect_match(out$composed, "^stk <- dplyr::mutate\\(dplyr::bind_rows\\(a = dplyr::mutate\\(a")
+  parts <- strsplit(out$composed, "\n\n", fixed = TRUE)[[1]]
+  expect_match(parts[1], "^stk <- ")
+  expect_match(parts[2], "^stk %>%")
+  expect_parses(out$composed)
+  # the rows of the three tables, one under another
+  a <- data.frame(AGE = c(34, 51), RACE = c("a", "b"), stringsAsFactors = FALSE)
+  b <- data.frame(AGE = c("29", "x"), RACE = c("c", "d"), SITE = 1:2, stringsAsFactors = FALSE)
+  d <- data.frame(AGE = 60, RACE = "f", stringsAsFactors = FALSE)
+  env <- list2env(list(a = a, b = b, d = d), parent = globalenv())
+  eval(parse(text = out$composed), env)
+  expect_equal(nrow(env$stk), 5L)
+  expect_equal(names(env$stk), c("source", "AGE", "RACE", "SITE"))
+})
+
+test_that("only a stack takes 2 to 8 inputs; any other derive step needs exactly 2", {
+  out <- run_pipeline_js("
+    const names = ['t1','t2','t3','t4','t5','t6','t7','t8','t9'];
+    const tbls = {}; names.forEach(n => { tbls[n] = { lazy: null, codeRef: n }; });
+    const p = new P.Pipeline();
+    p.setTables(tbls);
+    const live = k => p.deriveLive(P.deriveStep('s', 'stack', names.slice(0, k), {}));
+    out = { one: live(1), two: live(2), eight: live(8), nine: live(9),
+            three_unmatched: p.deriveLive(P.deriveStep('u', 'unmatched', ['t1', 't2', 't3'], {})),
+            noPlan: p.deriveExpr(P.deriveStep('s', 'stack', ['t1', 't2'], {})) };
+  ")
+  expect_false(out$one)
+  expect_true(out$two)
+  expect_true(out$eight)
+  expect_false(out$nine)
+  expect_false(out$three_unmatched)
+  expect_identical(out$noPlan$code, "")
+  expect_null(out$noPlan$kind)
+})
+
+test_that("undo and redo of a stack step, and a state round trip, keep args.plan", {
+  out <- run_pipeline_js(stack_pipe_js("
+    const before = JSON.stringify(p.steps[0].args);
+    const code = p.compose();
+    p.undo();
+    const undone = p.steps.length;
+    p.redo();
+    const redone = JSON.stringify(p.steps[0].args);
+    const json = JSON.stringify(p.toJSON());
+    const q = new P.Pipeline();
+    q.setTables({ a: { lazy: null, codeRef: 'a' }, b: { lazy: null, codeRef: 'b' }, d: { lazy: null, codeRef: 'd' } });
+    q.load(JSON.parse(json));
+    out = { before: before, undone: undone, redone: redone, steps: p.steps.length,
+            loaded: JSON.stringify(q.steps[0].args), op: q.steps[0].op, inputs: q.steps[0].inputs,
+            same: q.compose() === code, code: code };
+  "))
+  expect_equal(out$undone, 0)
+  expect_equal(out$steps, 1)
+  expect_identical(out$redone, out$before)
+  expect_identical(out$loaded, out$before)
+  expect_identical(out$op, "stack")
+  expect_identical(unlist(out$inputs), c("a", "b", "d"))
+  expect_true(out$same)
+  expect_match(out$code, "^stk <- dplyr::mutate\\(dplyr::bind_rows")
+})

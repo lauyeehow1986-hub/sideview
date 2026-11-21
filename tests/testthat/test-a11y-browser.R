@@ -1617,3 +1617,87 @@ test_that("list view join check offers the unmatched rows as a button; Enter ope
   expect_true(sv_wait_js(b, "document.querySelector('.sideview-announcer').textContent === 'Table ae_unmatched_dm added, 2 rows.'", timeout = 30))
   expect_equal(attr(b, "sv_errors")(), character())
 })
+
+test_that("Stack tab passes axe, every control is named and the open is announced", {
+  skip_if_no_browser()
+  skip_if_no_axe()
+  app <- sv_start_app(sv_stk_app)
+  b <- sv_open_page(app$url, 1360, 820)
+  on.exit({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) }, add = TRUE)
+  sv_stk_open_tab(b)
+  sv_stk_pick_check(b)
+  expect_true(sv_wait_js(b, "getComputedStyle(document.querySelector('.sideview-drawer')).opacity === '1' && document.querySelector('.sideview-drawer').getAnimations().length === 0", timeout = 30))
+  v <- sv_axe_run(b)
+  v <- v[!v$id %in% names(SV_AXE_ACCEPTED), , drop = FALSE]
+  expect_equal(nrow(v), 0, info = paste(v$id, v$targets, collapse = "; "))
+  bad <- sv_ax_unnamed(sv_ax_tree(b))
+  expect_equal(nrow(bad), 0, info = paste(bad$role, bad$name, collapse = ", "))
+  named <- sv_js(b, "[...document.querySelectorAll('[data-pane=stack] select, [data-pane=stack] input[type=checkbox]')].every(el => (el.labels && el.labels.length) || el.getAttribute('aria-label'))")
+  expect_true(named)
+  sv_stk_click(b, "[data-stack-action=open]")
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-card[data-card-name=wave2_stacked]')", timeout = 60))
+  want <- sprintf("Table wave2_stacked added, %d rows.", sv_stk_total_rows())
+  want_js <- as.character(jsonlite::toJSON(want, auto_unbox = TRUE))
+  expect_true(sv_wait_js(b, sprintf("document.querySelector('.sideview-container')._sideviewInstance.announceLog.indexOf(%s) >= 0", want_js), timeout = 30))
+  # and it reaches the live region itself
+  expect_true(sv_wait_js(b, sprintf("document.querySelector('.sideview-announcer').textContent === %s", want_js), timeout = 30))
+})
+
+# What the Stack pane shows after a check: the text lines and the table cells, row by row.
+sv_stk_read_js <- "(() => { const p = document.querySelector('[data-pane=stack]');
+  return { lines: [...p.querySelectorAll('.sideview-stack-text li')].map(x => x.textContent.trim()),
+           cells: [...p.querySelectorAll('.sideview-stack-table tr')].map(r => [...r.children].map(c => c.textContent.replace(new RegExp('[ ' + String.fromCharCode(9, 10, 13) + ']+', 'g'), ' ').trim())) }; })()"
+
+# Tab (at most `max` times) until the element matching `sel` holds focus.
+sv_stk_tab_to <- function(b, sel, max = 40L, shift = FALSE) {
+  q <- as.character(jsonlite::toJSON(sel, auto_unbox = TRUE))
+  for (i in seq_len(max)) {
+    if (isTRUE(sv_js(b, sprintf("document.activeElement === document.querySelector(%s)", q)))) return(invisible(TRUE))
+    sv_tab(b, 1L, shift = shift)
+  }
+  expect_true(sv_js(b, sprintf("document.activeElement === document.querySelector(%s)", q)), info = sel)
+  invisible(FALSE)
+}
+
+test_that("list view Stack builder matches the drawer", {
+  skip_if_no_browser()
+  # the drawer's answer for these picks (wave2 first, then wave1)
+  app1 <- sv_start_app(sv_stk_app)
+  b1 <- sv_open_page(app1$url, 1360, 820)
+  on.exit({ try(b1$close(), silent = TRUE); try(app1$proc$kill(), silent = TRUE) }, add = TRUE)
+  sv_stk_open_tab(b1)
+  sv_stk_pick_check(b1)
+  drawer <- sv_js(b1, sv_stk_read_js)
+  expect_gt(length(drawer$lines), 0)
+  expect_gt(length(drawer$cells), 1)
+
+  app <- sv_start_app(sv_stk_app)
+  b <- sv_open_page(app$url, 1360, 820, wait_for = sv_wait_eng)
+  on.exit({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) }, add = TRUE)
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-listview [data-sv-lv-builder=stack] [data-stack-pick]')", timeout = 30))
+  # the heading is there, named, and focusable like the others
+  expect_equal(sv_js(b, "document.getElementById('sv-lv-b-stack').tagName"), "H3")
+  sv_js(b, "document.getElementById('sv-lv-b-stack').focus(); true")
+  expect_true(sv_js(b, "document.activeElement === document.getElementById('sv-lv-b-stack')"))
+  # keyboard only: wave2 first, then wave1, then Check columns
+  sv_stk_tab_to(b, "[data-stack-pick=wave2]")
+  sv_key(b, " ", code = "Space", text = " ")
+  sv_stk_tab_to(b, "[data-stack-pick=wave1]", shift = TRUE)
+  sv_key(b, " ", code = "Space", text = " ")
+  expect_true(sv_js(b, "document.querySelector('[data-stack-pick=wave1]').checked && document.querySelector('[data-stack-pick=wave2]').checked"))
+  sv_stk_tab_to(b, "[data-stack-action=check]")
+  sv_key(b, "Enter", text = "\r")
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-stack-table')", timeout = 60))
+  listed <- sv_js(b, sv_stk_read_js)
+  expect_equal(listed$lines, drawer$lines)
+  expect_equal(listed$cells, drawer$cells)
+  # Open with Enter: the card is added, and the canvas shows it
+  sv_stk_tab_to(b, "[data-stack-action=open]")
+  sv_key(b, "Enter", text = "\r")
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-listview [data-sv-table=\"wave2_stacked\"]')", timeout = 60))
+  sv_js(b, paste0(sv_eng, ".setView('canvas'); true"))
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-card[data-card-name=wave2_stacked]')", timeout = 30))
+  expect_equal(sv_js(b, "document.querySelector('.sideview-card[data-card-name=wave2_stacked] .sideview-badge-dims').textContent.replace(/[^0-9]+/g, ' ').trim().split(' ')[0]"),
+               as.character(sv_stk_total_rows()))
+})
