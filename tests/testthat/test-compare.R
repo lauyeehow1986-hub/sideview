@@ -257,3 +257,42 @@ test_that("text and labels", {
   expect_match(sv_say_compare_text(s)[4], "none$")
   expect_length(sv_say_compare_text(s), 4L)
 })
+
+test_that("in-memory code parses, runs with dplyr only and rebuilds", {
+  check <- function(cut1, cut2, by) {
+    r <- sv_compare(cut1, cut2, by = by)
+    env <- list2env(list(cut1 = cut1, cut2 = cut2), parent = baseenv())
+    for (op in c("compare_added", "compare_removed", "compare_changed")) {
+      key <- sub("^compare_", "", op)
+      code <- r$code[[key]]
+      expect_parses(code)
+      expect_false(grepl("[|]>|%>%|sv_[a-z_]+[(]", code))
+      got <- eval(parse(text = code), env)
+      expect_equal(as.data.frame(got), as.data.frame(r[[key]]), ignore_attr = "row.names")
+    }
+    r
+  }
+  # the main fixture, a repeated key (one version only), NA on both sides of a key
+  check(cmp_cut1(), cmp_cut2(), cmp_keys)
+  check(data.frame(k = c(7, 7, 1, 2), v = 1:4), data.frame(k = c(7, 1, 2, 3), v = c(9L, 3L, 5L, 4L)), "k")
+  check(data.frame(k = c(1L, NA, 3L), v = c("a", "b", "c")), data.frame(k = c(1L, NA, 4L), v = c("a", "z", "d")), "k")
+  # NA / NaN values, factor against character, differing key kinds, no compared column, a zero-row old
+  check(data.frame(id = 1:6, x = c(NA, NaN, NA, NA, NaN, 2)), data.frame(id = 1:6, x = c(NA, NaN, NaN, 1, 1, 2)), "id")
+  check(data.frame(id = 1:3, f = factor(c("a", "b", "c"))), data.frame(id = 1:3, f = c("a", "x", "c")), "id")
+  r <- check(data.frame(USUBJID = c("S1", "S2"), AESEQ = c(1L, 2L), v = c("a", "b")),
+             data.frame(USUBJID = c("S1", "S3"), AESEQ = c("1", "1"), v = c("z", "c")), c("USUBJID", "AESEQ"))
+  expect_match(r$code$changed, ".sv_k2", fixed = TRUE)
+  check(data.frame(id = 1:3), data.frame(id = 2:4), "id")
+  check(data.frame(id = integer(0), v = character(0)), data.frame(id = 1:2, v = c("a", "b")), "id")
+  # date-times are text in their own zone; non-syntactic names
+  t1 <- as.POSIXct("2024-01-01 10:00:00", tz = "UTC") + c(0, 3600)
+  check(data.frame(id = 1:2, t = t1), data.frame(id = 1:2, t = t1 + c(60, 0)), "id")
+  odd1 <- stats::setNames(data.frame(1:2, c(1, 2)), c("visit id", "visit date"))
+  odd2 <- stats::setNames(data.frame(1:2, c(1, 3)), c("visit id", "visit date"))
+  r <- check(odd1, odd2, "visit id")
+  expect_equal(r$changed$column, "visit date")
+  # the lazy form is not written yet
+  plan <- sv_compare_plan(cmp_cut1(), cmp_cut2(), cmp_keys)
+  expect_error(sv_compare_code(plan, c("a", "b"), c("duckdb", NA), "compare_added"), "not yet written")
+  expect_equal(sv_compare_code(plan, c("cut1", "cut2"), c(NA, NA), "compare_added")$kind, NA_character_)
+})

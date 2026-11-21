@@ -67,11 +67,13 @@ sv_compare_plan <- function(old, new, by, old_name = "old", new_name = "new") {
       }
     }
   }
-  keys <- lapply(by, function(k) {
-    ko <- sv_key_kind(old[[k]]); kn <- sv_key_kind(new[[k]])
-    list(name = k, kind_old = ko, kind_new = kn, text = !identical(ko, kn))
-  })
   zone <- function(x) if (inherits(x, "POSIXct")) attr(x, "tzone")[1] %||% "" else NA_character_
+  keys <- lapply(by, function(k) {
+    zo <- old[[k]]; zn <- new[[k]]
+    ko <- sv_key_kind(zo); kn <- sv_key_kind(zn)
+    list(name = k, kind_old = ko, kind_new = kn, text = !identical(ko, kn),
+         from_old = sv_stack_tname(zo), from_new = sv_stack_tname(zn), zone_old = zone(zo), zone_new = zone(zn))
+  })
   compared <- list()
   type_changed <- list()
   for (nm in setdiff(intersect(names(new), names(old)), by)) {
@@ -180,6 +182,79 @@ sv_compare_finish <- function(summary, old_name, new_name) {
   s
 }
 
+# The R code that rebuilds one compare card (decision 9): `list(code, kind)`. `refs` are the R references of old and
+# new, `kinds` is NA, "duckdb" or "arrow" per input, `op` is "compare_added", "compare_removed" or
+# "compare_changed". The in-memory form is one expression of dplyr calls: no pipe, no helper, no sideview function.
+sv_compare_code <- function(plan, refs, kinds, op) {
+  if (any(!is.na(kinds))) stop("The lazy form of the compare code is not yet written.", call. = FALSE)
+  if (!op %in% c("compare_added", "compare_removed", "compare_changed")) {
+    stop(sprintf("Unknown compare op: %s", op), call. = FALSE)
+  }
+  q <- function(s) encodeString(s, quote = "\"")
+  cv <- function(v) paste0("c(", paste(q(v), collapse = ", "), ")")
+  by <- plan$by
+  # the text of a column (D2's cast to chr, a missing value NA, as sv_compare_text() does)
+  text <- function(x, from, zone) {
+    if (is.na(zone)) zone <- ""
+    paste0("replace(", sv_stack_cast_code(x, from, "chr", zone), ", is.na(", x, "), NA_character_)")
+  }
+  jb <- by
+  side <- function(i, ref) {
+    sets <- character()
+    for (j in seq_along(plan$keys)) {
+      k <- plan$keys[[j]]
+      if (!isTRUE(k$text)) next
+      nm <- paste0(".sv_k", j)
+      jb[j] <<- nm
+      sets <- c(sets, paste0(nm, " = ", text(sv_escape_ident(k$name),
+        if (i == 1L) k$from_old else k$from_new, if (i == 1L) k$zone_old else k$zone_new)))
+    }
+    if (length(sets)) paste0("dplyr::mutate(", ref, ", ", paste(sets, collapse = ", "), ")") else ref
+  }
+  o <- side(1L, refs[1L]); n <- side(2L, refs[2L])
+  extra <- jb[jb != by]
+  drop <- function(x) {
+    if (!length(extra)) return(x)
+    paste0("dplyr::select(", x, ", -c(", paste(extra, collapse = ", "), "))")
+  }
+  uniq <- function(x) paste0("dplyr::filter(", x, ", dplyr::n() == 1L, .by = ", cv(jb), ")")
+  if (identical(op, "compare_added")) {
+    code <- drop(paste0("dplyr::anti_join(", uniq(n), ", ", o, ", by = ", cv(jb), ", na_matches = \"na\")"))
+    return(list(code = code, kind = NA_character_))
+  }
+  if (identical(op, "compare_removed")) {
+    code <- drop(paste0("dplyr::anti_join(", uniq(o), ", ", n, ", by = ", cv(jb), ", na_matches = \"na\")"))
+    return(list(code = code, kind = NA_character_))
+  }
+  join <- paste0("dplyr::inner_join(", uniq(o), ", ", uniq(n), ", by = ", cv(jb),
+                 ", suffix = c(\".old\", \".new\"), na_matches = \"na\")")
+  keys <- vapply(seq_along(by), function(j) {
+    id <- sv_escape_ident(by[j])
+    if (isTRUE(plan$keys[[j]]$text)) paste0(id, " = ", sv_escape_ident(paste0(by[j], ".new"))) else id
+  }, "")
+  body <- if (!length(plan$compared)) {
+    paste0("dplyr::transmute(dplyr::filter(.sv_both, FALSE), ", paste(keys, collapse = ", "),
+           ", column = NA_character_, old = NA_character_, new = NA_character_)")
+  } else {
+    pieces <- vapply(plan$compared, function(cc) {
+      a <- sv_escape_ident(paste0(cc$name, ".old")); b <- sv_escape_ident(paste0(cc$name, ".new"))
+      ca <- a; cb <- b
+      if (cc$kind %in% "character") { ca <- paste0("as.character(", a, ")"); cb <- paste0("as.character(", b, ")") }
+      cond <- paste0("!(is.na(", a, ") & is.na(", b, ")) & (is.na(", a, ") | is.na(", b, ") | ", ca, " != ", cb, ")")
+      paste0("dplyr::transmute(dplyr::filter(.sv_both, ", cond, "), ", paste(keys, collapse = ", "),
+             ", column = ", q(cc$name), ", old = ", text(a, cc$from_old, cc$zone_old),
+             ", new = ", text(b, cc$from_new, cc$zone_new), ")")
+    }, "")
+    paste0("dplyr::arrange(dplyr::bind_rows(", paste(pieces, collapse = ", "), "), ",
+           paste(sv_escape_ident(by), collapse = ", "), ")")
+  }
+  code <- paste0("local({
+  .sv_both <- ", join, "
+  ", body, "
+})")
+  list(code = code, kind = NA_character_)
+}
+
 #' Compare two versions of a table by key
 #'
 #' Compares two cuts of the same table row by row. Rows are matched on the key columns
@@ -223,7 +298,11 @@ sv_compare <- function(old, new, by = NULL) {
   # `added`, `removed` and `changed` are the data frames here, so their counts are `n_added` etc.
   s[c("n_added", "n_removed", "n_changed")] <- s[c("added", "removed", "changed")]
   s[c("added", "removed", "changed")] <- list(rows$added, rows$removed, rows$changed)
-  s$code <- list(added = "", removed = "", changed = "")
+  refs <- named$refs
+  s$code <- list(
+    added = sv_compare_code(plan, refs, c(NA, NA), "compare_added")$code,
+    removed = sv_compare_code(plan, refs, c(NA, NA), "compare_removed")$code,
+    changed = sv_compare_code(plan, refs, c(NA, NA), "compare_changed")$code)
   structure(s, class = "sv_compare")
 }
 

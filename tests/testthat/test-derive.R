@@ -394,3 +394,71 @@ test_that("stack_check_request replies with the columns, counts, text and code; 
     expect_identical(card$totalRows, r2$n_rows)
   })
 })
+
+compare_store <- function(tags = NULL) {
+  c1 <- data.frame(id = 1:4, sev = c("MILD", "MILD", "SEVERE", "MILD"), stringsAsFactors = FALSE)
+  attr(c1$sev, "label") <- "Severity"
+  c2 <- data.frame(id = 2:5, sev = c("MILD", "MODERATE", "SEVERE", "MILD"), stringsAsFactors = FALSE)
+  attr(c2$sev, "label") <- "Severity 2"
+  cards <- list(sv_normalize(c1, name = "cut1"), sv_normalize(c2, name = "cut2"))
+  for (i in seq_along(tags)) cards[[i]]$cdisc <- if (is.na(tags[i])) NULL else list(domain = tags[i])
+  sv_card_store(cards)
+}
+
+test_that("compare derive cards: names, rows, tags, args", {
+  store <- compare_store(c("AE", "AE"))
+  req <- function(op) list(op = op, inputs = list("cut1", "cut2"), args = list(by = list("id")))
+  rem <- sv_derive_card(req("compare_removed"), store, NULL)
+  add <- sv_derive_card(req("compare_added"), store, NULL)
+  chg <- sv_derive_card(req("compare_changed"), store, NULL)
+  expect_equal(c(rem$name, add$name, chg$name), c("cut1_removed", "cut2_added", "cut2_changed"))
+  s <- sv_compare(data.frame(id = 1:4, sev = c("MILD", "MILD", "SEVERE", "MILD")),
+                  data.frame(id = 2:5, sev = c("MILD", "MODERATE", "SEVERE", "MILD")), by = "id")
+  expect_equal(c(rem$dims[1], add$dims[1], chg$dims[1]), c(s$n_removed, s$n_added, nrow(s$changed)))
+  expect_equal(chg$dims[1], 2L)
+  expect_equal(rem$derived$args$plan$by, "id")
+  expect_equal(add$derived$args$by, "id")
+  expect_equal(c(rem$cdisc$domain, add$cdisc$domain), c("AE", "AE"))
+  expect_null(chg$cdisc)
+  expect_equal(rem$col_labels[["sev"]], "Severity")
+  expect_equal(add$col_labels[["sev"]], "Severity 2")
+  expect_null(chg$col_labels)
+  # untagged cards give untagged cards; the tag of each side is its own
+  expect_null(sv_derive_card(req("compare_added"), compare_store(c("AE", NA)), NULL)$cdisc)
+  expect_equal(sv_derive_card(req("compare_removed"), compare_store(c("AE", NA)), NULL)$cdisc$domain, "AE")
+  # a second open of the same card is named _2, and a rebuild from the stored recipe gives the same rows
+  store$add(add)
+  again <- sv_derive_card(req("compare_added"), store, NULL)
+  expect_equal(again$name, "cut2_added_2")
+  expect_equal(sv_derive_card(sv_derive_request_of(chg), compare_store(), NULL)$data, chg$data)
+  expect_equal(sv_derive_rows("compare_added", list(cut1 = compare_store()$get("cut1")$data,
+                                                    cut2 = compare_store()$get("cut2")$data),
+                              list(by = "id"))$id, 5L)
+})
+
+test_that("compare requests are cleaned", {
+  store <- compare_store()
+  before <- store$names()
+  req <- function(inputs = c("cut1", "cut2"), by = list("id"), args = NULL) {
+    list(op = "compare_added", inputs = as.list(inputs), args = c(list(by = by), args))
+  }
+  expect_error(sv_derive_clean(req(by = list()), store), "Pick the key columns.")
+  expect_error(sv_derive_clean(req(by = list("nope")), store), "Not in cut1: nope")
+  expect_error(sv_derive_clean(req(inputs = c("cut1", "cut1")), store), "Pick two different tables.")
+  expect_error(sv_derive_clean(req(inputs = c("cut1", "gone")), store), "Not in the canvas: gone")
+  expect_error(sv_derive_clean(req(by = as.list(paste0("k", 1:21))), store), "at most 20 key pairs")
+  expect_error(sv_derive_clean(req(by = list(1)), store), "Pick the key columns.")
+  expect_error(sv_derive_clean(req(by = list(list("id", "sev"))), store), "Pick the key columns.")
+  expect_error(sv_derive_clean(list(op = "compare_added", inputs = list("cut1")), store), "two input tables")
+  expect_error(sv_compare_clean("cut1", "cut2", "id", store, card_full = function(cd) FALSE)$by, NA)
+  expect_equal(store$names(), before)
+  # only `by` is read from args
+  ok <- sv_derive_clean(req(args = list(junk = 1, plan = "x", side = "y")), store)
+  expect_equal(names(ok$args), c("by", "plan"))
+  expect_equal(ok$args$by, "id")
+  expect_null(sv_derive_validate(req(), store))
+  expect_match(sv_derive_validate(req(by = list()), store), "Pick the key")
+  cl <- sv_compare_clean("cut1", "cut2", c("id", "id"), store)
+  expect_equal(names(cl), c("inputs", "cards", "by", "plan"))
+  expect_equal(cl$by, "id")
+})

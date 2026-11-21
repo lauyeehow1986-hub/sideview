@@ -1,7 +1,8 @@
 # Derived rows: the rows behind a join-check or SUPP-check count, as a table. The console
 # (sv_unmatched()) and the canvas card builder both call sv_derive_rows(), so the rows agree.
 
-sv_derive_ops <- c("unmatched", "outside_window", "supp_orphans", "supp_bad_idvarval", "stack")
+sv_derive_ops <- c("unmatched", "outside_window", "supp_orphans", "supp_bad_idvarval", "stack",
+                   "compare_added", "compare_removed", "compare_changed")
 
 # `by` as a list of {x, y} column pairs: from a character vector (as dplyr takes it) or already a list.
 sv_derive_by_pairs <- function(by) {
@@ -26,6 +27,11 @@ sv_derive_rows <- function(op, tables, args) {
     }
     plan <- args$plan %||% sv_stack_plan(tables, args$fixes, args$id_col)
     return(sv_stack_rows(tables, plan))
+  }
+  if (op %in% c("compare_added", "compare_removed", "compare_changed")) {
+    if (length(tables) != 2L) stop("A derived table needs two input tables.", call. = FALSE)
+    plan <- args$plan %||% sv_compare_plan(tables[[1L]], tables[[2L]], args$by, names(tables)[1L], names(tables)[2L])
+    return(sv_compare_rows(tables[[1L]], tables[[2L]], plan)[[sub("^compare_", "", op)]])
   }
   if (length(tables) != 2L) stop("A derived table needs two input tables.", call. = FALSE)
   if (any(vapply(tables, sv_is_lazy_input, logical(1)))) {
@@ -117,6 +123,9 @@ sv_derive_name <- function(op, inputs, args, taken, name = NULL) {
     outside_window = paste0(inputs[kept_i], "_outside_window"),
     supp_orphans = paste0(supp, "_orphans"),
     supp_bad_idvarval = paste0(supp, "_bad_idvarval"),
+    compare_removed = paste0(inputs[1L], "_removed"),
+    compare_added = paste0(inputs[2L], "_added"),
+    compare_changed = paste0(inputs[2L], "_changed"),
     stop(sprintf("Unknown derive op: %s", op), call. = FALSE))
   base <- make.names(base)
   nm <- base
@@ -438,6 +447,59 @@ sv_derive_clean_stack <- function(req, inputs, store, con_env = NULL, card_full 
   list(op = "stack", inputs = cl$inputs, args = args, name = name)
 }
 
+# The one cleaner of a compare's inputs and key, for the check request and the derive request alike. `old` and
+# `new` are store names, `by` the key columns (a character vector or a list of strings, 1 to 20, the same in both
+# versions). Only store cards are named, so a forged name is refused with its message and nothing is read outside the
+# store. Returns `list(inputs, cards, by, plan)`; the plan is made here so a bad key is refused with its message.
+sv_compare_clean <- function(old, new, by, store, con_env = NULL, card_full = sv_card_is_lazy) {
+  one <- function(v) {
+    nm <- sv_derive_scalar(v, 200L)
+    if (is.null(nm)) stop("A comparison needs two tables.", call. = FALSE)
+    nm
+  }
+  inputs <- c(one(old), one(new))
+  if (is.list(by)) {
+    if (!all(vapply(by, function(b) !is.null(sv_derive_scalar(b, 500L)), NA))) {
+      stop("Pick the key columns.", call. = FALSE)
+    }
+    by <- unlist(by, use.names = FALSE)
+  }
+  if (is.null(by)) by <- character(0)
+  if (!is.character(by) || anyNA(by) || any(!nzchar(by)) || any(nchar(by) > 500L)) {
+    stop("Pick the key columns.", call. = FALSE)
+  }
+  for (nm in inputs) {
+    if (!store$has(nm)) stop(sprintf("Not in the canvas: %s", substr(nm, 1L, 100L)), call. = FALSE)
+  }
+  if (identical(inputs[1L], inputs[2L])) stop("Pick two different tables.", call. = FALSE)
+  cards <- lapply(inputs, store$get)
+  if (!all(vapply(cards, function(cd) is.data.frame(cd$data), NA))) {
+    stop("A derived table needs tables as inputs.", call. = FALSE)
+  }
+  by <- unique(unname(by))
+  if (!length(by)) stop("Pick the key columns.", call. = FALSE)
+  if (length(by) > sv_derive_max_pairs) {
+    stop(sprintf("A derived table takes at most %d key pairs.", sv_derive_max_pairs), call. = FALSE)
+  }
+  tabs <- unname(sv_stack_card_tables(cards, inputs, con_env, card_full))
+  plan <- sv_compare_plan(tabs[[1L]], tabs[[2L]], by, inputs[1L], inputs[2L])
+  list(inputs = inputs, cards = cards, by = by, plan = plan)
+}
+
+# The compare derive request: `by` is the only arg read (see sv_compare_clean()); any other field is dropped.
+sv_derive_clean_compare <- function(req, op, inputs, store, con_env = NULL, card_full = sv_card_is_lazy) {
+  if (length(inputs) != 2L) stop("A derived table needs two input tables.", call. = FALSE)
+  name <- sv_field(req, "name")
+  if (!is.null(name)) {
+    name <- sv_derive_scalar(name, 200L)
+    if (is.null(name)) stop("The table name must be one non-empty string.", call. = FALSE)
+  }
+  raw <- sv_field(req, "args")
+  if (!is.list(raw)) raw <- list()
+  cl <- sv_compare_clean(inputs[1L], inputs[2L], sv_field(raw, "by"), store, con_env, card_full)
+  list(op = op, inputs = cl$inputs, args = list(by = cl$by, plan = cl$plan), name = name)
+}
+
 # Check a request against the store and return the clean request, `list(op, inputs, args, name)`
 # (stops with a message on anything wrong). `args` holds only what the op reads. `con_env`, when given,
 # lets a lazy input answer its column types from a 0-row query.
@@ -449,6 +511,9 @@ sv_derive_clean <- function(req, store, con_env = NULL, card_full = sv_card_is_l
   if (is.list(inputs)) inputs <- unlist(inputs, use.names = FALSE)
   if (!is.character(inputs) || anyNA(inputs)) stop("A derived table needs two input tables.", call. = FALSE)
   if (identical(op, "stack")) return(sv_derive_clean_stack(req, unname(inputs), store, con_env, card_full))
+  if (op %in% c("compare_added", "compare_removed", "compare_changed")) {
+    return(sv_derive_clean_compare(req, op, unname(inputs), store, con_env, card_full))
+  }
   if (length(inputs) != 2L) stop("A derived table needs two input tables.", call. = FALSE)
   inputs <- unname(inputs)
   for (nm in inputs) {
@@ -596,6 +661,21 @@ sv_derive_card <- function(req, store, con_env, lazy_or_preview = NULL, card_ful
     doms <- vapply(tags, function(t) if (is.null(t) || is.null(t$domain)) NA_character_ else as.character(t$domain), "")
     same <- !anyNA(doms) && length(unique(doms)) == 1L
     card$cdisc <- if (isFALSE(cdisc) || !same) NULL else tags[[1L]]
+    return(card)
+  }
+  if (op %in% c("compare_added", "compare_removed", "compare_changed")) {
+    cx <- store$get(inputs[1L])
+    cy <- store$get(inputs[2L])
+    nm <- sv_derive_name(op, inputs, args, store$names(), clean$name)
+    rows <- sv_compare_rows(cx$data, cy$data, args$plan)[[sub("^compare_", "", op)]]
+    derived <- list(op = op, inputs = inputs, args = list(by = args$by, plan = args$plan))
+    card <- new_sideview_card(name = nm, type = "grid", data = rows, derived = derived)
+    src <- switch(op, compare_removed = cx, compare_added = cy, NULL)
+    if (!is.null(src)) {
+      lab <- src$col_labels[intersect(names(src$col_labels), names(rows))]
+      if (length(lab)) card$col_labels <- lab
+      card$cdisc <- if (isFALSE(cdisc)) NULL else src$cdisc
+    }
     return(card)
   }
   cx <- store$get(inputs[1L])
