@@ -205,3 +205,38 @@ sv_stk_pick_check <- function(b) {
   sv_stk_click(b, "[data-stack-action=check]")
   testthat::expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-stack-table')", timeout = 60))
 }
+
+
+# ---- the Compare drawer tab (D3): shared by the layout and a11y browser tests ----
+
+# Two synthetic cuts of an AE table. By USUBJID + AESEQ: S4 is added, S3 removed, (S1, 1) changed in AESEV.
+# Without AESEQ the key USUBJID repeats (S1 has two rows). The AE tag lets R suggest USUBJID + AESEQ.
+sv_cmp_cut1 <- "data.frame(USUBJID = c('S1', 'S1', 'S2', 'S3'), AESEQ = c(1L, 2L, 1L, 1L), AESEV = c('MILD', 'MILD', 'SEVERE', 'MILD'), stringsAsFactors = FALSE)"
+sv_cmp_cut2 <- "data.frame(USUBJID = c('S1', 'S1', 'S2', 'S4'), AESEQ = c(1L, 2L, 1L, 1L), AESEV = c('MODERATE', 'MILD', 'SEVERE', 'MILD'), stringsAsFactors = FALSE)"
+sv_cmp_app <- paste0(
+  "local({ cut1 <- ", sv_cmp_cut1, "; cut2 <- ", sv_cmp_cut2, ";",
+  "sideview(cut1, cut2, cdisc = c(cut1 = 'AE', cut2 = 'AE'), run = FALSE) })")
+
+sv_cmp_open_tab <- function(b) {
+  sv_js(b, "document.querySelector('.sideview-drawer').classList.remove('collapsed'); true")
+  testthat::expect_true(sv_wait_js(b, "getComputedStyle(document.querySelector('.sideview-drawer')).opacity === '1' && document.querySelector('.sideview-drawer').getAnimations().length === 0", timeout = 30))
+  sv_stk_click(b, ".sideview-drawer-tab[data-tab=compare]")
+  testthat::expect_true(sv_wait_js(b, "!!document.querySelector('[data-pane=compare] [data-compare-select]')", timeout = 30))
+}
+
+# Pick the two versions through their selects (a native select popup takes no synthetic mouse), then press Check.
+sv_cmp_pick_check <- function(b, old = "cut1", new = "cut2") {
+  for (side in c("old", "new")) {
+    v <- if (side == "old") old else new
+    sv_js(b, sprintf("(() => { const s = document.querySelector('[data-compare-select=%s]'); s.focus(); s.value = %s; s.dispatchEvent(new Event('change', {bubbles: true})); return true; })()",
+                     side, as.character(jsonlite::toJSON(v, auto_unbox = TRUE))))
+  }
+  sv_stk_click(b, "[data-compare-action=check]")
+  testthat::expect_true(sv_wait_js(b, "!!document.querySelector('[data-compare-result] .sideview-compare-text')", timeout = 60))
+}
+
+sv_cmp_text <- function(b) {
+  paste(unlist(sv_js(b, "[...document.querySelectorAll('.sideview-compare-text li')].map(x => x.textContent)")), collapse = " | ")
+}
+
+sv_cmp_eng <- "document.querySelector('.sideview-container')._sideviewInstance"

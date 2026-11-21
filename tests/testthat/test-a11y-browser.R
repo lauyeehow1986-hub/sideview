@@ -1701,3 +1701,29 @@ test_that("list view Stack builder matches the drawer", {
   expect_equal(sv_js(b, "document.querySelector('.sideview-card[data-card-name=wave2_stacked] .sideview-badge-dims').textContent.replace(/[^0-9]+/g, ' ').trim().split(' ')[0]"),
                as.character(sv_stk_total_rows()))
 })
+
+
+test_that("Compare tab passes axe, every control is named and the open is announced", {
+  skip_if_no_browser()
+  skip_if_no_axe()
+  app <- sv_start_app(sv_cmp_app)
+  b <- sv_open_page(app$url, 1360, 820)
+  on.exit({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) }, add = TRUE)
+  sv_cmp_open_tab(b)
+  sv_cmp_pick_check(b)
+  expect_true(sv_wait_js(b, "getComputedStyle(document.querySelector('.sideview-drawer')).opacity === '1' && document.querySelector('.sideview-drawer').getAnimations().length === 0", timeout = 30))
+  v <- sv_axe_run(b)
+  v <- v[!v$id %in% names(SV_AXE_ACCEPTED), , drop = FALSE]
+  expect_equal(nrow(v), 0, info = paste(v$id, v$targets, collapse = "; "))
+  bad <- sv_ax_unnamed(sv_ax_tree(b))
+  expect_equal(nrow(bad), 0, info = paste(bad$role, bad$name, collapse = ", "))
+  named <- sv_js(b, "[...document.querySelectorAll('[data-pane=compare] select, [data-pane=compare] input[type=checkbox]')].every(el => (el.labels && el.labels.length) || el.getAttribute('aria-label'))")
+  expect_true(named)
+  sv_stk_click(b, "[data-compare-open=changed]")
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-card[data-card-name=cut2_changed]')", timeout = 60))
+  n <- sv_js(b, "document.querySelector('.sideview-container')._sideviewInstance._compare.reply.changed_values")
+  want <- sprintf("Table cut2_changed added, %d %s.", n, if (n == 1) "row" else "rows")
+  want_js <- as.character(jsonlite::toJSON(want, auto_unbox = TRUE))
+  expect_true(sv_wait_js(b, sprintf("document.querySelector('.sideview-container')._sideviewInstance.announceLog.indexOf(%s) >= 0", want_js), timeout = 30))
+  expect_true(sv_wait_js(b, sprintf("document.querySelector('.sideview-announcer').textContent === %s", want_js), timeout = 30))
+})
