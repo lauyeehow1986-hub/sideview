@@ -21,26 +21,37 @@ RStudio pass is still to do.
   the join-check and SUPP-check replies (see CLAUDE.md). The widget has no R: it shows no buttons, and a saved state's
   derive steps stay in the code (when both inputs are there) but the tables are not shown, with a notice.
 
+## Stack tables
+
 Derived cards, second part (D2): stack tables. Checked with real-browser tests (headless Chrome) and unit tests;
 the manual RStudio pass is still to do.
 
-## Stack tables
-
 * `sv_stack_check(..., cast, rename)` lines up the columns of 2 to 8 tables and reports, per column, its type in each
-  table, its label, and what a stack would do: the same type, a cast to a common type (never a silent rounding), a
-  name that differs only by case offered as a rename, and a column missing from some tables. Nothing
-  changes until you pick a fix. `sv_stack(..., check)` stacks the tables with the check's fixes: exactly the sum of
-  the rows, a `source` column naming each row's table, labels kept, a value that cannot be cast becomes `NA`.
+  table, its label, and what a stack would do: the same type, a cast to a common type, a name that differs only by
+  case offered as a rename, and a column missing from some tables. Nothing changes until you pick a fix.
+  `sv_stack(..., check)` stacks the tables with the check's fixes: exactly the sum of the rows, a `source` column
+  naming each row's table, labels kept, a value that cannot be cast becomes `NA` (and the check counts those).
+  `sv_stack()` refuses a check made for other tables, or for data frames whose columns, types or row count have
+  changed since.
 * The drawer has a **Stack** tab (and the list view a Stack builder): pick tables, Check, change a fix, **Open** adds
-  the stacked table as a card (`wave2_stacked`). The step is `derive` with `op = "stack"`, its R code is
-  `dplyr::bind_rows()` and is byte-equal to what R runs; a duckdb or Arrow input stays lazy (one `union_all`, never
-  collected). The result is announced, and Open on a stack that exists zooms to it. A saved state keeps the step.
+  the stacked table as a card named after the first table you picked (`wave1_stacked`). The step is `derive` with
+  `op = "stack"`; its R code is `dplyr::bind_rows()`, and the code R writes and the code the browser writes are
+  byte-equal (R builds the card itself with the same plan). A duckdb or Arrow input stays lazy (one `union_all`,
+  never collected). The result is announced, and Open on a stack that exists zooms to it. A saved state keeps the
+  step; when it is opened, R plans the stack again from the data as they are then.
+* Dates and times: a date-time cast to a date is its UTC date; a date cast to a date-time is midnight UTC, shown in
+  the zone the stack keeps. Both are the same in memory and in duckdb or Arrow.
+* Some casts change values without counting them as `NA`: a date-time cast to text drops fractional seconds; a
+  number cast to text keeps 15 significant digits; an `integer64` column that is cast is read as a double first, so
+  digits beyond 2^53 are lost.
 * New input `stack_check_request` and new message `sideview_stack_check` (see CLAUDE.md). The widget has no R: no
   Stack tab; a saved stack step stays in the code but the table is not shown, with a notice.
-* Known limits: the generated code for a lazy date-time column cast to text names the time zone of the session that
-  made it; a number cast to text can differ between in-memory ("1e+05") and duckdb ("100000") for very large or small
-  values; lazy tables carry no labels; a saved state with a stack of lazy date-time columns carries the zone rules
-  (about 20 KB per time column per input).
+* Known limits: stacking a duckdb or Arrow table needs duckdb (without it the check and Open say so); duckdb reads
+  names that differ only by case (`AGE`, `Age`) as one, so a lazy stack with such a pair left apart is refused (tick
+  Rename to merge them); the generated code for a lazy date-time column cast to text names the time zone of the
+  session that made it; a number cast to text can differ between in-memory ("1e+05") and duckdb ("100000") for very
+  large or small values; duckdb tables carry no labels (Arrow tables do); a saved state with a stack of lazy
+  date-time columns carries the zone rules (about 20 KB per time column per input).
 
 # sideview 0.9.0
 

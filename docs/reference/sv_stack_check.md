@@ -5,9 +5,13 @@ what stacking them one under another would change: types that differ
 (and the type they would be cast to), values that become `NA` in a cast,
 labels that differ, columns missing from some tables, and near-miss
 names that differ only in case (these are never merged unless you ask
-with `rename`). Nothing is rounded or truncated silently: a cast
-converts a value exactly or gives `NA`, and the `NA` count says how
-many.
+with `rename`). A value a cast cannot convert becomes `NA`, and the `NA`
+count says how many. Some casts change values without an `NA`: a
+date-time cast to text drops fractional seconds, a number cast to text
+keeps 15 significant digits, and an `integer64` column that is cast is
+read as a double first (digits beyond 2^53 are lost). A date-time cast
+to a date is its UTC date; a date cast to a date-time is midnight UTC,
+shown in the zone the stack keeps.
 
 ## Usage
 
@@ -41,6 +45,14 @@ An object of class `sv_stack_check`: the plan (`inputs`, `id_col`,
 `n_rows`, `columns`, `kept_labels`, `tz`), plus `table` (one row per
 column, with its type in each input and a `Status`), `text` (summary
 lines) and `code`.
+
+## Details
+
+With a duckdb or Arrow table the check needs duckdb, and runs there:
+duckdb reads two names that differ only in case as one, so such a pair
+must be merged with `rename` (the check says so, and
+[`sv_stack()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_stack.md)
+refuses it). duckdb tables carry no labels; Arrow tables do.
 
 ## Examples
 

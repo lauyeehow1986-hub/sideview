@@ -456,14 +456,30 @@ column holds each row’s table name.</p>
 <p>On the canvas, the <strong>Stack</strong> tab of the drawer (and the
 Stack builder of the list view) does the same: pick two or more tables,
 press <strong>Check</strong>, change a fix if you want one, and press
-<strong>Open</strong> to add the stacked table as a card named for its
-inputs (<code>wave2_stacked</code>). The generated code rebuilds the
+<strong>Open</strong> to add the stacked table as a card named after the
+first table you ticked (<code>wave1_stacked</code> when
+<code>wave1</code> is ticked first). The generated code rebuilds the
 table with <code><a href="https://dplyr.tidyverse.org/reference/bind_rows.html" class="external-link">dplyr::bind_rows()</a></code>, so a script reproduces the
-card. A duckdb or Arrow input stays lazy: the stack is one
-<code>union_all</code> on a duckdb connection and is never
-collected.</p>
+card; R builds the card itself from the same plan, and the code R writes
+is byte-equal to the code the browser writes. A duckdb or Arrow input
+stays lazy: the stack is one <code>union_all</code> on a duckdb
+connection and is never collected.</p>
+<p>Dates and times: a date-time cast to a date is its UTC date, and a
+date cast to a date-time is midnight UTC, shown in the zone the stack
+keeps. A table in memory and a duckdb or Arrow table give the same
+values.</p>
 <p>Limits to know:</p>
 <ul>
+<li>Some casts change values without counting an <code>NA</code>: a
+date-time cast to text drops fractional seconds, a number cast to text
+keeps 15 significant digits, and an <code>integer64</code> column that
+is cast is read as a double first, so digits beyond 2^53 are lost.</li>
+<li>Stacking a duckdb or Arrow table needs the duckdb package; without
+it the check and <strong>Open</strong> say so.</li>
+<li>duckdb reads two names that differ only in case (<code>AGE</code>,
+<code>Age</code>) as one name, so a duckdb or Arrow stack with such a
+pair left apart is refused: tick <strong>Rename</strong> to merge them,
+or rename one first.</li>
 <li>The code for a lazy table whose columns are date-times cast to text
 writes the time zone of the session that made it
 (<code><a href="https://rdrr.io/r/base/timezones.html" class="external-link">Sys.timezone()</a></code>), so code generated on another machine can
@@ -471,8 +487,8 @@ differ in the zone only.</li>
 <li>A number cast to text is written by R as <code>"1e+05"</code> where
 a duckdb stack writes <code>"100000"</code>; whole numbers in ordinary
 ranges agree, very large or small ones may not.</li>
-<li>A lazy table carries no column labels, so a stack of lazy tables has
-none.</li>
+<li>A duckdb table carries no column labels, so its columns have none in
+the stack; an Arrow table keeps its labels.</li>
 <li>The widget has no R: it shows no Stack tab, and a saved state’s
 stack step stays in the code but the table is not shown there.</li>
 </ul>

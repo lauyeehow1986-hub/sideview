@@ -117,16 +117,31 @@ rstudio bridge: R/rstudio.R
   is `sv_stack_plan()` (in memory) and `sv_lazy_stack_plan()` (duckdb / Arrow): twins, held to each other by
   test-stack.R and test-lazy.R. The rows are `sv_stack_rows()` (in memory) and `sv_lazy_stack()` (one duckdb
   `union_all`, never collected): twins too, and both tested against each other. The generated code is also a twin:
-  `sv_stack_code()` (R) and `deriveExpr()` for `op: 'stack'` (sv-pipeline.js) are byte-equal; test-derive-code.R
-  evaluates it for every backend. The step is a `derive` step `{op: 'stack', inputs: [2..8], args: {fixes, id_col?,
-  plan}}`; the plan is R's and is embedded verbatim, including `tz_text` (the R-computed DST offset tree for a lazy
-  date-time to text cast: JS never ports time zone rules). `deriveArgsKey()` includes `fixes` and `id_col`, so two
-  stacks of the same inputs with different fixes are different cards. The wire is `stack_check_request`
-  (`{id, tables, fixes?}`, cleaned by `sv_stack_clean()`) and `sideview_stack_check`; Open is a `derive_request`
-  with `op: 'stack'`. Known gaps: `Sys.timezone()` is pinned in lazy date-time code; a number cast to text can be
-  `"1e+05"` in R and `"100000"` in duckdb; lazy tables carry no labels; `id_col` is not an input to the check, so a
-  user-chosen `id_col` would desync the preview from Open (the browser sends none); no lazy stack server test;
-  `sv_stack_clean()` has no unit test for 9 tables or the cast-target whitelist (the handler pre-checks).
+  `sv_stack_code()` (R) and `deriveExpr()` for `op: 'stack'` (sv-pipeline.js) are byte-equal (the code pair; R builds
+  the card with `sv_stack_rows()` / `sv_lazy_stack()`, not by running that code); test-derive-code.R evaluates it for
+  every backend. `sv_escape_ident()` / `ident()` and `encodeString()` / `str()` quote names and strings the same way
+  (ASCII-only syntactic names, control characters escaped; test-stack.R). The step is a `derive` step
+  `{op: 'stack', inputs: [2..8], args: {fixes, id_col?, plan}}`; the plan is R's and is embedded verbatim, including
+  `tz_text` (the R-computed DST offset tree for a lazy date-time to text cast: JS never ports time zone rules).
+  `sv_stack_clean()` adds `tz_text` whenever a card is lazy, even when the plan came from a preview, so JS never
+  writes lazy code without it. An opened state's stack steps take the plan R makes from the data as they are then
+  (`sv_derive_state_refresh()`; `derivedArrived()` refits a lazy card's step in the browser). A dttm to date cast is
+  the UTC date and a date to dttm cast midnight UTC on both sides (lazy uses `epoch_us()`: duckdb 1.4.3 has no ICU
+  for `CAST(TIMESTAMPTZ AS DATE)`). duckdb names are case-insensitive, so a lazy plan with `AGE` and `Age` left apart
+  carries `case_clash` and `sv_lazy_stack()` refuses it. Without duckdb a whole lazy card is refused, never stacked
+  from its preview. `deriveArgsKey()` includes the sorted `fixes` and `id_col` (the default `source` counts as none),
+  so two stacks of the same inputs with different fixes are different cards. The wire is `stack_check_request`
+  (`{id, tables, fixes?}`, cleaned by `sv_stack_clean()`; the id is a short sequence, and an id over 200 characters
+  gets a toast, not silence) and `sideview_stack_check`; Open is a `derive_request` with `op: 'stack'` whose plan is
+  made once (`sv_derive_check()` hands validate's clean result to `sv_derive_card()`). Ticking a rename drops the
+  cast picked for the renamed column. The card is named after the first table picked. Known gaps: `Sys.timezone()`
+  is pinned in lazy date-time code; a number cast to text can be `"1e+05"` in R and `"100000"` in duckdb (and keeps
+  15 significant digits in R); a dttm cast to text drops fractional seconds; a cast `integer64` loses digits beyond
+  2^53; none of these is counted as `NA`. duckdb tables carry no labels (Arrow tables do); `tz_text` adds about 20 KB
+  of saved state per date-time column per input; `sv_stack(check =)` compares a lazy input by name only (data frames
+  also by columns, types and row count); `id_col` is not an input to the check, so a user-chosen `id_col` would
+  desync the preview from Open (the browser sends none); Check then Open still plans twice; no lazy stack server
+  test; `sv_stack_clean()` has no unit test for 9 tables or the cast-target whitelist (the handler pre-checks).
 - **Derived cards (D1):** the rows behind a check count as a card of their own. Ops (`sv_derive_ops`): `unmatched`
   and `outside_window` (join check; `args` = `{by, rule?, side}`), `supp_orphans` and `supp_bad_idvarval` (SUPP check;
   `args` = `{rdomain?}`, the plan is R's). `sv_unmatched()` and `sv_supp_orphans()` are the console forms; all of them
