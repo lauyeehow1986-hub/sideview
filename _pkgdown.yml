@@ -64,6 +64,7 @@ reference:
       - sv_unmatched
       - sv_stack_check
       - sv_stack
+      - sv_compare
       - sv_code_recode
       - sv_auto_clean_rules
 
