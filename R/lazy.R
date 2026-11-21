@@ -2205,7 +2205,8 @@ sv_stack_lazy_cast <- function(cn, from, to, zone = "") {
       dttm = sv_stack_sql_calls(sv_lazy_tz_text_expr(x, sv_stack_zone(zone), seconds = TRUE)),
       rlang::expr(as.character(!!x))),
     date = if (from == "dttm") {
-      rlang::expr(as.Date(!!x))
+      # the UTC date, as in memory; CAST(TIMESTAMPTZ AS DATE) needs ICU, epoch_us() does not
+      sv_stack_sql(sprintf("CAST(make_timestamp(epoch_us(%s)) AS DATE)", q))
     } else {
       rlang::expr(dplyr::if_else(regexp_matches(!!x, "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"),
                                  !!sv_stack_sql(sprintf("TRY_CAST(%s AS DATE)", q)), NA))
@@ -2344,8 +2345,17 @@ sv_lazy_stack_plan <- function(tables, fixes = list(), id_col = NULL, con_env = 
     out
   }
   plan <- sv_stack_plan_core(samples, inputs, fixes, id_col, na_fun, function() sv_lazy_count(sum(counts)))
-  # The text of every dttm-to-chr cast (the zone's offset tree is long), so the browser writes the same code without
-  # rebuilding the tree: `tz_text[i]` is input i's cast of this column, NA where it has none.
+  plan <- sv_stack_add_tz_text(plan)
+  clash <- sv_stack_case_clash(plan)
+  if (length(clash)) plan$case_clash <- clash
+  plan
+}
+
+# The text of every dttm-to-chr cast (the zone's offset tree is long), so the browser writes the same lazy code without
+# rebuilding the tree: `tz_text[i]` is input i's cast of this column, NA where it has none. Pure R: an in-memory plan of
+# lazy cards (the lost-link preview) gets it too, so the browser can always write the lazy code.
+sv_stack_add_tz_text <- function(plan) {
+  inputs <- plan$inputs
   for (k in seq_along(plan$columns)) {
     col <- plan$columns[[k]]
     tt <- rep(NA_character_, length(inputs))
@@ -2357,6 +2367,14 @@ sv_lazy_stack_plan <- function(tables, fixes = list(), id_col = NULL, con_env = 
     if (any(!is.na(tt))) plan$columns[[k]]$tz_text <- tt
   }
   plan
+}
+
+# The names of a lazy stack that differ only in case (`AGE` and `Age` left apart): duckdb reads them as one name and
+# would rename one to `Age_1`, so a lazy stack refuses them. Empty when there are none.
+sv_stack_case_clash <- function(plan) {
+  nms <- c(plan$id_col, vapply(plan$columns, function(c) c$name, ""))
+  low <- tolower(nms)
+  nms[low %in% low[duplicated(low)]]
 }
 
 #' The stack of lazy tables, as one duckdb `union_all()`
@@ -2372,6 +2390,8 @@ sv_lazy_stack_plan <- function(tables, fixes = list(), id_col = NULL, con_env = 
 #' @noRd
 sv_lazy_stack <- function(tables, plan, con_env) {
   if (!identical(names(tables), plan$inputs)) stop("The plan was made for other tables.", call. = FALSE)
+  clash <- sv_stack_case_clash(plan)
+  if (length(clash)) stop(sv_say_stack_case_clash(clash), call. = FALSE)
   placed <- sv_lazy_place_n(tables, con_env)
   ok <- FALSE
   on.exit(if (!ok) placed$cleanup(), add = TRUE)

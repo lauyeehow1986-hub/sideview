@@ -1195,7 +1195,7 @@
         return 'as.character(' + x + ')';
       case 'date':
         return from === 'dttm'
-          ? 'as.Date(' + x + ')'
+          ? stackSql('CAST(make_timestamp(epoch_us(' + q + ')) AS DATE)')
           : 'dplyr::if_else(regexp_matches(' + x + ', "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"), ' +
             stackSql('TRY_CAST(' + q + ' AS DATE)') + ', NA)';
       case 'dttm':

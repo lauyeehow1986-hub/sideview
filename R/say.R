@@ -314,7 +314,14 @@ sv_say_stack_text <- function(plan) {
   if (n$near > 0L) {
     out <- c(out, paste0(sv_say_num(n$near), if (n$near == 1L) " near-miss name left apart." else " near-miss names left apart."))
   }
+  if (length(plan$case_clash)) out <- c(out, sv_say_stack_case_clash(plan$case_clash))
   out
+}
+
+# Why a lazy stack refuses names that differ only in case.
+sv_say_stack_case_clash <- function(clash) {
+  paste0("duckdb reads ", paste(clash, collapse = " and "),
+         " as one name, so a duckdb or Arrow stack cannot keep them apart. Tick Rename to merge them, or rename one first.")
 }
 
 # The label of the Open button of a stack.

@@ -2526,3 +2526,46 @@ test_that("a lazy derived stack card follows its recipe", {
   sv_lazy_release(tb, e)
   expect_true(all(c("r1", "r2") %in% DBI::dbListTables(con)))
 })
+
+test_that("a zone-aware Arrow time and a date agree lazily, both ways", {
+  stk_need("arrow")
+  # 20:00 UTC is the next day in Singapore: the date is the UTC date, in memory and lazily
+  sg <- as.POSIXct(c("2024-01-01 20:00:00", "2024-06-30 15:59:59", NA), tz = "UTC")
+  attr(sg, "tzone") <- "Asia/Singapore"
+  for (k in list(c("df", "arrow"), c("arrow", "arrow"), c("duckdb", "arrow"))) {
+    kk <- paste(k, collapse = "/")
+    r <- stk_pair(sg, as.Date("2024-01-01"), "date", k, paste("sg dttm->date", kk))
+    expect_equal(sort(r$want$V), as.Date(c("2024-01-01", "2024-01-01", "2024-06-30")), info = kk)
+    # a date into a Singapore time: midnight UTC, shown in the kept zone
+    r <- stk_pair(as.Date(c("2024-01-02", NA)), sg[1], "dttm", rev(k), paste("sg date->dttm", kk))
+    expect_true(1704153600 %in% as.numeric(r$want$V), info = kk)
+  }
+  # the code of the check rebuilds the same rows
+  p <- arrow::arrow_table(data.frame(V = as.Date("2024-01-01")))
+  s <- arrow::arrow_table(data.frame(V = sg))
+  chk <- sv_stack_check(p = p, s = s, cast = c(V = "date"))
+  expect_parses(chk$code, "sg code")
+  got <- eval(parse(text = chk$code), list2env(list(p = p, s = s), parent = globalenv()))
+  want <- sv_stack(p = data.frame(V = as.Date("2024-01-01")), s = data.frame(V = sg),
+                   check = sv_stack_check(p = data.frame(V = as.Date("2024-01-01")), s = data.frame(V = sg),
+                                          cast = c(V = "date")))
+  expect_equal(stk_norm(got), stk_norm(want))
+})
+
+test_that("a near-miss name left apart is refused lazily, and merges", {
+  # duckdb reads AGE and Age as one name (it would rename one to Age_1), so a lazy stack refuses to keep them apart
+  w1 <- data.frame(id = 1:2, AGE = c(34, 51))
+  w2 <- data.frame(id = 3:4, Age = c("29", "40"))
+  expect_identical(names(sv_stack(w1 = w1, w2 = w2)), c("source", "id", "AGE", "Age"))
+  for (k in list(c("duckdb", "duckdb"), c("arrow", "arrow"), c("df", "duckdb"), c("arrow", "duckdb"))) {
+    kk <- paste(k, collapse = "/")
+    objs <- stk_objs(list(w1 = w1, w2 = w2), k)
+    chk <- sv_stack_check(objs)
+    expect_identical(chk$case_clash, c("AGE", "Age"), info = kk)
+    expect_true(any(grepl("duckdb reads AGE and Age as one name", sv_say_stack_text(chk), fixed = TRUE)), info = kk)
+    expect_error(sv_stack(objs, check = chk), "AGE and Age as one name", fixed = TRUE)
+    # merged, the lazy stack equals the in-memory one
+    r <- stk_expect_same(list(w1 = w1, w2 = w2), k, rename = c(Age = "AGE"), info = paste("merged", kk))
+    expect_null(r$chk$case_clash)
+  }
+})
