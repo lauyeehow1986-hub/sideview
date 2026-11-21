@@ -1159,3 +1159,44 @@ test_that("reactive cards=: a re-fire keeps the derived card; dropping an input 
     expect_true(px$ctl$store$has("dm"))
   })
 })
+
+test_that("forged stack requests are refused", {
+  w1 <- data.frame(AGE = c(34, 51), RACE = c("a", "b"), stringsAsFactors = FALSE)
+  w2 <- data.frame(AGE = c("29", "x", "40"), RACE = c("c", "d", "e"), stringsAsFactors = FALSE)
+  shiny::testServer(sideviewServer, args = list(id = "cv", cards = list(wave1 = w1, wave2 = w2)), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    before <- px$ctl$store$names()
+    n_all <- length(session$userData$custom_messages)
+    i <- 0L
+    refuse <- function(req) {
+      i <<- i + 1L
+      req$id <- paste0("bad", i)
+      session$setInputs(stack_check_request = req)
+      all <- session$userData$custom_messages
+      expect_length(all, n_all + 1L)
+      n_all <<- length(all)
+      r <- all[[length(all)]]
+      expect_identical(r$type, "sideview_stack_check")
+      expect_identical(r$message$id, req$id)
+      expect_true(is.character(r$message$error) && nzchar(r$message$error))
+      expect_null(r$message$columns)
+      expect_identical(r$message$ns, session$ns(""))
+      expect_identical(px$ctl$store$names(), before)
+    }
+    refuse(list(tables = list("Sys.getenv", "wave2")))
+    refuse(list(tables = list("wave1", "nope")))
+    refuse(list(tables = as.list(rep("wave1", 9L))))
+    refuse(list(tables = list("wave1", "wave1")))
+    refuse(list(tables = list("wave1")))
+    refuse(list(tables = list("wave1", "wave2"),
+                fixes = list(list(column = "x; system('id')", action = "cast", to = "chr"))))
+    refuse(list(tables = list("wave1", "wave2"),
+                fixes = rep(list(list(column = "AGE", action = "keep")), 10000L)))
+    # and a good one still answers
+    session$setInputs(stack_check_request = list(id = "ok", tables = list("wave1", "wave2")))
+    all <- session$userData$custom_messages
+    expect_null(all[[length(all)]]$message$error)
+    expect_identical(px$ctl$store$names(), before)
+  })
+})

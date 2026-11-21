@@ -334,3 +334,45 @@ test_that("stack requests are cleaned", {
   expect_null(sv_derive_validate(req(c("wave1", "wave2")), store))
   expect_match(sv_derive_validate(req("wave1"), store), "A stack needs")
 })
+
+test_that("stack_check_request replies with the columns, counts, text and code; a fix changes the plan; Open adds the card", {
+  cards <- stack_store()$names()
+  cards <- sv_normalize_cards(list(
+    wave1 = data.frame(AGE = c(34, 51), RACE = c("a", "b"), stringsAsFactors = FALSE),
+    wave2 = data.frame(AGE = c("29", "x", "40"), RACE = c("c", "d", "e"), stringsAsFactors = FALSE)))
+  shiny::testServer(sideview_server(cards), {
+    last <- function(type) {
+      m <- Filter(function(z) identical(z$type, type), session$userData$custom_messages)
+      m[[length(m)]]$message
+    }
+    session$setInputs(stack_check_request = list(id = "k1", tables = list("wave1", "wave2")))
+    r <- last("sideview_stack_check")
+    expect_identical(r$id, "k1")
+    expect_null(r$error)
+    expect_equal(r$n_rows, 5L)
+    expect_identical(r$id_col, "source")
+    age <- r$columns[[which(vapply(r$columns, function(c) c$name, "") == "AGE")]]
+    expect_identical(unlist(age$table), c("num", "chr"))
+    expect_identical(age$target, "chr")
+    expect_true(length(r$text) >= 1L)
+    expect_match(r$open_label, "Open stacked card (5 rows", fixed = TRUE)
+    expect_identical(r$name, "wave1_stacked")
+    expect_false(inherits(try(parse(text = r$code_preview), silent = TRUE), "try-error"))
+    # a cast fix changes the target and the NA count
+    session$setInputs(stack_check_request = list(id = "k2", tables = list("wave1", "wave2"),
+      fixes = list(list(column = "AGE", action = "cast", to = "num"))))
+    r2 <- last("sideview_stack_check")
+    age2 <- r2$columns[[which(vapply(r2$columns, function(c) c$name, "") == "AGE")]]
+    expect_identical(age2$target, "num")
+    expect_identical(sum(unlist(age2$na), na.rm = TRUE), 1L)
+    # a refused request is an error reply
+    session$setInputs(stack_check_request = list(id = "k3", tables = list("wave1", "nope")))
+    expect_match(last("sideview_stack_check")$error, "Not in the canvas")
+    # Open: the same fixes, through derive_request
+    session$setInputs(derive_request = list(id = "d1", op = "stack", inputs = list("wave1", "wave2"),
+      args = list(fixes = list(list(column = "AGE", action = "cast", to = "num")))))
+    m <- Filter(function(z) identical(z$type, "sideview_card_add"), session$userData$custom_messages)
+    card <- m[[length(m)]]$message$card
+    expect_identical(card$totalRows, r2$n_rows)
+  })
+})

@@ -367,23 +367,25 @@ sv_stack_card_tables <- function(cards, inputs, con_env, card_full = sv_card_is_
   stats::setNames(tabs, inputs)
 }
 
-# The stack request: `fixes` and `id_col` are the only args read. Each fix has exactly column, action and to
-# (to may be missing for keep). The plan is run here so a bad fix is refused with its message, and kept in the
-# args for the card. A lazy card that `card_full` says is whole is read through its duckdb tbl (the plan then comes
-# from 0 rows and one query per input, see sv_lazy_stack_plan()); every other card by its rows in memory.
-sv_derive_clean_stack <- function(req, inputs, store, con_env = NULL, card_full = sv_card_is_lazy) {
+# The one cleaner of a stack's tables and fixes, for the check request and the derive request alike. `tables` are
+# store names (2 to 8, each once), `fixes` the client's list (each has exactly column, action and to; to may be
+# missing for keep; at most 500). The plan is run here so a bad fix is refused with its message. A lazy card that
+# `card_full` says is whole is read through its duckdb tbl (the plan then comes from 0 rows and one query per input,
+# see sv_lazy_stack_plan()); every other card by its rows in memory. Returns `list(inputs, cards, fixes, id_col, plan)`.
+sv_stack_clean <- function(tables, fixes, store, id_col = NULL, con_env = NULL, card_full = sv_card_is_lazy) {
+  if (is.list(tables)) tables <- unlist(tables, use.names = FALSE)
+  if (!is.character(tables) || anyNA(tables)) stop("A stack needs 2 to 8 tables.", call. = FALSE)
+  if (length(tables) < 2L || length(tables) > 8L) stop("A stack needs 2 to 8 tables.", call. = FALSE)
+  if (anyDuplicated(tables)) stop("A table can be stacked only once.", call. = FALSE)
+  inputs <- unname(tables)
+  for (nm in inputs) {
+    if (!store$has(nm)) stop(sprintf("Not in the canvas: %s", substr(nm, 1L, 100L)), call. = FALSE)
+  }
   cards <- lapply(inputs, store$get)
   if (!all(vapply(cards, function(cd) is.data.frame(cd$data), NA))) {
     stop("A derived table needs tables as inputs.", call. = FALSE)
   }
-  name <- sv_field(req, "name")
-  if (!is.null(name)) {
-    name <- sv_derive_scalar(name, 200L)
-    if (is.null(name)) stop("The table name must be one non-empty string.", call. = FALSE)
-  }
-  raw <- sv_field(req, "args")
-  if (!is.list(raw)) raw <- list()
-  fixes_in <- sv_field(raw, "fixes")
+  fixes_in <- fixes
   if (is.data.frame(fixes_in)) fixes_in <- lapply(seq_len(nrow(fixes_in)), function(i) as.list(fixes_in[i, , drop = FALSE]))
   if (is.null(fixes_in)) fixes_in <- list()
   if (!is.list(fixes_in)) stop("Fixes must be a list.", call. = FALSE)
@@ -403,7 +405,6 @@ sv_derive_clean_stack <- function(req, inputs, store, con_env = NULL, card_full 
     }
     list(column = col, action = act, to = to)
   })
-  id_col <- sv_field(raw, "id_col")
   if (!is.null(id_col)) {
     id_col <- sv_derive_scalar(id_col, 200L)
     if (is.null(id_col)) stop("The id column must be one non-empty string.", call. = FALSE)
@@ -411,11 +412,24 @@ sv_derive_clean_stack <- function(req, inputs, store, con_env = NULL, card_full 
       if (id_col %in% names(cards[[i]]$data)) stop(sprintf("%s is a column of %s.", id_col, inputs[i]), call. = FALSE)
     }
   }
-  tables <- sv_stack_card_tables(cards, inputs, con_env, card_full)
-  plan <- sv_stack_plan(tables, fixes, id_col, con_env)
-  args <- list(fixes = fixes, plan = plan)
-  if (!is.null(id_col)) args$id_col <- id_col
-  list(op = "stack", inputs = inputs, args = args, name = name)
+  tabs <- sv_stack_card_tables(cards, inputs, con_env, card_full)
+  plan <- sv_stack_plan(tabs, fixes, id_col, con_env)
+  list(inputs = inputs, cards = cards, fixes = fixes, id_col = id_col, plan = plan)
+}
+
+# The stack derive request: `fixes` and `id_col` are the only args read (see sv_stack_clean()).
+sv_derive_clean_stack <- function(req, inputs, store, con_env = NULL, card_full = sv_card_is_lazy) {
+  name <- sv_field(req, "name")
+  if (!is.null(name)) {
+    name <- sv_derive_scalar(name, 200L)
+    if (is.null(name)) stop("The table name must be one non-empty string.", call. = FALSE)
+  }
+  raw <- sv_field(req, "args")
+  if (!is.list(raw)) raw <- list()
+  cl <- sv_stack_clean(inputs, sv_field(raw, "fixes"), store, sv_field(raw, "id_col"), con_env, card_full)
+  args <- list(fixes = cl$fixes, plan = cl$plan)
+  if (!is.null(cl$id_col)) args$id_col <- cl$id_col
+  list(op = "stack", inputs = cl$inputs, args = args, name = name)
 }
 
 # Check a request against the store and return the clean request, `list(op, inputs, args, name)`
@@ -427,19 +441,13 @@ sv_derive_clean <- function(req, store, con_env = NULL, card_full = sv_card_is_l
   if (is.null(op) || !op %in% sv_derive_ops) stop("Unknown derive op.", call. = FALSE)
   inputs <- sv_field(req, "inputs")
   if (is.list(inputs)) inputs <- unlist(inputs, use.names = FALSE)
-  is_stack <- identical(op, "stack")
   if (!is.character(inputs) || anyNA(inputs)) stop("A derived table needs two input tables.", call. = FALSE)
-  if (is_stack) {
-    if (length(inputs) < 2L || length(inputs) > 8L) stop("A stack needs 2 to 8 tables.", call. = FALSE)
-    if (anyDuplicated(inputs)) stop("A table can be stacked only once.", call. = FALSE)
-  } else if (length(inputs) != 2L) {
-    stop("A derived table needs two input tables.", call. = FALSE)
-  }
+  if (identical(op, "stack")) return(sv_derive_clean_stack(req, unname(inputs), store, con_env, card_full))
+  if (length(inputs) != 2L) stop("A derived table needs two input tables.", call. = FALSE)
   inputs <- unname(inputs)
   for (nm in inputs) {
     if (!store$has(nm)) stop(sprintf("Not in the canvas: %s", substr(nm, 1L, 100L)), call. = FALSE)
   }
-  if (is_stack) return(sv_derive_clean_stack(req, inputs, store, con_env, card_full))
   cx <- store$get(inputs[1L])
   cy <- store$get(inputs[2L])
   if (!is.data.frame(cx$data) || !is.data.frame(cy$data)) stop("A derived table needs tables as inputs.", call. = FALSE)
