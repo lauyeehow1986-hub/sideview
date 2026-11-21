@@ -13,7 +13,7 @@ list view and the console, not only on the canvas.
 | A | Text-first access (list view, `sv_describe()`, announcements, table ARIA) | done, 0.8.0 (PRs #13-#17, #18 minors) |
 | C | Accessibility testing (axe-core, AX-tree tests, NVDA script, CI a11y job) | done, 0.8.0 (PR #12, NVDA fixes #19) |
 | B | Keyboard and low vision (access switch) | done, 0.9.0 (PR #20, version bump #22) |
-| D | Unmatched / dropped rows as cards; stack two tables and compare columns; compare data cuts by key | **D1 done, on `main` (42256d2; docs PR #23, a11y test fix PR #24)**; **D2 (stack) built on branch `d/d2-stack` (not pushed), in review**; build notes `plans/2026-11-17-d2-stack-design.md`, plan `plans/2026-11-17-d2-stack-implementation.md`; D3 (compare data cuts) gets its plan next; spec `plans/2026-11-16-derived-cards-design.md`, D1 plan `plans/2026-11-16-derived-cards-d1-implementation.md`; version bump to 0.10.0 waits for D2 and D3 |
+| D | Unmatched / dropped rows as cards; stack two tables and compare columns; compare data cuts by key | **D1 done, on `main` (42256d2; docs PR #23, a11y test fix PR #24)**; **D2 (stack) done, on `main` (PR #31; RStudio checks for the gadget, duckdb and Arrow confirmed by the user, widget and list view checks still open)**; build notes `plans/2026-11-17-d2-stack-design.md`, plan `plans/2026-11-17-d2-stack-implementation.md`; D3 (compare data cuts) gets its plan next; spec `plans/2026-11-16-derived-cards-design.md`, D1 plan `plans/2026-11-16-derived-cards-d1-implementation.md`; version bump to 0.10.0 waits for D2 and D3 |
 | E | `metatools::combine_supp()` option (SUPP/ADSL merges only); `dm` import and export; `pointblank` export; `metacore` spec check (labelled "spec check") | not started, after D |
 
 Other pending tasks:
