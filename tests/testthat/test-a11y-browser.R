@@ -1727,3 +1727,58 @@ test_that("Compare tab passes axe, every control is named and the open is announ
   expect_true(sv_wait_js(b, sprintf("document.querySelector('.sideview-container')._sideviewInstance.announceLog.indexOf(%s) >= 0", want_js), timeout = 30))
   expect_true(sv_wait_js(b, sprintf("document.querySelector('.sideview-announcer').textContent === %s", want_js), timeout = 30))
 })
+
+# What the Compare pane shows after a check: the text lines and the per-column table cells.
+sv_cmp_read_js <- "(() => { const p = document.querySelector('[data-pane=compare]');
+  return { lines: [...p.querySelectorAll('.sideview-compare-text li')].map(x => x.textContent.trim()),
+           cells: [...p.querySelectorAll('.sideview-compare-table tr')].map(r => [...r.children].map(c => c.textContent.replace(new RegExp('[ ' + String.fromCharCode(9, 10, 13) + ']+', 'g'), ' ').trim())) }; })()"
+
+# Focus the select matching `sel` by Tab, then arrow down until it holds `value` (a native select takes keys once focused).
+sv_cmp_key_pick <- function(b, sel, value) {
+  sv_stk_tab_to(b, sel)
+  q <- as.character(jsonlite::toJSON(sel, auto_unbox = TRUE))
+  for (i in 1:5) {
+    if (identical(sv_js(b, sprintf("document.querySelector(%s).value", q)), value)) break
+    sv_key(b, "ArrowDown")
+  }
+  expect_equal(sv_js(b, sprintf("document.querySelector(%s).value", q)), value)
+}
+
+test_that("list view Compare builder matches the drawer", {
+  skip_if_no_browser()
+  # the drawer's answer for these picks (cut1 old, cut2 new)
+  app1 <- sv_start_app(sv_cmp_app)
+  b1 <- sv_open_page(app1$url, 1360, 820)
+  on.exit({ try(b1$close(), silent = TRUE); try(app1$proc$kill(), silent = TRUE) }, add = TRUE)
+  sv_cmp_open_tab(b1)
+  sv_cmp_pick_check(b1)
+  drawer <- sv_js(b1, sv_cmp_read_js)
+  expect_gt(length(drawer$lines), 0)
+  expect_gt(length(drawer$cells), 1)
+
+  app <- sv_start_app(sv_cmp_app)
+  b <- sv_open_page(app$url, 1360, 820, wait_for = sv_wait_eng)
+  on.exit({ try(b$close(), silent = TRUE); try(app$proc$kill(), silent = TRUE) }, add = TRUE)
+  sv_js(b, paste0(sv_eng, ".setView('list'); true"))
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-listview [data-sv-lv-builder=compare] [data-compare-select]')", timeout = 30))
+  # the heading is there, named, and focusable like the others
+  expect_equal(sv_js(b, "document.getElementById('sv-lv-b-compare').tagName"), "H3")
+  sv_js(b, "document.getElementById('sv-lv-b-compare').focus(); true")
+  expect_true(sv_js(b, "document.activeElement === document.getElementById('sv-lv-b-compare')"))
+  # keyboard only: old = cut1, new = cut2, then Check
+  sv_cmp_key_pick(b, "[data-compare-select=old]", "cut1")
+  sv_cmp_key_pick(b, "[data-compare-select=new]", "cut2")
+  sv_stk_tab_to(b, "[data-compare-action=check]")
+  sv_key(b, "Enter", text = "\r")
+  expect_true(sv_wait_js(b, "!!document.querySelector('[data-compare-result] .sideview-compare-text')", timeout = 60))
+  listed <- sv_js(b, sv_cmp_read_js)
+  expect_equal(listed$lines, drawer$lines)
+  expect_equal(listed$cells, drawer$cells)
+  # Open added rows with Enter: the card is added, and the canvas shows it
+  sv_stk_tab_to(b, "[data-compare-open=added]")
+  sv_key(b, "Enter", text = "\r")
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-listview [data-sv-table=\"cut2_added\"]')", timeout = 60))
+  sv_js(b, paste0(sv_eng, ".setView('canvas'); true"))
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-card[data-card-name=cut2_added]')", timeout = 30))
+  expect_equal(attr(b, "sv_errors")(), character())
+})
