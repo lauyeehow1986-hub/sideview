@@ -79,6 +79,12 @@ Or install the development version from GitHub:
   [`sv_supp_orphans()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_orphans.md)
   in the console). Works with lazy `arrow` and `duckdb` tables and in
   the list view.
+- **Stack Tables**:
+  [`sv_stack_check()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_stack_check.md)
+  /
+  [`sv_stack()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_stack.md)
+  and the Stack tab line up columns, flag type, label and near-miss
+  differences, and open the stacked table as a card.
 - **Composable Pipeline**: Every sort, filter, join, rename, recode,
   mutate, reshape or summarise becomes a step you can toggle, reorder or
   delete, with undo/redo and a `%>%` / `|>` choice. Sorts and filters

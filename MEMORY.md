@@ -3,7 +3,7 @@
 Running log of what changed, why, and how it was verified. Newest entries first.
 Each entry: **date — change — why — verification**. Keep the "Open issues" table current.
 
-## Roadmap and task list (keep current; updated 2026-11-16)
+## Roadmap and task list (keep current; updated 2026-11-21)
 
 Agreed 2026-11-13: five sub-projects, each with its own spec, plan and PR. D and E must also work in the
 list view and the console, not only on the canvas.
@@ -13,7 +13,7 @@ list view and the console, not only on the canvas.
 | A | Text-first access (list view, `sv_describe()`, announcements, table ARIA) | done, 0.8.0 (PRs #13-#17, #18 minors) |
 | C | Accessibility testing (axe-core, AX-tree tests, NVDA script, CI a11y job) | done, 0.8.0 (PR #12, NVDA fixes #19) |
 | B | Keyboard and low vision (access switch) | done, 0.9.0 (PR #20, version bump #22) |
-| D | Unmatched / dropped rows as cards; stack two tables and compare columns; compare data cuts by key | **D1 done, on `main` (42256d2; docs PR #23, a11y test fix PR #24)**; D2 (stack) has build notes in `plans/2026-11-17-d2-stack-design.md` (ready to plan; build after the weekly reset, on Opus), D3 (compare data cuts) gets its plan next; spec `plans/2026-11-16-derived-cards-design.md`, D1 plan `plans/2026-11-16-derived-cards-d1-implementation.md`; version bump to 0.10.0 waits for D2 and D3 |
+| D | Unmatched / dropped rows as cards; stack two tables and compare columns; compare data cuts by key | **D1 done, on `main` (42256d2; docs PR #23, a11y test fix PR #24)**; **D2 (stack) built on branch `d/d2-stack` (not pushed), in review**; build notes `plans/2026-11-17-d2-stack-design.md`, plan `plans/2026-11-17-d2-stack-implementation.md`; D3 (compare data cuts) gets its plan next; spec `plans/2026-11-16-derived-cards-design.md`, D1 plan `plans/2026-11-16-derived-cards-d1-implementation.md`; version bump to 0.10.0 waits for D2 and D3 |
 | E | `metatools::combine_supp()` option (SUPP/ADSL merges only); `dm` import and export; `pointblank` export; `metacore` spec check (labelled "spec check") | not started, after D |
 
 Other pending tasks:
@@ -420,6 +420,15 @@ Each sub-project gets its own spec, plan and build, in this order:
 
 
 ## Log
+
+### 2026-11-21 - Derived cards, D2: stack tables (branch `d/d2-stack`, not pushed)
+- **Change:** `sv_stack_check()` / `sv_stack()` (R/stack.R) line up the columns of 2 to 8 tables (type per input, label, casts, case-only near-miss renames, missing columns) and stack them with the check's fixes; lazy (duckdb / Arrow) inputs become one `union_all` on the session connection, never collected. New derive op `stack` (R builder `sv_stack_rows()` / `sv_lazy_stack()`, code twin `sv_stack_code()` = `deriveExpr()`), `stack_check_request` / `sideview_stack_check` (handler cleans with `sv_stack_clean()`), a Stack drawer tab (only when R is there), the list view Stack builder, `deriveArgsKey()` now includes `fixes` and `id_col`. Rules are in CLAUDE.md ("Stack (D2)"). Docs: NEWS 0.10.0 (development), README bullet, a "Stacking tables" section in `vignettes/articles/cdisc.Rmd` (synthetic waves). Commits 0e5c455..f82535f plus the docs commit.
+- **Verified (Task 8, `Rscript` 4.5.2, script files, `NOT_CRAN=true`):** every `tests/testthat/test-*.R` run file by file except test-lazy.R, test-a11y-browser.R and test-layout-browser.R, 0 failures except lazy-browser (below): access-browser 391, access 14, app 307, assets 95, card-store 31, cdisc-keys 103, cdisc 328, codebook 278, codegen 323, computer-use-gui 246 (mock DOM), copilot 62, derive-code 1212, derive 225, describe 17, diagnostics 5123, e2e 136, features-verification 94, join-rules 10753, lifecycle 63, llm 121, module 407, normalize 100, pipeline 836, rows 38, rstudio 71, say 130, stack 134, state 153, supp 230, theme 272, widget 101. Real Chrome via chromote: test-layout-browser.R whole file 1046 passed, 0 failed, 0 errors; test-a11y-browser.R only by name (the whole file hangs when run unfiltered): "Stack tab passes axe, every control is named and the open is announced" 23 passed, "list view Stack builder matches the drawer" 27 passed (Task 7 also ran every "list view" test by name, 0 failures). `pkgdown::check_pkgdown()` clean. `devtools::check(document = FALSE, args = "--no-manual", env_vars = c(NOT_CRAN = "false"))` (browser suites skip, 1 h 3 min) on f82535f plus the docs edits: 0 errors, 1 WARNING, 2 NOTEs. The WARNING (`bit64` used with `::` / `requireNamespace()` in `R/stack.R` but not declared) and one NOTE (`regexp_matches` undefined global in `sv_stack_lazy_cast`) came from D2 code and are fixed in this commit (`bit64` added to Suggests, `regexp_matches` added to the `globalVariables()` list in `R/lazy.R`); the other NOTE is the environmental `NULL` check-directory note. After the fix a check without the tests step (`--no-tests`, 1 min) gave 0 errors, 0 warnings, 1 NOTE (the `NULL` one); test-stack, test-derive and test-module were re-run after the fix, all 0 failures. The full tests step was not re-run after the fix (it passed with 0 failures in the first check run; the fix does not touch test code).
+- **Not run:** the whole of test-a11y-browser.R (hangs unfiltered, only the Stack tests above were run in this task; the Task 6 fix round and Task 7 ran the other named ones; the rest of the a11y file was not re-run on this branch); the whole of test-lazy.R (takes hours; Task 3 and Task 4 checked the stack parts in pieces, and one Task 3 report says a whole run finished with no failures, not verified by the controller).
+- **Known failure, not from D2:** test-lazy-browser.R "list paging of a lazy card asks R for windows" fails 2 expectations (the list shows an ellipsis where values are expected). It fails the same 2 on the base commit d666728 (checked in a throwaway worktree, since removed), and D1's notes list it as open.
+- **Real browser (Tasks 6 and 7 reports):** the built-in browser on the demo app, light and dark theme: the Stack drawer at 380 px, the tab strip wraps, the table and the code preview scroll inside their regions. Mobile emulation did not change `innerWidth`, so the narrow layout is covered only by the automated no-overflow assertions at 560x520 (and the layout file at 1400x900). Keyboard focus (cast select, rename, Open) is asserted in the layout and a11y tests; the list view Stack builder was driven by keyboard only in a real-browser test.
+- **NOT verified / to do by the user (RStudio dialog, Viewer pane, external browser):** pick two tables, Check, change a fix (a cast and a rename), Open (card appears, announced, a second Open zooms to it), then Save and Open the state and see the stack card rebuilt; the same with a duckdb or Arrow input; the widget (no Stack tab, a saved stack step shows the no-R toast); the list view Stack builder. Record these only after the user says they did them.
+- **Version:** DESCRIPTION stays 0.9.0; 0.10.0 waits for D3.
 
 ### 2026-11-17 - Derived cards, D1 (branch `d/d1-derived-cards`, not pushed)
 - **Change:** the rows behind a join check or SUPP check open as a derived card: ops `unmatched`, `outside_window`, `supp_orphans`, `supp_bad_idvarval`; R builds the card (`R/derive.R`, `sv_derived_source()` in `R/lazy.R`, lazy inputs stay lazy), the browser adds one `derive` pipeline step whose composed code is the twin of the R builder; console `sv_unmatched()` and `sv_supp_orphans()`; list-view buttons; module cascade / rebuild / re-add; state restore. Wire names and rules are in CLAUDE.md ("Derived cards"). Docs: NEWS 0.10.0 (development), README bullet, a "Rows behind the counts" section in `vignettes/articles/cdisc.Rmd` (synthetic data, no screenshots; screenshots come with D3). `sideview_server()` gained the missing `@param state`.
@@ -1246,6 +1255,19 @@ None of these blocks D1; none is fixed. Source: `.superpowers/sdd/2026-11-16-der
 - Docs: derived cards carry the kept card's tag; the gadget builds lazy derive steps in `sv_derive_from_state()` at the first flush; widget derive steps stay in the code when both inputs exist (toast, CLAUDE.md, NEWS and article reworded).
 - Verified: node --check on inst/www/*.js; unit filter derive|module|pipeline|say|diagnostics|supp; test-layout-browser.R and test-a11y-browser.R each in one real-browser run (NOT_CRAN=true), all passing.
 - Fix (2026-11-17): `replaceCard()` writes the rebuilt SUPP plan through new `Pipeline.refit()`, which clears undo/redo when the step changed (via `clearHistory()`, shared with `disableMissing`), so one Ctrl+Z cannot bring back the stale plan. Tests: test-pipeline.R (refit), test-layout-browser.R (module: no undo after replace; fails without the fix).
+
+## D2 known gaps (deferred, from the SDD ledger, 2026-11-21)
+
+None of these blocks D2; none is fixed. Source: `.superpowers/sdd/2026-11-17-d2-stack-implementation/progress.md`.
+
+- `Sys.timezone()` is pinned in the generated lazy date-time to text code; code made on another machine differs in the zone only (documented in NEWS and the article).
+- A number cast to text: R gives `"1e+05"`, duckdb `"100000"`; fixtures are whole numbers in ordinary ranges. Documented limit, not fixed.
+- Lazy tables carry no column labels (labels come only from data frames and Arrow).
+- `tz_text` (the R-computed DST offset tree) bloats saved state, about 20 KB per date-time column per input.
+- `id_col` is not an input to the check, so a user-chosen `id_col` would desync the preview from Open (the browser sends none).
+- No lazy stack server test (handler with a duckdb / Arrow input); `sv_stack_clean()` has no unit test for 9 tables or the cast-target whitelist (the handler pre-checks).
+- Parked from reviews: state round trip tested via toJSON / load, not `getState` / `applyState`; mismatched kind / plan untested; Task 6 minors (error replies both `role=alert` and assertive announce, 500-fix cap not enforced client side, fixes order is part of the dedupe key, reply render restores focus without checking where focus is now, the cast change test uses a synthetic `dispatchEvent`); Task 7 minors (list view heading asserted only as H3, no focus or announce assertion after Open in list view, no no-R test for an absent Stack host, pick order assumes DOM order); pre-1970 fractional date-times untested.
+- Manual checks above still to do by the user.
 
 ## D1 parked after final review
 - Only the join `unmatched` offer label is pinned end to end; the other three offer labels are untested.

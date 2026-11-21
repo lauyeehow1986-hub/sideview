@@ -35,6 +35,39 @@ tests; the manual RStudio pass is still to do.
   code (when both inputs are there) but the tables are not shown, with a
   notice.
 
+Derived cards, second part (D2): stack tables. Checked with real-browser
+tests (headless Chrome) and unit tests; the manual RStudio pass is still
+to do.
+
+### Stack tables
+
+- `sv_stack_check(..., cast, rename)` lines up the columns of 2 to 8
+  tables and reports, per column, its type in each table, its label, and
+  what a stack would do: the same type, a cast to a common type (never a
+  silent rounding), a name that differs only by case offered as a
+  rename, and a column missing from some tables. Nothing changes until
+  you pick a fix. `sv_stack(..., check)` stacks the tables with the
+  check’s fixes: exactly the sum of the rows, a `source` column naming
+  each row’s table, labels kept, a value that cannot be cast becomes
+  `NA`.
+- The drawer has a **Stack** tab (and the list view a Stack builder):
+  pick tables, Check, change a fix, **Open** adds the stacked table as a
+  card (`wave2_stacked`). The step is `derive` with `op = "stack"`, its
+  R code is
+  [`dplyr::bind_rows()`](https://dplyr.tidyverse.org/reference/bind_rows.html)
+  and is byte-equal to what R runs; a duckdb or Arrow input stays lazy
+  (one `union_all`, never collected). The result is announced, and Open
+  on a stack that exists zooms to it. A saved state keeps the step.
+- New input `stack_check_request` and new message `sideview_stack_check`
+  (see CLAUDE.md). The widget has no R: no Stack tab; a saved stack step
+  stays in the code but the table is not shown, with a notice.
+- Known limits: the generated code for a lazy date-time column cast to
+  text names the time zone of the session that made it; a number cast to
+  text can differ between in-memory (“1e+05”) and duckdb (“100000”) for
+  very large or small values; lazy tables carry no labels; a saved state
+  with a stack of lazy date-time columns carries the zone rules (about
+  20 KB per time column per input).
+
 ## sideview 0.9.0
 
 Accessible canvas: one switch that makes the canvas itself usable by

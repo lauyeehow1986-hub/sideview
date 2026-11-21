@@ -87,6 +87,10 @@ fct_recode, or auto-cleanup rules.
   : Join Diagnostics
 - [`sv_unmatched()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_unmatched.md)
   : Rows That Have No Partner in a Join
+- [`sv_stack_check()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_stack_check.md)
+  : Check what stacking tables would do
+- [`sv_stack()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_stack.md)
+  : Stack tables
 - [`sv_code_recode()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_code_recode.md)
   : Generate tidyverse Code for Categorical Recoding and Discrepancy
   Crosswalks

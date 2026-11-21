@@ -113,6 +113,20 @@ rstudio bridge: R/rstudio.R
   `sv_supp_ws` / `SUPP_WS` (never `\s`/`trim()`), and generated `grepl()` uses `perl = TRUE`; `abs(x) > 1e308` is bad.
   An Arrow int64/uint64 key is always a double key (as duckdb BIGINT). Clashes with columns made by earlier chain
   steps are caught in the browser (`columnsBefore()`), not by the code guard. Change a twin together with the others.
+- **Stack (D2):** same twin rule. `sv_stack_check()` / `sv_stack()` (R/stack.R) and the `stack` derive op. The column plan
+  is `sv_stack_plan()` (in memory) and `sv_lazy_stack_plan()` (duckdb / Arrow): twins, held to each other by
+  test-stack.R and test-lazy.R. The rows are `sv_stack_rows()` (in memory) and `sv_lazy_stack()` (one duckdb
+  `union_all`, never collected): twins too, and both tested against each other. The generated code is also a twin:
+  `sv_stack_code()` (R) and `deriveExpr()` for `op: 'stack'` (sv-pipeline.js) are byte-equal; test-derive-code.R
+  evaluates it for every backend. The step is a `derive` step `{op: 'stack', inputs: [2..8], args: {fixes, id_col?,
+  plan}}`; the plan is R's and is embedded verbatim, including `tz_text` (the R-computed DST offset tree for a lazy
+  date-time to text cast: JS never ports time zone rules). `deriveArgsKey()` includes `fixes` and `id_col`, so two
+  stacks of the same inputs with different fixes are different cards. The wire is `stack_check_request`
+  (`{id, tables, fixes?}`, cleaned by `sv_stack_clean()`) and `sideview_stack_check`; Open is a `derive_request`
+  with `op: 'stack'`. Known gaps: `Sys.timezone()` is pinned in lazy date-time code; a number cast to text can be
+  `"1e+05"` in R and `"100000"` in duckdb; lazy tables carry no labels; `id_col` is not an input to the check, so a
+  user-chosen `id_col` would desync the preview from Open (the browser sends none); no lazy stack server test;
+  `sv_stack_clean()` has no unit test for 9 tables or the cast-target whitelist (the handler pre-checks).
 - **Derived cards (D1):** the rows behind a check count as a card of their own. Ops (`sv_derive_ops`): `unmatched`
   and `outside_window` (join check; `args` = `{by, rule?, side}`), `supp_orphans` and `supp_bad_idvarval` (SUPP check;
   `args` = `{rdomain?}`, the plan is R's). `sv_unmatched()` and `sv_supp_orphans()` are the console forms; all of them

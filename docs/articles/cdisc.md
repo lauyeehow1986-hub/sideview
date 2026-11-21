@@ -232,6 +232,51 @@ Notes:
 - The widget has no R, so it offers no buttons; a saved state’s derived
   steps stay in its code but the derived tables are not shown there.
 
+## Stacking tables
+
+Visits that arrive as separate files (one per wave, one per site) have
+to be stacked before they are analysed, and the columns rarely line up:
+`AGE` is numeric in one file and text in the next, a column is spelt
+`Age` in one table and `AGE` in another.
+[`sv_stack_check()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_stack_check.md)
+compares the columns of 2 to 8 tables and says, for each column, its
+type in every table, its label, and what a stack would do with it. A
+synthetic two-wave example:
+
+`wave1`` ``<-`` `[`data.frame`](https://rdrr.io/r/base/data.frame.html)`(``USUBJID ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``"S-01"``, ``"S-02"``)``, AGE ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``34``, ``51``)``, SEX ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``"F"``, ``"M"``)``,`` `` stringsAsFactors ``=`` ``FALSE``)`` ``wave2`` ``<-`` `[`data.frame`](https://rdrr.io/r/base/data.frame.html)`(``USUBJID ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``"S-03"``, ``"S-04"``)``, Age ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``"29"``, ``"40"``)``, SEX ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``"M"``, ``"M"``)``,`` `` stringsAsFactors ``=`` ``FALSE``)`` `[`sv_stack_check`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_stack_check.md)`(``wave1``, ``wave2``)`` ``#> Stack 2 tables: 4 rows, 5 columns.`` ``#> 1 near-miss name left apart.`` ``#> Column wave1 wave2 Status`` ``#> USUBJID chr chr ok`` ``#> AGE num - only in wave1 (NA in wave2)`` ``#> SEX chr chr ok`` ``#> Age - chr near-miss for AGE? (case)`` ``#> dplyr::bind_rows(wave1 = wave1, wave2 = wave2, .id = "source")`
+
+Here `Age` in `wave2` is a near miss for `AGE` in `wave1`, so the check
+offers to rename it; the check says so and changes nothing until you
+choose. A type that differs is cast to the type the check shows (or the
+one you choose), a value that cannot be cast becomes `NA` and is
+counted, and the stacked table has exactly the sum of the rows. A
+`source` column holds each row’s table name.
+
+`chk`` ``<-`` `[`sv_stack_check`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_stack_check.md)`(``wave1``, ``wave2``, rename ``=`` `[`c`](https://rdrr.io/r/base/c.html)`(``Age ``=`` ``"AGE"``)``)`` `[`sv_stack`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_stack.md)`(``wave1``, ``wave2``, check ``=`` ``chk``)`` ``#> source USUBJID AGE SEX`` ``#> 1 wave1 S-01 34 F`` ``#> 2 wave1 S-02 51 M`` ``#> 3 wave2 S-03 29 M`` ``#> 4 wave2 S-04 40 M`
+
+On the canvas, the **Stack** tab of the drawer (and the Stack builder of
+the list view) does the same: pick two or more tables, press **Check**,
+change a fix if you want one, and press **Open** to add the stacked
+table as a card named for its inputs (`wave2_stacked`). The generated
+code rebuilds the table with
+[`dplyr::bind_rows()`](https://dplyr.tidyverse.org/reference/bind_rows.html),
+so a script reproduces the card. A duckdb or Arrow input stays lazy: the
+stack is one `union_all` on a duckdb connection and is never collected.
+
+Limits to know:
+
+- The code for a lazy table whose columns are date-times cast to text
+  writes the time zone of the session that made it
+  ([`Sys.timezone()`](https://rdrr.io/r/base/timezones.html)), so code
+  generated on another machine can differ in the zone only.
+- A number cast to text is written by R as `"1e+05"` where a duckdb
+  stack writes `"100000"`; whole numbers in ordinary ranges agree, very
+  large or small ones may not.
+- A lazy table carries no column labels, so a stack of lazy tables has
+  none.
+- The widget has no R: it shows no Stack tab, and a saved state’s stack
+  step stays in the code but the table is not shown there.
+
 ## What it does not do
 
 - The `ig_versions` in the catalogue are approximate, and nothing is

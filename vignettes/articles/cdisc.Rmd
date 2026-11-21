@@ -235,6 +235,47 @@ Notes:
   back; replacing it rebuilds them from the new data.
 * The widget has no R, so it offers no buttons; a saved state's derived steps stay in its code but the derived tables are not shown there.
 
+## Stacking tables
+
+Visits that arrive as separate files (one per wave, one per site) have to be stacked before they are analysed,
+and the columns rarely line up: `AGE` is numeric in one file and text in the next, a column is spelt `Age`
+in one table and `AGE` in another. `sv_stack_check()` compares the columns of 2 to 8 tables and says, for each
+column, its type in every table, its label, and what a stack would do with it. A synthetic two-wave example:
+
+```{r stack}
+wave1 <- data.frame(USUBJID = c("S-01", "S-02"), AGE = c(34, 51), SEX = c("F", "M"),
+                    stringsAsFactors = FALSE)
+wave2 <- data.frame(USUBJID = c("S-03", "S-04"), Age = c("29", "40"), SEX = c("M", "M"),
+                    stringsAsFactors = FALSE)
+sv_stack_check(wave1, wave2)
+```
+
+Here `Age` in `wave2` is a near miss for `AGE` in `wave1`, so the check offers to rename it; the check says so
+and changes nothing until you choose. A type that differs is cast to the type the check shows (or the one you
+choose), a value that cannot be cast becomes `NA` and is counted, and the stacked table has exactly the sum of the
+rows. A `source` column holds each row's table name.
+
+```{r stack2}
+chk <- sv_stack_check(wave1, wave2, rename = c(Age = "AGE"))
+sv_stack(wave1, wave2, check = chk)
+```
+
+On the canvas, the **Stack** tab of the drawer (and the Stack builder of the list view) does the same: pick two or
+more tables, press **Check**, change a fix if you want one, and press **Open** to add the stacked table as a card
+named for its inputs (`wave2_stacked`). The generated code rebuilds the table with `dplyr::bind_rows()`, so a
+script reproduces the card. A duckdb or Arrow input stays lazy: the stack is one `union_all` on a duckdb
+connection and is never collected.
+
+Limits to know:
+
+* The code for a lazy table whose columns are date-times cast to text writes the time zone of the session that
+  made it (`Sys.timezone()`), so code generated on another machine can differ in the zone only.
+* A number cast to text is written by R as `"1e+05"` where a duckdb stack writes `"100000"`; whole numbers in
+  ordinary ranges agree, very large or small ones may not.
+* A lazy table carries no column labels, so a stack of lazy tables has none.
+* The widget has no R: it shows no Stack tab, and a saved state's stack step stays in the code but the table is not
+  shown there.
+
 ## What it does not do
 
 * The `ig_versions` in the catalogue are approximate, and nothing is validated against an implementation
