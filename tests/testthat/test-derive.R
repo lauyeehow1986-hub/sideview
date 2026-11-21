@@ -395,6 +395,65 @@ test_that("stack_check_request replies with the columns, counts, text and code; 
   })
 })
 
+test_that("compare_request replies with the key, counts, text and code; Open adds the card", {
+  cards <- sv_normalize_cards(list(
+    cut1 = data.frame(USUBJID = paste0("S", 1:4), AESEV = c("MILD", "MILD", "SEVERE", "MILD"), stringsAsFactors = FALSE),
+    cut2 = data.frame(USUBJID = paste0("S", 2:5), AESEV = c("MILD", "MODERATE", "SEVERE", "MILD"), stringsAsFactors = FALSE)))
+  shiny::testServer(sideview_server(cards), {
+    last <- function(type) {
+      m <- Filter(function(z) identical(z$type, type), session$userData$custom_messages)
+      m[[length(m)]]$message
+    }
+    session$setInputs(compare_request = list(id = "c1", old = "cut1", new = "cut2"))
+    r <- last("sideview_compare")
+    expect_identical(r$id, "c1")
+    expect_null(r$error)
+    expect_identical(r$by, list("USUBJID"))
+    expect_equal(c(r$n_old, r$n_new, r$added, r$removed, r$changed, r$same), c(4L, 4L, 1L, 1L, 2L, 1L))
+    expect_equal(r$changed_values, 2L)
+    expect_identical(r$old_name, "cut1")
+    expect_identical(r$new_name, "cut2")
+    expect_true(length(r$text) >= 4L)
+    expect_match(r$open$added, "Open added rows (1)", fixed = TRUE)
+    expect_named(r$code_preview, c("added", "removed", "changed"))
+    for (cd in r$code_preview) expect_false(inherits(try(parse(text = cd), silent = TRUE), "try-error"))
+    # the wire: the key stays an array, per_column an object even with one column or none
+    json <- as.character(shiny:::toJSON(r))
+    expect_match(json, "\"by\":[\"USUBJID\"]", fixed = TRUE)
+    expect_match(json, "\"per_column\":{\"AESEV\":2}", fixed = TRUE)
+    # a key by itself: only that key
+    session$setInputs(compare_request = list(id = "c2", old = "cut1", new = "cut2", by = list("USUBJID")))
+    expect_identical(last("sideview_compare")$by, list("USUBJID"))
+    session$setInputs(compare_request = list(id = "c3", old = "cut1", new = "cut2",
+                                             by = list("USUBJID", "AESEV")))
+    expect_identical(last("sideview_compare")$by, list("USUBJID", "AESEV"))
+    # a refusal is an error reply, and an id R cannot echo gets a toast
+    session$setInputs(compare_request = list(id = "c4", old = "cut1", new = "nope", by = list("USUBJID")))
+    expect_match(last("sideview_compare")$error, "Not in the canvas")
+    n_before <- length(Filter(function(z) identical(z$type, "sideview_compare"), session$userData$custom_messages))
+    session$setInputs(compare_request = list(id = strrep("x", 201), old = "cut1", new = "cut2"))
+    expect_length(Filter(function(z) identical(z$type, "sideview_compare"), session$userData$custom_messages), n_before)
+    expect_match(last("sideview_toast")$text, "request id is missing or longer than 200", fixed = TRUE)
+    # Open: the changed values card has as many rows as the reply says
+    session$setInputs(derive_request = list(id = "d1", op = "compare_changed", inputs = list("cut1", "cut2"),
+                                            args = list(by = list("USUBJID"))))
+    m <- Filter(function(z) identical(z$type, "sideview_card_add"), session$userData$custom_messages)
+    card <- m[[length(m)]]$message$card
+    expect_identical(card$name, "cut2_changed")
+    expect_identical(card$totalRows, r$changed_values)
+  })
+  # no key can be suggested: an empty editable key
+  none <- sv_normalize_cards(list(a = data.frame(x = c(1, 1)), b = data.frame(y = c("p", "q"))))
+  shiny::testServer(sideview_server(none), {
+    session$setInputs(compare_request = list(id = "e1", old = "a", new = "b"))
+    m <- Filter(function(z) identical(z$type, "sideview_compare"), session$userData$custom_messages)
+    r <- m[[length(m)]]$message
+    expect_identical(r$error, "Pick the key columns.")
+    expect_identical(r$by, list())
+    expect_match(as.character(shiny:::toJSON(r)), "\"by\":[]", fixed = TRUE)
+  })
+})
+
 compare_store <- function(tags = NULL) {
   c1 <- data.frame(id = 1:4, sev = c("MILD", "MILD", "SEVERE", "MILD"), stringsAsFactors = FALSE)
   attr(c1$sev, "label") <- "Severity"

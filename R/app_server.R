@@ -438,6 +438,62 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
     dispatch_message("sideview_stack_check", result)
   }, ignoreInit = FALSE)
 
+  # Compare check: two store cards and a key. The client only names store cards; everything goes through
+  # sv_compare_clean(), the cleaner derive_request uses too, so the plan is R's own and a refusal is `{id, error}`.
+  # Without a key R suggests one from the cards' CDISC tags (a lazy card from its 50-row preview, a suggestion only).
+  shiny::observeEvent(input$compare_request, {
+    req <- input$compare_request
+    if (!is.list(req)) return()
+    rid <- sv_derive_scalar(sv_field(req, "id"), 200L)
+    if (is.null(rid)) {
+      send_toast("The comparison was refused: its request id is missing or longer than 200 characters.", "warning")
+      return()
+    }
+    no_key <- "Pick the key columns."
+    result <- tryCatch({
+      old <- sv_derive_scalar(sv_field(req, "old"), 200L)
+      new <- sv_derive_scalar(sv_field(req, "new"), 200L)
+      by <- sv_field(req, "by")
+      if (!length(by) && !is.null(old) && !is.null(new) && !identical(old, new) &&
+          card_store$has(old) && card_store$has(new)) {
+        co <- card_store$get(old); cn <- card_store$get(new)
+        if (is.data.frame(co$data) && is.data.frame(cn$data)) by <- sv_compare_key(co$data, cn$data, co$cdisc, cn$cdisc)
+      }
+      cards <- Filter(Negate(is.null), lapply(unique(c(old, new)), function(nm) if (card_store$has(nm)) card_store$get(nm)))
+      run <- function(con) {
+        cl <- sv_compare_clean(old, new, by, card_store, con, card_full)
+        summary <- if (is.null(con)) {
+          sv_compare_rows(cl$cards[[1L]]$data, cl$cards[[2L]]$data, cl$plan)$summary
+        } else {
+          tabs <- sv_stack_card_tables(cl$cards, cl$inputs, con, card_full)
+          sv_lazy_compare(tabs[[1L]], tabs[[2L]], cl$plan, con)
+        }
+        list(cl = cl, summary = summary)
+      }
+      got <- lazy_or_preview(cards, function() run(con_env), function() run(NULL))
+      cl <- got$cl
+      refs <- vapply(cl$cards, function(cd) cd$code_ref %||% sv_escape_ident(cd$name), "")
+      kinds <- vapply(cl$cards, function(cd) {
+        if (!card_full(cd)) return(NA_character_)
+        tryCatch(sv_lazy_origin(cd$source), error = function(e) NA_character_)
+      }, "")
+      s <- sv_compare_finish(got$summary, cl$inputs[1L], cl$inputs[2L])
+      code <- lapply(c(added = "compare_added", removed = "compare_removed", changed = "compare_changed"),
+                     function(op) sv_compare_code(cl$plan, refs, kinds, op)$code)
+      # the wire: lists stay arrays when they hold one value or none, a named list is an object
+      for (f in c("by", "compared", "only_old", "only_new", "text")) s[[f]] <- as.list(s[[f]])
+      s$per_column <- structure(as.list(unname(s$per_column)), names = names(s$per_column) %||% character(0))
+      s$code_preview <- code
+      s
+    }, error = function(e) {
+      msg <- conditionMessage(e)
+      # an empty key is shown empty and editable
+      if (identical(msg, no_key)) list(error = msg, by = list()) else list(error = msg)
+    })
+    result$id <- rid
+    dispatch_message("sideview_compare", result)
+  }, ignoreInit = FALSE)
+
   # Column inspector: profile one column on the full data (the browser has a preview only).
   shiny::observeEvent(input$column_profile_request, {
     req <- input$column_profile_request
