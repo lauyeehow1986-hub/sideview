@@ -164,6 +164,8 @@ sv_cs_fixtures <- function(sid, usub) {
     cs_int = list(parent(), keyed()),
     cs_fac = list(parent(AEGRPID = factor(grp)), keyed(c("G2", "G1"), idvar = "AEGRPID")),
     cs_chr = list(parent(AEGRPID = grp), keyed(c("G2", "G1"), idvar = "AEGRPID")),
+    # combine_supp() joins DOMAIN to RDOMAIN, so its result has DOMAIN as character
+    cs_fac_domain = list(parent(DOMAIN = factor("AE")), ok),
     # columns
     cs_no_qorig = list(parent(), ok[setdiff(names(ok), "QORIG")]),
     cs_qeval = list(parent(), cbind(ok, QEVAL = "", stringsAsFactors = FALSE)),

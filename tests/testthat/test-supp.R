@@ -255,6 +255,7 @@ test_that("combine_supp field: reasons, in rule order", {
   expect_equal(cs("cs_frac")$reason, 'IDVARVAL "0.3" would match AESEQ 0.3 in combine_supp()')
   # the dplyr code joins a factor key to the text IDVARVAL, so its result has the key as character
   expect_equal(cs("cs_fac")$reason, "AEGRPID would be a factor in combine_supp(), not text")
+  expect_equal(cs("cs_fac_domain")$reason, "DOMAIN would be text in combine_supp(), not a factor")
   expect_equal(cs("cs_lab_two")$reason, 'AETRTEM label would be "TE two" in combine_supp(), not "TE one"')
   expect_equal(cs("cs_lab_blank_last")$reason, 'AETRTEM label would be none in combine_supp(), not "Treatment Emergent"')
   expect_match(cs("cs_clash")$reason, "^The merge stops: AETRTEM already in ae$")
@@ -287,6 +288,18 @@ test_that("combine_supp field ignores the session's scipen and restores it", {
   expect_equal(cs("cs_1e5")$reason, 'IDVARVAL "100000" would not match AESEQ 1e+05 in combine_supp()')
   expect_true(cs("cs_1e5_sci")$ok)
   expect_equal(getOption("scipen"), 999)
+})
+
+test_that("combine_supp field reads a numeric key column the same under any scipen", {
+  f <- fx$cs_ok
+  ids <- c(100000, 200000)
+  p <- f[[1]]
+  p$USUBJID <- ids[match(p$USUBJID, unique(p$USUBJID))]
+  s <- f[[2]]
+  s$USUBJID <- ids[match(s$USUBJID, unique(f[[1]]$USUBJID))]
+  at0 <- withr::with_options(list(scipen = 0), chk(s, parent = p)$combine_supp)
+  expect_true(at0$ok)
+  expect_identical(withr::with_options(list(scipen = 999), chk(s, parent = p)$combine_supp), at0)
 })
 
 test_that("blank last AE label in a SUPPQUAL counts after the RDOMAIN filter", {
@@ -377,7 +390,7 @@ test_that("not-ok fixtures: the real combine_supp() errors or differs", {
     }
     expect_false(supp_same_result(theirs, cs_ours(k)), info = nm)
   }
-  expect_identical(n_seen, 14L)
+  expect_identical(n_seen, 15L)
 })
 
 test_that("ok fixtures: the real combine_supp() gives the dplyr code's result", {

@@ -354,7 +354,7 @@ sv_supp_check_df <- function(parent, supp, parent_name, supp_name, rdomain, plan
   matched <- sv_supp_match_df(side, conv, parent, keys)
   res <- sv_supp_finish(side, conv, matched, types, keys, names(parent), nrow(parent),
                         utils::head(parent, sample_n), plan, sample_n, warn_other)
-  cs <- sv_supp_combine(parent, supp, side, conv, matched, keys, parent_name, supp_name)
+  cs <- sv_supp_combine(parent, supp, side, conv, matched, keys, parent_name, supp_name, res$plan)
   if (identical(res$status, "error")) {
     cs$ok <- FALSE
     cs["reason"] <- list(sv_supp_combine_stop_reason(res, parent_name))
@@ -405,9 +405,10 @@ sv_supp_count <- function(p, s) {
   out
 }
 
-# The combine_supp field. `side`, `conv`, `matched` and `keys` are the check's own steps; `supp`
-# is the SUPP before the RDOMAIN filter (its column names), `parent` a data frame.
-sv_supp_combine <- function(parent, supp, side, conv, matched, keys, parent_name, supp_name) {
+# The combine_supp field. `side`, `conv`, `matched`, `keys` and `plan` (the check's new plan:
+# its QNAM labels are "ours" for rule 8) are the check's own steps; `supp` is the SUPP before
+# the RDOMAIN filter (its column names), `parent` a data frame.
+sv_supp_combine <- function(parent, supp, side, conv, matched, keys, parent_name, supp_name, plan) {
   op <- options(scipen = 0)
   on.exit(options(op), add = TRUE)
   iv_raw <- as.character(side$supp$IDVAR)
@@ -424,7 +425,7 @@ sv_supp_combine <- function(parent, supp, side, conv, matched, keys, parent_name
   if (length(miss)) return(no(paste0(parent_name, " has no ", miss[1], " column")))
   why <- sv_supp_combine_rows(parent, side, conv, matched, keys, parent_name)
   if (is.null(why)) why <- sv_supp_combine_factor(parent, side)
-  if (is.null(why)) why <- sv_supp_combine_labels(side)
+  if (is.null(why)) why <- sv_supp_combine_labels(side, plan)
   if (!is.null(why)) return(no(why))
   list(ok = TRUE, reason = NULL, prep = prep)
 }
@@ -444,7 +445,10 @@ sv_supp_combine_rows <- function(parent, side, conv, matched, keys, parent_name)
   }
   pk_t <- sv_supp_paste(enc(parent$STUDYID), enc(parent$DOMAIN), enc(parent$USUBJID))
   sk_t <- sv_supp_paste(enc(s$STUDYID), enc(s$RDOMAIN), enc(s$USUBJID))
+  # Both key texts are built here, under the caller's scipen = 0: conv$skey was written under the
+  # session's scipen, so a numeric USUBJID would read "1e+05" on one side and "100000" on the other.
   pkey <- do.call(sv_supp_paste, lapply(parent[keys], sv_supp_key_chr))
+  skey <- do.call(sv_supp_paste, lapply(s[keys], sv_supp_key_chr))
   n <- side$n_supp
   n_o <- n_t <- n_b <- integer(n)
   s_o <- s_t <- character(n)
@@ -457,16 +461,16 @@ sv_supp_combine_rows <- function(parent, side, conv, matched, keys, parent_name)
     if (!nzchar(iv)) {
       p_o <- pkey
       p_t <- pk_t
-      s_o[r] <- conv$skey[r]
+      s_o[r] <- skey[r]
       s_t[r] <- sk_t[r]
     } else {
       pv <- parent[[iv]]
       if (identical(sv_supp_key_type(pv), "character")) {
         p_o <- sv_supp_paste(pkey, sv_supp_key_chr(pv))
-        s_o[r] <- sv_supp_paste(conv$skey[r], conv$val[r])
+        s_o[r] <- sv_supp_paste(skey[r], conv$val[r])
       } else {
         p_o <- sv_supp_paste(pkey, sv_supp_hex(pv))
-        s_o[r] <- sv_supp_paste(conv$skey[r], sv_supp_hex(conv$num[r]))
+        s_o[r] <- sv_supp_paste(skey[r], sv_supp_hex(conv$num[r]))
         joins <- !conv$bad[r]
       }
       p_t <- sv_supp_paste(pk_t, enc(sv_str_trim(sv_r_chr(pv))))
@@ -490,27 +494,30 @@ sv_supp_combine_rows <- function(parent, side, conv, matched, keys, parent_name)
   paste0(v, "would match a different ", parent_name, " record in combine_supp()")
 }
 
-# Rule 7, the key's class: combine_supp() keeps a factor key a factor, while the dplyr code
-# joins it to the text IDVARVAL and so returns it as character.
+# Rule 7, the classes: a join changes a factor it joins to text. The dplyr code joins a factor
+# IDVAR key to the text IDVARVAL (so returns it as character), which combine_supp() does not;
+# combine_supp() joins the parent's DOMAIN to RDOMAIN (so returns a factor DOMAIN as character),
+# which the dplyr code does not. STUDYID and USUBJID are joined by both.
 sv_supp_combine_factor <- function(parent, side) {
   for (iv in side$levels[nzchar(side$levels)]) {
     if (is.factor(parent[[iv]])) return(paste0(iv, " would be a factor in combine_supp(), not text"))
   }
+  if (is.factor(parent$DOMAIN)) return("DOMAIN would be text in combine_supp(), not a factor")
   NULL
 }
 
 # Rule 8: combine_supp() labels each QNAM from unique(supp[c("QNAM", "QLABEL")]), the last pair
-# winning: the last distinct QLABEL in order of first appearance. Ours is the plan's, the first
-# non-NA QLABEL. NA and "" both mean no label.
-sv_supp_combine_labels <- function(side) {
+# winning: the last distinct QLABEL in order of first appearance. Ours is the plan's label
+# (sv_supp_finish(): the first non-NA QLABEL, "" when none). NA and "" both mean no label.
+sv_supp_combine_labels <- function(side, plan) {
   if (!"QLABEL" %in% names(side$supp)) return(NULL)
   lab <- as.character(side$supp$QLABEL)
-  none <- function(x) is.na(x) || !nzchar(x)
+  none <- function(x) is.null(x) || is.na(x) || !nzchar(x)
   say <- function(x) if (none(x)) "none" else paste0("\"", x, "\"")
-  for (q in unique(side$qnam)) {
-    l <- lab[side$qnam == q]
-    ours <- l[!is.na(l)][1]
-    theirs <- utils::tail(unique(l), 1L)
+  for (e in plan$qnams) {
+    q <- e$qnam
+    ours <- e$label
+    theirs <- utils::tail(unique(lab[side$qnam == q]), 1L)
     if (none(ours) && none(theirs)) next
     if (!none(ours) && !none(theirs) && identical(ours, theirs)) next
     return(paste0(q, " label would be ", say(theirs), " in combine_supp(), not ", say(ours)))
