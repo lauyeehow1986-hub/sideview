@@ -9,5 +9,5 @@
       Changed values by column:  AESEV 2 · AEDY 1
       added: 2 rows
       removed: 1 row
-      changed: 3 rows
+      changed values: 3
 

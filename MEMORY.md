@@ -416,14 +416,35 @@ Each sub-project gets its own spec, plan and build, in this order:
     completion or show it only for click-to-connect;
   - one non-reproducing error in "module: canvases are independent" in a combined browser run; watch it on CI.
 
+- **D3 backlog** (compare data cuts, from the final review, not scheduled):
+  - a key named `column`, `old` or `new`, or the internal `.sv_k*` / `x.old` / `x.new` names, is silently overwritten in `_changed`; refuse these in `sv_compare_by()`;
+  - list columns are neither compared nor listed in `type_changed`;
+  - tests to add: a text-key repeated sample, a factor or Date key, a NaN key, a zero-row `_changed` derive, a date-time lazy gap, a collect trap for Arrow, the preview fallback, a backtick ref `copy_to` name;
+  - the compare and stack cleaners duplicate the name block;
+  - `sv_compare()` places inputs 4 times, and the lazy `run()` in `compare_request` places them twice (performance);
+  - lazy `_added` / `_removed` lose data frame factor levels (inherited from D1);
+  - the NaN/NA order in the repeated sample differs between twins;
+  - `COMPARE_OPS[op]` / `REFIT_DERIVE_OPS[d.op]` should use hasOwnProperty;
+  - `compareCode` should return `{code: ''}` for a null `plan.keys` / `plan.compared` entry rather than throw;
+  - a non-data-frame card with no `by` gets "Pick the key columns." rather than the needs-tables message;
+  - shared Stack/Compare drawer polish: the "Add at least two tables" state goes stale when a card is added while the tab is open, the double announcement (role=alert plus assertive), the layout jump on pending render, dead `compareId`, duplicated focus helpers;
+  - test quality: `Sys.sleep(1)` as a negative proof, no reply-after-removal test, the list view Open row badge and changed/removed Open, the unscoped `[data-compare-open]` selector;
+  - D2: the Arrow `to_duckdb()` view race in `sv_stack_code_lazy`, for a follow-up PR: pass `keep_views = TRUE` and update the JS twin and the byte-equal tests;
+  - the untagged key suggestion takes the first single column unique in both versions, which in a small extract can beat a real composite key (suggestion only);
+  - a lazy numeric key below 1e-4 reads `1e-07` in duckdb and `0.0000001` in memory (key text of a double against a text key; integers and simple decimals agree).
+
 ---
 
 
 ## Log
 
+### 2026-11-22 - D3 final-review fix wave (branch `d/d3-compare`, not pushed)
+- **Fixed:** a numeric key against a text key (`sv_compare_text(key = TRUE)`, `sv_compare_code()`, `compareCode()`): a double key is written in full as the join check's `format_key()` does, so 100000 matches "100000" (it was "1e+05": added/removed/changed miscounted in memory, right in duckdb); the repeated-key sample (up to 5 keys, " + " between key columns) is now on the Warnings line of `sv_say_compare_text()`, so it reaches `text`, the drawer, the list view and print; `print.sv_compare` says "changed values: N"; date-times of two zones compare by instant without a tzone warning (in memory and in the generated code, JS twin too); NEWS and README wording.
+- **Tests:** test-compare.R (numeric key against text, sample text, tz, print label, a JS byte-equal fixture), test-lazy.R (the same fixture on duckdb / Arrow / mixed equals memory).
+
 ### 2026-11-22 - Derived cards, D3: compare data cuts, version 0.10.0 (branch `d/d3-compare`, not pushed)
 - **Change:** `sv_compare(old, new, by)` (R/compare.R) counts rows added, removed and changed by key, lists column and type changes; the drawer Compare tab and the list view Compare builder open `<new>_added`, `<old>_removed` and `<new>_changed` as derived cards (ops `compare_added`, `compare_removed`, `compare_changed`); lazy duckdb / Arrow paths in R/lazy.R; JS code twin `compareCode()` (sv-pipeline.js). Task 8: DESCRIPTION 0.10.0, NEWS "Compare data cuts", README bullet, article `vignettes/articles/derived-cards.Rmd` (navbar "Derived cards"), CLAUDE.md "Compare (D3)" twin rule, rebuilt site. R/say.R: the literal middle dot in R strings is now `·` (devtools::check flags non-ASCII), output byte-identical.
-- **Verified:** full suite with `NOT_CRAN=true` (real-browser chromote tests in test-layout-browser.R and test-a11y-browser.R included): 979 tests, 2 failures, 0 skips; the 2 are the known test-lazy-browser.R "list paging of a lazy card asks R for windows" failure (not from D3, same as on D2). `pkgdown::check_pkgdown()`: no problems. devtools::check() (NOT_CRAN=true, --no-manual): 0 errors, 0 warnings, 2 notes; one was new from D3 (a second local `run` in sideview_server_impl) and is fixed by renaming it `compare_run` (R/app_server.R; test-derive.R and test-module.R re-run, 0 failures); the other is the "`NULL`" file in the check directory (environment artefact).
+- **Verified:** full suite with `NOT_CRAN=true` (real-browser chromote tests in test-layout-browser.R and test-a11y-browser.R included): 979 tests, 2 failures, 0 skips; the 2 are the known test-lazy-browser.R "list paging of a lazy card asks R for windows" failure (not from D3, same as on D2). `pkgdown::check_pkgdown()`: no problems. the controller's `devtools::check(args = c('--no-tests','--no-manual'))` after the `compare_run` rename (the second local `run` in sideview_server_impl, R/app_server.R): 0 errors, 0 warnings, 1 note (only the "`NULL`" file in the check directory, an environment artefact).
 - **TO DO (RStudio, not done, record only after the user says so):** dialog, Viewer pane and external browser: pick two tables, Check, change the key, Open each of the three cards, then Save and Open the state; with in-memory, Arrow and duckdb cuts.
 
 ### 2026-11-21 - Derived cards, D2: stack tables (branch `d/d2-stack`, not pushed)

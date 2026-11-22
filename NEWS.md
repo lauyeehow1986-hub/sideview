@@ -61,7 +61,7 @@ and unit tests; the manual RStudio pass is still to do.
 * `sv_compare(old, new, by)` matches the rows of two tables on a key (1 to 20 columns) and counts the rows added (key
   only in `new`), removed (key only in `old`), changed (key in both, a value differs) and the same. It also lists
   the columns added, removed or with a changed type, the changed values by column, and keys that repeat. It prints a
-  summary; nothing is modified. With no `by`, the key is suggested from the cards' CDISC tags.
+  summary; nothing is modified. With no `by`, two tables with the same CDISC tag use that domain's natural key; otherwise the key is suggested from the shared columns (same name, similar values, no repeated value).
 * The drawer has a **Compare** tab (and the list view a Compare builder): pick the old and new table, Check, change
   the key, and **Open** each set of rows as a card: `<new>_added`, `<old>_removed` and `<new>_changed` (the changed
   rows carry the old and new value side by side). The steps are `derive` steps with `op = "compare_added"`,

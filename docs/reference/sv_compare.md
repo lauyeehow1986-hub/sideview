@@ -72,5 +72,5 @@ sv_compare(cut1, cut2, by = "id")
 #> Changed values by column:  sev 2
 #> added: 1 row
 #> removed: 1 row
-#> changed: 2 rows
+#> changed values: 2
 ```

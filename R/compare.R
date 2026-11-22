@@ -3,9 +3,17 @@
 # generated code writes (dplyr only): a key repeated in either version leaves all its rows out of every count.
 
 # The text of a column's values, as a changed value or a text key is written: D2's cast to chr, a date-time in
-# its own zone, a factor by its labels. A missing value (NA or NaN) is NA_character_, never "NaN".
-sv_compare_text <- function(x) {
+# its own zone, a factor by its labels. A missing value (NA or NaN) is NA_character_, never "NaN". With `key` a
+# double is written in full as the join check's format_key() does (100000, not 1e+05), so a numeric key matches the
+# same number kept as text; the text of a changed value stays D2's.
+sv_compare_text <- function(x, key = FALSE) {
   ty <- as.character(sv_stack_type(x))
+  if (key && identical(ty, "num")) {
+    out <- sub("\\.0+$|(\\.[0-9]*[1-9])0+$", "\\1",
+               format(x, scientific = FALSE, trim = TRUE, digits = 15))
+    out[is.na(x)] <- NA_character_
+    return(out)
+  }
   zone <- if (identical(ty, "dttm")) attr(x, "tzone")[1] %||% "" else NULL
   out <- as.character(sv_stack_cast(x, ty, "chr", zone))
   out[is.na(x)] <- NA_character_
@@ -113,7 +121,7 @@ sv_compare_joinable <- function(x, plan) {
   for (i in seq_along(plan$keys)) {
     if (isTRUE(plan$keys[[i]]$text)) {
       nm <- paste0(".sv_k", i)
-      x[[nm]] <- sv_compare_text(x[[plan$keys[[i]]$name]])
+      x[[nm]] <- sv_compare_text(x[[plan$keys[[i]]$name]], key = TRUE)
       by[i] <- nm
     }
   }
@@ -123,6 +131,8 @@ sv_compare_joinable <- function(x, plan) {
 # Rows where the value changed (decision 9): missing in one only, or different; NA and NaN in both are the same.
 sv_compare_changed <- function(a, b) {
   if (is.factor(a) || is.factor(b)) { a <- as.character(a); b <- as.character(b) }
+  # date-times of two zones compare by instant (as.numeric() drops the zones, which would warn)
+  if (inherits(a, "POSIXct") && inherits(b, "POSIXct")) { a <- as.numeric(a); b <- as.numeric(b) }
   na_a <- is.na(a); na_b <- is.na(b)
   !(na_a & na_b) & (na_a | na_b | a != b)
 }
@@ -218,10 +228,14 @@ sv_compare_code <- function(plan, refs, kinds, op) {
   cv <- function(v) paste0("c(", paste(q(v), collapse = ", "), ")")
   by <- plan$by
   # the text of a column (D2's cast to chr, a missing value NA, as sv_compare_text() does); `cn` is the plain name
-  text <- function(cn, from, zone) {
+  text <- function(cn, from, zone, key = FALSE) {
     if (is.null(zone) || isTRUE(is.na(zone))) zone <- ""
     if (lazy) return(sv_stack_show(sv_compare_lazy_text(cn, from, zone)))
     x <- sv_escape_ident(cn)
+    if (key && identical(from, "num")) {
+      return(paste0("replace(sub(", q("\\.0+$|(\\.[0-9]*[1-9])0+$"), ", ", q("\\1"), ", format(", x,
+                    ", scientific = FALSE, trim = TRUE, digits = 15)), is.na(", x, "), NA_character_)"))
+    }
     paste0("replace(", sv_stack_cast_code(x, from, "chr", zone), ", is.na(", x, "), NA_character_)")
   }
   if (lazy) {
@@ -240,7 +254,7 @@ sv_compare_code <- function(plan, refs, kinds, op) {
       nm <- paste0(".sv_k", j)
       jb[j] <<- nm
       sets <- c(sets, paste0(nm, " = ", text(k$name,
-        if (i == 1L) k$from_old else k$from_new, if (i == 1L) k$zone_old else k$zone_new)))
+        if (i == 1L) k$from_old else k$from_new, if (i == 1L) k$zone_old else k$zone_new, key = TRUE)))
     }
     if (length(sets)) paste0("dplyr::mutate(", ref, ", ", paste(sets, collapse = ", "), ")") else ref
   }
@@ -276,6 +290,8 @@ sv_compare_code <- function(plan, refs, kinds, op) {
         a <- sv_escape_ident(an); b <- sv_escape_ident(bn)
         ca <- a; cb <- b
         if (cc$kind %in% "character") { ca <- paste0("as.character(", a, ")"); cb <- paste0("as.character(", b, ")") }
+        # date-times of two zones compare by instant, without a 'tzone' warning
+        if (cc$kind %in% "date-time") { ca <- paste0("as.numeric(", a, ")"); cb <- paste0("as.numeric(", b, ")") }
         paste0("!(is.na(", a, ") & is.na(", b, ")) & (is.na(", a, ") | is.na(", b, ") | ", ca, " != ", cb, ")")
       }
       paste0("dplyr::transmute(dplyr::filter(.sv_both, ", cond, "), ", paste(keys, collapse = ", "),
@@ -385,6 +401,6 @@ print.sv_compare <- function(x, ...) {
   # the counts, not nrow(): a lazy table has no row count in R
   cat("added: ", rows(x$n_added), "\n", sep = "")
   cat("removed: ", rows(x$n_removed), "\n", sep = "")
-  cat("changed: ", rows(x$changed_values), "\n", sep = "")
+  cat("changed values: ", sv_say_num(x$changed_values), "\n", sep = "")
   invisible(x)
 }

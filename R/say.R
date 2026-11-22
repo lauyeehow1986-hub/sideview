@@ -361,6 +361,13 @@ sv_say_compare_text <- function(s) {
                          if (s$repeated_keys == 1) " key repeats: " else " keys repeat: ",
                          rows(s$repeated_rows_old), " in old, ", sv_say_num(s$repeated_rows_new),
                          " in new, not compared"))
+    # up to 5 sample keys, a key of several columns joined with " + " (NA as sv_say_value() says it)
+    sample <- vapply(s$repeated_sample, function(k) {
+      paste(vapply(unname(k), sv_say_value, ""), collapse = " + ")
+    }, "")
+    if (length(sample)) {
+      out[length(out)] <- paste0(out[length(out)], " (e.g. ", paste(sample, collapse = ", "), ")")
+    }
   }
   out
 }

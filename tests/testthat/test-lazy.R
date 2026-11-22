@@ -2744,6 +2744,19 @@ test_that("lazy keys: NA, repeats and differing kinds", {
   expect_identical(names(ad), names(new))
 })
 
+test_that("compare: a numeric key against a text key matches in duckdb as in memory", {
+  old <- data.frame(id = c(1, 2, 100000, 1e6, 0.5, 2.25, NA), v = 1:7)
+  new <- data.frame(id = c("1", "2", "100000", "1000000", "0.5", "2.25", NA), v = c(1L, 2L, 9L, 4L, 5L, 6L, 7L),
+                    stringsAsFactors = FALSE)
+  for (kinds in list(c("duckdb", "duckdb"), c("arrow", "arrow"), c(NA_character_, "duckdb"))) {
+    kk <- ifelse(is.na(kinds), "df", kinds)
+    r <- cmp_expect_same(old, new, "id", kk, paste("numeric against text key", paste(kk, collapse = "/")))
+    expect_true(isTRUE(r$plan$keys[[1]]$text))
+    expect_equal(r$lazy[c("added", "removed", "changed", "same")], list(added = 0L, removed = 0L, changed = 1L, same = 6L))
+    expect_equal(r$mem[c("added", "removed", "changed", "same")], r$lazy[c("added", "removed", "changed", "same")])
+  }
+})
+
 test_that("the repeated-key sample is the first 5 repeated keys in sorted order", {
   both <- list(c("duckdb", "duckdb"), c("arrow", "arrow"))
   # 8 repeated numeric keys, first seen out of order, one of them NA (sorted last); the sample is the 5 smallest

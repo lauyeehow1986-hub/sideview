@@ -104,7 +104,15 @@ test_that("repeated keys leave every count", {
   expect_equal(r$repeated_keys, 7L)
   expect_length(r$repeated_sample, 5L)
   expect_equal(r$repeated_sample[[1]], list(k = 1L))
-  expect_match(r$text[length(r$text)], "^Warnings: 7 keys repeat: 14 rows in old, 14 in new, not compared$")
+  expect_match(r$text[length(r$text)],
+               "^Warnings: 7 keys repeat: 14 rows in old, 14 in new, not compared \\(e[.]g[.] 1, 2, 3, 4, 5\\)$")
+  expect_false(grepl("6", r$text[length(r$text)], fixed = TRUE))
+  # the sample reaches the printed text, a key of several columns is joined with " + ", NA is "missing"
+  r <- sv_compare(data.frame(a = c("x", "x", "y", "y", NA, NA), b = c(1L, 1L, 2L, 2L, 3L, 3L), v = 1:6),
+                  data.frame(a = "z", b = 9L, v = 1L), by = c("a", "b"))
+  expect_equal(r$text[length(r$text)],
+               "Warnings: 3 keys repeat: 6 rows in old, 0 in new, not compared (e.g. x + 1, y + 2, missing + 3)")
+  expect_output(print(r), "x + 1, y + 2, missing + 3", fixed = TRUE)
 })
 
 test_that("NA and NaN compare as missing", {
@@ -172,6 +180,54 @@ test_that("keys of differing kinds compare as text", {
   expect_equal(r$changed$AESEQ, "1")
   expect_false(any(grepl("^\\.sv_k", c(names(r$added), names(r$removed), names(r$changed)))))
   expect_cmp_identities(r)
+})
+
+test_that("a numeric key against a text key matches as the join check writes it", {
+  # as.character(100000) is "1e+05": the key text must be "100000", as format_key() writes it
+  old <- data.frame(id = c(1, 2, 100000, 1e6, 0.5, 2.25, NA), v = 1:7)
+  new <- data.frame(id = c("1", "2", "100000", "1000000", "0.5", "2.25", NA), v = c(1L, 2L, 9L, 4L, 5L, 6L, 7L),
+                    stringsAsFactors = FALSE)
+  plan <- sv_compare_plan(old, new, "id")
+  expect_true(isTRUE(plan$keys[[1]]$text))
+  r <- sv_compare(old, new, by = "id")
+  expect_equal(c(r$n_added, r$n_removed, r$n_changed, r$same), c(0L, 0L, 1L, 6L))
+  expect_equal(r$changed$id, "100000")
+  expect_cmp_identities(r)
+  # the same key text as the join check's format_key()
+  expect_identical(sv_compare_text(old$id, key = TRUE), ifelse(is.na(old$id), NA_character_, format_key(old$id)))
+  # the generated code rebuilds the cards
+  env <- list2env(list(old = old, new = new), parent = baseenv())
+  for (key in c("added", "removed", "changed")) {
+    expect_parses(r$code[[key]])
+    got <- eval(parse(text = r$code[[key]]), env)
+    expect_equal(as.data.frame(got), as.data.frame(r[[key]]), ignore_attr = "row.names")
+  }
+  # and the other way round
+  r2 <- sv_compare(new, old, by = "id")
+  expect_equal(c(r2$n_added, r2$n_removed, r2$n_changed, r2$same), c(0L, 0L, 1L, 6L))
+})
+
+test_that("date-times of two zones compare by instant without a warning", {
+  t0 <- as.POSIXct("2024-03-10 01:30:00", tz = "UTC") + c(0, 3600)
+  new_t <- t0 + c(60, 0)
+  attr(new_t, "tzone") <- "America/New_York"
+  old <- data.frame(id = 1:2, t = t0)
+  new <- data.frame(id = 1:2, t = new_t)
+  expect_no_warning(r <- sv_compare(old, new, by = "id"))
+  expect_equal(c(r$n_changed, r$same), c(1L, 1L))
+  expect_equal(r$changed$old, "2024-03-10 01:30:00")
+  expect_equal(r$changed$new, "2024-03-09 20:31:00")
+  # the generated code compares the same way, without a warning
+  env <- list2env(list(old = old, new = new), parent = baseenv())
+  expect_no_warning(got <- eval(parse(text = r$code$changed), env))
+  expect_equal(as.data.frame(got), as.data.frame(r$changed), ignore_attr = "row.names")
+})
+
+test_that("print labels the changed values, not rows", {
+  r <- sv_compare(cmp_cut1(), cmp_cut2(), by = cmp_keys)
+  out <- capture.output(print(r))
+  expect_true("changed values: 3" %in% out)
+  expect_false(any(grepl("^changed: ", out)))
 })
 
 test_that("empty and identical versions", {
@@ -336,6 +392,9 @@ test_that("R and JS write the same compare code", {
                      data.frame(USUBJID = c("S1", "S3"), AESEQ = c("1", "1"), v = c("z", "c")),
                      c("USUBJID", "AESEQ"), c("cut1", "cut2")),
     no_compared = list(data.frame(id = 1:3), data.frame(id = 2:4), "id", c("cut1", "cut2")),
+    num_text_key = list(data.frame(id = c(1, 100000, 0.5), v = 1:3),
+                        data.frame(id = c("1", "100000", "0.5"), v = c(1L, 2L, 4L), stringsAsFactors = FALSE),
+                        "id", c("cut1", "cut2")),
     dttm_key = list(tk_old, tk_new, "t", c("cut1", "cut2")),
     factor = list(data.frame(id = 1:3, f = factor(c("a", "b", "c"))), data.frame(id = 1:3, f = c("a", "x", "c")),
                   "id", c("cut1", "cut2")),

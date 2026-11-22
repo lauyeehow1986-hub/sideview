@@ -1137,6 +1137,9 @@
   // zones and renames, and carries the text of each lazy time-to-text cast (`tz_text`: the zone's offset
   // tree is long, R writes it once). A missing value (R's NA) is null.
 
+  // the trailing zeros format() pads a number with (R's sub() pattern in sv_compare_code())
+  var COMPARE_KEY_RE = /\.0+$|(\.[0-9]*[1-9])0+$/;
+
   function stackHas(v) { return v !== null && v !== undefined; }
 
   function stackQid(name) { return '"' + String(name).replace(/"/g, '""') + '"'; }
@@ -1328,7 +1331,7 @@
     var cv = function (v) { return 'c(' + v.map(str).join(', ') + ')'; };
     var bad = false;
     // the text of a column: D2's cast to chr, a missing value NA (sv_compare_text()); `cn` is the plain name
-    var text = function (cn, from, zone, tzText) {
+    var text = function (cn, from, zone, tzText, key) {
       if (!stackHas(zone)) zone = '';
       if (lazy) {
         if (from === 'dttm') {
@@ -1340,6 +1343,11 @@
         return from === 'num' ? 'dplyr::if_else(isnan(' + ident(cn) + '), NA_character_, ' + e + ')' : e;
       }
       var x = ident(cn);
+      if (key && from === 'num') {
+        // a numeric key is written in full (100000, not 1e+05), as the join check's format_key() does
+        return 'replace(sub(' + str(COMPARE_KEY_RE.source) + ', ' + str(String.fromCharCode(92) + '1') + ', format(' + x +
+          ', scientific = FALSE, trim = TRUE, digits = 15)), is.na(' + x + '), NA_character_)';
+      }
       return 'replace(' + stackCastCode(x, from, 'chr', zone) + ', is.na(' + x + '), NA_character_)';
     };
     if (lazy) {
@@ -1369,8 +1377,8 @@
         var nm = '.sv_k' + (j + 1);
         jb[j] = nm;
         sets.push(nm + ' = ' + (i === 0
-          ? text(k.name, k.from_old, k.zone_old, k.tz_text_old)
-          : text(k.name, k.from_new, k.zone_new, k.tz_text_new)));
+          ? text(k.name, k.from_old, k.zone_old, k.tz_text_old, true)
+          : text(k.name, k.from_new, k.zone_new, k.tz_text_new, true)));
       });
       return sets.length ? 'dplyr::mutate(' + ref + ', ' + sets.join(', ') + ')' : ref;
     };
@@ -1404,6 +1412,8 @@
           var ca = a;
           var cb = b;
           if (cc.kind === 'character') { ca = 'as.character(' + a + ')'; cb = 'as.character(' + b + ')'; }
+          // date-times of two zones compare by instant, without a 'tzone' warning (in memory only)
+          if (!lazy && cc.kind === 'date-time') { ca = 'as.numeric(' + a + ')'; cb = 'as.numeric(' + b + ')'; }
           // missing: NA, or lazily NaN too for a double (duckdb says NaN is not NULL)
           var ma = lazy && cc.from_old === 'num' ? '(is.na(' + a + ') | isnan(' + a + '))' : 'is.na(' + a + ')';
           var mb = lazy && cc.from_new === 'num' ? '(is.na(' + b + ') | isnan(' + b + '))' : 'is.na(' + b + ')';
