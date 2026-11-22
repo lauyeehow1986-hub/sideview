@@ -437,17 +437,24 @@ supp_canon <- function(x) {
 }
 
 supp_js <- function(parent, supp, supp_name = "suppae", rdomain = NULL, plan = NULL,
-                    sample_n = 5L, parent_name = "ae", extra = list()) {
+                    sample_n = 5L, parent_name = "ae", extra = list(), wire = "exact") {
   types <- lapply(parent, function(col) class(col)[1])
   opts <- list(parentName = parent_name, suppName = supp_name, parentTypes = types,
                suppTypes = lapply(supp, function(col) class(col)[1]),
                sampleN = sample_n, parentCols = names(parent), suppCols = names(supp))
   if (!is.null(rdomain)) opts$rdomain <- rdomain
   if (!is.null(plan)) opts$plan <- plan
+  # wire = "widget": rows as the widget payload sends them (htmlwidgets' toJSON2: 16 significant
+  # digits; NA, Inf and NaN as null), with `rounded: true` as the engine passes it
+  if (identical(wire, "widget")) opts$rounded <- TRUE
   opts[names(extra)] <- extra
-  # 17 significant digits, so the browser gets the very doubles R has (0.1 + 0.2, not 0.3)
+  # else 17 significant digits, so the browser gets the very doubles R has (0.1 + 0.2, not 0.3)
   rows <- function(d) {
     rownames(d) <- NULL
+    if (identical(wire, "widget")) {
+      return(jsonlite::toJSON(d, dataframe = "rows", na = "null", null = "null", auto_unbox = TRUE,
+                              digits = 16, use_signif = TRUE))
+    }
     jsonlite::toJSON(d, dataframe = "rows", na = "null", digits = I(17))
   }
   run_pipeline_js(sprintf(
@@ -592,7 +599,7 @@ test_that("strTrim matches stringr::str_trim", {
   skip_if_not_installed("stringr")
   cps <- c(1:0xD7FF, 0xE000:0xFFFF)
   ch <- intToUtf8(cps, multiple = TRUE)
-  y <- c(paste0(ch, "1"), paste0("1", ch), paste0("﻿﻿", ch, "1"), " ﻿1")
+  y <- c(paste0(ch, "1"), paste0("1", ch), paste0("\ufeff\ufeff", ch, "1"), " \ufeff1")
   # code points both ways: U+007F and other controls do not survive the trip through stdout
   got <- run_pipeline_js(sprintf(paste(
     "out = %s.map(function (a) {",
@@ -640,6 +647,85 @@ test_that("suppCheck: a key value R may write differently is not ok (rule 7)", {
   expect_identical(r$reason, "AESEQ 2.38418579101562e-07 is too close to R's rounding to check in the browser")
 })
 
+test_that("suppCheck: rows rounded to 16 digits (the widget) keep rule 7 to exact doubles", {
+  skip_if_not_installed("htmlwidgets")
+  # the widget's JSON: 0.1 + 0.2 arrives as 0.3, and Inf, NaN and NA all as null
+  expect_identical(as.character(htmlwidgets:::toJSON(data.frame(a = c(0.1 + 0.2, Inf, NaN, NA)))),
+                   '{"a":[0.3,null,null,null]}')
+  expect_identical(as.character(jsonlite::toJSON(data.frame(a = c(0.1 + 0.2, Inf, NaN, NA)),
+                                                 dataframe = "columns", na = "null", digits = 16,
+                                                 use_signif = TRUE)),
+                   '{"a":[0.3,null,null,null]}')
+  # cs_frac: R says IDVARVAL "0.3" would match AESEQ 0.3; the browser cannot tell 0.3 from 0.1 + 0.2
+  fr <- fx$cs_frac
+  expect_false(sv_supp_check(fr[[1]], fr[[2]], parent_name = "ae", supp_name = "suppae")$combine_supp$ok)
+  r <- supp_js(fr[[1]], fr[[2]], wire = "widget")$combine_supp
+  expect_false(r$ok)
+  expect_identical(r$reason, "AESEQ 0.3 is too close to R's rounding to check in the browser")
+  # Inf and NaN keys arrive as null
+  for (v in list(c(Inf, "Inf"), c(NaN, "NaN"))) {
+    p <- fx$cs_1e5[[1]]
+    p$AESEQ <- c(1, 2, as.numeric(v[1]))
+    s <- fx$cs_1e5[[2]]
+    s$IDVARVAL <- c("1", v[2])
+    expect_false(sv_supp_check(p, s, parent_name = "ae", supp_name = "suppae")$combine_supp$ok)
+    r <- supp_js(p, s, wire = "widget")$combine_supp
+    expect_false(r$ok)
+    expect_identical(r$reason, "AESEQ has missing or infinite values the browser cannot check")
+  }
+  # whole doubles below 2^53 are exact on the wire: the same answer as R
+  for (nm in c("cs_ok", "cs_1e5", "cs_1e5_sci", "cs_110000")) {
+    k <- fx[[nm]]
+    want <- sv_supp_check(k[[1]], k[[2]], parent_name = "ae", supp_name = "suppae")$combine_supp
+    got <- supp_js(k[[1]], k[[2]], wire = "widget")$combine_supp
+    expect_identical(got$ok, want$ok, info = nm)
+    expect_identical(got$reason, want$reason, info = nm)
+  }
+  expect_true(supp_js(fx$cs_ok[[1]], fx$cs_ok[[2]], wire = "widget")$combine_supp$ok)
+  # a whole double past 2^53 may have lost digits
+  p <- fx$cs_1e5[[1]]
+  p$AESEQ <- c(1, 2, 2^53)
+  r <- supp_js(p, fx$cs_1e5[[2]], wire = "widget")$combine_supp
+  expect_identical(r$reason, "AESEQ 9007199254740992 is too close to R's rounding to check in the browser")
+})
+
+test_that("suppCheck: combine_supp needs both column type maps", {
+  k <- fx$cs_ok
+  for (miss in c("parentTypes", "suppTypes")) {
+    extra <- list()
+    extra[miss] <- list(NULL)
+    r <- supp_js(k[[1]], k[[2]], extra = extra)$combine_supp
+    expect_false(r$ok)
+    expect_identical(r$reason, "Column types are not known in the browser", info = miss)
+    # prep as computed (cs_ok has a subject-level row with IDVAR "")
+    expect_identical(r$prep, list(rdomain = FALSE, idvar_na = TRUE), info = miss)
+  }
+  # after rule 5 (the parent's columns), before rule 7
+  r <- supp_js(fx$cs_no_domain[[1]], fx$cs_no_domain[[2]], extra = list(suppTypes = NULL))$combine_supp
+  expect_identical(r$reason, "ae has no DOMAIN column")
+  expect_true(supp_js(k[[1]], k[[2]])$combine_supp$ok)
+})
+
+test_that("suppCheck: a blank IDVAR is blank as R's trimws() sees it", {
+  # "\f" and NBSP are not blank to trimws(): R looks for a parent column of that name
+  for (w in c("\f", "\v", " ", " ", "  ", "\t\r\n")) {
+    s <- fx$cs_ok[[2]]
+    s$IDVAR[3] <- w
+    supp_parity(sprintf("subject IDVAR %s", paste(utf8ToInt(w), collapse = " ")), fx$cs_ok[[1]], s)
+  }
+})
+
+test_that("suppCheck: double STUDYID / USUBJID keys are R's 15-digit text on each side", {
+  # parent 0.1 + 0.2 and SUPP 0.3 are both "0.3" to R, so they match
+  p <- fx$cs_ok[[1]]
+  p$USUBJID <- c(0.1 + 0.2, 0.7)[match(p$USUBJID, unique(p$USUBJID))]
+  s <- fx$cs_ok[[2]]
+  s$USUBJID <- c(0.3, 0.7)[match(s$USUBJID, unique(fx$cs_ok[[1]]$USUBJID))]
+  want <- supp_parity("usubjid 0.1 + 0.2 vs 0.3", p, s)
+  expect_true(want$combine_supp$ok)
+  expect_identical(want$n_matched, 3L)
+})
+
 test_that("suppCheck follows R on NA keys", {
   # an NA key becomes the string "NA" on both sides, so NA matches NA
   ae <- fx$ae
@@ -681,7 +767,7 @@ test_that("odd numeric IDVARVAL strings are treated alike in R and JS", {
 test_that("only ASCII whitespace around IDVARVAL is trimmed, in R and JS (NBSP, BOM, U+2028, U+3000 are bad)", {
   dbl <- fx$ae
   dbl$AESEQ <- c(1, 2, 3, 4)
-  ws <- c(" 1", "1 ", " 1", "﻿2", "　3", "\t1", "2\n", "\r3\f", "\v4", " 1 ")
+  ws <- c("\u00a01", "1\u00a0", "\u20281", "\ufeff2", "\u30003", "\t1", "2\n", "\r3\f", "\v4", " 1 ")
   s <- fx$suppae[rep(1, length(ws)), ]
   s$IDVARVAL <- ws
   s$QNAM <- paste0("Q", seq_along(ws))

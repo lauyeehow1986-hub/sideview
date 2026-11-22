@@ -2631,7 +2631,7 @@
   /** stringr::str_trim(s): also drops one leading BOM, as stringi does; null for NA. */
   function strTrim(s) {
     if (s === null || s === undefined) return null;
-    return String(s).replace(/^﻿/, '').replace(STR_TRIM_EDGES, '');
+    return String(s).replace(/^\ufeff/, '').replace(STR_TRIM_EDGES, '');
   }
 
   // A missing value is the string "NA" once keys are pasted together, as in R.
@@ -2705,7 +2705,9 @@
   // parentRows / suppRows: arrays of row objects. opts: {parentName, suppName, rdomain,
   // parentTypes: {col: colType}, suppTypes: {col: colType} (R class names; guessed when absent),
   // parentCols, suppCols, plan, sampleN, lazy: {name, kind: 'duckdb'|'arrow'} or null (a lazy
-  // card: combine_supp rule 2), preview: true when a card holds only its preview rows (rule 3)}.
+  // card: combine_supp rule 2), preview: true when a card holds only its preview rows (rule 3),
+  // rounded: true when the rows came through 16-digit JSON (the widget: rule 7 then trusts only
+  // whole doubles below 2^53)}. Without both type maps combine_supp is not ok.
   function suppCheck(parentRows, suppRows, opts) {
     opts = opts || {};
     parentRows = parentRows || [];
@@ -2738,7 +2740,8 @@
 
     var idvar = suppRows.map(function (r) {
       var v = r.IDVAR;
-      return v === null || v === undefined || String(v).trim() === '' ? '' : String(v);
+      // blank as R's trimws() sees it: space, tab, CR and LF only (trim() would also take NBSP)
+      return v === null || v === undefined || /^[ \t\r\n]*$/.test(String(v)) ? '' : String(v);
     });
     var qnam = suppRows.map(function (r) { return suppChr(r.QNAM); });
     var levels = suppUnique(idvar);
@@ -2757,8 +2760,19 @@
     }
 
     var keys = ['STUDYID', 'USUBJID'].filter(function (c) { return pNames.indexOf(c) >= 0 && sNames.indexOf(c) >= 0; });
-    var keyOf = function (row) { return keys.map(function (c) { return suppChr(row[c]); }).join('\r'); };
-    var pkey = parentRows.map(keyOf), skey = suppRows.map(keyOf);
+    // key text as sv_supp_key_chr() writes it: a double key in R's 15 digits, on each side by its type
+    var keyKinds = function (rows, given) {
+      return keys.map(function (c) {
+        var t = (given || {})[c];
+        return suppKeyType(t === undefined || t === null ? suppGuessType(rows, c) : t);
+      });
+    };
+    var pKinds = keyKinds(parentRows, opts.parentTypes), sKinds = keyKinds(suppRows, opts.suppTypes);
+    var keyFn = function (kinds) {
+      return function (row) { return keys.map(function (c, n) { return suppKeyText(row[c], kinds[n]); }).join('\r'); };
+    };
+    var keyOf = keyFn(pKinds);
+    var pkey = parentRows.map(keyOf), skey = suppRows.map(keyFn(sKinds));
 
     // num: the converted value as a number on a numeric level (the combine_supp rows compare it)
     var val = [], bad = [], matched = [], num = [];
@@ -2958,6 +2972,9 @@
     // rule 5: it joins on STUDYID, DOMAIN and USUBJID
     miss = suppSetdiff(COMBINE_PARENT_COLS, c.pNames);
     if (miss.length) return no(c.parentName + ' has no ' + miss[0] + ' column');
+    // rules 7 and 8 need R's text of each value, so R's class of each column
+    var known = function (t) { return t !== null && t !== undefined && typeof t === 'object'; };
+    if (!known(opts.parentTypes) || !known(opts.suppTypes)) return no('Column types are not known in the browser');
     var why = suppCombineRows(c);
     if (why === null) why = suppCombineFactor(c);
     if (why === null) why = suppCombineLabels(c);
@@ -2975,15 +2992,26 @@
       return t === undefined || t === null ? suppGuessType(rows, col) : String(t);
     };
     var unsure = null;
+    var tooClose = function (col, t) { return col + ' ' + t + " is too close to R's rounding to check in the browser"; };
+    // opts.rounded: the rows came through 16-digit JSON (the widget), so a double is exact only
+    // when it is a whole number below 2^53, and NA, Inf and NaN all arrived as null
+    var rounded = !!opts.rounded;
     // R's text of one value (sv_r_chr for theirs; sv_supp_key_chr for ours, where an integer64
-    // key is a double). A double R may write otherwise is remembered for the reason.
+    // key is a double). A value whose text may not be R's is remembered for the reason.
     var text = function (v, type, col, ours) {
+      var dbl = /^(numeric|double|float)$/.test(type) || (ours && suppKeyType(type) === 'double');
+      if (rounded && unsure === null && suppKeyType(type) === 'double') {
+        if (v === null || v === undefined) {
+          unsure = col + ' has missing or infinite values the browser cannot check';
+        } else if (typeof v === 'number' && (v % 1 !== 0 || Math.abs(v) >= 9007199254740992)) {
+          unsure = tooClose(col, rAsCharacter(v));
+        }
+      }
       if (v === null || v === undefined) return null;
       if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
-      var dbl = /^(numeric|double|float)$/.test(type) || (ours && suppKeyType(type) === 'double');
       if (!dbl || (typeof v !== 'number' && v !== 'Inf' && v !== '-Inf' && v !== 'NaN')) return String(v);
       var r = rChr(v);
-      if (!r.sure && unsure === null) unsure = col + ' ' + r.text;
+      if (!r.sure && unsure === null) unsure = tooClose(col, r.text);
       return r.text;
     };
     var column = function (rows, given, col, ours) {
@@ -3043,7 +3071,7 @@
       lv[iv] = { pO: pO, pT: pT };
     });
     // a text that may not be R's makes every comparison above uncertain
-    if (unsure !== null) return unsure + " is too close to R's rounding to check in the browser";
+    if (unsure !== null) return unsure;
     var say = function (x) { return x === null ? 'NA' : x; };
     for (i = 0; i < n; i++) {
       if (nO[i] === nT[i] && nB[i] === nO[i]) continue;
