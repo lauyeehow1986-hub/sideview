@@ -35,7 +35,8 @@ or tabular objects to be normalized.}
 the browser and wins.}
 
 \item{code_style}{\code{"dplyr"} (default) or \code{"pharmaverse"}: the starting style of the
-generated code (see \code{\link[=sideview]{sideview()}}). A \code{state} that records a style wins over it.}
+generated code (see \code{\link[=sideview]{sideview()}}).
+A workspace state, with or without a recorded style, sets the style, and one without a style loads as \code{"dplyr"}: \code{code_style} is only the starting style when no \code{state} is applied.}
 }
 \value{
 A \code{shiny.tag.list} UI definition.

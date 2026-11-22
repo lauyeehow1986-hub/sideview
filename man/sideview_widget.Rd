@@ -44,8 +44,7 @@ the single-key shortcuts off, default \code{getOption("sideview.shortcuts", TRUE
 or a named character vector of domain codes.}
 
 \item{code_style}{Style of the generated code: \code{"dplyr"} (default) or \code{"pharmaverse"}
-(see \code{\link[=sideview]{sideview()}}). A workspace that records a style (\code{options = list(state = )},
-\verb{state =}) wins over it.}
+(see \code{\link[=sideview]{sideview()}}). A workspace state, with or without a recorded style, sets the style, and one without a style loads as \code{"dplyr"}: \code{code_style} is only the starting style when no \code{state} is applied.}
 
 \item{max_rows}{Most rows of each data-frame table to embed in the widget
 (default 5000). A longer table is cut to its first \code{max_rows} rows, its

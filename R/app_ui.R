@@ -391,7 +391,8 @@ render_card_tag <- function(card, index = 1L) {
 #'   `bslib::bs_theme()`. See [sv_theme()].
 #' @param state Optional saved workspace to restore on load (see [sideview()]).
 #' @param code_style `"dplyr"` (default) or `"pharmaverse"`: the starting style of the
-#'   generated code (see [sideview()]). A `state` that records a style wins over it.
+#'   generated code (see [sideview()]).
+#'   A workspace state, with or without a recorded style, sets the style, and one without a style loads as `"dplyr"`: `code_style` is only the starting style when no `state` is applied.
 #'
 #' @param view Starting view: `"canvas"` (default) or `"list"` (see [sideview()]).
 #' @param access `TRUE` starts with the Accessible canvas switch on (default

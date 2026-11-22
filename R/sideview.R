@@ -53,8 +53,7 @@ sv_find_tables <- function(env = parent.frame()) {
 #'   pan, sorts, filters, joins and the pipeline come back; cards are matched
 #'   to tables by name.
 #' @param code_style Style of the generated code: `"dplyr"` (default) or `"pharmaverse"`,
-#'   which writes `metatools::combine_supp()` for a SUPP-- merge. It is the starting style:
-#'   a workspace `state` that records a style wins over it.
+#'   which writes `metatools::combine_supp()` for a SUPP-- merge. A workspace state, with or without a recorded style, sets the style, and one without a style loads as `"dplyr"`: `code_style` is only the starting style when no `state` is applied.
 #' @param cdisc CDISC awareness: `"auto"` (default) tags tables that look like
 #'   SDTM, SEND or ADaM datasets; `FALSE` turns it off; a named character vector
 #'   such as `c(my_ae = "AE")` sets a table's domain by name (other tables are

@@ -38,7 +38,8 @@
 #' @param cdisc CDISC tagging, as for [sideview()]: `"auto"`, `FALSE`, or a named
 #'   character vector of domain codes. Tags are kept current as cards come and go.
 #' @param code_style `"dplyr"` (default) or `"pharmaverse"`: the starting style of the
-#'   generated code, sent to the canvas before `state`. A `state` that records a style wins.
+#'   generated code, sent to the canvas before `state`.
+#'   A workspace state, with or without a recorded style, sets the style, and one without a style loads as `"dplyr"`: `code_style` is only the starting style when no `state` is applied.
 #'   It changes the code the browser composes, nothing R evaluates.
 #'
 #' @return `sideviewUI()` returns a `shiny.tag.list`. `sideviewServer()` returns a

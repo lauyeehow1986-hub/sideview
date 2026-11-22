@@ -56,8 +56,7 @@ sideview_widget_dependencies <- function() {
 #' @param cdisc CDISC awareness (see [sideview()]): `"auto"` (default), `FALSE`,
 #'   or a named character vector of domain codes.
 #' @param code_style Style of the generated code: `"dplyr"` (default) or `"pharmaverse"`
-#'   (see [sideview()]). A workspace that records a style (`options = list(state = )`,
-#'   `state =`) wins over it.
+#'   (see [sideview()]). A workspace state, with or without a recorded style, sets the style, and one without a style loads as `"dplyr"`: `code_style` is only the starting style when no `state` is applied.
 #' @param max_rows Most rows of each data-frame table to embed in the widget
 #'   (default 5000). A longer table is cut to its first `max_rows` rows, its
 #'   card says "First N of M rows", and one message names the tables cut. The

@@ -58,7 +58,8 @@ message arrives.}
 character vector of domain codes. Tags are kept current as cards come and go.}
 
 \item{code_style}{\code{"dplyr"} (default) or \code{"pharmaverse"}: the starting style of the
-generated code, sent to the canvas before \code{state}. A \code{state} that records a style wins.
+generated code, sent to the canvas before \code{state}.
+A workspace state, with or without a recorded style, sets the style, and one without a style loads as \code{"dplyr"}: \code{code_style} is only the starting style when no \code{state} is applied.
 It changes the code the browser composes, nothing R evaluates.}
 }
 \value{
