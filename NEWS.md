@@ -2,7 +2,7 @@
 
 Derived cards: the rows behind a check count become a card of their own (D1), tables stack with a check (D2), and two
 cuts of a table compare by key (D3). Development version; the release number is decided at merge time. Checked with
-real-browser tests (headless Chrome) and unit tests; the D3 manual RStudio pass is still to do.
+real-browser tests (headless Chrome) and unit tests, and by hand in RStudio (dialog, Viewer pane, external browser).
 
 ## Open the rows behind a count
 
@@ -24,7 +24,7 @@ real-browser tests (headless Chrome) and unit tests; the D3 manual RStudio pass 
 ## Stack tables
 
 Derived cards, second part (D2): stack tables. Checked with real-browser tests (headless Chrome) and unit tests;
-the manual RStudio pass is still to do.
+also checked by hand in RStudio (dialog, Viewer pane, external browser).
 
 * `sv_stack_check(..., cast, rename)` lines up the columns of 2 to 8 tables and reports, per column, its type in each
   table, its label, and what a stack would do: the same type, a cast to a common type, a name that differs only by
@@ -56,7 +56,7 @@ the manual RStudio pass is still to do.
 ## Compare data cuts
 
 Derived cards, third part (D3): compare two cuts of a table by key. Checked with real-browser tests (headless Chrome)
-and unit tests; the manual RStudio pass is still to do.
+and unit tests, and by hand in RStudio (dialog, Viewer pane, external browser).
 
 * `sv_compare(old, new, by)` matches the rows of two tables on a key (1 to 20 columns) and counts the rows added (key
   only in `new`), removed (key only in `old`), changed (key in both, a value differs) and the same. It also lists
