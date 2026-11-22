@@ -465,3 +465,16 @@ test_that("Computer Use GUI: Scenario 15 - code style init order, state wins, mo
     expect_true(isTRUE(s15[[nm]]), info = nm)
   }
 })
+
+# ==============================================================================
+# Scenario 16: Code select, combine_supp step line and panel line
+# ==============================================================================
+test_that("Computer Use GUI: Scenario 16 - Code select, combine_supp step and panel lines", {
+  res <- run_gui_test_scenarios()
+  s16 <- res$scenario16
+
+  expect_gt(length(s16), 0)
+  for (nm in names(s16)) {
+    expect_true(isTRUE(s16[[nm]]), info = nm)
+  }
+})

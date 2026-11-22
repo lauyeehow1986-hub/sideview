@@ -3467,6 +3467,7 @@ function sendToShiny(name, value) {
       x: initialX,
       y: initialY,
       colLabels: cardData.col_labels || null,
+      colInexact: cardData.col_inexact === undefined ? null : cardData.col_inexact,
       cdisc: cardData.cdisc || null,
       derivedInputs: cardData.derived ? asArray(cardData.derived.inputs).map(String) : null
     };
@@ -5191,6 +5192,8 @@ function sendToShiny(name, value) {
         '<button type="button" class="sideview-icon-btn" data-action="pipeline-redo" title="Redo (Ctrl+Y)" aria-label="Redo">' + icon('redo') + '</button>',
         '<label class="sideview-pipe-choice">Pipe <select class="sideview-pipe-select" aria-label="Pipe operator">',
         '<option value="%&gt;%">%&gt;%</option><option value="|&gt;">|&gt;</option></select></label>',
+        '<label class="sideview-code-choice">Code <select class="sideview-code-select" aria-label="Code style">',
+        '<option value="dplyr">dplyr</option><option value="pharmaverse">pharmaverse</option></select></label>',
         '<span class="sideview-step-count" aria-live="polite"></span>'
       ].join('');
       var list = document.createElement('ol');
@@ -5583,6 +5586,8 @@ function sendToShiny(name, value) {
     if (redo) redo.disabled = !p.canRedo();
     var pipeSel = this.container.querySelector('.sideview-pipe-select');
     if (pipeSel) pipeSel.value = p.pipe;
+    var codeSel = this.container.querySelector('.sideview-code-select');
+    if (codeSel) codeSel.value = p.style;
     if (this.activeDrawerTab === 'discrepancy') this.renderJoinCheck();
 
     // The drawer no longer pops open; the Drawer button shows the step count.
@@ -5919,6 +5924,36 @@ function sendToShiny(name, value) {
     return d;
   }
 
+  var COMBINE_PREP0 = { rdomain: false, idvar_na: false };
+
+  /**
+   * The combine_supp field the pipeline keeps for a stored merge check (null: none to keep).
+   * An {error} check and a stale one (drift) are not ok, with the reason the step line shows.
+   * A reply without the field (an older R) keeps none, so the code stays dplyr.
+   */
+  function combineSuppOf(d) {
+    if (!d) return null;
+    if (d.error) return { ok: false, reason: String(d.error), prep: COMBINE_PREP0, installed: null };
+    var f = d.combine_supp && typeof d.combine_supp === 'object' ? d.combine_supp : null;
+    if (d.drift && d.drift.stale) {
+      return { ok: false, reason: 'Merge needs refreshing', prep: (f && f.prep) || COMBINE_PREP0,
+        installed: f && f.installed !== undefined ? f.installed : null };
+    }
+    return f;
+  }
+
+  /** Keep the pipeline's combine_supp field for the key in step with this.suppChecks[key]. */
+  SideviewEngine.prototype.syncSuppCombine = function (key) {
+    this.pipeline.setSuppCheck(key, combineSuppOf(this.suppChecks[key]));
+  };
+
+  /** The one way to store a merge check: the pipeline hears of it at once, so the code is composed from it. */
+  SideviewEngine.prototype.storeSuppCheck = function (key, d) {
+    this.suppChecks[key] = d;
+    this.syncSuppCombine(key);
+  };
+
+
   /** The column names a card holds (its virtual table, else its header ports). */
   SideviewEngine.prototype.cardColNames = function (name) {
     var el = this.cardElByName(name);
@@ -6160,9 +6195,24 @@ function sendToShiny(name, value) {
   SideviewEngine.prototype.localSuppCheck = function (parentName, suppName, rdomain, plan) {
     var p = this.cardRows(parentName), s = this.cardRows(suppName);
     if (p.error || s.error) return { error: p.error || s.error };
+    var pm = this.cardMetaByName(parentName), sm = this.cardMetaByName(suppName);
+    var pel = this.cardElByName(parentName), sel = this.cardElByName(suppName);
+    var lazyOf = function (name, el) {
+      return el && el.dataset && el.dataset.lazy ? { name: name, kind: String(el.dataset.lazy) } : null;
+    };
+    // the first lazy table, the parent before the SUPP card (R names it so); a preview-only card
+    // (lazy, truncated or capped) is checked on its rows alone
+    var lazy = lazyOf(parentName, pel) || lazyOf(suppName, sel);
+    var preview = rowsBasis(pel) === 'preview' || rowsBasis(sel) === 'preview';
+    // the double columns the widget's JSON cannot give back exactly, per card (R's col_inexact); a
+    // card without the list gives none, and combine_supp() then trusts no double column of it
+    var inexactOf = function (m) { return m && m.colInexact !== undefined && m.colInexact !== null ? asArray(m.colInexact) : undefined; };
     return global.SideviewPipeline.suppCheck(p.rows, s.rows, {
       parentName: parentName, suppName: suppName, rdomain: rdomain,
-      parentTypes: p.types, parentCols: p.cols, suppCols: s.cols, plan: plan ? suppPlanOf(plan) : null
+      parentTypes: p.types, parentCols: p.cols, suppTypes: s.types, suppCols: s.cols,
+      plan: plan ? suppPlanOf(plan) : null,
+      rounded: true, inexact: { parent: inexactOf(pm), supp: inexactOf(sm) },
+      lazy: lazy, preview: preview
     });
   };
 
@@ -6186,7 +6236,13 @@ function sendToShiny(name, value) {
     qn.forEach(function (q) {
       if (q && known.indexOf(q) >= 0 && d.clashes.indexOf(q) < 0) { d.clashes.push(q); added = true; }
     });
-    if (added) d.status = 'error';
+    if (added) {
+      d.status = 'error';
+      // the merge now stops (rule 1): the field says so, whatever the check answered
+      var was = d.combine_supp || null;
+      d.combine_supp = { ok: false, reason: global.SideviewPipeline.combineSuppStopReason(d, table),
+        prep: (was && was.prep) || COMBINE_PREP0, installed: was ? was.installed : null };
+    }
     return d;
   };
 
@@ -6208,7 +6264,7 @@ function sendToShiny(name, value) {
         this.listHook('onSuppCheck', { error: msg }, ctx.key, !!ctx.list);
         return;
       }
-      this.suppChecks[ctx.key] = { error: msg };
+      this.storeSuppCheck(ctx.key, { error: msg });
     } else {
       var d = suppNormalize(data);
       delete d.id;
@@ -6221,7 +6277,7 @@ function sendToShiny(name, value) {
       if (ctx.mode === 'add') {
         this.widenSuppClashes(d, ctx.parent, ctx.key, true);
         // stored first: adding the step renders the pipeline, which reads it
-        this.suppChecks[ctx.key] = d;
+        this.storeSuppCheck(ctx.key, d);
         this.reportFocus = { kind: 'supp', id: ctx.key };
         this.announceSupp(ctx, d);
         this.pipeline.add(P.suppStep(ctx.parent, ctx.supp, ctx.rdomain, d.plan), 'supp');
@@ -6233,7 +6289,7 @@ function sendToShiny(name, value) {
       var step = this.pipeline.steps.filter(function (s) { return s.key === ctx.key; })[0];
       if (!step) return;
       this.widenSuppClashes(d, ctx.parent, ctx.key, false);
-      this.suppChecks[ctx.key] = d;
+      this.storeSuppCheck(ctx.key, d);
     }
     this.announceSupp(ctx, this.suppChecks[ctx.key]);
     // a quiet check answered synchronously is drawn by the render that asked; a reply from R comes
@@ -6290,6 +6346,18 @@ function sendToShiny(name, value) {
     if (d.status === 'warning' && !(d.n_orphan > 0) && !(d.bad_idvarval.n > 0) && d.n_other_rdomain > 0) {
       t += ' · ' + suppCount(d.n_other_rdomain, 'other-RDOMAIN row', 'other-RDOMAIN rows');
     }
+    // the pharmaverse style says what the code does; the step's one decision is combineSuppFor()
+    if (this.pipeline.style === 'pharmaverse') {
+      var cf = this.pipeline.combineSuppFor(s);
+      if (cf.ok) {
+        // orphans and bad IDVARVALs make combine_supp() warn
+        if (d.n_orphan > 0 || d.bad_idvarval.n > 0) t += ' (combine_supp() warns)';
+        t += d.combine_supp && d.combine_supp.installed === false ? ' · needs metatools 0.3.0 or later to run' :
+          ' · combine_supp()';
+      } else if (cf.reason) {
+        t += ' · dplyr: ' + cf.reason;
+      }
+    }
     return { text: t, status: d.status === 'warning' ? 'warn' : 'ok' };
   };
 
@@ -6337,6 +6405,7 @@ function sendToShiny(name, value) {
     if (!d || d.error || !d.plan) return false;
     var next = global.SideviewPipeline.suppStep(s.table, s.supp, s.rdomain, d.plan);
     d.drift = { stale: false, reasons: [] };
+    this.syncSuppCombine(s.key);
     this.reportFocus = { kind: 'supp', id: s.key };
     this.pipeline.update(s.id, { keys: next.keys, idvars: next.idvars, qnams: next.qnams, rdomain_col: next.rdomain_col });
     this.renderJoinCheck();
@@ -6350,12 +6419,15 @@ function sendToShiny(name, value) {
       if (name === null || name === undefined) return true;
       try { var k = JSON.parse(key); return k[1] === name || k[2] === name; } catch (e) { return false; }
     };
-    Object.keys(this.suppChecks).forEach(function (k) { if (touches(k)) delete self.suppChecks[k]; });
+    var dropped = Object.keys(this.suppChecks).filter(touches);
+    dropped.forEach(function (k) { delete self.suppChecks[k]; });
     Object.keys(this.suppReq).forEach(function (k) { if (touches(k)) delete self.suppReq[k]; });
     // a reply to a forgotten request is dropped (its id is no longer pending)
     Object.keys(this.suppPending).forEach(function (id) {
       if (touches(self.suppPending[id].key)) delete self.suppPending[id];
     });
+    // last: telling the pipeline renders it, and the render may ask for a new check
+    dropped.forEach(function (k) { self.pipeline.setSuppCheck(k, null); });
   };
 
   // A join step the engine has not seen before takes the top of the Discrepancy tab.
@@ -6366,6 +6438,23 @@ function sendToShiny(name, value) {
       self._seenJoins[s.id] = true;
       self.reportFocus = { kind: 'join', id: s.id };
     });
+  };
+
+  /**
+   * The panel's combine_supp(): yes / combine_supp(): no, <reason> line, in both styles: whether
+   * the pharmaverse style would write combine_supp() for this merge (the check's field, then rule 6).
+   * Not part of saySupp(), which is the twin of R's sv_say_supp().
+   */
+  SideviewEngine.prototype.combineSuppLine = function (s, d) {
+    var f = combineSuppOf(d);
+    if (!f) return '';
+    var ok = f.ok === true, reason = f.reason === undefined || f.reason === null ? '' : String(f.reason);
+    if (ok) {
+      var ap = this.pipeline.combineSuppApplies(s);
+      if (!ap.ok) { ok = false; reason = ap.reason; }
+    }
+    return '<p class="sideview-suppcheck-combine">' +
+      escapeHtml('combine_supp(): ' + (ok ? 'yes' : 'no' + (reason ? ', ' + reason : ''))) + '</p>';
   };
 
   /** The merge check report (design §4.5) in the Discrepancy tab's top box. */
@@ -6424,6 +6513,7 @@ function sendToShiny(name, value) {
         '<button type="button" class="sideview-suppcheck-refresh" data-supp-refresh="' + esc(s.id) + '">Refresh</button></div>' : '',
       problems.length ? '<ul class="sideview-joincheck-list sideview-suppcheck-problems">' +
         problems.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>' : '',
+      this.combineSuppLine(s, d),
       '<dl class="sideview-joincheck-stats sideview-suppcheck-stats">',
       '<dt>' + esc(s.table + ' rows') + '</dt><dd>' + esc(fmt(d.n_parent)) + '</dd>',
       '<dt>SUPP rows</dt><dd>' + esc(fmt(d.n_supp)) + '</dd>',
@@ -7050,6 +7140,8 @@ function sendToShiny(name, value) {
     var p = state.pipeline || {};
     if (state.pipeline) {
       // merge checks are asked again, with each step's plan, when the loaded pipeline renders
+      // the pipeline forgets its combine_supp fields too (no render: loading the steps renders)
+      this.pipeline.suppCombine = {};
       this.suppChecks = {};
       this.suppReq = {};
       this.suppPending = {};
@@ -8206,6 +8298,8 @@ function sendToShiny(name, value) {
         self.pipeline.update(li.dataset.stepId, { type: t.value });
       } else if (t.classList.contains('sideview-pipe-select')) {
         self.pipeline.setPipe(t.value);
+      } else if (t.classList.contains('sideview-code-select')) {
+        self.pipeline.setStyle(t.value);
       } else if (t.dataset && t.dataset.inspect) {
         var pick = t.closest('.sideview-inspector');
         var tSel = pick && pick.querySelector('[data-inspect="table"]');

@@ -3583,3 +3583,112 @@ test_that("the saved widget has no Compare tab, and a compare step opens disable
   expect_equal(sv_js(b, "document.querySelectorAll('.sideview-card[data-card-name=cut2_added]').length"), 0)
   expect_equal(sv_js(b, "document.querySelectorAll('[data-tab=compare]').length"), 0)
 })
+
+# ---- pharmaverse code style: the Code select, the step line and the panel line (E1) ----
+# A gadget on helper-cdisc.R's cs_ok pair (the SDTM SUPP column set, so combine_supp() applies).
+# Every click is real input; a <select> has no real-input path in chromote, so the value is set and
+# `change` is dispatched, as the Pipe select's tests do.
+
+test_that("gadget: the Code select writes combine_supp(), the step line and the panel line say so", {
+  skip_if_no_browser()
+  skip_if_not_installed("metatools")
+  root <- sv_pkg_root()
+  if (!nzchar(root)) skip("combine_supp browser tests need the source tree (helper-cdisc.R)")
+  helper <- normalizePath(file.path(root, "tests", "testthat", "helper-cdisc.R"), winslash = "/")
+  app <- sv_start_app(app_expr = sprintf(
+    "{ source('%s'); f <- sv_cdisc_fixtures(); sideview(ae = f$cs_ok[[1]], suppae = f$cs_ok[[2]], run = FALSE) }",
+    helper))
+  withr::defer(try(app$proc$kill(), silent = TRUE))
+  b <- sv_open_page(app$url)
+  withr::defer(try(b$close(), silent = TRUE))
+  expect_true(attr(b, "sv_ready"))
+  sv_set_viewport(b, 2300, 900)
+  eng <- "window._sideviewInstance"
+  root_sel <- ".sideview-container"
+  sv_js(b, sprintf("(() => { const e = %s, root = e.container;
+    const c = n => root.querySelector('.sideview-card[data-card-name=\"' + n + '\"]');
+    [['ae', 20, 90], ['suppae', 1620, 90]].forEach(p => { c(p[0]).style.left = p[1] + 'px'; c(p[0]).style.top = p[2] + 'px'; });
+    e.updateConnectors(); return true; })()", eng))
+  Sys.sleep(0.3)
+
+  sv_supp_drawer(b, root_sel, open = FALSE)
+  sv_supp_click(b, paste(root_sel, '.sideview-card[data-card-name="suppae"] [data-action="supp-merge"]'))
+  expect_true(sv_wait_js(b, sprintf("%s.pipeline.steps.some(s => s.kind === 'supp')", eng), 30))
+  sv_supp_drawer(b, root_sel, open = TRUE)
+  sv_supp_click(b, paste(root_sel, '.sideview-drawer-tab[data-tab="pipeline"]'))
+  diag <- sv_json(paste(root_sel, '.sideview-step-list [data-step-action="supp-diag"]'))
+  expect_true(sv_wait_js(b, sprintf("(() => { const d = document.querySelector(%s); return !!d && !d.classList.contains('is-pending'); })()", diag), 30))
+  state <- function() sv_js(b, sprintf("(() => { const e = %s, d = document.querySelector(%s);
+    const sel = document.querySelector('.sideview-code-select');
+    return { style: e.pipeline.style, sel: sel ? sel.value : null, opts: sel ? [...sel.options].map(o => o.value) : null,
+      aria: sel ? sel.getAttribute('aria-label') : null, label: !!document.querySelector('label.sideview-code-choice'),
+      code: document.querySelector('.sideview-code-text').textContent, diag: d.textContent, undo: e.pipeline.undoStack.length,
+      field: (e.pipeline.suppCombine[e.pipeline.steps.filter(s => s.kind === 'supp')[0].key] || {}) }; })()", eng, diag))
+  s <- state()
+  expect_identical(s$style, "dplyr")
+  expect_identical(s$sel, "dplyr")
+  expect_identical(unlist(s$opts), c("dplyr", "pharmaverse"))
+  expect_identical(s$aria, "Code style")
+  expect_true(s$label)
+  expect_true(s$field$ok)
+  expect_no_match(s$code, "metatools::combine_supp(", fixed = TRUE)
+  expect_identical(trimws(s$diag), "3 of 3 SUPP rows matched")
+
+  sv_js(b, "(() => { const s = document.querySelector('.sideview-code-select'); s.value = 'pharmaverse';
+    s.dispatchEvent(new Event('change', {bubbles: true})); return true; })()")
+  expect_true(sv_wait_js(b, "document.querySelector('.sideview-code-text').textContent.includes('metatools::combine_supp(')", 15))
+  p <- state()
+  expect_identical(p$style, "pharmaverse")
+  expect_identical(p$sel, "pharmaverse")
+  expect_equal(p$undo, s$undo)  # the style is not an undo step
+  expect_identical(trimws(p$diag), "3 of 3 SUPP rows matched · combine_supp()")
+  # the composed code runs, and gives the merged columns
+  out <- local({
+    f <- sv_cdisc_fixtures()
+    env <- list2env(list(ae = f$cs_ok[[1]], suppae = f$cs_ok[[2]]), parent = globalenv())
+    env$`%>%` <- dplyr::`%>%`
+    as.data.frame(eval(parse(text = p$code), envir = env))
+  })
+  expect_true(all(c("AETRTEM", "AESUBJQ") %in% names(out)))
+  expect_equal(nrow(out), 3L)
+
+  # the panel line, from the step line
+  sv_supp_click(b, paste(root_sel, '.sideview-step-list [data-step-action="supp-diag"]'))
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-joincheck[data-report=supp] .sideview-suppcheck-combine')", 30))
+  expect_identical(sv_js(b, "document.querySelector('.sideview-suppcheck-combine').textContent"), "combine_supp(): yes")
+
+  # the report opened the Discrepancy tab; the bar is in the Pipeline tab
+  sv_supp_click(b, paste(root_sel, '.sideview-drawer-tab[data-tab="pipeline"]'))
+  # 560 x 520: the bar's controls do not intersect, and nothing scrolls sideways
+  sv_set_viewport(b, 560, 520)
+  expect_true(sv_wait_js(b, "document.querySelector('.sideview-container').classList.contains('sv-narrow')", 15))
+  g <- sv_js(b, "(() => { const bar = document.querySelector('.sideview-pipeline-bar');
+    const kids = [...bar.children].map(k => ({ cls: k.className, r: k.getBoundingClientRect() }));
+    const sels = ['.sideview-pipe-select', '.sideview-code-select'].map(q => bar.querySelector(q).getBoundingClientRect());
+    const hit = (a, c) => a.left < c.right && c.left < a.right && a.top < c.bottom && c.top < a.bottom;
+    const all = kids.map(k => k.r).concat(sels);
+    let overlap = false;
+    for (let i = 0; i < kids.length; i++) for (let j = i + 1; j < kids.length; j++) if (hit(kids[i].r, kids[j].r)) overlap = true;
+    const pipeLab = bar.querySelector('.sideview-pipe-choice').getBoundingClientRect(), codeLab = bar.querySelector('.sideview-code-choice').getBoundingClientRect();
+    const br = bar.getBoundingClientRect();
+    return { n: kids.length, overlap: overlap || hit(sels[0], sels[1]) || hit(pipeLab, codeLab),
+      inside: all.every(r => r.left >= br.left - 1 && r.right <= br.right + 1),
+      barOverflow: bar.scrollWidth - bar.clientWidth, pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
+      visible: sels.every(r => r.width > 10 && r.height > 8), rects: JSON.stringify(sels.concat([br])), count: bar.querySelector('.sideview-step-count').textContent }; })()")
+  expect_gte(g$n, 5)
+  expect_false(g$overlap)
+  expect_true(g$inside)
+  expect_lte(g$barOverflow, 1)
+  expect_lte(g$pageOverflow, 1)
+  expect_true(g$visible, info = g$rects)
+  expect_identical(g$count, "1 step")
+  sv_set_viewport(b, 2300, 900)
+
+  # back to dplyr: the code and the step line follow
+  sv_js(b, "(() => { const s = document.querySelector('.sideview-code-select'); s.value = 'dplyr';
+    s.dispatchEvent(new Event('change', {bubbles: true})); return true; })()")
+  expect_true(sv_wait_js(b, "!document.querySelector('.sideview-code-text').textContent.includes('metatools::combine_supp(')", 15))
+  d <- state()
+  expect_identical(trimws(d$diag), "3 of 3 SUPP rows matched")
+  expect_equal(attr(b, "sv_errors")(), character())
+})
