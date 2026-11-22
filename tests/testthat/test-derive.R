@@ -394,3 +394,205 @@ test_that("stack_check_request replies with the columns, counts, text and code; 
     expect_identical(card$totalRows, r2$n_rows)
   })
 })
+
+test_that("compare_request replies with the key, counts, text and code; Open adds the card", {
+  cards <- sv_normalize_cards(list(
+    cut1 = data.frame(USUBJID = paste0("S", 1:4), AESEV = c("MILD", "MILD", "SEVERE", "MILD"), stringsAsFactors = FALSE),
+    cut2 = data.frame(USUBJID = paste0("S", 2:5), AESEV = c("MILD", "MODERATE", "SEVERE", "MILD"), stringsAsFactors = FALSE)))
+  shiny::testServer(sideview_server(cards), {
+    last <- function(type) {
+      m <- Filter(function(z) identical(z$type, type), session$userData$custom_messages)
+      m[[length(m)]]$message
+    }
+    session$setInputs(compare_request = list(id = "c1", old = "cut1", new = "cut2"))
+    r <- last("sideview_compare")
+    expect_identical(r$id, "c1")
+    expect_null(r$error)
+    expect_identical(r$by, list("USUBJID"))
+    expect_equal(c(r$n_old, r$n_new, r$added, r$removed, r$changed, r$same), c(4L, 4L, 1L, 1L, 2L, 1L))
+    expect_equal(r$changed_values, 2L)
+    expect_identical(r$old_name, "cut1")
+    expect_identical(r$new_name, "cut2")
+    expect_true(length(r$text) >= 4L)
+    expect_match(r$open$added, "Open added rows (1)", fixed = TRUE)
+    expect_named(r$code_preview, c("added", "removed", "changed"))
+    for (cd in r$code_preview) expect_false(inherits(try(parse(text = cd), silent = TRUE), "try-error"))
+    # the wire: the key stays an array, per_column an object even with one column or none
+    json <- as.character(shiny:::toJSON(r))
+    expect_match(json, "\"by\":[\"USUBJID\"]", fixed = TRUE)
+    expect_match(json, "\"per_column\":{\"AESEV\":2}", fixed = TRUE)
+    # a key by itself: only that key
+    session$setInputs(compare_request = list(id = "c2", old = "cut1", new = "cut2", by = list("USUBJID")))
+    expect_identical(last("sideview_compare")$by, list("USUBJID"))
+    session$setInputs(compare_request = list(id = "c3", old = "cut1", new = "cut2",
+                                             by = list("USUBJID", "AESEV")))
+    expect_identical(last("sideview_compare")$by, list("USUBJID", "AESEV"))
+    # a refusal is an error reply, and an id R cannot echo gets a toast
+    session$setInputs(compare_request = list(id = "c4", old = "cut1", new = "nope", by = list("USUBJID")))
+    expect_match(last("sideview_compare")$error, "Not in the canvas")
+    n_before <- length(Filter(function(z) identical(z$type, "sideview_compare"), session$userData$custom_messages))
+    session$setInputs(compare_request = list(id = strrep("x", 201), old = "cut1", new = "cut2"))
+    expect_length(Filter(function(z) identical(z$type, "sideview_compare"), session$userData$custom_messages), n_before)
+    expect_match(last("sideview_toast")$text, "request id is missing or longer than 200", fixed = TRUE)
+    # Open: the changed values card has as many rows as the reply says
+    session$setInputs(derive_request = list(id = "d1", op = "compare_changed", inputs = list("cut1", "cut2"),
+                                            args = list(by = list("USUBJID"))))
+    m <- Filter(function(z) identical(z$type, "sideview_card_add"), session$userData$custom_messages)
+    card <- m[[length(m)]]$message$card
+    expect_identical(card$name, "cut2_changed")
+    expect_identical(card$totalRows, r$changed_values)
+  })
+  # no key can be suggested: an empty editable key
+  none <- sv_normalize_cards(list(a = data.frame(x = c(1, 1)), b = data.frame(y = c("p", "q"))))
+  shiny::testServer(sideview_server(none), {
+    session$setInputs(compare_request = list(id = "e1", old = "a", new = "b"))
+    m <- Filter(function(z) identical(z$type, "sideview_compare"), session$userData$custom_messages)
+    r <- m[[length(m)]]$message
+    expect_identical(r$error, "Pick the key columns.")
+    expect_identical(r$by, list())
+    expect_match(as.character(shiny:::toJSON(r)), "\"by\":[]", fixed = TRUE)
+  })
+})
+
+test_that("compare_request with no compared column sends per_column as {} and compared as []", {
+  cards <- sv_normalize_cards(list(k1 = data.frame(id = 1:3), k2 = data.frame(id = 2:4)))
+  shiny::testServer(sideview_server(cards), {
+    session$setInputs(compare_request = list(id = "n1", old = "k1", new = "k2", by = list("id")))
+    m <- Filter(function(z) identical(z$type, "sideview_compare"), session$userData$custom_messages)
+    r <- m[[length(m)]]$message
+    expect_null(r$error)
+    expect_equal(c(r$added, r$removed, r$changed, r$same), c(1L, 1L, 0L, 2L))
+    expect_identical(as.character(shiny:::toJSON(r$per_column)), "{}")
+    expect_identical(as.character(shiny:::toJSON(r$compared)), "[]")
+    json <- as.character(shiny:::toJSON(r))
+    expect_match(json, "\"per_column\":{}", fixed = TRUE)
+    expect_match(json, "\"compared\":[]", fixed = TRUE)
+  })
+})
+
+compare_store <- function(tags = NULL) {
+  c1 <- data.frame(id = 1:4, sev = c("MILD", "MILD", "SEVERE", "MILD"), stringsAsFactors = FALSE)
+  attr(c1$sev, "label") <- "Severity"
+  c2 <- data.frame(id = 2:5, sev = c("MILD", "MODERATE", "SEVERE", "MILD"), stringsAsFactors = FALSE)
+  attr(c2$sev, "label") <- "Severity 2"
+  cards <- list(sv_normalize(c1, name = "cut1"), sv_normalize(c2, name = "cut2"))
+  for (i in seq_along(tags)) cards[[i]]$cdisc <- if (is.na(tags[i])) NULL else list(domain = tags[i])
+  sv_card_store(cards)
+}
+
+test_that("compare derive cards: names, rows, tags, args", {
+  store <- compare_store(c("AE", "AE"))
+  req <- function(op) list(op = op, inputs = list("cut1", "cut2"), args = list(by = list("id")))
+  rem <- sv_derive_card(req("compare_removed"), store, NULL)
+  add <- sv_derive_card(req("compare_added"), store, NULL)
+  chg <- sv_derive_card(req("compare_changed"), store, NULL)
+  expect_equal(c(rem$name, add$name, chg$name), c("cut1_removed", "cut2_added", "cut2_changed"))
+  s <- sv_compare(data.frame(id = 1:4, sev = c("MILD", "MILD", "SEVERE", "MILD")),
+                  data.frame(id = 2:5, sev = c("MILD", "MODERATE", "SEVERE", "MILD")), by = "id")
+  expect_equal(c(rem$dims[1], add$dims[1], chg$dims[1]), c(s$n_removed, s$n_added, nrow(s$changed)))
+  expect_equal(chg$dims[1], 2L)
+  expect_equal(rem$derived$args$plan$by, "id")
+  expect_equal(add$derived$args$by, "id")
+  expect_equal(c(rem$cdisc$domain, add$cdisc$domain), c("AE", "AE"))
+  expect_null(chg$cdisc)
+  expect_equal(rem$col_labels[["sev"]], "Severity")
+  expect_equal(add$col_labels[["sev"]], "Severity 2")
+  expect_null(chg$col_labels)
+  # untagged cards give untagged cards; the tag of each side is its own
+  expect_null(sv_derive_card(req("compare_added"), compare_store(c("AE", NA)), NULL)$cdisc)
+  expect_equal(sv_derive_card(req("compare_removed"), compare_store(c("AE", NA)), NULL)$cdisc$domain, "AE")
+  # a second open of the same card is named _2, and a rebuild from the stored recipe gives the same rows
+  store$add(add)
+  again <- sv_derive_card(req("compare_added"), store, NULL)
+  expect_equal(again$name, "cut2_added_2")
+  expect_equal(sv_derive_card(sv_derive_request_of(chg), compare_store(), NULL)$data, chg$data)
+  expect_equal(sv_derive_rows("compare_added", list(cut1 = compare_store()$get("cut1")$data,
+                                                    cut2 = compare_store()$get("cut2")$data),
+                              list(by = "id"))$id, 5L)
+})
+
+test_that("compare requests are cleaned", {
+  store <- compare_store()
+  before <- store$names()
+  req <- function(inputs = c("cut1", "cut2"), by = list("id"), args = NULL) {
+    list(op = "compare_added", inputs = as.list(inputs), args = c(list(by = by), args))
+  }
+  expect_error(sv_derive_clean(req(by = list()), store), "Pick the key columns.")
+  expect_error(sv_derive_clean(req(by = list("nope")), store), "Not in cut1: nope")
+  expect_error(sv_derive_clean(req(inputs = c("cut1", "cut1")), store), "Pick two different tables.")
+  expect_error(sv_derive_clean(req(inputs = c("cut1", "gone")), store), "Not in the canvas: gone")
+  expect_error(sv_derive_clean(req(by = as.list(paste0("k", 1:21))), store), "at most 20 key pairs")
+  expect_error(sv_derive_clean(req(by = list(1)), store), "Pick the key columns.")
+  expect_error(sv_derive_clean(req(by = list(list("id", "sev"))), store), "Pick the key columns.")
+  expect_error(sv_derive_clean(list(op = "compare_added", inputs = list("cut1")), store), "two input tables")
+  expect_error(sv_compare_clean("cut1", "cut2", "id", store, card_full = function(cd) FALSE)$by, NA)
+  expect_equal(store$names(), before)
+  # only `by` is read from args
+  ok <- sv_derive_clean(req(args = list(junk = 1, plan = "x", side = "y")), store)
+  expect_equal(names(ok$args), c("by", "plan"))
+  expect_equal(ok$args$by, "id")
+  expect_null(sv_derive_validate(req(), store))
+  expect_match(sv_derive_validate(req(by = list()), store), "Pick the key")
+  cl <- sv_compare_clean("cut1", "cut2", c("id", "id"), store)
+  expect_equal(names(cl), c("inputs", "cards", "by", "plan"))
+  expect_equal(cl$by, "id")
+})
+
+# A saved workspace (as the browser writes it) whose pipeline holds `steps`
+compare_state <- function(steps) {
+  sv_state_from_json(jsonlite::toJSON(
+    list(version = "0.3.0", cards = list(), pipeline = list(steps = steps)),
+    auto_unbox = TRUE, null = "null", na = "null", digits = NA))
+}
+
+compare_step <- function(op, table, plan = NULL) {
+  list(kind = "derive", key = paste0("k_", op), table = table, op = op, inputs = list("cut1", "cut2"),
+       args = c(list(by = list("id")), if (!is.null(plan)) list(plan = plan)))
+}
+
+test_that("state refresh refits compare args", {
+  store <- compare_store()
+  req <- function(op) list(op = op, inputs = list("cut1", "cut2"), args = list(by = list("id")))
+  cards <- c(store$all(), list(sv_derive_card(req("compare_changed"), store, NULL),
+                               sv_derive_card(req("compare_added"), store, NULL)))
+  # a plan saved when the data were other: no compared column, a key that is gone
+  stale <- list(by = "old_id", keys = list(), compared = list(), type_changed = list(),
+                only_old = list(), only_new = list(), lazy = FALSE)
+  st <- compare_state(list(compare_step("compare_changed", "cut2_changed", stale),
+                           compare_step("compare_added", "cut2_added", stale),
+                           compare_step("compare_removed", "cut1_removed", stale)))
+  out <- sv_derive_state_refresh(st, cards)
+  fresh <- cards[[3]]$derived$args
+  expect_identical(out$pipeline$steps[[1]]$args, fresh)
+  expect_equal(out$pipeline$steps[[1]]$args$plan$by, "id")
+  expect_equal(out$pipeline$steps[[1]]$args$plan$compared[[1]]$name, "sev")
+  expect_identical(out$pipeline$steps[[2]]$args, cards[[4]]$derived$args)
+  # a step with no card of its name keeps what was saved
+  expect_equal(out$pipeline$steps[[3]]$args$plan$by, "old_id")
+  # a card of the step's name made by another op does not refit it
+  wrong <- cards[[3]]
+  wrong$name <- "cut1_removed"
+  wrong$derived$op <- "compare_added"
+  out2 <- sv_derive_state_refresh(st, c(cards, list(wrong)))
+  expect_equal(out2$pipeline$steps[[3]]$args$plan$by, "old_id")
+})
+
+test_that("a saved state rebuilds the compare cards", {
+  store <- compare_store()
+  req <- function(op) list(op = op, inputs = list("cut1", "cut2"), args = list(by = list("id")))
+  before <- lapply(c("compare_added", "compare_removed", "compare_changed"), function(op) {
+    sv_derive_card(req(op), store, NULL)
+  })
+  steps <- lapply(before, function(cd) {
+    list(kind = "derive", key = paste0("k_", cd$derived$op), table = cd$name, op = cd$derived$op,
+         inputs = as.list(cd$derived$inputs), args = cd$derived$args)
+  })
+  st <- compare_state(steps)
+  out <- sv_derive_from_state(compare_store()$all(), st)
+  expect_length(out, 5L)
+  built <- unname(out[3:5])
+  expect_identical(vapply(built, function(cd) cd$name, ""), vapply(before, function(cd) cd$name, ""))
+  expect_identical(lapply(built, function(cd) cd$dims), lapply(before, function(cd) cd$dims))
+  expect_identical(lapply(built, function(cd) cd$derived$op), lapply(before, function(cd) cd$derived$op))
+  for (i in 1:3) expect_equal(built[[i]]$data, before[[i]]$data, ignore_attr = TRUE)
+})

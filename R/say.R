@@ -330,3 +330,52 @@ sv_say_stack_open <- function(plan) {
   paste0("Open stacked card (", sv_say_num(plan$n_rows), if (plan$n_rows == 1) " row" else " rows",
          if (n$na > 0) paste0("; ", sv_say_n_values(n$na, "becomes NA", "become NA")), ")")
 }
+
+# ---- compare (D3) ----
+
+# D2's type names as the compare text writes them: "Date" and "date-time".
+sv_say_compare_type <- function(t) switch(t, date = "Date", dttm = "date-time", t)
+
+# The summary lines of a compare (spec 7.2). `s` is the summary of sv_compare_rows() with the table names.
+sv_say_compare_text <- function(s) {
+  none <- function(x) if (length(x)) paste(x, collapse = ", ") else "none"
+  tc <- vapply(s$type_changed, function(t) {
+    sprintf("%s (%s -> %s)", t$column, sv_say_compare_type(t$old), sv_say_compare_type(t$new))
+  }, "")
+  out <- c(
+    sprintf("%s -> %s, key %s", s$old_name, s$new_name, paste(s$by, collapse = " + ")),
+    paste0("Rows:    ", sv_say_num(s$n_old), " -> ", sv_say_num(s$n_new), "   added ", sv_say_num(s$added),
+           " \u00b7 removed ", sv_say_num(s$removed), " \u00b7 changed ", sv_say_num(s$changed),
+           " \u00b7 same ", sv_say_num(s$same)),
+    paste0("Columns: added ", none(s$only_new), " \u00b7 removed ", none(s$only_old),
+           " \u00b7 type changed ", none(tc)))
+  pc <- unlist(s$per_column)
+  pc <- pc[pc > 0]
+  pc <- pc[order(-pc)]
+  out <- c(out, paste0("Changed values by column:  ",
+                       if (length(pc)) paste(sprintf("%s %s", names(pc), vapply(pc, sv_say_num, "")), collapse = " \u00b7 ")
+                       else "none"))
+  if (s$repeated_keys > 0) {
+    rows <- function(n) paste0(sv_say_num(n), if (n == 1) " row" else " rows")
+    out <- c(out, paste0("Warnings: ", sv_say_num(s$repeated_keys),
+                         if (s$repeated_keys == 1) " key repeats: " else " keys repeat: ",
+                         rows(s$repeated_rows_old), " in old, ", sv_say_num(s$repeated_rows_new),
+                         " in new, not compared"))
+    # up to 5 sample keys, a key of several columns joined with " + " (NA as sv_say_value() says it)
+    sample <- vapply(s$repeated_sample, function(k) {
+      paste(vapply(unname(k), sv_say_value, ""), collapse = " + ")
+    }, "")
+    if (length(sample)) {
+      out[length(out)] <- paste0(out[length(out)], " (e.g. ", paste(sample, collapse = ", "), ")")
+    }
+  }
+  out
+}
+
+# The labels of the three Open buttons of a compare.
+sv_say_compare_open <- function(s) {
+  nv <- s$changed_values
+  list(added = paste0("Open added rows (", sv_say_num(s$added), ")"),
+       removed = paste0("Open removed rows (", sv_say_num(s$removed), ")"),
+       changed = paste0("Open changed values (", sv_say_num(nv), if (nv == 1) " row)" else " rows)"))
+}

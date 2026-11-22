@@ -1201,6 +1201,56 @@ test_that("forged stack requests are refused", {
   })
 })
 
+test_that("forged compare requests are refused", {
+  c1 <- data.frame(id = 1:3, sev = c("a", "b", "c"), stringsAsFactors = FALSE)
+  c2 <- data.frame(id = 2:4, sev = c("a", "x", "c"), stringsAsFactors = FALSE)
+  shiny::testServer(sideviewServer, args = list(id = "cv", cards = list(cut1 = c1, cut2 = c2)), {
+    px <- session$getReturned()
+    session$setInputs(sideview_ready = list(nonce = 1))
+    before <- px$ctl$store$names()
+    n_all <- length(session$userData$custom_messages)
+    i <- 0L
+    forged <- list(
+      list(old = "Sys.getenv", new = "cut2", by = list("id")),
+      list(old = "cut1", new = "nope", by = list("id")),
+      list(old = "cut1", new = "cut1", by = list("id")),
+      list(old = "cut1", new = "cut2", by = list("x; system('id')")),
+      list(old = "cut1", new = "cut2", by = as.list(paste0("k", 1:10000))),
+      list(old = "cut1", new = "cut2", by = list(list("id", "sev"))),
+      list(old = list("cut1"), new = list("cut2", "cut1"), by = list("id")))
+    for (req in forged) {
+      i <- i + 1L
+      req$id <- paste0("bad", i)
+      session$setInputs(compare_request = req)
+      all <- session$userData$custom_messages
+      expect_length(all, n_all + 1L)
+      n_all <- length(all)
+      r <- all[[length(all)]]
+      expect_identical(r$type, "sideview_compare")
+      expect_identical(r$message$id, req$id)
+      expect_true(is.character(r$message$error) && nzchar(r$message$error))
+      expect_null(r$message$n_old)
+      expect_identical(r$message$ns, session$ns(""))
+      expect_identical(px$ctl$store$names(), before)
+      # the same inputs through Open are refused too, and add nothing
+      session$setInputs(derive_request = list(id = paste0("d", i), op = "compare_added",
+                                              inputs = list(req$old, req$new), args = list(by = req$by)))
+      all <- session$userData$custom_messages
+      expect_length(all, n_all + 1L)
+      n_all <- length(all)
+      expect_identical(all[[length(all)]]$type, "sideview_derive_result")
+      expect_true(nzchar(all[[length(all)]]$message$error))
+      expect_identical(px$ctl$store$names(), before)
+    }
+    # and a good one still answers
+    session$setInputs(compare_request = list(id = "ok", old = "cut1", new = "cut2", by = list("id")))
+    all <- session$userData$custom_messages
+    expect_null(all[[length(all)]]$message$error)
+    expect_identical(all[[length(all)]]$message$added, 1L)
+    expect_identical(px$ctl$store$names(), before)
+  })
+})
+
 test_that("a restored stack step takes the plan R makes from the current data", {
   w1 <- data.frame(AGE = c(34, 51), RACE = c("a", "b"), stringsAsFactors = FALSE)
   w2 <- data.frame(AGE = c("29", "x", "40"), RACE = c("c", "d", "e"), stringsAsFactors = FALSE)

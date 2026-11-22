@@ -2056,6 +2056,13 @@ sv_lazy_derived_tbl <- function(source, con_env, key = NULL) {
     if (!is.null(key)) con_env$tbls[[key]] <- tbl
     return(tbl)
   }
+  if (source$op %in% c("compare_added", "compare_removed", "compare_changed")) {
+    # old and new, read as sv_compare_clean() read them, compared on one duckdb connection (see sv_lazy_compare())
+    tabs <- sv_stack_card_tables(unname(inputs), names(inputs), con_env)
+    tbl <- sv_lazy_compare(tabs[[1L]], tabs[[2L]], source$args$plan, con_env, source$op)
+    if (!is.null(key)) con_env$tbls[[key]] <- tbl
+    return(tbl)
+  }
   tbls <- lapply(inputs, function(card) {
     if (sv_card_is_lazy(card)) sv_lazy_tbl(card$source, con_env, card$id) else card$data
   })
@@ -2083,20 +2090,21 @@ sv_lazy_derived_tbl <- function(source, con_env, key = NULL) {
 #' it also runs here if placing a later table fails.
 #' @param tables A named list of data frames, duckdb tbls or Arrow objects.
 #' @param con_env An environment from `sv_lazy_env()`.
+#' @param what What the tables are placed for, as the messages name it: `"stack"` or `"compare"`.
 #' @return `list(tbls, con, cleanup)`: the tbls (same names), the shared connection, an undo function.
 #' @noRd
-sv_lazy_place_n <- function(tables, con_env) {
+sv_lazy_place_n <- function(tables, con_env, what = "stack") {
   origin <- vapply(tables, sv_lazy_origin, "")
   for (src in tables) {
     if (inherits(src, "tbl_lazy") && !inherits(src, "tbl_duckdb_connection")) {
-      rlang::abort("The stack needs duckdb tables; this table is on another database.",
+      rlang::abort(sprintf("The %s needs duckdb tables; this table is on another database.", what),
                    class = "sv_lazy_not_duckdb")
     }
   }
   duck <- which(origin == "duckdb")
   cons <- lapply(tables[duck], dbplyr::remote_con)
   if (length(cons) > 1L && !all(vapply(cons[-1L], function(cn) identical(cn, cons[[1L]]), NA))) {
-    rlang::abort("These tables are on different duckdb connections; stack unavailable.",
+    rlang::abort(sprintf("These tables are on different duckdb connections; %s unavailable.", what),
                  class = "sv_lazy_cross_con")
   }
   con <- if (length(duck)) cons[[1L]] else sv_lazy_con(con_env)
@@ -2410,4 +2418,266 @@ sv_lazy_stack <- function(tables, plan, con_env) {
   attr(out, "sv_cleanup") <- placed$cleanup
   ok <- TRUE
   out
+}
+
+# ---- D3: comparing two versions of a lazy table (duckdb / Arrow) by key ----
+
+#' The code that puts one input of a lazy stack or compare on the shared duckdb connection
+#'
+#' A duckdb input stays as it is; an Arrow input is moved with `to_duckdb()` (`compute()` makes a real table on a
+#' duckdb input's connection, as a view can be collected before the query runs); a data frame is copied in with
+#' `copy_to()` under `name` or, with no duckdb input, made an Arrow table first.
+#'
+#' `keep_views = TRUE` (the compare) writes `auto_disconnect = FALSE` where an Arrow table is registered on arrow's
+#' own duckdb connection: arrow ties the view to the tbl's `src`, and a join keeps only x's, so y's view would be
+#' unregistered when R collects the garbage before the query runs.
+#' @param ref The input's R reference.
+#' @param kind `NA` (a data frame), `"duckdb"` or `"arrow"`.
+#' @param duck_ref The reference of the first duckdb input, or `NULL`.
+#' @param name The `copy_to()` table name.
+#' @param keep_views Keep the Arrow views registered (see above).
+#' @noRd
+sv_lazy_place_code <- function(ref, kind, duck_ref, name, keep_views = FALSE) {
+  keep <- if (keep_views) ", auto_disconnect = FALSE" else ""
+  if (is.na(kind)) {
+    if (is.null(duck_ref)) return(paste0("arrow::to_duckdb(arrow::arrow_table(", ref, ")", keep, ")"))
+    return(paste0("dplyr::copy_to(dbplyr::remote_con(", duck_ref, "), ", ref, ", name = ",
+                  encodeString(name, quote = "\""), ", overwrite = TRUE)"))
+  }
+  if (identical(kind, "arrow")) {
+    if (is.null(duck_ref)) return(paste0("arrow::to_duckdb(", ref, keep, ")"))
+    return(paste0("dplyr::compute(arrow::to_duckdb(", ref, ", con = dbplyr::remote_con(", duck_ref, ")))"))
+  }
+  ref
+}
+
+#' The text of a column's values in a lazy compare, as an expression
+#'
+#' D2's lazy cast to text (`sv_stack_lazy_cast()`), with a NaN as `NA` (the cast would write `"NaN"`): the lazy twin
+#' of `sv_compare_text()`. A date-time is written in `zone` (else the session's).
+#' @param cn The column name as the table has it.
+#' @param from Its type name.
+#' @param zone Its zone, or `NA` / `NULL`.
+#' @noRd
+sv_compare_lazy_text <- function(cn, from, zone = "") {
+  if (is.null(zone) || isTRUE(is.na(zone))) zone <- ""
+  e <- sv_stack_lazy_cast(cn, from, "chr", zone)
+  if (identical(from, "num")) e <- rlang::expr(dplyr::if_else(isnan(!!rlang::sym(cn)), NA_character_, !!e))
+  e
+}
+
+# A missing value of a column, lazily: NA, or NaN for a double (duckdb says NaN is not NULL)
+sv_compare_lazy_missing <- function(cn, from) {
+  x <- rlang::sym(cn)
+  if (identical(from, "num")) rlang::expr((is.na(!!x) | isnan(!!x))) else rlang::expr(is.na(!!x))
+}
+
+#' The lazy condition of a changed value (decision 9) for one compared column, as an expression
+#'
+#' The twin of `sv_compare_changed()`: missing in one only, or different; missing in both is the same. A
+#' character-kind column (a factor or text) is compared as text, so an enum and a string agree.
+#' @param cc One entry of the plan's `compared`.
+#' @noRd
+sv_compare_lazy_cond <- function(cc) {
+  an <- paste0(cc$name, ".old")
+  bn <- paste0(cc$name, ".new")
+  ma <- sv_compare_lazy_missing(an, cc$from_old)
+  mb <- sv_compare_lazy_missing(bn, cc$from_new)
+  ca <- rlang::sym(an)
+  cb <- rlang::sym(bn)
+  if (cc$kind %in% "character") {
+    ca <- rlang::call2("as.character", ca)
+    cb <- rlang::call2("as.character", cb)
+  }
+  both <- rlang::call2("(", rlang::call2("&", ma, mb))
+  differ <- rlang::call2("(", rlang::call2("|", rlang::call2("|", ma, mb), rlang::call2("!=", ca, cb)))
+  rlang::call2("&", rlang::call2("!", both), differ)
+}
+
+# The text of every date-time text cast of a lazy compare (the zone's offset tree is long), so the browser writes the
+# same lazy code without rebuilding it: a compared column's `tz_text_old` / `tz_text_new`, and a text key's.
+sv_compare_add_tz_text <- function(plan) {
+  tt <- function(cn, from, zone) {
+    if (!identical(from, "dttm")) return(NA_character_)
+    sv_stack_show(sv_compare_lazy_text(cn, "dttm", zone))
+  }
+  for (k in seq_along(plan$compared)) {
+    cc <- plan$compared[[k]]
+    plan$compared[[k]]$tz_text_old <- tt(paste0(cc$name, ".old"), cc$from_old, cc$zone_old)
+    plan$compared[[k]]$tz_text_new <- tt(paste0(cc$name, ".new"), cc$from_new, cc$zone_new)
+  }
+  for (k in seq_along(plan$keys)) {
+    ky <- plan$keys[[k]]
+    if (!isTRUE(ky$text)) next
+    plan$keys[[k]]$tz_text_old <- tt(ky$name, ky$from_old, ky$zone_old)
+    plan$keys[[k]]$tz_text_new <- tt(ky$name, ky$from_new, ky$zone_new)
+  }
+  plan
+}
+
+#' The plan of a compare with a lazy version
+#'
+#' The twin of `sv_compare_plan()` for any mix of a data frame, a duckdb table and an Arrow table: the same return
+#' value, with `lazy = TRUE` and the `tz_text_*` of every date-time text cast. Types, zones and factor levels come
+#' from 0 rows of each lazy input, placed on one duckdb connection (`sv_lazy_place_n()`). Nothing is collected.
+#' @param con_env An environment from `sv_lazy_env()`; when `NULL` a private connection is opened for this call.
+#' @noRd
+sv_lazy_compare_plan <- function(old, new, by, con_env = NULL, old_name = "old", new_name = "new") {
+  by <- sv_compare_by(by, old_name, new_name)
+  if (is.null(con_env)) {
+    con_env <- sv_lazy_env()
+    on.exit(sv_lazy_close(con_env), add = TRUE)
+  }
+  tables <- list(old = old, new = new)
+  is_lazy <- vapply(tables, sv_is_lazy_input, NA)
+  placed <- sv_lazy_place_n(tables[is_lazy], con_env, what = "compare")
+  on.exit(placed$cleanup(), add = TRUE, after = FALSE)
+  samples <- lapply(names(tables), function(nm) {
+    if (is_lazy[[nm]]) sv_lazy_stack_sample(tables[[nm]], placed$tbls[[nm]]) else sv_stack_zero_df(tables[[nm]])
+  })
+  plan <- sv_compare_plan_core(samples[[1L]], samples[[2L]], by, old_name, new_name)
+  plan$lazy <- TRUE
+  sv_compare_add_tz_text(plan)
+}
+
+#' A lazy compare: the summary from queries, or one card as a duckdb tbl
+#'
+#' The twin of `sv_compare_rows()`. Both versions are placed on one duckdb connection (`sv_lazy_place_n()`), given
+#' their text key columns, kept to the keys that do not repeat (`n() == 1` by key) and joined with
+#' `na_matches = "na"`: the steps `sv_compare_code()` writes. With `op = NULL` the summary has exactly the fields of
+#' `sv_compare_rows()$summary`, every count from a query; only the up to 5 repeated keys of the sample are read.
+#' With an op the card is returned as a duckdb tbl (in no order) carrying `sv_tz`, `sv_factors` and `sv_cleanup`.
+#' Nothing is collected.
+#' @param old,new Data frames, duckdb tbls or Arrow objects.
+#' @param plan From `sv_compare_plan()`.
+#' @param con_env An environment from `sv_lazy_env()`.
+#' @param op `NULL`, `"compare_added"`, `"compare_removed"` or `"compare_changed"`.
+#' @noRd
+sv_lazy_compare <- function(old, new, plan, con_env, op = NULL) {
+  if (!is.null(op) && !op %in% c("compare_added", "compare_removed", "compare_changed")) {
+    stop(sprintf("Unknown compare op: %s", op), call. = FALSE)
+  }
+  tables <- list(old = old, new = new)
+  placed <- sv_lazy_place_n(tables, con_env, what = "compare")
+  keep <- FALSE
+  on.exit(if (!keep) placed$cleanup(), add = TRUE)
+  by <- plan$by
+  jb <- by
+  for (j in seq_along(plan$keys)) if (isTRUE(plan$keys[[j]]$text)) jb[j] <- paste0(".sv_k", j)
+  extra <- jb[jb != by]
+  side <- function(i) {
+    sets <- list()
+    for (j in seq_along(plan$keys)) {
+      k <- plan$keys[[j]]
+      if (!isTRUE(k$text)) next
+      sets[[jb[j]]] <- if (i == 1L) {
+        sv_compare_lazy_text(k$name, k$from_old, k$zone_old)
+      } else {
+        sv_compare_lazy_text(k$name, k$from_new, k$zone_new)
+      }
+    }
+    if (length(sets)) dplyr::mutate(placed$tbls[[i]], !!!sets) else placed$tbls[[i]]
+  }
+  o <- side(1L)
+  n <- side(2L)
+  uniq <- function(x) dplyr::filter(x, dplyr::n() == 1L, .by = dplyr::all_of(jb))
+  drop <- function(x) if (length(extra)) dplyr::select(x, -dplyr::all_of(extra)) else x
+  added <- function() drop(dplyr::anti_join(uniq(n), o, by = jb, na_matches = "na"))
+  removed <- function() drop(dplyr::anti_join(uniq(o), n, by = jb, na_matches = "na"))
+  both <- function() dplyr::inner_join(uniq(o), uniq(n), by = jb, suffix = c(".old", ".new"), na_matches = "na")
+  conds <- lapply(plan$compared, sv_compare_lazy_cond)
+  nms <- vapply(plan$compared, function(cc) cc$name, "")
+
+  # a card carries the zones and factor levels of the side its columns come from
+  finish <- function(out, from, cols_from = NULL) {
+    src <- tables[[from]]
+    tz <- attr(placed$tbls[[from]], "sv_tz", exact = TRUE)
+    factors <- attr(src, "sv_factors", exact = TRUE)
+    if (is.null(factors) && identical(sv_lazy_origin(src), "arrow")) factors <- sv_lazy_factors(src)
+    cols <- cols_from %||% as.character(sv_lazy_names(out))
+    tz <- tz[intersect(names(tz), cols)]
+    factors <- factors[intersect(names(factors), cols)]
+    if (length(tz)) attr(out, "sv_tz") <- tz
+    if (length(factors)) attr(out, "sv_factors") <- factors
+    attr(out, "sv_cleanup") <- placed$cleanup
+    keep <<- TRUE
+    out
+  }
+  if (identical(op, "compare_added")) return(finish(added(), "new"))
+  if (identical(op, "compare_removed")) return(finish(removed(), "old"))
+  if (identical(op, "compare_changed")) {
+    is_text <- vapply(plan$keys, function(k) isTRUE(k$text), NA)
+    keys <- lapply(seq_along(by), function(j) rlang::sym(if (is_text[j]) paste0(by[j], ".new") else by[j]))
+    names(keys) <- by
+    b <- both()
+    pieces <- if (!length(nms)) {
+      na <- sv_stack_lazy_na("chr")
+      list(dplyr::transmute(dplyr::filter(b, FALSE), !!!keys, column = !!na, old = !!na, new = !!na))
+    } else {
+      lapply(seq_along(nms), function(k) {
+        cc <- plan$compared[[k]]
+        dplyr::transmute(dplyr::filter(b, !!conds[[k]]), !!!keys, column = !!cc$name,
+                         old = !!sv_compare_lazy_text(paste0(cc$name, ".old"), cc$from_old, cc$zone_old),
+                         new = !!sv_compare_lazy_text(paste0(cc$name, ".new"), cc$from_new, cc$zone_new))
+      })
+    }
+    out <- Reduce(function(a, b) dplyr::union_all(a, b), pieces, right = TRUE)
+    # a plain key holds old's values (the join keeps x's key); a text key is new's text and has no zone or levels
+    return(finish(out, "old", by[!is_text]))
+  }
+
+  # the summary: one query per count; nothing is collected but the counts and up to 5 repeated keys
+  count <- function(x) {
+    v <- dplyr::collect(dplyr::summarise(x, .sv_n = dplyr::n()))$.sv_n
+    sv_lazy_count(if (length(v) && !is.na(v[1L])) v[1L] else 0)
+  }
+  one <- function(cond) rlang::expr(sum(dplyr::if_else(!!cond, 1L, 0L), na.rm = TRUE))
+  sums <- list(.sv_n = rlang::expr(dplyr::n()))
+  if (length(conds)) sums$.sv_ch <- one(Reduce(function(a, b) rlang::call2("|", a, b), conds))
+  for (k in seq_along(conds)) sums[[paste0(".sv_c", k)]] <- one(conds[[k]])
+  res <- dplyr::collect(dplyr::summarise(both(), !!!sums))
+  num <- function(nm) {
+    v <- res[[nm]]
+    if (is.null(v) || !length(v) || is.na(v[1L])) 0L else sv_lazy_count(v[1L])
+  }
+  n_both <- num(".sv_n")
+  n_changed <- if (length(conds)) num(".sv_ch") else 0L
+  per_column <- stats::setNames(vapply(seq_along(conds), function(k) as.integer(num(paste0(".sv_c", k))), 1L), nms)
+
+  # keys that repeat in either version
+  dups <- function(x) {
+    dplyr::distinct(dplyr::filter(dplyr::select(x, dplyr::all_of(jb)), dplyr::n() > 1L, .by = dplyr::all_of(jb)))
+  }
+  rep_keys <- dplyr::union(dups(o), dups(n))
+  rows_in <- function(x) count(dplyr::semi_join(x, rep_keys, by = jb, na_matches = "na"))
+  n_rep <- count(rep_keys)
+  sample <- list()
+  if (n_rep > 0) {
+    # the first 5 in sorted order, as the in-memory twin: duckdb sorts text by bytes and NULL last; a factor key
+    # (a duckdb ENUM) sorts by its text, not by its level order
+    ord <- lapply(seq_along(jb), function(j) {
+      k <- plan$keys[[j]]
+      s <- rlang::sym(jb[j])
+      if (!isTRUE(k$text) && any(c(k$from_old, k$from_new) %in% "fct")) rlang::expr(as.character(!!s)) else s
+    })
+    got <- as.data.frame(dplyr::collect(utils::head(dplyr::arrange(rep_keys, !!!ord), 5L)),
+                         stringsAsFactors = FALSE)
+    zones <- attr(placed$tbls$old, "sv_tz", exact = TRUE)
+    sample <- lapply(seq_len(nrow(got)), function(r) {
+      stats::setNames(lapply(seq_along(by), function(j) {
+        v <- got[[jb[j]]][r]
+        if (is.factor(v)) v <- as.character(v)
+        if (inherits(v, "POSIXct")) attr(v, "tzone") <- sv_lazy_zone_for(zones, by[j])
+        v
+      }), by)
+    })
+  }
+  list(
+    by = by, n_old = count(placed$tbls$old), n_new = count(placed$tbls$new),
+    added = count(added()), removed = count(removed()), changed = n_changed,
+    same = n_both - n_changed,
+    repeated_keys = n_rep, repeated_rows_old = rows_in(o), repeated_rows_new = rows_in(n),
+    repeated_sample = sample,
+    compared = nms, type_changed = plan$type_changed, only_old = plan$only_old, only_new = plan$only_new,
+    per_column = per_column, changed_values = sum(per_column))
 }

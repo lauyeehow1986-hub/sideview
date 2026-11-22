@@ -4144,3 +4144,175 @@ html.sv-standalone body {
   color: var(--sv-text);
   background: var(--sv-surface-secondary);
 }
+
+/* Compare tab: pick an old and a new version, check them by key, open the rows */
+.sideview-container .sideview-compare {
+  min-width: 0;
+}
+
+.sideview-container .sideview-compare-pick {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.sideview-container .sideview-compare-keys {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--sv-border-light);
+  border-radius: var(--sv-radius-sm);
+  min-width: 0;
+}
+
+.sideview-container .sideview-compare-keys legend {
+  padding: 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sv-text-muted);
+}
+
+.sideview-container .sideview-compare-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sideview-container .sideview-compare-col label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-sm);
+  background: var(--sv-surface);
+  color: var(--sv-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sideview-container .sideview-compare-col label:has(input:checked) {
+  background: var(--sv-primary-subtle);
+  border-color: var(--sv-primary);
+}
+
+.sideview-container .sideview-compare-col label:has(input:focus-visible) {
+  outline: 2px solid var(--sv-focus-ring);
+  outline-offset: 1px;
+}
+
+.sideview-container .sideview-compare-col span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sideview-container .sideview-compare-actions {
+  justify-content: flex-start;
+}
+
+.sideview-container .sideview-compare-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sideview-container .sideview-compare-error {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--sv-danger-border);
+  border-radius: var(--sv-radius-sm);
+  background: var(--sv-danger-subtle);
+  color: var(--sv-danger-text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.sideview-container .sideview-compare-text {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--sv-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sideview-container .sideview-compare-scroll,
+.sideview-container .sideview-compare-code {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--sv-border-light);
+  border-radius: var(--sv-radius-sm);
+}
+
+.sideview-container .sideview-compare-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sideview-container .sideview-compare-table caption {
+  padding: 4px 6px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sv-text-muted);
+}
+
+.sideview-container .sideview-compare-table th,
+.sideview-container .sideview-compare-table td {
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--sv-border-light);
+  text-align: left;
+  vertical-align: top;
+}
+
+.sideview-container .sideview-compare-table thead th {
+  background: var(--sv-th-bg);
+  color: var(--sv-text);
+  font-weight: 600;
+}
+
+.sideview-container .sideview-compare-table tbody th {
+  font-weight: 600;
+  color: var(--sv-text);
+  white-space: nowrap;
+}
+
+.sideview-container .sideview-compare-offers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sideview-container .sideview-compare-offers .sideview-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.sideview-container .sideview-compare-details {
+  font-size: 12px;
+  color: var(--sv-text);
+}
+
+.sideview-container .sideview-compare-details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.sideview-container .sideview-compare-details .sideview-compare-code {
+  margin-top: 6px;
+}
+
+.sideview-container .sideview-compare-code pre {
+  margin: 0;
+  padding: 6px 8px;
+  font-family: var(--sv-font-mono);
+  font-size: 11px;
+  color: var(--sv-text);
+  background: var(--sv-surface-secondary);
+}

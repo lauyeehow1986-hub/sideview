@@ -91,6 +91,8 @@ fct_recode, or auto-cleanup rules.
   : Check what stacking tables would do
 - [`sv_stack()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_stack.md)
   : Stack tables
+- [`sv_compare()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_compare.md)
+  : Compare two versions of a table by key
 - [`sv_code_recode()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_code_recode.md)
   : Generate tidyverse Code for Categorical Recoding and Discrepancy
   Crosswalks

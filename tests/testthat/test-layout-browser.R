@@ -425,7 +425,7 @@ test_that("each drawer tab shows only its own pane and builders render forms", {
     return { tabs: tabs, panes: out };
   })()"))
   expect_setequal(unlist(r$tabs), c("pipeline", "filter", "arrange", "mutate", "recode",
-                                    "summarise", "stack", "inspect", "discrepancy", "chat"))
+                                    "summarise", "stack", "compare", "inspect", "discrepancy", "chat"))
   for (t in unlist(r$tabs)) {
     p <- r$panes[[t]]
     expect_length(p$shown, 1)
@@ -3430,4 +3430,156 @@ test_that("the saved widget has no Stack tab, and a stack step opens disabled wi
   expect_true(sv_wait_js(b, "/Derived tables are not shown/.test(document.querySelector('.sideview-toast-stack').textContent)", timeout = 15))
   expect_equal(sv_js(b, "document.querySelectorAll('.sideview-card[data-card-name=wave1_stacked]').length"), 0)
   expect_equal(sv_js(b, "document.querySelectorAll('[data-tab=stack]').length"), 0)
+})
+
+
+# ---- the Compare drawer tab (D3, Task 6) ----
+
+test_that("Compare tab: pick, check, open", {
+  skip_if_no_browser()
+  app <- sv_start_app(sv_cmp_app)
+  b <- sv_open_page(app$url, 1400, 900)
+  withr::defer(try(b$close(), silent = TRUE))
+  withr::defer(try(app$proc$kill(), silent = TRUE))
+  expect_true(attr(b, "sv_ready"))
+  sv_cmp_open_tab(b)
+  expect_equal(sv_js(b, "document.querySelector('.sideview-drawer-tab[data-tab=compare]').textContent"), "Compare")
+  # the tab follows Stack
+  tabs <- unlist(sv_js(b, "[...document.querySelectorAll('.sideview-drawer-tab')].map(t => t.dataset.tab)"))
+  expect_equal(which(tabs == "compare"), which(tabs == "stack") + 1)
+  # Check waits for two different cards
+  expect_true(sv_js(b, "document.querySelector('[data-compare-action=check]').disabled"))
+  expect_equal(sv_js(b, "document.querySelector('[data-compare-select=old]').labels[0].firstChild.textContent.trim()"), "Old version")
+  expect_equal(sv_js(b, "document.querySelector('[data-compare-select=new]').labels[0].firstChild.textContent.trim()"), "New version")
+  expect_equal(sv_js(b, "document.querySelector('.sideview-compare-keys legend').textContent"), "Key columns")
+  sv_cmp_pick_check(b)
+  ticked <- function() unlist(sv_js(b, "[...document.querySelectorAll('[data-compare-by]')].filter(c => c.checked).map(c => c.getAttribute('data-compare-by'))"))
+  expect_equal(ticked(), c("USUBJID", "AESEQ"))
+  expect_match(sv_cmp_text(b), "added 1 · removed 1", fixed = TRUE)
+  expect_equal(sv_js(b, "document.querySelector('.sideview-compare-table caption').textContent"), "Changed values by column")
+  expect_equal(unlist(sv_js(b, "[...document.querySelectorAll('.sideview-compare-table thead th[scope=col]')].map(t => t.textContent)")),
+               c("Column", "Changed rows"))
+  # the code previews sit in a details
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-compare-result details pre').length"), 3)
+  # untick AESEQ: the key USUBJID repeats, and the text says so
+  before <- sv_cmp_text(b)
+  sv_stk_click(b, "[data-compare-by=AESEQ]")
+  expect_true(sv_wait_js(b, "/repeat/.test([...document.querySelectorAll('.sideview-compare-text li')].map(x => x.textContent).join(' '))", timeout = 60))
+  expect_false(identical(before, sv_cmp_text(b)))
+  expect_equal(ticked(), "USUBJID")
+  # the checkbox that sent the check keeps focus after the reply is drawn
+  expect_true(sv_wait_js(b, "document.activeElement && document.activeElement.getAttribute('data-compare-by') === 'AESEQ'", timeout = 15))
+  # tick it again, and the first text is back (changed 1 tells it from the key-USUBJID reply)
+  sv_stk_click(b, "[data-compare-by=AESEQ]")
+  expect_true(sv_wait_js(b, "/added 1 \\u00b7 removed 1 \u00b7 changed 1/.test([...document.querySelectorAll('.sideview-compare-text li')].map(x => x.textContent).join(' '))", timeout = 60))
+  expect_equal(ticked(), c("USUBJID", "AESEQ"))
+  # the three Open buttons carry R's labels
+  labels <- unlist(sv_js(b, "[...document.querySelectorAll('[data-compare-open]')].map(x => x.textContent.trim())"))
+  expect_equal(labels, c("Open added rows (1)", "Open removed rows (1)", "Open changed values (1 row)"))
+  # Open changed values: the card is new, clear of the others, and its row badge is changed_values
+  n0 <- sv_js(b, "document.querySelectorAll('.sideview-card').length")
+  sv_stk_click(b, "[data-compare-open=changed]")
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-card[data-card-name=cut2_changed]')", timeout = 60))
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-card').length"), n0 + 1)
+  want <- sv_js(b, sprintf("%s._compare.reply.changed_values", sv_cmp_eng))
+  badge <- sv_js(b, "document.querySelector('.sideview-card[data-card-name=cut2_changed] .sideview-badge-dims').textContent")
+  expect_equal(as.integer(sub("[^0-9].*$", "", badge)), want)
+  overlap <- sv_js(b, "(() => { const r = [...document.querySelectorAll('.sideview-card')].map(c => c.getBoundingClientRect()); let n = 0;
+    for (let i = 0; i < r.length; i++) for (let j = i + 1; j < r.length; j++) {
+      const a = r[i], c = r[j]; if (a.left < c.right - 0.5 && c.left < a.right - 0.5 && a.top < c.bottom - 0.5 && c.top < a.bottom - 0.5) n++; }
+    return n; })()")
+  expect_equal(overlap, 0)
+  # the picker follows the new card, and focus is back on the Open button
+  expect_true(sv_wait_js(b, "!!document.querySelector('[data-compare-select=old] option[value=cut2_changed]')", timeout = 15))
+  expect_true(sv_wait_js(b, "(() => { const a = document.activeElement; return !!a && a.getAttribute('data-compare-open') === 'changed'; })()", timeout = 15))
+  # Open again zooms to the card and never makes a second one
+  sv_stk_click(b, "[data-compare-open=changed]")
+  Sys.sleep(1)
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-card[data-card-name^=cut2_changed]').length"), 1)
+  # the pane stays inside the drawer at three sizes
+  for (sz in list(c(1400, 900), c(1024, 700), c(560, 520))) {
+    sv_set_viewport(b, sz[1], sz[2])
+    r <- sv_js(b, "(() => { const p = document.querySelector('[data-pane=compare]'), d = document.querySelector('.sideview-drawer');
+      return { pane: p.scrollWidth - p.clientWidth, drawer: d.scrollWidth - d.clientWidth, right: p.getBoundingClientRect().right - d.getBoundingClientRect().right }; })()")
+    label <- paste(sz, collapse = "x")
+    expect_lte(r$pane, 1, label = paste("pane", label))
+    expect_lte(r$drawer, 1, label = paste("drawer", label))
+    expect_lte(r$right, 1, label = paste("right edge", label))
+  }
+  sv_set_viewport(b, 1400, 900)
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("Compare tab: two compare offers with other keys or ops are not the same card", {
+  skip_if_no_browser()
+  app <- sv_start_app(sv_cmp_app)
+  b <- sv_open_page(app$url, 1400, 900)
+  withr::defer(try(b$close(), silent = TRUE))
+  withr::defer(try(app$proc$kill(), silent = TRUE))
+  sv_cmp_open_tab(b)
+  sv_cmp_pick_check(b)
+  sv_stk_click(b, "[data-compare-open=added]")
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-card[data-card-name=cut2_added]')", timeout = 60))
+  find <- function(op, by) sv_js(b, sprintf("%s.derivedCardFor({op: '%s', inputs: ['cut1', 'cut2'], args: {by: %s}})", sv_cmp_eng, op,
+                                            as.character(jsonlite::toJSON(by))))
+  expect_equal(find("compare_added", c("USUBJID", "AESEQ")), "cut2_added")
+  expect_null(find("compare_added", "USUBJID"))
+  expect_null(find("compare_added", c("AESEQ", "USUBJID")))
+  expect_null(find("compare_removed", c("USUBJID", "AESEQ")))
+  expect_null(find("compare_changed", c("USUBJID", "AESEQ")))
+  # a different key makes its own card, not a zoom to the first
+  sv_stk_click(b, "[data-compare-by=AESEQ]")
+  expect_true(sv_wait_js(b, "/repeat/.test([...document.querySelectorAll('.sideview-compare-text li')].map(x => x.textContent).join(' '))", timeout = 60))
+  sv_stk_click(b, "[data-compare-open=added]")
+  expect_true(sv_wait_js(b, "!!document.querySelector('.sideview-card[data-card-name=cut2_added_2]')", timeout = 60))
+  expect_equal(attr(b, "sv_errors")(), character())
+})
+
+test_that("Compare tab: an error keeps the picker, and a removed card clears its pick", {
+  skip_if_no_browser()
+  app <- sv_start_app(paste0("local({ a <- data.frame(x = 1:2); b <- data.frame(y = 3:4); c <- data.frame(x = 5L);",
+                             "sideview(a, b, c, run = FALSE) })"))
+  b <- sv_open_page(app$url, 1400, 900)
+  withr::defer(try(b$close(), silent = TRUE))
+  withr::defer(try(app$proc$kill(), silent = TRUE))
+  sv_cmp_open_tab(b)
+  for (side in c("old", "new")) {
+    sv_js(b, sprintf("(() => { const s = document.querySelector('[data-compare-select=%s]'); s.value = '%s'; s.dispatchEvent(new Event('change', {bubbles: true})); return true; })()",
+                     side, if (side == "old") "a" else "b"))
+  }
+  sv_stk_click(b, "[data-compare-action=check]")
+  # a and b share no column: R cannot suggest a key, the error shows and the picker stays
+  expect_true(sv_wait_js(b, "!!document.querySelector('[data-compare-result] .sideview-compare-error')", timeout = 60))
+  expect_equal(sv_js(b, "document.querySelector('.sideview-compare-error').textContent"), "Pick the key columns.")
+  expect_equal(sv_js(b, "document.querySelectorAll('[data-compare-select]').length"), 2)
+  sv_js(b, sprintf("%s.removeCard('b'); true", sv_cmp_eng))
+  expect_true(sv_wait_js(b, sprintf("!%s._compare.new", sv_cmp_eng), timeout = 15))
+  expect_equal(sv_js(b, "document.querySelectorAll('[data-compare-result] .sideview-compare-error').length"), 0)
+  expect_true(sv_js(b, "document.querySelector('[data-compare-action=check]').disabled"))
+})
+
+test_that("the saved widget has no Compare tab, and a compare step opens disabled with the derive toast", {
+  skip_if_no_browser()
+  env <- list2env(list(
+    cut1 = data.frame(id = 1:3, v = c(34, 51, 62)),
+    cut2 = data.frame(id = 2:4, v = c(51, 40, 1))))
+  dir <- withr::local_tempdir()
+  file <- file.path(dir, "compare.html")
+  w <- local(sideview_widget(cut1, cut2), envir = env)
+  suppressMessages(save_sideview(w, file, selfcontained = FALSE))
+  url <- paste0("file:///", gsub("\\\\", "/", normalizePath(file)))
+  b <- sv_open_page(url, width = 1400, height = 900,
+                    wait_for = "!!document.querySelector('.sideview-card[data-card-name=\"cut2\"]')")
+  withr::defer(try(b$close(), silent = TRUE))
+  eng <- "document.querySelector('.sideview-container')._sideviewInstance"
+  expect_false(sv_js(b, sprintf("%s.hasR()", eng)))
+  expect_equal(sv_js(b, "document.querySelectorAll('[data-tab=compare], [data-pane=compare], [data-sv-tab=compare]').length"), 0)
+  state <- sv_js(b, sprintf("(() => { const e = %s; e.pipeline.add(SideviewPipeline.deriveStep('cut2_added', 'compare_added', ['cut1', 'cut2'], {by: ['id']}), 'derive');
+    return e.getState(); })()", eng))
+  expect_true(!is.null(state))
+  sv_js(b, sprintf("(() => { const e = %s; e.applyState(%s); return true; })()", eng,
+                   jsonlite::toJSON(state, auto_unbox = TRUE, null = "null")))
+  expect_true(sv_wait_js(b, "/Derived tables are not shown/.test(document.querySelector('.sideview-toast-stack').textContent)", timeout = 15))
+  expect_equal(sv_js(b, "document.querySelectorAll('.sideview-card[data-card-name=cut2_added]').length"), 0)
+  expect_equal(sv_js(b, "document.querySelectorAll('[data-tab=compare]').length"), 0)
 })

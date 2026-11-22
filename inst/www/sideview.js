@@ -3504,6 +3504,7 @@ function sendToShiny(name, value) {
     // a card came or went: the Merge into buttons name their targets on the canvas
     this.refreshSuppButtons();
     this.stackCardsChanged();
+    this.compareCardsChanged();
     if (this.listView) this.listView.syncTables();
     this.reconcileDerived();
   };
@@ -4265,7 +4266,11 @@ function sendToShiny(name, value) {
   // id column (R stores the default id column, source, which a request leaves out).
   function deriveArgsKey(args) {
     args = args || {};
-    var by = asArray(args.by).map(function (p) { return p ? String(p.x) + '\u0001' + String(p.y) : ''; });
+    // a join's pairs are {x, y}; a compare's key is a list of plain column names
+    var by = asArray(args.by).map(function (p) {
+      if (typeof p === 'string') return p;
+      return p ? String(p.x) + '\u0001' + String(p.y) : '';
+    });
     var idCol = args.id_col && String(args.id_col) !== 'source' ? String(args.id_col) : null;
     return JSON.stringify([args.side || null, args.rdomain || null, by, stableJson(args.rule),
       stableJson(asArray(args.fixes).length ? sortedFixes(args.fixes) : null), idCol]);
@@ -4496,6 +4501,9 @@ function sendToShiny(name, value) {
     }
   };
 
+  // the derive ops whose step is written from R's plan, so a card R rebuilt refits its step's args
+  var REFIT_DERIVE_OPS = { stack: 1, compare_added: 1, compare_removed: 1, compare_changed: 1 };
+
   /** A derived card came from R: its derive step (when this browser asked), its saved place, the announcement. */
   SideviewEngine.prototype.derivedArrived = function (data, pend, known) {
     var P = global.SideviewPipeline;
@@ -4514,12 +4522,12 @@ function sendToShiny(name, value) {
         this.dropDerivedCard(name);
         return;
       }
-    } else if (has && d.op === 'stack' && d.args && P) {
-      // a stack step from an opened state, rebuilt by R from the data as they are now: the step takes R's plan, or
-      // $code() would be written from the saved one (a SUPP or join step keeps its args, as before)
+    } else if (has && REFIT_DERIVE_OPS[d.op] && d.args && P) {
+      // a stack or compare step from an opened state, rebuilt by R from the data as they are now: the step takes
+      // R's plan, or $code() would be written from the saved one (a SUPP or join step keeps its args, as before)
       var dstep = this.pipeline.steps.filter(function (s) { return s.kind === 'derive' && s.table === name; })[0];
-      if (dstep && dstep.op === 'stack') {
-        var fresh = P.deriveStep(name, 'stack', asArray(d.inputs).length ? d.inputs : dstep.inputs, d.args);
+      if (dstep && dstep.op === d.op) {
+        var fresh = P.deriveStep(name, d.op, asArray(d.inputs).length ? d.inputs : dstep.inputs, d.args);
         this.pipeline.refit(dstep.id, { inputs: fresh.inputs, args: fresh.args, key: fresh.key });
       }
     }
@@ -5132,12 +5140,12 @@ function sendToShiny(name, value) {
     { id: 'discrepancy', label: 'Discrepancy' },
     { id: 'chat', label: 'Copilot' }
   ];
-  var BUILDER_TABS = { filter: 1, arrange: 1, mutate: 1, recode: 1, summarise: 1, stack: 1 };
-  // Stack is R's check: its tab exists only when an R session backs the engine
+  var BUILDER_TABS = { filter: 1, arrange: 1, mutate: 1, recode: 1, summarise: 1, stack: 1, compare: 1 };
+  // Stack and Compare are R's checks: their tabs exist only when an R session backs the engine
   function drawerTabsFor(engine) {
     if (!engine.hasR()) return DRAWER_TABS;
     var out = DRAWER_TABS.slice();
-    out.splice(6, 0, { id: 'stack', label: 'Stack' });
+    out.splice(6, 0, { id: 'stack', label: 'Stack' }, { id: 'compare', label: 'Compare' });
     return out;
   }
   var TAB_ALIASES = { join: 'pipeline', copilot: 'chat' };
@@ -7226,6 +7234,7 @@ function sendToShiny(name, value) {
   /** Does a builder show other tables than the cards now on the canvas? */
   SideviewEngine.prototype.builderStale = function (pane) {
     if (pane.querySelector('[data-builder="stack"]')) return this.stackStale(pane);
+    if (pane.querySelector('[data-builder="compare"]')) return this.compareStale(pane);
     var sel = pane.querySelector('select[data-field="table"]');
     var names = this.tableSchemas().map(function (t) { return t.name; });
     if (!names.length) return !!sel;
@@ -7346,6 +7355,7 @@ function sendToShiny(name, value) {
     var pane = this.paneNode(kind);
     if (!pane) return;
     if (kind === 'stack') { this.renderStackBuilder(pane); return; }
+    if (kind === 'compare') { this.renderCompareBuilder(pane); return; }
     var saved = null, focusAt = null;
     if (preserve) {
       saved = [];
@@ -7722,6 +7732,291 @@ function sendToShiny(name, value) {
       if (back && !back.disabled) { try { back.focus({ preventScroll: true }); } catch (e) { back.focus(); } }
     }
   };
+
+  // ---- Compare tab (D3): pick an old and a new version, check them by key in R, open the rows ----
+  // State lives on the engine (this._compare), so a re-render, a tab switch or movePanes() keeps it.
+
+  SideviewEngine.prototype.compareState = function () {
+    return this._compare || (this._compare = { old: null, new: null, by: [], reply: null, latest: null, error: null, pending: false });
+  };
+
+  /** What an earlier reply said no longer holds: a new pick, or a card that left. */
+  SideviewEngine.prototype.compareReset = function () {
+    var st = this.compareState();
+    st.reply = null;
+    st.error = null;
+    st.latest = null;
+    st.pending = false;
+  };
+
+  SideviewEngine.prototype.compareCardNames = function () {
+    return this.tableSchemas().map(function (t) { return t.name; });
+  };
+
+  /** The columns the two picked versions share, in the new version's order (the key can be any of them). */
+  SideviewEngine.prototype.compareShared = function () {
+    var st = this.compareState();
+    if (!st.old || !st.new || st.old === st.new) return [];
+    var cols = {};
+    this.tableSchemas().forEach(function (t) { cols[t.name] = t.columns.map(function (c) { return c.name; }); });
+    var o = cols[st.old] || [], n = cols[st.new] || [];
+    return n.filter(function (c) { return o.indexOf(c) >= 0; });
+  };
+
+  SideviewEngine.prototype.compareReady = function () {
+    var st = this.compareState();
+    return !!st.old && !!st.new && st.old !== st.new;
+  };
+
+  /** A card came or went: a picked card that left is dropped and the reply with it; the picker follows the cards. */
+  SideviewEngine.prototype.compareCardsChanged = function () {
+    if (!this._compare) return;
+    var st = this._compare;
+    var names = this.compareCardNames();
+    var lost = false;
+    ['old', 'new'].forEach(function (side) {
+      if (st[side] && names.indexOf(st[side]) < 0) { st[side] = null; lost = true; }
+    });
+    if (lost) { st.by = []; this.compareReset(); }
+    var pane = this.paneNode('compare');
+    if (pane && pane.querySelector('.sideview-compare') && this.compareStale(pane)) {
+      var key = this.compareFocusKey(pane);
+      this.renderCompareBuilder(pane);
+      this.compareRestoreFocus(pane, key);
+    }
+  };
+
+  SideviewEngine.prototype.compareStale = function (pane) {
+    var b = pane.querySelector('.sideview-compare');
+    var have = b ? b.getAttribute('data-cards') : null;
+    return have === null || have !== JSON.stringify(this.compareCardNames());
+  };
+
+  /** The data-compare-key of the focused control inside the Compare pane, else null (focus is elsewhere). */
+  SideviewEngine.prototype.compareFocusKey = function (pane) {
+    var a = document.activeElement;
+    if (!pane || !a || !pane.contains(a) || !a.getAttribute) return null;
+    return a.getAttribute('data-compare-key');
+  };
+
+  /** Put focus back after a re-render; falls back to the Check button when the control is gone or disabled. */
+  SideviewEngine.prototype.compareRestoreFocus = function (pane, key) {
+    if (!key) return;
+    var back = Array.prototype.filter.call(pane.querySelectorAll('[data-compare-key]'), function (el) {
+      return el.getAttribute('data-compare-key') === key && !el.disabled;
+    })[0] || pane.querySelector('[data-compare-action="check"]');
+    if (back && !back.disabled) { try { back.focus({ preventScroll: true }); } catch (e) { back.focus(); } }
+  };
+
+  /** Ask R about two versions and a key (an empty key: R suggests one). Only the reply to the latest id is drawn. */
+  SideviewEngine.prototype.requestCompareCheck = function (oldName, newName, by) {
+    var st = this.compareState();
+    by = asArray(by).map(String);
+    // a short sequence id (R caps ids at 200 characters)
+    this._compareSeq = (this._compareSeq || 0) + 1;
+    var id = 'cp' + this._compareSeq + '_' + Date.now().toString(36);
+    st.latest = id;
+    st.pending = true;
+    st.error = null;
+    var msg = { id: id, old: String(oldName), new: String(newName) };
+    if (by.length) msg.by = by;
+    if (!this.send('compare_request', msg)) {
+      st.pending = false;
+      st.latest = null;
+      this.showToast('The R session is not connected.', 'warning');
+      this.renderCompareResult();
+      return null;
+    }
+    this.renderCompareResult();
+    return id;
+  };
+
+  /** A sideview_compare reply; one that is not for the latest request is ignored. */
+  SideviewEngine.prototype.onCompare = function (data) {
+    var st = this._compare;
+    if (!st || !data || data.id === undefined || data.id === null || String(data.id) !== st.latest) return;
+    st.pending = false;
+    // R's key (suggested or echoed); a refusal that sends `by: []` empties it, other refusals keep the user's
+    if (data.by !== undefined && data.by !== null) st.by = asArray(data.by).map(String);
+    if (data.error) {
+      st.reply = null;
+      st.error = String(data.error);
+      this.syncCompareKeys();
+      this.renderCompareResult();
+      this.announce(st.error, { assertive: true });
+      return;
+    }
+    st.error = null;
+    st.reply = data;
+    this.syncCompareKeys();
+    this.renderCompareResult();
+    var lines = asArray(data.text).slice(0, 2).map(function (t) { return String(t).replace(/\s+/g, ' '); });
+    if (lines.length) this.announce(lines.join('. '), { coalesce: 'compare-check' });
+  };
+
+  /** Open one of the three cards: D1's derive. R checks the key again at open. */
+  SideviewEngine.prototype.compareOpen = function (which) {
+    var st = this.compareState();
+    var r = st.reply;
+    if (!r || st.pending || !this.compareReady() || !/^(added|removed|changed)$/.test(which)) return false;
+    var n = which === 'changed' ? r.changed_values : r[which];
+    var open = r.open || {};
+    return this.requestDerive({
+      op: 'compare_' + which, inputs: [st.old, st.new], args: { by: asArray(r.by).map(String) },
+      n: n, label: String(open[which] || ('Open ' + which))
+    });
+  };
+
+  SideviewEngine.prototype.compareId = function (part) {
+    return (typeof this.options.ns === 'string' ? this.options.ns : '') + 'sv-compare-' + part;
+  };
+
+  SideviewEngine.prototype.compareSelectHtml = function (side, label, names) {
+    var st = this.compareState();
+    var opts = '<option value=""' + (st[side] ? '' : ' selected') + '>Choose a table</option>' + names.map(function (n) {
+      return '<option value="' + escapeHtml(n) + '"' + (st[side] === n ? ' selected' : '') + '>' + escapeHtml(n) + '</option>';
+    }).join('');
+    return '<label class="sideview-builder-field">' + label + ' <select data-compare-select="' + side + '" data-compare-key="select:' + side + '">' +
+      opts + '</select></label>';
+  };
+
+  SideviewEngine.prototype.compareKeysHtml = function () {
+    var st = this.compareState();
+    if (!this.compareReady()) {
+      return '<p class="sideview-builder-hint">Pick two different tables to choose the key columns.</p>';
+    }
+    var shared = this.compareShared();
+    if (!shared.length) return '<p class="sideview-builder-hint">The two tables share no column, so there is no key.</p>';
+    return '<ul class="sideview-compare-cols">' + shared.map(function (c) {
+      return '<li class="sideview-compare-col"><label><input type="checkbox" data-compare-by="' + escapeHtml(c) + '" data-compare-key="by:' +
+        escapeHtml(c) + '"' + (st.by.indexOf(c) >= 0 ? ' checked' : '') + ' /> <span>' + escapeHtml(c) + '</span></label></li>';
+    }).join('') + '</ul>';
+  };
+
+  /** Tick the key boxes from the state (R's suggestion arrives with a reply) without redrawing them. */
+  SideviewEngine.prototype.syncCompareKeys = function () {
+    var pane = this.paneNode('compare');
+    if (!pane) return;
+    var st = this.compareState();
+    Array.prototype.forEach.call(pane.querySelectorAll('[data-compare-by]'), function (c) {
+      c.checked = st.by.indexOf(c.getAttribute('data-compare-by')) >= 0;
+    });
+  };
+
+  SideviewEngine.prototype.renderCompareBuilder = function (pane) {
+    var st = this.compareState();
+    var names = this.compareCardNames();
+    ['old', 'new'].forEach(function (side) { if (st[side] && names.indexOf(st[side]) < 0) st[side] = null; });
+    if (names.length < 2) {
+      pane.innerHTML = '<p class="sideview-drawer-desc">Add at least two tables to the canvas to compare them.</p>';
+      return;
+    }
+    pane.innerHTML = '<div class="sideview-builder sideview-compare" data-builder="compare" data-cards="' +
+      escapeHtml(JSON.stringify(names)) + '">' +
+      '<div class="sideview-compare-pick">' + this.compareSelectHtml('old', 'Old version', names) +
+      this.compareSelectHtml('new', 'New version', names) + '</div>' +
+      '<fieldset class="sideview-compare-keys"><legend>Key columns</legend>' + this.compareKeysHtml() + '</fieldset>' +
+      '<div class="sideview-builder-actions sideview-compare-actions"><button type="button" class="sideview-btn sideview-btn-primary" ' +
+      'data-compare-action="check" data-compare-key="check"' + (this.compareReady() ? '' : ' disabled') + '>Check</button></div>' +
+      '<div class="sideview-compare-result" data-compare-result></div></div>';
+    this.wireComparePane(pane);
+    this.renderCompareResult();
+  };
+
+  SideviewEngine.prototype.wireComparePane = function (pane) {
+    if (pane._svCompareWired) return;
+    pane._svCompareWired = true;
+    var self = this;
+    pane.addEventListener('change', function (e) {
+      var t = e.target;
+      if (!t || !t.getAttribute) return;
+      var st = self.compareState();
+      if (t.hasAttribute('data-compare-select')) {
+        // another pick: R suggests a key again at the next check
+        st[t.getAttribute('data-compare-select') === 'old' ? 'old' : 'new'] = t.value || null;
+        st.by = [];
+        self.compareReset();
+        var key = self.compareFocusKey(pane);
+        self.renderCompareBuilder(pane);
+        self.compareRestoreFocus(pane, key);
+        return;
+      }
+      if (t.hasAttribute('data-compare-by')) {
+        st.by = Array.prototype.filter.call(pane.querySelectorAll('[data-compare-by]'), function (c) { return c.checked; })
+          .map(function (c) { return c.getAttribute('data-compare-by'); });
+        if (!st.by.length) {
+          // nothing ticked: no request (R would suggest a key and tick it again)
+          self.compareReset();
+          st.error = 'Pick the key columns.';
+          self.renderCompareResult();
+          return;
+        }
+        self._compareFocus = t.getAttribute('data-compare-key');
+        self.requestCompareCheck(st.old, st.new, st.by);
+      }
+    });
+    pane.addEventListener('click', function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest('[data-compare-action],[data-compare-open]') : null;
+      if (!btn || btn.disabled) return;
+      var st = self.compareState();
+      if (btn.getAttribute('data-compare-action') === 'check') {
+        if (!self.compareReady()) return;
+        self._compareFocus = btn.getAttribute('data-compare-key');
+        self.requestCompareCheck(st.old, st.new, st.by);
+      } else if (btn.hasAttribute('data-compare-open')) {
+        self.compareOpen(btn.getAttribute('data-compare-open'));
+      }
+    });
+  };
+
+  SideviewEngine.prototype.compareResultHtml = function () {
+    var st = this.compareState();
+    var out = '';
+    if (st.pending) out += '<p class="sideview-builder-hint" role="status">Comparing the two versions in R.</p>';
+    if (st.error) out += '<p class="sideview-compare-error" role="alert">' + escapeHtml(st.error) + '</p>';
+    var r = st.reply;
+    if (!r) return out;
+    var lines = asArray(r.text).map(function (t) { return '<li>' + escapeHtml(t) + '</li>'; }).join('');
+    if (lines) out += '<ul class="sideview-compare-text">' + lines + '</ul>';
+    var per = r.per_column && typeof r.per_column === 'object' ? r.per_column : {};
+    var cols = Object.keys(per);
+    if (cols.length) {
+      out += '<div class="sideview-compare-scroll" role="region" aria-label="Changed values by column" tabindex="0">' +
+        '<table class="sideview-compare-table"><caption>Changed values by column</caption><thead><tr><th scope="col">Column</th>' +
+        '<th scope="col">Changed rows</th></tr></thead><tbody>' + cols.map(function (c) {
+          return '<tr><th scope="row">' + escapeHtml(c) + '</th><td>' + escapeHtml(per[c]) + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
+    var open = r.open || {};
+    var counts = { added: r.added, removed: r.removed, changed: r.changed_values };
+    out += '<div class="sideview-compare-offers" role="group" aria-label="Open the rows behind these counts as a card">' +
+      ['added', 'removed', 'changed'].map(function (w) {
+        var zero = !(Number(counts[w]) > 0);
+        return '<button type="button" class="sideview-btn sideview-btn-primary" data-compare-open="' + w + '" data-compare-key="open:' + w + '"' +
+          (zero || st.pending ? ' disabled' : '') + '>' + escapeHtml(open[w] || ('Open ' + w)) + '</button>';
+      }).join('') + '</div>';
+    var code = r.code_preview || {};
+    var heads = { added: 'Added rows', removed: 'Removed rows', changed: 'Changed values' };
+    var blocks = ['added', 'removed', 'changed'].filter(function (w) { return code[w]; }).map(function (w) {
+      return '<div class="sideview-compare-code" role="region" aria-label="R code for ' + heads[w].toLowerCase() + '" tabindex="0">' +
+        '<pre>' + escapeHtml(asArray(code[w]).join('\n')) + '</pre></div>';
+    }).join('');
+    if (blocks) out += '<details class="sideview-compare-details"><summary>R code preview</summary>' + blocks + '</details>';
+    return out;
+  };
+
+  SideviewEngine.prototype.renderCompareResult = function () {
+    var pane = this.paneNode('compare');
+    var box = pane && pane.querySelector('[data-compare-result]');
+    if (!box) return;
+    var st = this.compareState();
+    var want = this._compareFocus || (box.contains(document.activeElement) ? this.compareFocusKey(pane) : null);
+    // keep the wanted key until the reply has been drawn: the pending render has no controls
+    if (!st.pending) this._compareFocus = null;
+    box.innerHTML = this.compareResultHtml();
+    if (want && !st.pending) this.compareRestoreFocus(pane, want);
+  };
+
 
   function fieldValue(root, name) {
     var el = root.querySelector('[data-field="' + name + '"]');
@@ -8526,8 +8821,17 @@ function sendToShiny(name, value) {
 
   var STEP_KIND_WORDS = {
     join: 'Join', filter: 'Filter', arrange: 'Sort', mutate: 'Mutate', recode: 'Recode',
-    summarise: 'Summarise', pivot: 'Reshape', supp: 'SUPP merge', derive: 'Derived table', stack: 'Stack', custom: 'Custom'
+    summarise: 'Summarise', pivot: 'Reshape', supp: 'SUPP merge', derive: 'Derived table', stack: 'Stack',
+    compare: 'Compare', custom: 'Custom'
   };
+
+  // The announced kind of a step: a stack or compare derive step has its own word
+  function stepKindWord(s) {
+    if (s.kind !== 'derive') return s.kind;
+    if (s.op === 'stack') return 'stack';
+    if (/^compare_/.test(String(s.op))) return 'compare';
+    return s.kind;
+  }
 
   // "Join step added. 3 steps." / "Undone. 2 steps." / "Redone. 3 steps."
   SideviewEngine.prototype.stepAnnouncement = function (kind, verb, count) {
@@ -8541,7 +8845,7 @@ function sendToShiny(name, value) {
   // Called from the pipeline's change emit: say what changed, by diffing the step list.
   SideviewEngine.prototype.announceStepChange = function (label) {
     var steps = (this.pipeline && this.pipeline.steps) || [];
-    var now = steps.map(function (s) { return { id: s.id, kind: s.kind === 'derive' && s.op === 'stack' ? 'stack' : s.kind }; });
+    var now = steps.map(function (s) { return { id: s.id, kind: stepKindWord(s) }; });
     var prev = this._annSteps;
     this._annSteps = now;
     if (label === 'checks' || label === 'pipe' || label === 'tables' || label === 'load' || label === 'refresh') return;
@@ -8870,6 +9174,10 @@ function sendToShiny(name, value) {
 
     self.onMessage('sideview_stack_check', function (data) {
       self.onStackCheck(data);
+    });
+
+    self.onMessage('sideview_compare', function (data) {
+      self.onCompare(data);
     });
 
     self.onMessage('sideview_join_diagnostics', function (data) {

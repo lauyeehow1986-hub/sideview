@@ -13,7 +13,7 @@ list view and the console, not only on the canvas.
 | A | Text-first access (list view, `sv_describe()`, announcements, table ARIA) | done, 0.8.0 (PRs #13-#17, #18 minors) |
 | C | Accessibility testing (axe-core, AX-tree tests, NVDA script, CI a11y job) | done, 0.8.0 (PR #12, NVDA fixes #19) |
 | B | Keyboard and low vision (access switch) | done, 0.9.0 (PR #20, version bump #22) |
-| D | Unmatched / dropped rows as cards; stack two tables and compare columns; compare data cuts by key | **D1 done, on `main` (42256d2; docs PR #23, a11y test fix PR #24)**; **D2 (stack) done, on `main` (PR #31; RStudio checks for the gadget, duckdb and Arrow confirmed by the user, widget and list view checks still open)**; build notes `plans/2026-11-17-d2-stack-design.md`, plan `plans/2026-11-17-d2-stack-implementation.md`; D3 (compare data cuts) gets its plan next; spec `plans/2026-11-16-derived-cards-design.md`, D1 plan `plans/2026-11-16-derived-cards-d1-implementation.md`; version bump to 0.10.0 waits for D2 and D3 |
+| D | Unmatched / dropped rows as cards; stack two tables and compare columns; compare data cuts by key | **D1 done, on `main` (42256d2; docs PR #23, a11y test fix PR #24)**; **D2 (stack) done, on `main` (PR #31; all RStudio checks confirmed by the user: gadget, duckdb, Arrow, widget, list view)**; build notes `plans/2026-11-17-d2-stack-design.md`, plan `plans/2026-11-17-d2-stack-implementation.md`; **D3 (compare data cuts) in review** (branch `d/d3-compare`, not pushed; version 0.10.0 in DESCRIPTION); spec `plans/2026-11-16-derived-cards-design.md`, D1 plan `plans/2026-11-16-derived-cards-d1-implementation.md`; version bumped to 0.10.0 with D3 |
 | E | `metatools::combine_supp()` option (SUPP/ADSL merges only); `dm` import and export; `pointblank` export; `metacore` spec check (labelled "spec check") | not started, after D |
 
 Other pending tasks:
@@ -416,10 +416,36 @@ Each sub-project gets its own spec, plan and build, in this order:
     completion or show it only for click-to-connect;
   - one non-reproducing error in "module: canvases are independent" in a combined browser run; watch it on CI.
 
+- **D3 backlog** (compare data cuts, from the final review, not scheduled):
+  - a key named `column`, `old` or `new`, or the internal `.sv_k*` / `x.old` / `x.new` names, is silently overwritten in `_changed`; refuse these in `sv_compare_by()`;
+  - list columns are neither compared nor listed in `type_changed`;
+  - tests to add: a text-key repeated sample, a factor or Date key, a NaN key, a zero-row `_changed` derive, a date-time lazy gap, a collect trap for Arrow, the preview fallback, a backtick ref `copy_to` name;
+  - the compare and stack cleaners duplicate the name block;
+  - `sv_compare()` places inputs 4 times, and the lazy `run()` in `compare_request` places them twice (performance);
+  - lazy `_added` / `_removed` lose data frame factor levels (inherited from D1);
+  - the NaN/NA order in the repeated sample differs between twins;
+  - `COMPARE_OPS[op]` / `REFIT_DERIVE_OPS[d.op]` should use hasOwnProperty;
+  - `compareCode` should return `{code: ''}` for a null `plan.keys` / `plan.compared` entry rather than throw;
+  - a non-data-frame card with no `by` gets "Pick the key columns." rather than the needs-tables message;
+  - shared Stack/Compare drawer polish: the "Add at least two tables" state goes stale when a card is added while the tab is open, the double announcement (role=alert plus assertive), the layout jump on pending render, dead `compareId`, duplicated focus helpers;
+  - test quality: `Sys.sleep(1)` as a negative proof, no reply-after-removal test, the list view Open row badge and changed/removed Open, the unscoped `[data-compare-open]` selector;
+  - D2: the Arrow `to_duckdb()` view race in `sv_stack_code_lazy`, for a follow-up PR: pass `keep_views = TRUE` and update the JS twin and the byte-equal tests;
+  - the untagged key suggestion takes the first single column unique in both versions, which in a small extract can beat a real composite key (suggestion only);
+  - a lazy numeric key below 1e-4 reads `1e-07` in duckdb and `0.0000001` in memory (key text of a double against a text key; integers and simple decimals agree).
+
 ---
 
 
 ## Log
+
+### 2026-11-22 - D3 final-review fix wave (branch `d/d3-compare`, not pushed)
+- **Fixed:** a numeric key against a text key (`sv_compare_text(key = TRUE)`, `sv_compare_code()`, `compareCode()`): a double key is written in full as the join check's `format_key()` does, so 100000 matches "100000" (it was "1e+05": added/removed/changed miscounted in memory, right in duckdb); the repeated-key sample (up to 5 keys, " + " between key columns) is now on the Warnings line of `sv_say_compare_text()`, so it reaches `text`, the drawer, the list view and print; `print.sv_compare` says "changed values: N"; date-times of two zones compare by instant without a tzone warning (in memory and in the generated code, JS twin too); NEWS and README wording.
+- **Tests:** test-compare.R (numeric key against text, sample text, tz, print label, a JS byte-equal fixture), test-lazy.R (the same fixture on duckdb / Arrow / mixed equals memory).
+
+### 2026-11-22 - Derived cards, D3: compare data cuts, version 0.10.0 (branch `d/d3-compare`, not pushed)
+- **Change:** `sv_compare(old, new, by)` (R/compare.R) counts rows added, removed and changed by key, lists column and type changes; the drawer Compare tab and the list view Compare builder open `<new>_added`, `<old>_removed` and `<new>_changed` as derived cards (ops `compare_added`, `compare_removed`, `compare_changed`); lazy duckdb / Arrow paths in R/lazy.R; JS code twin `compareCode()` (sv-pipeline.js). Task 8: DESCRIPTION 0.10.0, NEWS "Compare data cuts", README bullet, article `vignettes/articles/derived-cards.Rmd` (navbar "Derived cards"), CLAUDE.md "Compare (D3)" twin rule, rebuilt site. R/say.R: the literal middle dot in R strings is now `·` (devtools::check flags non-ASCII), output byte-identical.
+- **Verified:** full suite with `NOT_CRAN=true` (real-browser chromote tests in test-layout-browser.R and test-a11y-browser.R included): 979 tests, 2 failures, 0 skips; the 2 are the known test-lazy-browser.R "list paging of a lazy card asks R for windows" failure (not from D3, same as on D2). `pkgdown::check_pkgdown()`: no problems. the controller's `devtools::check(args = c('--no-tests','--no-manual'))` after the `compare_run` rename (the second local `run` in sideview_server_impl, R/app_server.R): 0 errors, 0 warnings, 1 note (only the "`NULL`" file in the check directory, an environment artefact).
+- **TO DO (RStudio, not done, record only after the user says so):** dialog, Viewer pane and external browser: pick two tables, Check, change the key, Open each of the three cards, then Save and Open the state; with in-memory, Arrow and duckdb cuts.
 
 ### 2026-11-21 - Derived cards, D2: stack tables (branch `d/d2-stack`, not pushed)
 - **Change:** `sv_stack_check()` / `sv_stack()` (R/stack.R) line up the columns of 2 to 8 tables (type per input, label, casts, case-only near-miss renames, missing columns) and stack them with the check's fixes; lazy (duckdb / Arrow) inputs become one `union_all` on the session connection, never collected. New derive op `stack` (R builder `sv_stack_rows()` / `sv_lazy_stack()`, code twin `sv_stack_code()` = `deriveExpr()`), `stack_check_request` / `sideview_stack_check` (handler cleans with `sv_stack_clean()`), a Stack drawer tab (only when R is there), the list view Stack builder, `deriveArgsKey()` now includes `fixes` and `id_col`. Rules are in CLAUDE.md ("Stack (D2)"). Docs: NEWS 0.10.0 (development), README bullet, a "Stacking tables" section in `vignettes/articles/cdisc.Rmd` (synthetic waves). Commits 0e5c455..f82535f plus the docs commit.
@@ -427,7 +453,7 @@ Each sub-project gets its own spec, plan and build, in this order:
 - **Not run:** the whole of test-a11y-browser.R (hangs unfiltered, only the Stack tests above were run in this task; the Task 6 fix round and Task 7 ran the other named ones; the rest of the a11y file was not re-run on this branch); the whole of test-lazy.R (takes hours; Task 3 and Task 4 checked the stack parts in pieces, and one Task 3 report says a whole run finished with no failures, not verified by the controller).
 - **Known failure, not from D2:** test-lazy-browser.R "list paging of a lazy card asks R for windows" fails 2 expectations (the list shows an ellipsis where values are expected). It fails the same 2 on the base commit d666728 (checked in a throwaway worktree, since removed), and D1's notes list it as open.
 - **Real browser (Tasks 6 and 7 reports):** the built-in browser on the demo app, light and dark theme: the Stack drawer at 380 px, the tab strip wraps, the table and the code preview scroll inside their regions. Mobile emulation did not change `innerWidth`, so the narrow layout is covered only by the automated no-overflow assertions at 560x520 (and the layout file at 1400x900). Keyboard focus (cast select, rename, Open) is asserted in the layout and a11y tests; the list view Stack builder was driven by keyboard only in a real-browser test.
-- **Verified by the user in RStudio (2026-11-21, reported in chat):** gadget steps 1-5 (pick two tables, Check, change a fix, Open, Save and Open state), and the same with duckdb and Arrow lazy inputs, including restoring a saved state with `sideview(wave1, wave2_lazy, viewer = "browser")` (the stacked card is rebuilt). **Still not reported:** the widget (no Stack tab, saved stack step shows the no-R toast) and the list view Stack builder. A page with no R behind it (a saved widget) shows "Derived tables are not shown in a saved page", as designed.
+- **Verified by the user in RStudio (2026-11-21, reported in chat):** gadget steps 1-5 (pick two tables, Check, change a fix, Open, Save and Open state), and the same with duckdb and Arrow lazy inputs, including restoring a saved state with `sideview(wave1, wave2_lazy, viewer = "browser")` (the stacked card is rebuilt). Later the same day the user reported the widget (no Stack tab, saved stack step shows the no-R toast) and the list view Stack builder as OK, so all D2 manual checks are done. A page with no R behind it (a saved widget) shows "Derived tables are not shown in a saved page", as designed.
 - **Original to-do list (RStudio dialog, Viewer pane, external browser):** pick two tables, Check, change a fix (a cast and a rename), Open (card appears, announced, a second Open zooms to it), then Save and Open the state and see the stack card rebuilt; the same with a duckdb or Arrow input; the widget (no Stack tab, a saved stack step shows the no-R toast); the list view Stack builder. Record these only after the user says they did them.
 - **Version:** DESCRIPTION stays 0.9.0; 0.10.0 waits for D3.
 
@@ -1278,7 +1304,7 @@ None of these blocks D2; none is fixed. Source: `.superpowers/sdd/2026-11-17-d2-
 - `id_col` is not an input to the check, so a user-chosen `id_col` would desync the preview from Open (the browser sends none).
 - No lazy stack server test (handler with a duckdb / Arrow input); `sv_stack_clean()` has no unit test for 9 tables or the cast-target whitelist (the handler pre-checks).
 - Parked from reviews: state round trip tested via toJSON / load, not `getState` / `applyState`; mismatched kind / plan untested; Task 6 minors (error replies both `role=alert` and assertive announce, 500-fix cap not enforced client side, reply render restores focus without checking where focus is now, the cast change test uses a synthetic `dispatchEvent`); Task 7 minors (list view heading asserted only as H3, no focus or announce assertion after Open in list view, no no-R test for an absent Stack host, pick order assumes DOM order); pre-1970 fractional date-times untested.
-- Manual checks above still to do by the user.
+- Manual checks: all done by the user (2026-11-21).
 
 ## D1 parked after final review
 - Only the join `unmatched` offer label is pinned end to end; the other three offer labels are untested.

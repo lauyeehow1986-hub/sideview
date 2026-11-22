@@ -452,15 +452,7 @@ sv_stack_code_lazy <- function(plan, refs, kinds) {
   duck_ref <- if (length(duck)) refs[duck[1L]] else NULL
   show <- sv_stack_show
   parts <- vapply(seq_along(plan$inputs), function(i) {
-    ref <- refs[i]
-    placed <- if (is.na(kinds[i])) {
-      if (is.null(duck_ref)) paste0("arrow::to_duckdb(arrow::arrow_table(", ref, "))")
-      else paste0("dplyr::copy_to(dbplyr::remote_con(", duck_ref, "), ", ref, ", name = ",
-                  q(paste0("sideview_", plan$inputs[i], "_", i)), ", overwrite = TRUE)")
-    } else if (kinds[i] == "arrow") {
-      if (is.null(duck_ref)) paste0("arrow::to_duckdb(", ref, ")")
-      else paste0("dplyr::compute(arrow::to_duckdb(", ref, ", con = dbplyr::remote_con(", duck_ref, ")))")
-    } else ref
+    placed <- sv_lazy_place_code(refs[i], kinds[i], duck_ref, paste0("sideview_", plan$inputs[i], "_", i))
     p <- sv_stack_lazy_parts(plan, i)
     if (length(p$rename)) {
       pairs <- vapply(names(p$rename), function(n) paste0(sv_escape_ident(n), " = ", sv_escape_ident(p$rename[[n]])), "")

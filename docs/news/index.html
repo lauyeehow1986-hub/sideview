@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.9.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.10.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -18,6 +18,7 @@
       <ul class="navbar-nav me-auto"><li class="nav-item"><a class="nav-link" href="../articles/tour.html">Visual tour</a></li>
 <li class="nav-item"><a class="nav-link" href="../articles/cdisc.html">CDISC</a></li>
 <li class="nav-item"><a class="nav-link" href="../articles/screen-reader.html">Screen reader</a></li>
+<li class="nav-item"><a class="nav-link" href="../articles/derived-cards.html">Derived cards</a></li>
 <li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="active nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
@@ -36,7 +37,7 @@
 
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.10.0" id="sideview-0100-development">sideview 0.10.0 (development)<a class="anchor" aria-label="anchor" href="#sideview-0100-development"></a></h2>
-<p>Derived cards, first part (D1): the rows behind a check count become a card of their own. Development version; the release number is decided at merge time. Checked with real-browser tests (headless Chrome) and unit tests; the manual RStudio pass is still to do.</p>
+<p>Derived cards: the rows behind a check count become a card of their own (D1), tables stack with a check (D2), and two cuts of a table compare by key (D3). Development version; the release number is decided at merge time. Checked with real-browser tests (headless Chrome) and unit tests; the D3 manual RStudio pass is still to do.</p>
 <div class="section level3">
 <h3 id="open-the-rows-behind-a-count-0-10-0">Open the rows behind a count<a class="anchor" aria-label="anchor" href="#open-the-rows-behind-a-count-0-10-0"></a></h3>
 <ul><li>A join check or a SUPP check offers buttons that open the rows behind its counts as a new card: the rows of either table with no match (<code>unmatched</code>), the rows a date rule dropped (<code>outside_window</code>), and the SUPP rows with no parent row (<code>supp_orphans</code>) or with an <code>IDVARVAL</code> that does not convert (<code>supp_bad_idvarval</code>). The card is named for what it holds (<code>ae_unmatched_dm</code>), sits near its first input, and is built by R from the tables as loaded, so a duckdb or Arrow input stays lazy. The same buttons appear in the list view as real buttons, and the result is announced.</li>
@@ -56,6 +57,14 @@
 <li>Some casts change values without counting them as <code>NA</code>: a date-time cast to text drops fractional seconds; a number cast to text keeps 15 significant digits; an <code>integer64</code> column that is cast is read as a double first, so digits beyond 2^53 are lost.</li>
 <li>New input <code>stack_check_request</code> and new message <code>sideview_stack_check</code> (see CLAUDE.md). The widget has no R: no Stack tab; a saved stack step stays in the code but the table is not shown, with a notice.</li>
 <li>Known limits: stacking a duckdb or Arrow table needs duckdb (without it the check and Open say so); duckdb reads names that differ only by case (<code>AGE</code>, <code>Age</code>) as one, so a lazy stack with such a pair left apart is refused (tick Rename to merge them); the generated code for a lazy date-time column cast to text names the time zone of the session that made it; a number cast to text can differ between in-memory (“1e+05”) and duckdb (“100000”) for very large or small values; duckdb tables carry no labels (Arrow tables do); a saved state with a stack of lazy date-time columns carries the zone rules (about 20 KB per time column per input).</li>
+</ul></div>
+<div class="section level3">
+<h3 id="compare-data-cuts-0-10-0">Compare data cuts<a class="anchor" aria-label="anchor" href="#compare-data-cuts-0-10-0"></a></h3>
+<p>Derived cards, third part (D3): compare two cuts of a table by key. Checked with real-browser tests (headless Chrome) and unit tests; the manual RStudio pass is still to do.</p>
+<ul><li>
+<code>sv_compare(old, new, by)</code> matches the rows of two tables on a key (1 to 20 columns) and counts the rows added (key only in <code>new</code>), removed (key only in <code>old</code>), changed (key in both, a value differs) and the same. It also lists the columns added, removed or with a changed type, the changed values by column, and keys that repeat. It prints a summary; nothing is modified. With no <code>by</code>, two tables with the same CDISC tag use that domain’s natural key; otherwise the key is suggested from the shared columns (same name, similar values, no repeated value).</li>
+<li>The drawer has a <strong>Compare</strong> tab (and the list view a Compare builder): pick the old and new table, Check, change the key, and <strong>Open</strong> each set of rows as a card: <code>&lt;new&gt;_added</code>, <code>&lt;old&gt;_removed</code> and <code>&lt;new&gt;_changed</code> (the changed rows carry the old and new value side by side). The steps are <code>derive</code> steps with <code>op = "compare_added"</code>, <code>"compare_removed"</code> or <code>"compare_changed"</code>; their R code is plain <code>dplyr</code>, and the code R writes and the code the browser writes are byte-equal. A duckdb or Arrow input stays lazy and is never collected. The result is announced.</li>
+<li>New input <code>compare_request</code> and new message <code>sideview_compare</code> (see CLAUDE.md). The widget has no R: no Compare tab; a saved compare step stays in the code but the table is not shown, with a notice.</li>
 </ul></div>
 </div>
     <div class="section level2">

@@ -2569,3 +2569,401 @@ test_that("a near-miss name left apart is refused lazily, and merges", {
     expect_null(r$chk$case_clash)
   }
 })
+
+# ---- D3: lazy compare (two versions of a duckdb / Arrow table, by key) ----
+# Known deviation (decision 7, D2's): number text can read "1e+05" in R and "100000" in duckdb, so `old` and `new`
+# of a numeric column are compared after as.numeric(). A lazy card has no order: the twins compare rows sorted. The
+# repeated-key sample is the first 5 repeated keys in sorted order (numbers by value, text by C-locale bytes, NA
+# last) in both twins, so it is compared in order.
+
+# Rows as plain, comparable values: stk_norm() with every number a double, and the text of a numeric column's
+# changed values read back as a number (so "1e+05" and "100000" agree).
+cmp_norm <- function(df, num_cols = character(0)) {
+  df <- as.data.frame(dplyr::collect(df), stringsAsFactors = FALSE)
+  if (all(c("column", "old", "new") %in% names(df))) {
+    hit <- df$column %in% num_cols
+    for (side in c("old", "new")) {
+      v <- df[[side]]
+      v[hit] <- as.character(suppressWarnings(as.numeric(v[hit])))
+      df[[side]] <- v
+    }
+  }
+  for (cn in names(df)) if (is.integer(df[[cn]])) df[[cn]] <- as.numeric(df[[cn]])
+  stk_norm(df)
+}
+
+# The repeated-key sample as plain values, in its order
+cmp_sample <- function(s) {
+  if (!length(s)) return(list())
+  keys <- vapply(s, function(k) paste(vapply(k, function(v) {
+    if (inherits(v, "POSIXct")) v <- as.numeric(v)
+    if (is.factor(v)) v <- as.character(v)
+    if (is.integer(v)) v <- as.numeric(v)
+    if (is.na(v)) "<NA>" else as.character(v)
+  }, ""), collapse = "|"), "")
+  unname(keys)
+}
+
+# The lazy compare of `old` and `new` (as `kinds`) against the in-memory compare of the data frames: the plan, every
+# summary field and the rows of the three cards; the lazy code of each card parses and rebuilds the card.
+cmp_expect_same <- function(old, new, by, kinds, info = "") {
+  objs <- stk_objs(list(old_t = old, new_t = new), kinds)
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  mp <- sv_compare_plan(old, new, by, "old_t", "new_t")
+  mr <- sv_compare_rows(old, new, mp)
+  lp <- sv_compare_plan(objs$old_t, objs$new_t, by, "old_t", "new_t", con_env = e)
+  expect_true(isTRUE(lp$lazy), info = info)
+  strip <- function(p) {
+    p$lazy <- NULL
+    p$compared <- lapply(p$compared, function(cc) cc[setdiff(names(cc), c("tz_text_old", "tz_text_new"))])
+    p$keys <- lapply(p$keys, function(k) k[setdiff(names(k), c("tz_text_old", "tz_text_new"))])
+    p
+  }
+  expect_equal(strip(lp), strip(mp), info = info)
+  ls <- sv_lazy_compare(objs$old_t, objs$new_t, lp, e)
+  ms <- mr$summary
+  expect_setequal(names(ls), names(ms))
+  for (f in setdiff(names(ms), "repeated_sample")) {
+    expect_equal(ls[[f]], ms[[f]], tolerance = 1e-12, info = paste(info, f))
+  }
+  expect_equal(cmp_sample(ls$repeated_sample), cmp_sample(ms$repeated_sample), info = paste(info, "sample"))
+  num_cols <- vapply(Filter(function(cc) identical(cc$kind, "numeric"), mp$compared), function(cc) cc$name, "")
+  kinds_na <- ifelse(kinds == "df", NA_character_, kinds)
+  for (op in c("compare_added", "compare_removed", "compare_changed")) {
+    want <- cmp_norm(mr[[sub("^compare_", "", op)]], num_cols)
+    tb <- sv_lazy_compare(objs$old_t, objs$new_t, lp, e, op)
+    expect_s3_class(tb, "tbl_duckdb_connection")
+    expect_true(is.function(attr(tb, "sv_cleanup")), info = paste(info, op))
+    expect_equal(cmp_norm(tb, num_cols), want, ignore_attr = TRUE, info = paste(info, op))
+    sv_lazy_release(tb, e)
+    code <- sv_compare_code(lp, c("old_t", "new_t"), kinds_na, op)
+    expect_identical(code$kind, "duckdb")
+    expect_parses(code$code, label = paste(info, op))
+    env <- list2env(objs, parent = globalenv())
+    got <- eval(parse(text = code$code), env)
+    expect_equal(cmp_norm(got, num_cols), want, ignore_attr = TRUE, info = paste(info, op, "code"))
+  }
+  invisible(list(lazy = ls, mem = ms, plan = lp))
+}
+
+cmp_old <- function() {
+  data.frame(
+    id = c(1L, 2L, 3L, 4L, 5L, 6L, 7L, 7L),
+    sev = c("MILD", "MILD", "SEVERE", "MILD", "MODERATE", "MILD", "MILD", "MILD"),
+    dose = c(1, 2.5, NA, 4, 5, 6, 7, 8),
+    n = 1:8,
+    ok = c(TRUE, FALSE, TRUE, NA, TRUE, TRUE, FALSE, FALSE),
+    d = as.Date("2024-01-01") + 0:7,
+    arm = factor(c("A", "B", "A", "B", "A", "B", "A", "B")),
+    tc = 1:8,
+    gone = 11:18,
+    stringsAsFactors = FALSE)
+}
+
+cmp_new <- function() {
+  data.frame(
+    id = c(2L, 3L, 4L, 5L, 6L, 8L, 9L, 7L),
+    sev = c("MODERATE", "SEVERE", "MILD", "MODERATE", "MILD", "MILD", "SEVERE", "MILD"),
+    dose = c(2.5, 3, 4, 5, 6, 1, 2, 7),
+    n = c(2, 3, 4, 50, 6, 8, 9, 7),
+    ok = c(FALSE, TRUE, NA, FALSE, TRUE, TRUE, FALSE, FALSE),
+    d = as.Date("2024-01-01") + c(1, 2, 3, 9, 5, 6, 7, 6),
+    arm = c("B", "A", "B", "A", "A", "B", "A", "B"),
+    tc = as.character(1:8),
+    extra = letters[1:8],
+    stringsAsFactors = FALSE)
+}
+
+test_that("lazy compare equals in-memory compare", {
+  for (kinds in list(c("duckdb", "duckdb"), c("arrow", "arrow"), c("df", "duckdb"), c("arrow", "df"))) {
+    info <- paste(kinds, collapse = "/")
+    r <- cmp_expect_same(cmp_old(), cmp_new(), "id", kinds, info)
+    # the fixture really exercises the counts
+    expect_equal(r$lazy$added, 2L, info = info)
+    expect_equal(r$lazy$removed, 1L, info = info)
+    expect_gt(r$lazy$changed, 0L)
+    expect_equal(r$lazy$repeated_keys, 1L, info = info)
+    expect_equal(r$lazy$type_changed, list(list(column = "tc", old = "int", new = "chr")), info = info)
+  }
+})
+
+test_that("lazy NaN agrees", {
+  old <- data.frame(id = 1:6, x = c(NA, NaN, NA, NA, NaN, 2))
+  new <- data.frame(id = 1:6, x = c(NA, NaN, NaN, 1, 1, 2))
+  for (kinds in list(c("duckdb", "duckdb"), c("arrow", "arrow"))) {
+    info <- paste(kinds, collapse = "/")
+    r <- cmp_expect_same(old, new, "id", kinds, info)
+    # NaN or NA in both is the same; NaN or NA against 1 is a change; the text of a missing value is NA
+    expect_equal(r$lazy$changed, 2L, info = info)
+    expect_equal(r$lazy$same, 4L, info = info)
+    objs <- stk_objs(list(o = old, n = new), kinds)
+    e <- sv_lazy_env()
+    withr::defer(sv_lazy_close(e))
+    plan <- sv_compare_plan(objs$o, objs$n, "id", "o", "n", con_env = e)
+    ch <- as.data.frame(dplyr::collect(sv_lazy_compare(objs$o, objs$n, plan, e, "compare_changed")))
+    ch <- ch[order(ch$id), ]
+    expect_equal(as.numeric(ch$id), c(4, 5), info = info)
+    expect_true(all(is.na(ch$old)), info = info)
+    expect_equal(ch$new, c("1", "1"), info = info)
+  }
+})
+
+test_that("lazy keys: NA, repeats and differing kinds", {
+  # NA on both sides of a key: the rows match (as the join check), never one added plus one removed
+  r <- cmp_expect_same(data.frame(k = c(1L, NA, 3L), v = c("a", "b", "c")),
+                       data.frame(k = c(1L, NA, 4L), v = c("a", "z", "d")), "k", c("duckdb", "duckdb"), "NA key")
+  expect_equal(r$lazy[c("added", "removed", "changed", "same")], list(added = 1L, removed = 1L, changed = 1L, same = 1L))
+  # a key repeated in new only: in no card and no count; both identities hold
+  r <- cmp_expect_same(data.frame(k = c(7, 1, 2), v = 1:3),
+                       data.frame(k = c(7, 7, 1, 2, 3), v = c(9L, 8L, 1L, 5L, 4L)), "k", c("duckdb", "duckdb"), "repeat new")
+  s <- r$lazy
+  expect_equal(s[c("repeated_keys", "repeated_rows_old", "repeated_rows_new")],
+               list(repeated_keys = 1L, repeated_rows_old = 1L, repeated_rows_new = 2L))
+  expect_equal(s$n_old, s$removed + s$changed + s$same + s$repeated_rows_old)
+  expect_equal(s$n_new, s$added + s$changed + s$same + s$repeated_rows_new)
+  expect_equal(cmp_sample(s$repeated_sample), "7")
+  # and repeated in old only
+  r <- cmp_expect_same(data.frame(k = c(7, 7, 1, 2), v = 1:4),
+                       data.frame(k = c(7, 1, 2, 3), v = c(9L, 3L, 5L, 4L)), "k", c("duckdb", "duckdb"), "repeat old")
+  expect_equal(r$lazy$repeated_rows_old, 2L)
+  expect_equal(r$lazy$repeated_rows_new, 1L)
+  # keys of differing kinds join on text; the `_changed` key takes new's values and type
+  old <- data.frame(USUBJID = c("S1", "S2", "S4"), AESEQ = c(1L, 2L, 1L), v = c("a", "b", "q"))
+  new <- data.frame(USUBJID = c("S1", "S3", "S4"), AESEQ = c("1", "1", "1"), v = c("z", "c", "q"))
+  r <- cmp_expect_same(old, new, c("USUBJID", "AESEQ"), c("duckdb", "duckdb"), "text key")
+  expect_true(isTRUE(r$plan$keys[[2]]$text))
+  expect_equal(r$lazy[c("added", "removed", "changed", "same")], list(added = 1L, removed = 1L, changed = 1L, same = 1L))
+  objs <- stk_objs(list(o = old, n = new), c("duckdb", "duckdb"))
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  ch <- dplyr::collect(sv_lazy_compare(objs$o, objs$n, r$plan, e, "compare_changed"))
+  expect_type(ch$AESEQ, "character")
+  expect_identical(names(ch), c("USUBJID", "AESEQ", "column", "old", "new"))
+  ad <- dplyr::collect(sv_lazy_compare(objs$o, objs$n, r$plan, e, "compare_added"))
+  expect_identical(names(ad), names(new))
+})
+
+test_that("compare: a numeric key against a text key matches in duckdb as in memory", {
+  old <- data.frame(id = c(1, 2, 100000, 1e6, 0.5, 2.25, NA), v = 1:7)
+  new <- data.frame(id = c("1", "2", "100000", "1000000", "0.5", "2.25", NA), v = c(1L, 2L, 9L, 4L, 5L, 6L, 7L),
+                    stringsAsFactors = FALSE)
+  for (kinds in list(c("duckdb", "duckdb"), c("arrow", "arrow"), c(NA_character_, "duckdb"))) {
+    kk <- ifelse(is.na(kinds), "df", kinds)
+    r <- cmp_expect_same(old, new, "id", kk, paste("numeric against text key", paste(kk, collapse = "/")))
+    expect_true(isTRUE(r$plan$keys[[1]]$text))
+    expect_equal(r$lazy[c("added", "removed", "changed", "same")], list(added = 0L, removed = 0L, changed = 1L, same = 6L))
+    expect_equal(r$mem[c("added", "removed", "changed", "same")], r$lazy[c("added", "removed", "changed", "same")])
+  }
+})
+
+test_that("the repeated-key sample is the first 5 repeated keys in sorted order", {
+  both <- list(c("duckdb", "duckdb"), c("arrow", "arrow"))
+  # 8 repeated numeric keys, first seen out of order, one of them NA (sorted last); the sample is the 5 smallest
+  old <- data.frame(k = c(9, 9, 3, 3, 7, 7, NA, NA, 5, 5, 2, 2, 4), v = 1:13)
+  new <- data.frame(k = c(8, 8, 1, 1, 4, 6), v = 1:6)
+  mem <- sv_compare_rows(old, new, sv_compare_plan(old, new, "k"))$summary
+  expect_equal(mem$repeated_keys, 8L)
+  expect_identical(cmp_sample(mem$repeated_sample), c("1", "2", "3", "5", "7"))
+  for (kinds in both) cmp_expect_same(old, new, "k", kinds, paste("numeric", paste(kinds, collapse = "/")))
+  # a two-column key: text by C-locale bytes (capitals first), then the number, NA last
+  old <- data.frame(id = c("b", "b", "B", "B", "a", "a", "a", "a", "Z", "Z", "s1", "s1"),
+                    seq = c(2L, 2L, 1L, 1L, NA, NA, 1L, 1L, 3L, 3L, 1L, 1L), v = 1:12)
+  new <- data.frame(id = c("a", "q"), seq = c(1L, 1L), v = c(5L, 0L))
+  mem <- sv_compare_rows(old, new, sv_compare_plan(old, new, c("id", "seq")))$summary
+  expect_identical(cmp_sample(mem$repeated_sample), c("B|1", "Z|3", "a|1", "a|<NA>", "b|2"))
+  for (kinds in both) cmp_expect_same(old, new, c("id", "seq"), kinds, paste("two keys", paste(kinds, collapse = "/")))
+  # keys of differing kinds join on text, so they sort as text ("10" before "2")
+  old <- data.frame(k = c(10L, 10L, 2L, 2L, 3L, 3L, 1L, 1L, 20L, 20L, 5L, 5L), v = 1:12)
+  new <- data.frame(k = c("1", "4"), v = c(1L, 0L))
+  mem <- sv_compare_rows(old, new, sv_compare_plan(old, new, "k"))$summary
+  expect_identical(cmp_sample(mem$repeated_sample), c("1", "10", "2", "20", "3"))
+  for (kinds in both) cmp_expect_same(old, new, "k", kinds, paste("text key", paste(kinds, collapse = "/")))
+  # a factor key sorts by its text, not by its levels
+  lv <- rev(letters[1:6])
+  old <- data.frame(k = factor(c("c", "c", "a", "a", "f", "f", "b", "b", "e", "e", "d", "d"), levels = lv), v = 1:12)
+  new <- data.frame(k = factor(c("a", "b"), levels = lv), v = c(1L, 0L))
+  mem <- sv_compare_rows(old, new, sv_compare_plan(old, new, "k"))$summary
+  expect_identical(cmp_sample(mem$repeated_sample), c("a", "b", "c", "d", "e"))
+  for (kinds in both) cmp_expect_same(old, new, "k", kinds, paste("factor", paste(kinds, collapse = "/")))
+})
+
+test_that("date-times become text in their zone", {
+  t1 <- as.POSIXct("2024-01-01 10:00:00", tz = "Asia/Singapore") + c(0, 3600, 7200)
+  old <- data.frame(id = 1:3, t = t1)
+  new <- data.frame(id = 1:3, t = t1 + c(60, 0, -3600))
+  mem <- sv_compare_rows(old, new, sv_compare_plan(old, new, "id"))$changed
+  expect_equal(mem$old, c("2024-01-01 10:00:00", "2024-01-01 12:00:00"))
+  for (kinds in list(c("arrow", "arrow"), c("arrow", "df"))) {
+    info <- paste(kinds, collapse = "/")
+    r <- cmp_expect_same(old, new, "id", kinds, info)
+    cc <- r$plan$compared[[1]]
+    expect_identical(cc$zone_old, "Asia/Singapore")
+    expect_false(is.na(cc$tz_text_old))
+    expect_identical(cc$tz_text_old, sv_stack_show(sv_stack_lazy_cast("t.old", "dttm", "chr", "Asia/Singapore")))
+    objs <- stk_objs(list(o = old, n = new), kinds)
+    e <- sv_lazy_env()
+    withr::defer(sv_lazy_close(e))
+    plan <- sv_compare_plan(objs$o, objs$n, "id", "o", "n", con_env = e)
+    ch <- as.data.frame(dplyr::collect(sv_lazy_compare(objs$o, objs$n, plan, e, "compare_changed")))
+    ch <- ch[order(ch$id), ]
+    expect_identical(ch$old, mem$old, info = info)
+    expect_identical(ch$new, mem$new, info = info)
+  }
+  # an in-memory plan has no tz_text (keys included), so both plans have one shape
+  p <- sv_compare_plan(old, new, "id")
+  expect_true(is.na(p$compared[[1]]$tz_text_old))
+  expect_true(all(c("tz_text_old", "tz_text_new") %in% names(p$keys[[1]])))
+})
+
+test_that("lazy compare is never collected", {
+  stk_need("duckdb")
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  con <- sv_lazy_con(e)
+  n <- 3000L
+  a <- data.frame(id = seq_len(n), v = as.character(seq_len(n)), x = seq_len(n) / 2)
+  b <- data.frame(id = seq_len(n) + 100L, v = as.character(seq_len(n) + 100L), x = (seq_len(n) + 100L) / 2)
+  b$x[1:10] <- 0
+  DBI::dbWriteTable(con, "ca", a)
+  DBI::dbWriteTable(con, "cb", b)
+  ta <- dplyr::tbl(con, "ca")
+  tb <- dplyr::tbl(con, "cb")
+  sizes <- integer(0)
+  real_collect <- dplyr::collect
+  testthat::local_mocked_bindings(
+    collect = function(x, ...) {
+      out <- real_collect(x, ...)
+      if (is.data.frame(out)) sizes <<- c(sizes, nrow(out))
+      out
+    },
+    .package = "dplyr"
+  )
+  plan <- sv_compare_plan(ta, tb, "id", "ca", "cb", con_env = e)
+  s <- sv_lazy_compare(ta, tb, plan, e)
+  expect_equal(s[c("n_old", "n_new", "added", "removed", "changed", "same")],
+               list(n_old = n, n_new = n, added = 100L, removed = 100L, changed = 10L, same = n - 110L))
+  expect_equal(s$per_column, c(v = 0L, x = 10L))
+  expect_equal(s$changed_values, 10L)
+  # the three cards through the card builder: each keeps a recipe, its rows are never collected whole
+  store <- sv_card_store(sv_normalize_cards(list(ca = ta, cb = tb)))
+  want <- c(compare_added = 100, compare_removed = 100, compare_changed = 10)
+  for (op in names(want)) {
+    card <- sv_derive_card(list(op = op, inputs = list("ca", "cb"), args = list(by = "id")), store, e)
+    expect_true(isTRUE(card$is_lazy))
+    expect_identical(card$derived$op, op)
+    expect_s3_class(card$source, "sv_derived_source")
+    expect_equal(card$dims[1], want[[op]])
+  }
+  # sv_compare() is lazy in, lazy out (and suggests the key from a preview)
+  r <- sv_compare(ta, tb)
+  expect_identical(r$by, "id")
+  expect_s3_class(r$added, "tbl_duckdb_connection")
+  expect_equal(as.numeric(dplyr::pull(dplyr::count(r$changed), "n")), 10)
+  expect_equal(r$n_added, 100L)
+  expect_lt(max(sizes, 0L), 100L)
+})
+
+test_that("compare: two duckdb connections are refused", {
+  stk_need("duckdb")
+  c1 <- DBI::dbConnect(duckdb::duckdb())
+  c2 <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer({ DBI::dbDisconnect(c1, shutdown = TRUE); DBI::dbDisconnect(c2, shutdown = TRUE) })
+  DBI::dbWriteTable(c1, "a", data.frame(id = 1:2, v = 1:2))
+  DBI::dbWriteTable(c2, "b", data.frame(id = 1:2, v = 3:4))
+  a <- dplyr::tbl(c1, "a")
+  b <- dplyr::tbl(c2, "b")
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  expect_error(sv_compare_plan(a, b, "id", "a", "b", con_env = e), class = "sv_lazy_cross_con")
+  expect_error(sv_compare_plan(a, b, "id", "a", "b", con_env = e),
+               "These tables are on different duckdb connections; compare unavailable.", fixed = TRUE)
+  expect_error(sv_compare(a, b, by = "id"), class = "sv_lazy_cross_con")
+  plan <- sv_compare_plan(data.frame(id = 1:2, v = 1:2), data.frame(id = 1:2, v = 3:4), "id")
+  expect_error(sv_lazy_compare(a, b, plan, e), class = "sv_lazy_cross_con")
+  expect_error(sv_lazy_compare(a, b, plan, e, "compare_changed"), class = "sv_lazy_cross_con")
+  # the stack keeps its own word
+  expect_error(sv_lazy_place_n(list(a = a, b = b), e), "stack unavailable", fixed = TRUE)
+})
+
+test_that("zero-row lazy version", {
+  k <- c("duckdb", "duckdb")
+  # a zero-row old: every new row is added
+  r <- cmp_expect_same(data.frame(id = integer(0), v = character(0)),
+                       data.frame(id = 1:2, v = c("a", "b")), "id", k, "zero old")
+  expect_equal(r$lazy[c("n_old", "added", "removed", "changed", "same")],
+               list(n_old = 0L, added = 2L, removed = 0L, changed = 0L, same = 0L))
+  # a zero-row new: every old row is removed
+  r <- cmp_expect_same(data.frame(id = 1:2, v = c("a", "b")),
+                       data.frame(id = integer(0), v = character(0)), "id", k, "zero new")
+  expect_equal(r$lazy$removed, 2L)
+  # identical versions: all the same
+  same <- data.frame(id = 1:4, v = c("a", "b", NA, "d"), x = c(1, NaN, NA, 4))
+  r <- cmp_expect_same(same, same, "id", k, "identical")
+  expect_equal(r$lazy$same, 4L)
+  expect_equal(r$lazy$changed_values, 0L)
+  # a factor against the same values as character: compared, not type changed, no changed rows
+  r <- cmp_expect_same(data.frame(id = 1:3, f = factor(c("a", "b", "c"))),
+                       data.frame(id = 1:3, f = c("a", "b", "c")), "id", k, "factor")
+  expect_identical(r$lazy$compared, "f")
+  expect_length(r$lazy$type_changed, 0L)
+  expect_equal(r$lazy$changed, 0L)
+  # no compared column: `_changed` is zero rows with the key, column, old and new
+  r <- cmp_expect_same(data.frame(id = 1:3), data.frame(id = 2:4), "id", k, "no compared")
+  expect_length(r$lazy$compared, 0L)
+  expect_equal(r$lazy$per_column, stats::setNames(integer(0), character(0)))
+})
+
+test_that("compare_request answers a lazy card from queries and matches the in-memory reply", {
+  stk_need("duckdb")
+  e <- sv_lazy_env()
+  withr::defer(sv_lazy_close(e))
+  con <- sv_lazy_con(e)
+  n <- 3000L
+  a <- data.frame(id = seq_len(n), v = as.character(seq_len(n)), x = seq_len(n) / 2)
+  b <- data.frame(id = seq_len(n) + 100L, v = as.character(seq_len(n) + 100L), x = (seq_len(n) + 100L) / 2)
+  b$x[1:10] <- 0
+  DBI::dbWriteTable(con, "ca", a)
+  DBI::dbWriteTable(con, "cb", b)
+  ta <- dplyr::tbl(con, "ca")
+  tb <- dplyr::tbl(con, "cb")
+  reply <- function(app, old, new) {
+    out <- NULL
+    shiny::testServer(app, {
+      session$setInputs(compare_request = list(id = "z1", old = old, new = new, by = list("id")))
+      m <- Filter(function(z) identical(z$type, "sideview_compare"), session$userData$custom_messages)
+      out <<- m[[length(m)]]$message
+    })
+    out
+  }
+  want <- reply(sideview(ca = a, cb = b, run = FALSE), "ca", "cb")
+  expect_null(want$error)
+  sizes <- integer(0)
+  real_collect <- dplyr::collect
+  testthat::local_mocked_bindings(
+    collect = function(x, ...) {
+      out <- real_collect(x, ...)
+      if (is.data.frame(out)) sizes <<- c(sizes, nrow(out))
+      out
+    },
+    .package = "dplyr"
+  )
+  fields <- c("by", "n_old", "n_new", "added", "removed", "changed", "same", "repeated_keys", "per_column",
+              "changed_values", "compared", "text", "open")
+  for (app in list(sideview(ca = ta, cb = tb, run = FALSE),   # both lazy
+                   sideview(ca = a, cb = tb, run = FALSE))) { # a data frame and a lazy card
+    r <- reply(app, "ca", "cb")
+    expect_null(r$error)
+    expect_equal(r[fields], want[fields])
+    expect_length(r$code_preview, 3L)
+    for (cd in r$code_preview) {
+      expect_true(is.character(cd) && length(cd) == 1L)
+      expect_false(inherits(try(parse(text = cd), silent = TRUE), "try-error"))
+    }
+  }
+  # the lazy code is the duckdb form, and no whole table came back (previews and samples only)
+  r <- reply(sideview(ca = ta, cb = tb, run = FALSE), "ca", "cb")
+  expect_match(r$code_preview$added, "duckdb|copy_to|to_duckdb|ca", ignore.case = TRUE)
+  expect_true(length(sizes) > 0L)
+  expect_lt(max(sizes), n)
+})
