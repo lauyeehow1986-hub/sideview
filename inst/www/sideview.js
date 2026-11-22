@@ -799,8 +799,13 @@ function sendToShiny(name, value) {
       throw new Error('sideview: sv-pipeline.js must be loaded before sideview.js');
     }
     this.ruleDraft = null;
+    // the starting style of the generated code: option (widget), data attribute (gadget), else dplyr;
+    // a loaded state's own style wins over it (see applyState)
+    this.initialStyle = this.options.codeStyle ||
+      (this.container.getAttribute ? this.container.getAttribute('data-sv-code-style') : null) || 'dplyr';
     this.pipeline = new global.SideviewPipeline.Pipeline({
       pipe: this.options.pipe,
+      style: this.initialStyle,
       onChange: function (_p, label) {
         if (label === 'undo' || label === 'redo') {
           self.forgetSuppChecks(null);
@@ -836,7 +841,8 @@ function sendToShiny(name, value) {
     }
 
     if (this.options.pipeline) {
-      this.pipeline.load(this.options.pipeline);
+      // not a workspace state: a pipeline without a style keeps the engine's starting style
+      this.pipeline.load(Object.assign({}, this.options.pipeline, { style: this.options.pipeline.style || this.initialStyle }));
       this.pipeline.undoStack = [];
     }
     this.renderPipeline();
@@ -6924,7 +6930,8 @@ function sendToShiny(name, value) {
         code: isNoCode(this.generatedCode) ? '' : this.generatedCode,
         active_tab: this.activeDrawerTab || 'pipeline',
         steps: this.pipeline.toJSON().steps,
-        pipe: this.pipeline.pipe
+        pipe: this.pipeline.pipe,
+        style: this.pipeline.style
       },
       view: { labels_row: !!this.labelsRow, mode: this.view }
     };
@@ -7049,10 +7056,14 @@ function sendToShiny(name, value) {
       this.reportFocus = null;
     }
     if (Array.isArray(p.steps)) {
-      this.pipeline.load({ steps: p.steps, pipe: p.pipe });
+      // a state's style wins over code_style; one without a style is dplyr (load() does both)
+      this.pipeline.load({ steps: p.steps, pipe: p.pipe, style: p.style });
     } else if (!isNoCode(p.code)) {
-      // Version 0.2.0 files carry only the code.
+      // Version 0.2.0 files carry only the code, and no style: dplyr.
+      this.pipeline.setStyle('dplyr');
       this.pipeline.replaceWithCode(String(p.code).trim(), 'restore');
+    } else if (state.pipeline) {
+      this.pipeline.setStyle(p.style);
     }
     if (p.pipe) this.pipeline.setPipe(p.pipe);
     // A restored workspace starts a fresh undo history.
@@ -9112,6 +9123,10 @@ function sendToShiny(name, value) {
         self._rRemoved[String(data.name)] = true;
       }
       if (data && self.removeCard(data.name)) self.announce('Table ' + data.name + ' removed.');
+    });
+    // display and codegen only: the browser composes the code, R evaluates nothing
+    self.onMessage('sideview_code_style', function (data) {
+      if (data) self.pipeline.setStyle(data.style);
     });
     self.onMessage('sideview_state_set', function (data) {
       if (!data || data.state === undefined || data.state === null) return;

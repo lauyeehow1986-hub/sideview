@@ -13,6 +13,7 @@ sideview_widget(
   theme = "auto",
   state = NULL,
   cdisc = "auto",
+  code_style = c("dplyr", "pharmaverse"),
   max_rows = 5000,
   view = getOption("sideview.view", "canvas")
 )
@@ -41,6 +42,10 @@ the single-key shortcuts off, default \code{getOption("sideview.shortcuts", TRUE
 
 \item{cdisc}{CDISC awareness (see \code{\link[=sideview]{sideview()}}): \code{"auto"} (default), \code{FALSE},
 or a named character vector of domain codes.}
+
+\item{code_style}{Style of the generated code: \code{"dplyr"} (default) or \code{"pharmaverse"}
+(see \code{\link[=sideview]{sideview()}}). A workspace that records a style (\code{options = list(state = )},
+\verb{state =}) wins over it.}
 
 \item{max_rows}{Most rows of each data-frame table to embed in the widget
 (default 5000). A longer table is cut to its first \code{max_rows} rows, its

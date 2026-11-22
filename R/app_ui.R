@@ -390,6 +390,8 @@ render_card_tag <- function(card, index = 1L) {
 #' @param theme `"auto"`, `"light"`, `"dark"`, an [sv_theme()] or a
 #'   `bslib::bs_theme()`. See [sv_theme()].
 #' @param state Optional saved workspace to restore on load (see [sideview()]).
+#' @param code_style `"dplyr"` (default) or `"pharmaverse"`: the starting style of the
+#'   generated code (see [sideview()]). A `state` that records a style wins over it.
 #'
 #' @param view Starting view: `"canvas"` (default) or `"list"` (see [sideview()]).
 #' @param access `TRUE` starts with the Accessible canvas switch on (default
@@ -400,11 +402,13 @@ render_card_tag <- function(card, index = 1L) {
 #' @export
 sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALSE, theme = "auto",
                         state = NULL, view = getOption("sideview.view", "canvas"),
-                        access = getOption("sideview.access", FALSE)) {
+                        access = getOption("sideview.access", FALSE),
+                        code_style = c("dplyr", "pharmaverse")) {
   view <- sv_check_view(view)
   access <- sv_check_access(access)
+  code_style <- match.arg(code_style)
   sv_ui_build(cards = cards, title = title, gadget = gadget, theme = theme, state = state, view = view,
-              access = access)
+              access = access, code_style = code_style)
 }
 
 # The chrome (toolbar, canvas, drawer, AI bar) behind sideview_ui() and sideviewUI().
@@ -412,7 +416,7 @@ sideview_ui <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
 # no page-level rules, no buttons that run code, `data-sv-ns` and a per-container init script.
 sv_ui_build <- function(cards = list(), title = "Sideview Canvas", gadget = FALSE, theme = "auto",
                         state = NULL, ns = NULL, height = NULL, view = "canvas",
-                        access = getOption("sideview.access", FALSE)) {
+                        access = getOption("sideview.access", FALSE), code_style = "dplyr") {
   access <- sv_check_access(access)
   module <- !is.null(ns)
   normalized_cards <- if (module) list() else sv_normalize_cards(cards)
@@ -632,6 +636,8 @@ sv_ui_build <- function(cards = list(), title = "Sideview Canvas", gadget = FALS
     `data-sv-theme` = theme$mode,
     `data-sv-ns` = ns,
     `data-sv-view` = view,
+    # the starting style of the generated code; a saved state or sideview_code_style overrides it
+    `data-sv-code-style` = code_style,
     # access = TRUE (or option sideview.access): the Accessible canvas switch starts on
     `data-sv-access` = if (access) "true" else NULL,
     # option(sideview.shortcuts = FALSE): single-key shortcuts start off (a stored choice wins)

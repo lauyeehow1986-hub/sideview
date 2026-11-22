@@ -11,6 +11,7 @@ sideview(
   theme = "auto",
   state = NULL,
   cdisc = "auto",
+  code_style = c("dplyr", "pharmaverse"),
   view = getOption("sideview.view", "canvas"),
   access = getOption("sideview.access", FALSE),
   env = parent.frame(),
@@ -43,6 +44,10 @@ to tables by name.}
 SDTM, SEND or ADaM datasets; \code{FALSE} turns it off; a named character vector
 such as \code{c(my_ae = "AE")} sets a table's domain by name (other tables are
 still detected).}
+
+\item{code_style}{Style of the generated code: \code{"dplyr"} (default) or \code{"pharmaverse"},
+which writes \code{metatools::combine_supp()} for a SUPP-- merge. It is the starting style:
+a workspace \code{state} that records a style wins over it.}
 
 \item{view}{Starting view: \code{"canvas"} (default, the pan/zoom canvas) or \code{"list"}
 (a text-first list of the tables, for keyboard and screen-reader use). The

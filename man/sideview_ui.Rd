@@ -11,7 +11,8 @@ sideview_ui(
   theme = "auto",
   state = NULL,
   view = getOption("sideview.view", "canvas"),
-  access = getOption("sideview.access", FALSE)
+  access = getOption("sideview.access", FALSE),
+  code_style = c("dplyr", "pharmaverse")
 )
 }
 \arguments{
@@ -32,6 +33,9 @@ or tabular objects to be normalized.}
 \item{access}{\code{TRUE} starts with the Accessible canvas switch on (default
 \code{getOption("sideview.access", FALSE)}); the switch in the \verb{?} list is remembered in
 the browser and wins.}
+
+\item{code_style}{\code{"dplyr"} (default) or \code{"pharmaverse"}: the starting style of the
+generated code (see \code{\link[=sideview]{sideview()}}). A \code{state} that records a style wins over it.}
 }
 \value{
 A \code{shiny.tag.list} UI definition.

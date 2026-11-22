@@ -41,7 +41,7 @@ test_that("state is queued until ready, after the cards", {
     expect_length(msgs(session, "sideview_state_set"), 0L)
     session$setInputs(sideview_ready = list(nonce = 1))
     types <- vapply(session$userData$custom_messages, function(m) m$type, "")
-    expect_equal(types[types != "sideview_llm"], c("sideview_card_add", "sideview_card_add", "sideview_state_set"))
+    expect_equal(types[!types %in% c("sideview_llm", "sideview_code_style")], c("sideview_card_add", "sideview_card_add", "sideview_state_set"))
     expect_type(msgs(session, "sideview_state_set")[[1]]$message$state, "character")
   })
 })
@@ -1276,4 +1276,18 @@ test_that("a restored stack step takes the plan R makes from the current data", 
   # a SUPP or join step is left as saved
   other <- sv_derive_state_refresh(dv_state(list(dv_step1)), app$cards)
   expect_identical(other$pipeline$steps[[1]]$args$side, "x")
+})
+
+test_that("code_style is emitted before the state, with ns; a bad value errors", {
+  expect_error(sideviewServer("cv", code_style = "base"), "should be one of")
+  st <- new_sideview_state()
+  shiny::testServer(sideviewServer, args = start_module(state = st, code_style = "pharmaverse"), {
+    session$setInputs(sideview_ready = list(nonce = 1))
+    types <- vapply(session$userData$custom_messages, function(m) m$type, "")
+    expect_true(match("sideview_code_style", types) < match("sideview_state_set", types))
+    m <- msgs(session, "sideview_code_style")
+    expect_length(m, 1L)
+    expect_identical(m[[1]]$message$style, "pharmaverse")
+    expect_identical(m[[1]]$message$ns, session$ns(""))
+  })
 })

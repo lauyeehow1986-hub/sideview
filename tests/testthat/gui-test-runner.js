@@ -1851,6 +1851,58 @@ function runAllScenarios() {
   s14_pw.destroy();
   results.scenario14 = s14_r;
 
+  // SCENARIO 15: the code style (dplyr / pharmaverse): init order, state precedence, module message
+  const s15_r = {};
+  const s15_make = function (opts, attr) {
+    const el = new MockElement('DIV');
+    el.className = 'sideview-container';
+    if (attr) el.setAttribute('data-sv-code-style', attr);
+    document.body.appendChild(el);
+    return global.Sideview.init(el, Object.assign({ mode: 'embedded', cards: [] }, opts));
+  };
+  const s15_state = function (pipeline) {
+    return JSON.stringify({ version: '0.3.0', canvas: { zoom: 1, pan_x: 0, pan_y: 0 }, cards: [], connections: [], pipeline: pipeline });
+  };
+  const s15_a = s15_make({});
+  s15_r.default_is_dplyr = s15_a.pipeline.style === 'dplyr';
+  s15_a.destroy();
+  const s15_b = s15_make({}, 'pharmaverse');
+  s15_r.data_attribute_sets_style = s15_b.pipeline.style === 'pharmaverse';
+  s15_b.destroy();
+  const s15_c = s15_make({ codeStyle: 'pharmaverse' }, 'dplyr');
+  s15_r.option_beats_attribute = s15_c.pipeline.style === 'pharmaverse';
+  s15_c.destroy();
+  const s15_d = s15_make({ codeStyle: 'dplyr',
+    state: s15_state({ code: '', active_tab: 'pipeline', steps: [], pipe: '%>%', style: 'pharmaverse' }) });
+  s15_r.state_style_wins = s15_d.pipeline.style === 'pharmaverse';
+  s15_r.get_state_carries_style = s15_d.getState().pipeline.style === 'pharmaverse';
+  s15_d.destroy();
+  const s15_e = s15_make({ codeStyle: 'pharmaverse',
+    state: s15_state({ code: '', active_tab: 'pipeline', steps: [], pipe: '%>%' }) });
+  s15_r.styleless_state_is_dplyr = s15_e.pipeline.style === 'dplyr';
+  s15_e.destroy();
+  const s15_f = s15_make({ codeStyle: 'pharmaverse', pipeline: { steps: [], pipe: '%>%' } });
+  s15_r.styleless_options_pipeline_keeps_style = s15_f.pipeline.style === 'pharmaverse';
+  s15_f.destroy();
+  const s15_g = s15_make({ codeStyle: 'dplyr', pipeline: { steps: [], pipe: '%>%', style: 'pharmaverse' } });
+  s15_r.options_pipeline_style_used = s15_g.pipeline.style === 'pharmaverse';
+  s15_g.destroy();
+  // Open on a running engine: a saved style is kept, a code-only 0.2.0 state is dplyr
+  const s15_h = s15_make({ codeStyle: 'pharmaverse' });
+  s15_h.applyState(JSON.parse(s15_state({ code: '', active_tab: 'pipeline', steps: [], pipe: '%>%', style: 'pharmaverse' })));
+  s15_r.open_keeps_saved_style = s15_h.pipeline.style === 'pharmaverse';
+  s15_h.applyState(JSON.parse(s15_state({ code: 'x <- 1', active_tab: 'pipeline' })));
+  s15_r.open_code_only_is_dplyr = s15_h.pipeline.style === 'dplyr';
+  s15_h.destroy();
+  // module: the message sets the style (routed by ns), and a bad value becomes dplyr
+  const s15_m = s11_make('cs-', []);
+  shinyHandlers.sideview_code_style({ ns: 'cs-', style: 'pharmaverse' });
+  s15_r.message_sets_style = s15_m.engine.pipeline.style === 'pharmaverse';
+  shinyHandlers.sideview_code_style({ ns: 'cs-', style: 'base' });
+  s15_r.message_bad_value_is_dplyr = s15_m.engine.pipeline.style === 'dplyr';
+  s15_m.engine.destroy();
+  results.scenario15 = s15_r;
+
   // snapshots wait for the debounce, so they finish after the synchronous scenarios
   results.__later = function () {
     const sleep = function (ms) { return new Promise(function (res) { setTimeout(res, ms); }); };

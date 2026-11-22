@@ -452,3 +452,16 @@ test_that("Computer Use GUI: Scenario 14 - Merge into button, merge check report
     expect_true(isTRUE(s14[[nm]]), info = nm)
   }
 })
+
+# ==============================================================================
+# Scenario 15: code style (dplyr / pharmaverse): init order, state precedence, module message
+# ==============================================================================
+test_that("Computer Use GUI: Scenario 15 - code style init order, state wins, module message", {
+  res <- run_gui_test_scenarios()
+  s15 <- res$scenario15
+
+  expect_gt(length(s15), 0)
+  for (nm in names(s15)) {
+    expect_true(isTRUE(s15[[nm]]), info = nm)
+  }
+})

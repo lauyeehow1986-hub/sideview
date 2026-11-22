@@ -37,6 +37,9 @@
 #'   message arrives.
 #' @param cdisc CDISC tagging, as for [sideview()]: `"auto"`, `FALSE`, or a named
 #'   character vector of domain codes. Tags are kept current as cards come and go.
+#' @param code_style `"dplyr"` (default) or `"pharmaverse"`: the starting style of the
+#'   generated code, sent to the canvas before `state`. A `state` that records a style wins.
+#'   It changes the code the browser composes, nothing R evaluates.
 #'
 #' @return `sideviewUI()` returns a `shiny.tag.list`. `sideviewServer()` returns a
 #'   `sideview_proxy`: a list with the reactives `code()` (the composed code, `""`
@@ -70,9 +73,11 @@ sideviewUI <- function(id, height = "600px", title = NULL, theme = "auto",
 
 #' @rdname sideviewUI
 #' @export
-sideviewServer <- function(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto") {
+sideviewServer <- function(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto",
+                          code_style = c("dplyr", "pharmaverse")) {
   force(cards)
   cdisc <- sv_cdisc_check_arg(cdisc)
+  code_style <- match.arg(code_style)
   force(state)
   force(llm_fn)
   shiny::moduleServer(id, function(input, output, session) {
@@ -103,6 +108,9 @@ sideviewServer <- function(id, cards = list(), state = NULL, llm_fn = NULL, cdis
     )
     sv_register_proxy(session, ns, proxy)
     if (is.null(llm_fn)) ctl$emit("sideview_llm", list(enabled = FALSE))
+
+    # the canvas starts as dplyr: only another style needs saying (before the state, which may override it)
+    if (!identical(code_style, "dplyr")) ctl$emit("sideview_code_style", list(style = code_style))
 
     if (!is.null(state)) {
       state <- sv_module_state(state)

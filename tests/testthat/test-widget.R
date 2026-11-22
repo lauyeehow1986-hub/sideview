@@ -314,3 +314,38 @@ test_that("save_sideview(view =) reaches the widget options", {
   save_sideview(mtcars, file = tf, view = "list")
   expect_true(grepl('"view":"list"', paste(readLines(tf, warn = FALSE), collapse = "\n"), fixed = TRUE))
 })
+
+# ---- code_style (E1) --------------------------------------------------------
+
+test_that("code_style is match.arg-checked and reaches options$codeStyle", {
+  expect_error(sideview_widget(mtcars, code_style = "base"), "should be one of")
+  expect_error(sideview(mtcars, code_style = "base", run = FALSE), "should be one of")
+  expect_error(sideviewServer("x", code_style = "base"), "should be one of")
+  expect_error(save_sideview(mtcars, tempfile(fileext = ".html"), code_style = "base"), "should be one of")
+  expect_identical(sideview_widget(mtcars)$x$options$codeStyle, "dplyr")
+  expect_identical(sideview_widget(mtcars, code_style = "pharmaverse")$x$options$codeStyle, "pharmaverse")
+})
+
+test_that("sideview_ui writes data-sv-code-style", {
+  html <- as.character(sideview_ui(list(), code_style = "pharmaverse"))
+  expect_match(html, 'data-sv-code-style="pharmaverse"', fixed = TRUE)
+  expect_match(as.character(sideview_ui(list())), 'data-sv-code-style="dplyr"', fixed = TRUE)
+  expect_error(sideview_ui(list(), code_style = "base"), "should be one of")
+})
+
+test_that("save_sideview keeps the widget's style unless code_style is given", {
+  skip_if_not_installed("htmlwidgets")
+  w <- sideview_widget(mtcars, code_style = "pharmaverse")
+  seen <- NULL
+  testthat::local_mocked_bindings(saveWidget = function(widget, ...) { seen <<- widget$x$options$codeStyle; invisible() },
+                                  .package = "htmlwidgets")
+  f <- tempfile(fileext = ".html")
+  save_sideview(w, f)
+  expect_identical(seen, "pharmaverse")
+  save_sideview(w, f, code_style = "dplyr")
+  expect_identical(seen, "dplyr")
+  save_sideview(mtcars, f, code_style = "pharmaverse")
+  expect_identical(seen, "pharmaverse")
+  save_sideview(mtcars, f)
+  expect_identical(seen, "dplyr")
+})

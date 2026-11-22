@@ -14,7 +14,14 @@ sideviewUI(
   access = getOption("sideview.access", FALSE)
 )
 
-sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto")
+sideviewServer(
+  id,
+  cards = list(),
+  state = NULL,
+  llm_fn = NULL,
+  cdisc = "auto",
+  code_style = c("dplyr", "pharmaverse")
+)
 }
 \arguments{
 \item{id}{Module id.}
@@ -49,6 +56,10 @@ message arrives.}
 
 \item{cdisc}{CDISC tagging, as for \code{\link[=sideview]{sideview()}}: \code{"auto"}, \code{FALSE}, or a named
 character vector of domain codes. Tags are kept current as cards come and go.}
+
+\item{code_style}{\code{"dplyr"} (default) or \code{"pharmaverse"}: the starting style of the
+generated code, sent to the canvas before \code{state}. A \code{state} that records a style wins.
+It changes the code the browser composes, nothing R evaluates.}
 }
 \value{
 \code{sideviewUI()} returns a \code{shiny.tag.list}. \code{sideviewServer()} returns a
