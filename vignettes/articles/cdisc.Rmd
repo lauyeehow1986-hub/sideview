@@ -201,6 +201,44 @@ the code casts a numeric key to the parent's own Arrow type, so an `int64` `AESE
 In the widget the check runs in the browser on the embedded rows; when a card's rows were cut (`max_rows`) or
 the card is lazy, the panel says "Preview rows".
 
+### Pharmaverse code
+
+The step above is written with `dplyr` and `tidyr`. Set `code_style = "pharmaverse"` (on `sideview()`,
+`sideview_widget()` and `sideviewServer()`), or pick `pharmaverse` in the pipeline bar's Code select, and an
+eligible merge is written with `metatools::combine_supp()` (version 0.3.0 or later) instead. Every other step
+stays `dplyr`.
+
+sideview writes `combine_supp()` only when its result is the same as the `dplyr` code's. Where it would not be,
+the step stays `dplyr` and the step line says why, for example `dplyr: IDVARVAL "01" would not match AESEQ 1 in
+combine_supp()`. The reasons fall in a few groups: the merge stops anyway; a table is a duckdb or Arrow table
+(`combine_supp() needs data frames`) or only its preview rows were checked; the SUPP table has extra or missing
+columns, or the merge has steps before it; keys that `combine_supp()` matches differently (as text, where the
+`dplyr` code converts a number), or a class that differs (a factor key, `DOMAIN`); and a `QLABEL` that
+`combine_supp()` would label differently. The merge panel in the Discrepancy tab shows
+`combine_supp(): yes` or `combine_supp(): no, <reason>` in both styles, and so does `print(chk)`.
+
+For a `SUPPQUAL` table with rows of other domains, the generated code looks like this (the guard block, about 50
+lines, is shortened here; the code the app writes has all of it):
+
+```r
+suppqual_q <- suppqual %>%
+  dplyr::filter(RDOMAIN == "AE")
+local({
+  q <- suppqual_q %>%
+    dplyr::mutate(IDVAR = dplyr::if_else(is.na(IDVAR) | trimws(IDVAR) == "", "", as.character(IDVAR)),
+                  QNAM = dplyr::coalesce(as.character(QNAM), "NA"))
+  # ... guards: stop when the SUPP has an IDVAR this merge does not handle, repeats a QNAM, or has
+  # keys that combine_supp() would match differently from the dplyr code ...
+})
+
+ae %>%
+  metatools::combine_supp(suppqual_q)
+```
+
+The guards stop the code, with a message that says to use the `dplyr` code style for this merge, if a later data
+cut breaks what the check found. Orphan or unconvertible `IDVARVAL` rows make `combine_supp()` warn, and the step
+line says so.
+
 ## Rows behind the counts
 
 A join check or a SUPP check ends in counts: how many rows have no partner, how many fell outside a date

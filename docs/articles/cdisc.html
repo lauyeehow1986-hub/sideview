@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.10.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.11.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -366,6 +366,52 @@ on the embedded rows; when a card’s rows were cut
 (<code>max_rows</code>) or the card is lazy, the panel says “Preview
 rows”.</p>
 </div>
+<div class="section level3">
+<h3 id="pharmaverse-code">Pharmaverse code<a class="anchor" aria-label="anchor" href="#pharmaverse-code"></a>
+</h3>
+<p>The step above is written with <code>dplyr</code> and
+<code>tidyr</code>. Set <code>code_style = "pharmaverse"</code> (on
+<code><a href="../reference/sideview.html">sideview()</a></code>, <code><a href="../reference/sideview_widget.html">sideview_widget()</a></code> and
+<code><a href="../reference/sideviewUI.html">sideviewServer()</a></code>), or pick <code>pharmaverse</code> in the
+pipeline bar’s Code select, and an eligible merge is written with
+<code><a href="https://pharmaverse.github.io/metatools/reference/combine_supp.html" class="external-link">metatools::combine_supp()</a></code> (version 0.3.0 or later) instead.
+Every other step stays <code>dplyr</code>.</p>
+<p>sideview writes <code>combine_supp()</code> only when its result is
+the same as the <code>dplyr</code> code’s. Where it would not be, the
+step stays <code>dplyr</code> and the step line says why, for example
+<code>dplyr: IDVARVAL "01" would not match AESEQ 1 in combine_supp()</code>.
+The reasons fall in a few groups: the merge stops anyway; a table is a
+duckdb or Arrow table (<code>combine_supp() needs data frames</code>) or
+only its preview rows were checked; the SUPP table has extra or missing
+columns, or the merge has steps before it; keys that
+<code>combine_supp()</code> matches differently (as text, where the
+<code>dplyr</code> code converts a number), or a class that differs (a
+factor key, <code>DOMAIN</code>); and a <code>QLABEL</code> that
+<code>combine_supp()</code> would label differently. The merge panel in
+the Discrepancy tab shows <code>combine_supp(): yes</code> or
+<code>combine_supp(): no, &lt;reason&gt;</code> in both styles, and so
+does <code>print(chk)</code>.</p>
+<p>For a <code>SUPPQUAL</code> table with rows of other domains, the
+generated code looks like this (the guard block, about 50 lines, is
+shortened here; the code the app writes has all of it):</p>
+<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">suppqual_q</span> <span class="op">&lt;-</span> <span class="va">suppqual</span> <span class="op">%&gt;%</span></span>
+<span>  <span class="fu">dplyr</span><span class="fu">::</span><span class="fu"><a href="https://dplyr.tidyverse.org/reference/filter.html" class="external-link">filter</a></span><span class="op">(</span><span class="va">RDOMAIN</span> <span class="op">==</span> <span class="st">"AE"</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/eval.html" class="external-link">local</a></span><span class="op">(</span><span class="op">{</span></span>
+<span>  <span class="va">q</span> <span class="op">&lt;-</span> <span class="va">suppqual_q</span> <span class="op">%&gt;%</span></span>
+<span>    <span class="fu">dplyr</span><span class="fu">::</span><span class="fu"><a href="https://dplyr.tidyverse.org/reference/mutate.html" class="external-link">mutate</a></span><span class="op">(</span>IDVAR <span class="op">=</span> <span class="fu">dplyr</span><span class="fu">::</span><span class="fu"><a href="https://dplyr.tidyverse.org/reference/if_else.html" class="external-link">if_else</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/NA.html" class="external-link">is.na</a></span><span class="op">(</span><span class="va">IDVAR</span><span class="op">)</span> <span class="op">|</span> <span class="fu"><a href="https://rdrr.io/r/base/trimws.html" class="external-link">trimws</a></span><span class="op">(</span><span class="va">IDVAR</span><span class="op">)</span> <span class="op">==</span> <span class="st">""</span>, <span class="st">""</span>, <span class="fu"><a href="https://rdrr.io/r/base/character.html" class="external-link">as.character</a></span><span class="op">(</span><span class="va">IDVAR</span><span class="op">)</span><span class="op">)</span>,</span>
+<span>                  QNAM <span class="op">=</span> <span class="fu">dplyr</span><span class="fu">::</span><span class="fu"><a href="https://dplyr.tidyverse.org/reference/coalesce.html" class="external-link">coalesce</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/character.html" class="external-link">as.character</a></span><span class="op">(</span><span class="va">QNAM</span><span class="op">)</span>, <span class="st">"NA"</span><span class="op">)</span><span class="op">)</span></span>
+<span>  <span class="co"># ... guards: stop when the SUPP has an IDVAR this merge does not handle, repeats a QNAM, or has</span></span>
+<span>  <span class="co"># keys that combine_supp() would match differently from the dplyr code ...</span></span>
+<span><span class="op">}</span><span class="op">)</span></span>
+<span></span>
+<span><span class="va">ae</span> <span class="op">%&gt;%</span></span>
+<span>  <span class="fu">metatools</span><span class="fu">::</span><span class="fu"><a href="https://pharmaverse.github.io/metatools/reference/combine_supp.html" class="external-link">combine_supp</a></span><span class="op">(</span><span class="va">suppqual_q</span><span class="op">)</span></span></code></pre></div>
+<p>The guards stop the code, with a message that says to use the
+<code>dplyr</code> code style for this merge, if a later data cut breaks
+what the check found. Orphan or unconvertible <code>IDVARVAL</code> rows
+make <code>combine_supp()</code> warn, and the step line says so.</p>
+</div>
 </div>
 <div class="section level2">
 <h2 id="rows-behind-the-counts">Rows behind the counts<a class="anchor" aria-label="anchor" href="#rows-behind-the-counts"></a>
@@ -382,7 +428,7 @@ view the same offers are plain buttons.</p>
 <p>The console gives the same rows. A synthetic adverse event table with
 one subject that is not in <code>dm</code>, and a <code>SUPP--</code>
 table with one orphan and one bad <code>IDVARVAL</code>:</p>
-<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">ae2</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/cbind.html" class="external-link">rbind</a></span><span class="op">(</span><span class="va">ae</span>, <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>STUDYID <span class="op">=</span> <span class="va">sid</span>, DOMAIN <span class="op">=</span> <span class="st">"AE"</span>, USUBJID <span class="op">=</span> <span class="st">"SV-001-999"</span>, AESEQ <span class="op">=</span> <span class="fl">1L</span>,</span>
 <span>                            AETERM <span class="op">=</span> <span class="st">"Dizziness"</span>, AESEV <span class="op">=</span> <span class="st">"MILD"</span>, stringsAsFactors <span class="op">=</span> <span class="cn">FALSE</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="fu"><a href="../reference/sv_unmatched.html">sv_unmatched</a></span><span class="op">(</span><span class="va">ae2</span>, <span class="va">dm</span>, <span class="st">"USUBJID"</span><span class="op">)</span></span>
@@ -425,7 +471,7 @@ column is spelt <code>Age</code> in one table and <code>AGE</code> in
 another. <code><a href="../reference/sv_stack_check.html">sv_stack_check()</a></code> compares the columns of 2 to 8
 tables and says, for each column, its type in every table, its label,
 and what a stack would do with it. A synthetic two-wave example:</p>
-<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">wave1</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>USUBJID <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"S-01"</span>, <span class="st">"S-02"</span><span class="op">)</span>, AGE <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">34</span>, <span class="fl">51</span><span class="op">)</span>, SEX <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"F"</span>, <span class="st">"M"</span><span class="op">)</span>,</span>
 <span>                    stringsAsFactors <span class="op">=</span> <span class="cn">FALSE</span><span class="op">)</span></span>
 <span><span class="va">wave2</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>USUBJID <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"S-03"</span>, <span class="st">"S-04"</span><span class="op">)</span>, Age <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"29"</span>, <span class="st">"40"</span><span class="op">)</span>, SEX <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"M"</span>, <span class="st">"M"</span><span class="op">)</span>,</span>
@@ -446,7 +492,7 @@ differs is cast to the type the check shows (or the one you choose), a
 value that cannot be cast becomes <code>NA</code> and is counted, and
 the stacked table has exactly the sum of the rows. A <code>source</code>
 column holds each row’s table name.</p>
-<div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb13"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">chk</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/sv_stack_check.html">sv_stack_check</a></span><span class="op">(</span><span class="va">wave1</span>, <span class="va">wave2</span>, rename <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>Age <span class="op">=</span> <span class="st">"AGE"</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="fu"><a href="../reference/sv_stack.html">sv_stack</a></span><span class="op">(</span><span class="va">wave1</span>, <span class="va">wave2</span>, check <span class="op">=</span> <span class="va">chk</span><span class="op">)</span></span>
 <span><span class="co">#&gt;   source USUBJID AGE SEX</span></span>

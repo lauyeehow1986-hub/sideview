@@ -11,7 +11,7 @@ action drawer, and natural language AI bar with all HTML dependencies attached."
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.10.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.11.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -55,7 +55,8 @@ action drawer, and natural language AI bar with all HTML dependencies attached.<
 <span>  theme <span class="op">=</span> <span class="st">"auto"</span>,</span>
 <span>  state <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  view <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/options.html" class="external-link">getOption</a></span><span class="op">(</span><span class="st">"sideview.view"</span>, <span class="st">"canvas"</span><span class="op">)</span>,</span>
-<span>  access <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/options.html" class="external-link">getOption</a></span><span class="op">(</span><span class="st">"sideview.access"</span>, <span class="cn">FALSE</span><span class="op">)</span></span>
+<span>  access <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/options.html" class="external-link">getOption</a></span><span class="op">(</span><span class="st">"sideview.access"</span>, <span class="cn">FALSE</span><span class="op">)</span>,</span>
+<span>  code_style <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"dplyr"</span>, <span class="st">"pharmaverse"</span><span class="op">)</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -93,6 +94,12 @@ or tabular objects to be normalized.</p></dd>
 <dd><p><code>TRUE</code> starts with the Accessible canvas switch on (default
 <code>getOption("sideview.access", FALSE)</code>); the switch in the <code>?</code> list is remembered in
 the browser and wins.</p></dd>
+
+
+<dt id="arg-code-style">code_style<a class="anchor" aria-label="anchor" href="#arg-code-style"></a></dt>
+<dd><p><code>"dplyr"</code> (default) or <code>"pharmaverse"</code>: the starting style of the
+generated code (see <code><a href="sideview.html">sideview()</a></code>).
+A workspace state, with or without a recorded style, sets the style, and one without a style loads as <code>"dplyr"</code>: <code>code_style</code> is only the starting style when no <code>state</code> is applied.</p></dd>
 
 </dl></div>
     <div class="section level2">

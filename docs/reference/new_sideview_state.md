@@ -48,7 +48,10 @@ new_sideview_state(
 
   Named list containing `code` (character), `active_tab` (character)
   and, from version 0.3.0, the pipeline `steps` and `pipe` (`"%>%"` or
-  `"|>"`). Without `steps`, `code` is restored as one custom step.
+  `"|>"`), and optionally `style` (`"dplyr"` or `"pharmaverse"`, the
+  style of the generated code). A state without `style` loads as
+  `"dplyr"`; a recorded `style` wins over the `code_style` argument.
+  Without `steps`, `code` is restored as one custom step.
 
 ## Value
 

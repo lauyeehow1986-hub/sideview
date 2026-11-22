@@ -9,7 +9,7 @@ card configurations, table join connections, and pipeline script state."><meta p
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.10.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.11.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -83,7 +83,9 @@ off) size, not the enlarged one.</p></dd>
 <dt id="arg-pipeline">pipeline<a class="anchor" aria-label="anchor" href="#arg-pipeline"></a></dt>
 <dd><p>Named list containing <code>code</code> (character), <code>active_tab</code>
 (character) and, from version 0.3.0, the pipeline <code>steps</code> and <code>pipe</code>
-(<code>"%&gt;%"</code> or <code>"|&gt;"</code>). Without <code>steps</code>, <code>code</code> is restored as one custom step.</p></dd>
+(<code>"%&gt;%"</code> or <code>"|&gt;"</code>), and optionally <code>style</code> (<code>"dplyr"</code> or <code>"pharmaverse"</code>, the style
+of the generated code). A state without <code>style</code> loads as <code>"dplyr"</code>; a recorded <code>style</code>
+wins over the <code>code_style</code> argument. Without <code>steps</code>, <code>code</code> is restored as one custom step.</p></dd>
 
 </dl></div>
     <div class="section level2">

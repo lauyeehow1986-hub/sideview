@@ -15,6 +15,7 @@ sideview(
   theme = "auto",
   state = NULL,
   cdisc = "auto",
+  code_style = c("dplyr", "pharmaverse"),
   view = getOption("sideview.view", "canvas"),
   access = getOption("sideview.access", FALSE),
   env = parent.frame(),
@@ -72,6 +73,15 @@ sideview(
   SEND or ADaM datasets; `FALSE` turns it off; a named character vector
   such as `c(my_ae = "AE")` sets a table's domain by name (other tables
   are still detected).
+
+- code_style:
+
+  Style of the generated code: `"dplyr"` (default) or `"pharmaverse"`,
+  which writes
+  [`metatools::combine_supp()`](https://pharmaverse.github.io/metatools/reference/combine_supp.html)
+  for a SUPP– merge. A workspace state, with or without a recorded
+  style, sets the style, and one without a style loads as `"dplyr"`:
+  `code_style` is only the starting style when no `state` is applied.
 
 - view:
 

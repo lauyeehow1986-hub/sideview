@@ -9,7 +9,7 @@ with all styles, fonts, and JavaScript embedded."><meta property="og:image" cont
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.10.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.11.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -54,6 +54,7 @@ with all styles, fonts, and JavaScript embedded.</p>
 <span>  max_rows <span class="op">=</span> <span class="fl">5000</span>,</span>
 <span>  cdisc <span class="op">=</span> <span class="st">"auto"</span>,</span>
 <span>  view <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/options.html" class="external-link">getOption</a></span><span class="op">(</span><span class="st">"sideview.view"</span>, <span class="st">"canvas"</span><span class="op">)</span>,</span>
+<span>  code_style <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  <span class="va">...</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
@@ -98,6 +99,12 @@ keeps the cap it was built with.</p></dd>
 <dt id="arg-view">view<a class="anchor" aria-label="anchor" href="#arg-view"></a></dt>
 <dd><p>Starting view when <code>widget</code> is table data (see <code><a href="sideview_widget.html">sideview_widget()</a></code>).
 A widget you built yourself keeps its own.</p></dd>
+
+
+<dt id="arg-code-style">code_style<a class="anchor" aria-label="anchor" href="#arg-code-style"></a></dt>
+<dd><p><code>NULL</code> (default) keeps the widget's own style (<code>"dplyr"</code> for table data); <code>"dplyr"</code>
+or <code>"pharmaverse"</code> sets it (see <code><a href="sideview_widget.html">sideview_widget()</a></code>). A workspace the widget carries
+that records a style still wins in the browser.</p></dd>
 
 
 <dt id="arg--">...<a class="anchor" aria-label="anchor" href="#arg--"></a></dt>

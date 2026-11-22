@@ -1,12 +1,50 @@
 # Changelog
 
+## sideview 0.11.0 (development)
+
+Pharmaverse code (E1): a SUPP– merge can be written with
+[`metatools::combine_supp()`](https://pharmaverse.github.io/metatools/reference/combine_supp.html).
+Development version; the release number is decided at merge time.
+Checked with unit tests and real-browser tests (headless Chrome); not
+yet checked by hand in RStudio.
+
+### Pharmaverse code style
+
+- `code_style = c("dplyr", "pharmaverse")` on
+  [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md),
+  [`sideview_ui()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_ui.md),
+  [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md)
+  and
+  [`sideviewServer()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewUI.md);
+  `save_sideview(code_style = NULL)` keeps the widget’s style. It is the
+  starting style: an applied workspace state sets the style (a state
+  without one loads as `"dplyr"`). The pipeline bar has a **Code**
+  select to change it, and the style is saved in the pipeline state.
+- In the pharmaverse style an eligible SUPP– merge is written as
+  `<parent chain> %>% metatools::combine_supp(<supp>)`, after only the
+  prep lines it needs (a `dplyr::filter(RDOMAIN == "AE")`, and `IDVAR`
+  blanks set to `NA`) and a guard block. Every other step stays `dplyr`.
+- sideview writes `combine_supp()` only when its result equals the
+  `dplyr` code’s result. Otherwise the merge stays `dplyr` and the step
+  line says why (for example
+  `dplyr: IDVARVAL "01" would not match AESEQ 1 in combine_supp()`). The
+  generated guards stop the code, with a message, on a later data cut
+  where the two would differ.
+- The SUPP check has a `combine_supp` field (`ok`, `reason`, `prep`,
+  `installed`) in R, for lazy tables and in the browser. The Discrepancy
+  merge panel and [`print()`](https://rdrr.io/r/base/print.html) of the
+  check show `combine_supp(): yes` or `combine_supp(): no, <reason>` in
+  both styles. `metatools` (0.3.0 or later) stays in `Suggests`; the
+  step line says when it is not installed.
+- New message `sideview_code_style` (see CLAUDE.md).
+
 ## sideview 0.10.0 (development)
 
 Derived cards: the rows behind a check count become a card of their own
 (D1), tables stack with a check (D2), and two cuts of a table compare by
 key (D3). Development version; the release number is decided at merge
-time. Checked with real-browser tests (headless Chrome) and unit tests;
-the D3 manual RStudio pass is still to do.
+time. Checked with real-browser tests (headless Chrome) and unit tests,
+and by hand in RStudio (dialog, Viewer pane, external browser).
 
 ### Open the rows behind a count
 
@@ -39,8 +77,8 @@ the D3 manual RStudio pass is still to do.
 ### Stack tables
 
 Derived cards, second part (D2): stack tables. Checked with real-browser
-tests (headless Chrome) and unit tests; the manual RStudio pass is still
-to do.
+tests (headless Chrome) and unit tests; also checked by hand in RStudio
+(dialog, Viewer pane, external browser).
 
 - `sv_stack_check(..., cast, rename)` lines up the columns of 2 to 8
   tables and reports, per column, its type in each table, its label, and
@@ -89,8 +127,8 @@ to do.
 ### Compare data cuts
 
 Derived cards, third part (D3): compare two cuts of a table by key.
-Checked with real-browser tests (headless Chrome) and unit tests; the
-manual RStudio pass is still to do.
+Checked with real-browser tests (headless Chrome) and unit tests, and by
+hand in RStudio (dialog, Viewer pane, external browser).
 
 - `sv_compare(old, new, by)` matches the rows of two tables on a key (1
   to 20 columns) and counts the rows added (key only in `new`), removed

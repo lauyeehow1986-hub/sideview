@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.10.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.11.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -35,6 +35,19 @@
       <small>Source: <a href="https://github.com/lauyeehow1986-hub/sideview/blob/HEAD/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.11.0" id="sideview-0110-development">sideview 0.11.0 (development)<a class="anchor" aria-label="anchor" href="#sideview-0110-development"></a></h2>
+<p>Pharmaverse code (E1): a SUPP– merge can be written with <code><a href="https://pharmaverse.github.io/metatools/reference/combine_supp.html" class="external-link">metatools::combine_supp()</a></code>. Development version; the release number is decided at merge time. Checked with unit tests and real-browser tests (headless Chrome); not yet checked by hand in RStudio.</p>
+<div class="section level3">
+<h3 id="pharmaverse-code-style-0-11-0">Pharmaverse code style<a class="anchor" aria-label="anchor" href="#pharmaverse-code-style-0-11-0"></a></h3>
+<ul><li>
+<code>code_style = c("dplyr", "pharmaverse")</code> on <code><a href="../reference/sideview.html">sideview()</a></code>, <code><a href="../reference/sideview_ui.html">sideview_ui()</a></code>, <code><a href="../reference/sideview_widget.html">sideview_widget()</a></code> and <code><a href="../reference/sideviewUI.html">sideviewServer()</a></code>; <code>save_sideview(code_style = NULL)</code> keeps the widget’s style. It is the starting style: an applied workspace state sets the style (a state without one loads as <code>"dplyr"</code>). The pipeline bar has a <strong>Code</strong> select to change it, and the style is saved in the pipeline state.</li>
+<li>In the pharmaverse style an eligible SUPP– merge is written as <code>&lt;parent chain&gt; %&gt;% metatools::combine_supp(&lt;supp&gt;)</code>, after only the prep lines it needs (a <code>dplyr::filter(RDOMAIN == "AE")</code>, and <code>IDVAR</code> blanks set to <code>NA</code>) and a guard block. Every other step stays <code>dplyr</code>.</li>
+<li>sideview writes <code>combine_supp()</code> only when its result equals the <code>dplyr</code> code’s result. Otherwise the merge stays <code>dplyr</code> and the step line says why (for example <code>dplyr: IDVARVAL "01" would not match AESEQ 1 in combine_supp()</code>). The generated guards stop the code, with a message, on a later data cut where the two would differ.</li>
+<li>The SUPP check has a <code>combine_supp</code> field (<code>ok</code>, <code>reason</code>, <code>prep</code>, <code>installed</code>) in R, for lazy tables and in the browser. The Discrepancy merge panel and <code><a href="https://rdrr.io/r/base/print.html" class="external-link">print()</a></code> of the check show <code>combine_supp(): yes</code> or <code>combine_supp(): no, &lt;reason&gt;</code> in both styles. <code>metatools</code> (0.3.0 or later) stays in <code>Suggests</code>; the step line says when it is not installed.</li>
+<li>New message <code>sideview_code_style</code> (see CLAUDE.md).</li>
+</ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.10.0" id="sideview-0100-development">sideview 0.10.0 (development)<a class="anchor" aria-label="anchor" href="#sideview-0100-development"></a></h2>
 <p>Derived cards: the rows behind a check count become a card of their own (D1), tables stack with a check (D2), and two cuts of a table compare by key (D3). Development version; the release number is decided at merge time. Checked with real-browser tests (headless Chrome) and unit tests, and by hand in RStudio (dialog, Viewer pane, external browser).</p>
@@ -269,7 +282,7 @@
 <div class="section level3">
 <h3 id="shiny-module-and-proxy-0-4-0">Shiny module and proxy<a class="anchor" aria-label="anchor" href="#shiny-module-and-proxy-0-4-0"></a></h3>
 <ul><li>
-<strong><code><a href="../reference/sideviewUI.html">sideviewUI()</a></code> / <code><a href="../reference/sideviewUI.html">sideviewServer()</a></code></strong> put an R-backed canvas into your own Shiny app, several per page. The server returns a proxy with the reactives <code>code()</code>, <code>pipeline()</code>, <code>state()</code> and <code>cards()</code>, and <code>sideviewProxy(id)</code> reaches the same canvas from elsewhere in the session. <code>cards =</code> can be a reactive; <code>req()</code> in it means “no cards yet”. Lazy (arrow / duckdb) cards in a module show their true size, not “First 500 of …”, because R serves the whole table.</li>
+<strong><code><a href="../reference/sideviewUI.html">sideviewUI()</a></code> / <code><a href="../reference/sideviewUI.html">sideviewServer()</a></code></strong> put an R-backed canvas into your own Shiny app, several per page. The server returns a proxy with the reactives <code><a href="https://rstudio.github.io/htmltools/reference/builder.html" class="external-link">code()</a></code>, <code>pipeline()</code>, <code>state()</code> and <code>cards()</code>, and <code>sideviewProxy(id)</code> reaches the same canvas from elsewhere in the session. <code>cards =</code> can be a reactive; <code><a href="https://rdrr.io/pkg/shiny/man/req.html" class="external-link">req()</a></code> in it means “no cards yet”. Lazy (arrow / duckdb) cards in a module show their true size, not “First 500 of …”, because R serves the whole table.</li>
 <li>
 <strong>Verbs:</strong> <code><a href="../reference/sv_add_card.html">sv_add_card()</a></code>, <code><a href="../reference/sv_add_card.html">sv_replace_card()</a></code>, <code><a href="../reference/sv_add_card.html">sv_remove_card()</a></code>, <code><a href="../reference/sv_add_card.html">sv_set_state()</a></code> and <code><a href="../reference/sv_add_card.html">sv_highlight()</a></code>, which pipe. A replace keeps the card’s place and size, re-checks the join keys, and <strong>disables, not deletes</strong>, any pipeline step that names a column the new table lacks (a <code>mutate</code> expression that uses it included), with one toast. A replace also keeps the card’s header sort and filter, so the canvas still agrees with the code.</li>
 <li>

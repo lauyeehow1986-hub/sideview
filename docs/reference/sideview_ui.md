@@ -15,7 +15,8 @@ sideview_ui(
   theme = "auto",
   state = NULL,
   view = getOption("sideview.view", "canvas"),
-  access = getOption("sideview.access", FALSE)
+  access = getOption("sideview.access", FALSE),
+  code_style = c("dplyr", "pharmaverse")
 )
 ```
 
@@ -60,6 +61,15 @@ sideview_ui(
   `TRUE` starts with the Accessible canvas switch on (default
   `getOption("sideview.access", FALSE)`); the switch in the `?` list is
   remembered in the browser and wins.
+
+- code_style:
+
+  `"dplyr"` (default) or `"pharmaverse"`: the starting style of the
+  generated code (see
+  [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)).
+  A workspace state, with or without a recorded style, sets the style,
+  and one without a style loads as `"dplyr"`: `code_style` is only the
+  starting style when no `state` is applied.
 
 ## Value
 

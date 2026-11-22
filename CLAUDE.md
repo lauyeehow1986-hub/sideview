@@ -46,7 +46,7 @@ rstudio bridge: R/rstudio.R
 - Custom messages (R → client): `sideview_code_update`, `sideview_discrepancies`,
   `sideview_suggested_mappings` (candidates carry `group`, e.g. `"cdisc:adae~ae"`, and `kind`, `"trace"|"subject"|"visit"`, both null for heuristic rows; a group is drawn as dashed paths with class `sideview-spline-suggested-cdisc` and accepted as one join by `addConnections()`: one undo step, one `column_mapped` per key), `sideview_copilot_reply`, `sideview_inject_result`,
   `sideview_console_result`, `sideview_eval_result`, `sideview_rows`, `sideview_ai_status`,
-  `sideview_join_diagnostics`, `sideview_derive_result` (`{id, error}`: a refused `derive_request`; success is a `sideview_card_add` with `request_id`), `sideview_stack_check` (`{id, columns, n_rows, id_col, name, open_label, code_preview, text}` from `sv_stack_plan()`, each column with a `table` cell per input; or `{id, error}`; carries `ns` in module mode), `sideview_compare` (`{id, old_name, new_name, by, n_old, n_new, added, removed, changed, same, repeated_*, compared, type_changed, only_old, only_new, per_column, changed_values, text, open, code_preview}`: the counts and lines of `sv_compare_finish()`, `by` an array and `per_column` an object, `open` the three button labels, `code_preview` `{added, removed, changed}`; or `{id, error}`, with `by: []` when no key could be suggested; carries `ns` in module mode), `sideview_column_profile`, `sideview_supp_check` (`{id, ...check}` from `sv_supp_check()`, or `{id, error}`; carries `ns` in module mode), `sideview_codebook_saved` (module: carries `csv`, the file text, plus `filename`; the browser downloads it),
+  `sideview_join_diagnostics`, `sideview_derive_result` (`{id, error}`: a refused `derive_request`; success is a `sideview_card_add` with `request_id`), `sideview_stack_check` (`{id, columns, n_rows, id_col, name, open_label, code_preview, text}` from `sv_stack_plan()`, each column with a `table` cell per input; or `{id, error}`; carries `ns` in module mode), `sideview_compare` (`{id, old_name, new_name, by, n_old, n_new, added, removed, changed, same, repeated_*, compared, type_changed, only_old, only_new, per_column, changed_values, text, open, code_preview}`: the counts and lines of `sv_compare_finish()`, `by` an array and `per_column` an object, `open` the three button labels, `code_preview` `{added, removed, changed}`; or `{id, error}`, with `by: []` when no key could be suggested; carries `ns` in module mode), `sideview_column_profile`, `sideview_supp_check` (`{id, ...check}` from `sv_supp_check()`, or `{id, error}`; carries `ns` in module mode; the check has a `combine_supp` field `{ok, reason, prep: {rdomain, idvar_na}, installed}`, where `installed` is `null` from the browser and TRUE/FALSE (metatools >= 0.3.0) from the R handler), `sideview_codebook_saved` (module: carries `csv`, the file text, plus `filename`; the browser downloads it),
   `sideview_state_saved`, `sideview_state_loaded`,
   `sideview_cdisc_update` (module: `{tags: {<card_id>: tag | null}}`, the badges only; an unknown card id is ignored quietly),
   `sideview_card_add` (the first population on `sideview_ready` carries `initial: true`; a derived card's payload carries `derived: {op, inputs, args}` and the message `request_id`, the id of the `derive_request` it answers), `sideview_card_replace`, `sideview_card_remove`, `sideview_state_set`, `sideview_highlight`,
@@ -186,6 +186,16 @@ rstudio bridge: R/rstudio.R
     the new data.
   - The list view shows the same offers as real buttons (`appendOffers()`, `data-sv-lv-action="derive-open"`); a
     duplicate open zooms the existing card and announces it.
+- **Pharmaverse code (0.11.0):** same twin rule. `combine_supp` is a field of every SUPP check: `sv_supp_check()`
+  (R/supp.R), `sv_lazy_supp_check()` (R/lazy.R) and `SideviewPipeline.suppCheck()` (sv-pipeline.js) return the same
+  `{ok, reason, prep, installed}` (JS sends `installed: null`, the R handler adds it); test-supp.R / test-lazy.R hold them
+  together. Governing rule: write `metatools::combine_supp()` only when its result equals the dplyr code's; otherwise
+  the step stays dplyr and says why. `Pipeline.style` (`"dplyr"` / `"pharmaverse"`, `setStyle()`, no undo) is part of the
+  pipeline state without a schema bump; a state without one loads as dplyr. `setSuppCheck(key, field|null)` is not state.
+  `combineSuppApplies(step)` is rule 6 (steps before the merge) and `combineSuppFor(step)` is the one decision that
+  `compose()` and the step line both ask (a stale check, i.e. drift, gives dplyr with `Merge needs refreshing`): do not
+  duplicate it. A merge with no check, or a lazy / preview / failing one, stays dplyr. The R-only `installed` flag only
+  changes the step-line text. Change a twin together with the others.
 - **Column inspector / codebook:** same twin rule. `sv_column_profile()` / `sv_codebook()` (R/codebook.R) and
   `SideviewPipeline.columnProfile()` / `codebookRow()` / `codebookCsv()` (sv-pipeline.js); `test-codebook.R`
   checks the fields, the issue texts and that the JS CSV is byte-equal to `write.csv(sv_codebook(...))`.
