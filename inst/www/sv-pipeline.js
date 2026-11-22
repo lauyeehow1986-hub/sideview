@@ -2536,26 +2536,135 @@
   // Inf where Number() keeps it, so the top of the range is cut off on both sides alike.
   var SUPP_DBL_MAX = 1e308;
 
+  // ---- R's as.character() for a double, under scipen = 0 (twin of sv_r_chr, R/supp.R) ----
+  // R keeps the fewest significant digits, at most 15, that give the value rounded to 15 digits
+  // (ties to even), and writes the fixed form when it is no wider than the scientific one. The
+  // digits are worked out exactly here (BigInt). R works them out in long double arithmetic and
+  // prints with the C library, so a value within a hair of a rounding tie may come out otherwise
+  // there: such a value is not sure (rAsCharacterSure), and the combine_supp field says not ok.
+  var HAS_BIGINT = typeof BigInt === 'function';
+  var P10 = [];
+  function pow10n(k) {
+    if (!P10.length) P10.push(BigInt(1));
+    while (P10.length <= k) P10.push(P10[P10.length - 1] * BigInt(10));
+    return P10[k];
+  }
+
+  // x > 0, finite: x = num / den exactly, den a power of 2
+  function dblExact(x) {
+    var dv = new DataView(new ArrayBuffer(8));
+    dv.setFloat64(0, x);
+    var hi = dv.getUint32(0), ex = (hi >>> 20) & 0x7ff;
+    var m = BigInt(hi & 0xfffff) * BigInt(4294967296) + BigInt(dv.getUint32(4));
+    var e = -1074;
+    if (ex !== 0) { m = m + BigInt(4503599627370496); e = ex - 1075; }
+    return e >= 0 ? { num: m << BigInt(e), den: BigInt(1) } : { num: m, den: BigInt(1) << BigInt(-e) };
+  }
+
+  // a / b rounded to an integer, ties to even; `tie`: exactly half way; `half(n, d)`: the
+  // fraction a / b - floor(a / b) is within n / d of one half
+  function roundEven(a, b) {
+    var q = a / b, two = (a % b) * BigInt(2);
+    if (two > b || (two === b && q % BigInt(2) === BigInt(1))) q = q + BigInt(1);
+    var gap = two > b ? two - b : b - two;
+    return { q: q, tie: two === b, half: function (n, d) { return gap * BigInt(d) <= b * BigInt(2 * n); } };
+  }
+
+  function rChr(x) {
+    if (x === null || x === undefined) return { text: null, sure: true };
+    if (x === 'Inf' || x === '-Inf' || x === 'NaN') return { text: x, sure: true };
+    x = Number(x);
+    if (isNaN(x)) return { text: 'NaN', sure: true };
+    if (!isFinite(x)) return { text: x > 0 ? 'Inf' : '-Inf', sure: true };
+    if (x === 0) return { text: '0', sure: true };
+    if (!HAS_BIGINT) return { text: String(x), sure: false };
+    var neg = x < 0 ? 1 : 0, ex = dblExact(Math.abs(x));
+    var cmp10 = function (p) {   // sign of |x| - 10^p
+      var l = p >= 0 ? ex.num : ex.num * pow10n(-p), r = p >= 0 ? ex.den * pow10n(p) : ex.den;
+      return l < r ? -1 : (l > r ? 1 : 0);
+    };
+    var e10 = Math.floor(Math.log10(Math.abs(x)));
+    while (cmp10(e10) < 0) e10--;
+    while (cmp10(e10 + 1) >= 0) e10++;
+    // the 15 significant digits: R's alpha = |x| / 10^kp, rounded
+    var kp = e10 - 14;
+    var a = roundEven(kp >= 0 ? ex.num : ex.num * pow10n(-kp), kp >= 0 ? ex.den * pow10n(kp) : ex.den);
+    var q = a.q;
+    if (q === pow10n(15)) { q = pow10n(14); e10++; }
+    var mant = q.toString().replace(/0+$/, ''), nsig = mant.length;
+    var sciW = neg + (nsig > 1 ? nsig + 1 : 1) + (Math.abs(e10) >= 100 ? 5 : 4);
+    var rgt = Math.max(0, nsig - e10 - 1);
+    var fixW = neg + (e10 >= 0 ? e10 + 1 : 1) + (rgt > 0 ? rgt + 1 : 0);
+    // R scales by a power of ten held exactly only for |kp| < 10; past -308 it scales in double
+    var sure = kp <= -308 ? !a.half(3, 10) : (a.tie ? Math.abs(kp) < 10 : !a.half(1, 1000));
+    var text;
+    if (fixW <= sciW) {
+      var f = roundEven(ex.num * pow10n(rgt), ex.den);
+      text = f.q.toString();
+      if (rgt > 0) {
+        while (text.length <= rgt) text = '0' + text;
+        text = text.slice(0, text.length - rgt) + '.' + text.slice(text.length - rgt);
+      }
+      // the C library rounds the printed digits on its own: a near-tie there may differ; and
+      // past 19 integer digits R's printf on Windows is not exact (about 1 in 8 at 20 digits)
+      if (f.half(1, 50) || e10 >= 19) sure = false;
+    } else {
+      var ae = Math.abs(e10);
+      text = mant.charAt(0) + (nsig > 1 ? '.' + mant.slice(1) : '') + 'e' + (e10 < 0 ? '-' : '+') +
+        (ae < 10 ? '0' : '') + ae;
+      if (a.tie && nsig === 15) sure = false;
+    }
+    return { text: (neg ? '-' : '') + text, sure: sure };
+  }
+
+  /** R's as.character(x) for a double x (scipen = 0); null for NA. Also takes "Inf", "-Inf", "NaN". */
+  function rAsCharacter(x) { return rChr(x).text; }
+
+  /** Whether rAsCharacter(x) is known to equal R's text (false near a rounding tie). */
+  function rAsCharacterSure(x) { return rChr(x).sure; }
+
+  // The Unicode White_Space set that stringr::str_trim() trims; twin of sv_str_trim_ws (R/supp.R).
+  // Not trim(), which also takes the BOM and not U+0085; not SUPP_WS, the ASCII class of the keys.
+  var STR_TRIM_WS = '[\\t\\n\\x0b\\f\\r \\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]';
+  var STR_TRIM_EDGES = new RegExp('^' + STR_TRIM_WS + '+|' + STR_TRIM_WS + '+$', 'g');
+
+  /** stringr::str_trim(s): also drops one leading BOM, as stringi does; null for NA. */
+  function strTrim(s) {
+    if (s === null || s === undefined) return null;
+    return String(s).replace(/^﻿/, '').replace(STR_TRIM_EDGES, '');
+  }
+
   // A missing value is the string "NA" once keys are pasted together, as in R.
   function suppChr(v) {
     return v === null || v === undefined ? 'NA' : String(v);
   }
 
-  // IDVARVAL text converted to the key type; null means it did not convert.
-  function suppConvert(v, type) {
+  // A key value as the check pastes it: a double as R's as.character() writes it (15 digits).
+  function suppKeyText(v, type) {
+    return type === 'double' && typeof v === 'number' ? rAsCharacter(v) : suppChr(v);
+  }
+
+  // IDVARVAL converted to a numeric key type as a number; null means it did not convert.
+  function suppConvertNum(v, type) {
     if (v === null || v === undefined) return null;
     var s = String(v);
-    if (type === 'character') return s;
     if (type === 'integer') {
       if (!SUPP_INT_RE.test(s)) return null;
       var n = parseInt(s.replace(SUPP_WS_EDGES, ''), 10);
-      if (!isFinite(n) || Math.abs(n) > 2147483647) return null;
-      return String(n);
+      return isFinite(n) && Math.abs(n) <= 2147483647 ? n : null;
     }
     if (!SUPP_DBL_RE.test(s)) return null;
     var d = Number(s.replace(SUPP_WS_EDGES, ''));
     // 1e999 overflows to Infinity: bad, as in R; so is anything past SUPP_DBL_MAX
-    return isFinite(d) && Math.abs(d) <= SUPP_DBL_MAX ? String(d) : null;
+    return isFinite(d) && Math.abs(d) <= SUPP_DBL_MAX ? d : null;
+  }
+
+  // IDVARVAL text converted to the key type; null means it did not convert.
+  function suppConvert(v, type) {
+    if (v === null || v === undefined) return null;
+    if (type === 'character') return String(v);
+    var n = suppConvertNum(v, type);
+    return n === null ? null : suppKeyText(n, type);
   }
 
   function suppUnique(a) {
@@ -2594,7 +2703,9 @@
   }
 
   // parentRows / suppRows: arrays of row objects. opts: {parentName, suppName, rdomain,
-  // parentTypes: {col: colType}, parentCols, suppCols, plan, sampleN}.
+  // parentTypes: {col: colType}, suppTypes: {col: colType} (R class names; guessed when absent),
+  // parentCols, suppCols, plan, sampleN, lazy: {name, kind: 'duckdb'|'arrow'} or null (a lazy
+  // card: combine_supp rule 2), preview: true when a card holds only its preview rows (rule 3)}.
   function suppCheck(parentRows, suppRows, opts) {
     opts = opts || {};
     parentRows = parentRows || [];
@@ -2649,15 +2760,16 @@
     var keyOf = function (row) { return keys.map(function (c) { return suppChr(row[c]); }).join('\r'); };
     var pkey = parentRows.map(keyOf), skey = suppRows.map(keyOf);
 
-    var val = [], bad = [], matched = [];
-    for (i = 0; i < nSupp; i++) { val.push(''); bad.push(false); matched.push(false); }
+    // num: the converted value as a number on a numeric level (the combine_supp rows compare it)
+    var val = [], bad = [], matched = [], num = [];
+    for (i = 0; i < nSupp; i++) { val.push(''); bad.push(false); matched.push(false); num.push(null); }
     var pset = {};
     pkey.forEach(function (x) { pset[x] = true; });
     levels.forEach(function (iv) {
       var pairs = null;
       if (iv !== '') {
         pairs = {};
-        parentRows.forEach(function (r, j) { pairs[pkey[j] + '\r' + suppChr(r[iv])] = true; });
+        parentRows.forEach(function (r, j) { pairs[pkey[j] + '\r' + suppKeyText(r[iv], types[iv])] = true; });
       }
       for (var j = 0; j < nSupp; j++) {
         if (idvar[j] !== iv) continue;
@@ -2665,6 +2777,7 @@
         var cv = suppConvert(suppRows[j].IDVARVAL, types[iv]);
         val[j] = cv;
         bad[j] = cv === null;
+        if (types[iv] !== 'character') num[j] = suppConvertNum(suppRows[j].IDVARVAL, types[iv]);
         matched[j] = cv !== null && !!pairs[skey[j] + '\r' + cv];
       }
     });
@@ -2755,9 +2868,17 @@
         look[sk] = qv === null || qv === undefined ? null : String(qv);
       }
       pv.forEach(function (o, j) {
-        var pk = iv !== '' ? pvKey[j] + '\r' + suppChr(o[iv]) : pvKey[j];
+        var pk = iv !== '' ? pvKey[j] + '\r' + suppKeyText(o[iv], types[iv]) : pvKey[j];
         o[q] = Object.prototype.hasOwnProperty.call(look, pk) ? look[pk] : null;
       });
+    });
+
+    var combine = suppCombine({
+      parentRows: parentRows, suppRows: suppRows, pNames: pNames, sNames: sNames,
+      parentName: parentName, suppName: suppName, levels: levels, idvar: idvar, qnam: qnam,
+      types: types, keys: keys, matched: matched, val: val, bad: bad, num: num, plan: newPlan,
+      nOther: nOther, opts: opts,
+      check: { status: status, repeats: { n: count(dup) }, clashes: clashes, two_level: twoLevel }
     });
 
     return {
@@ -2775,8 +2896,204 @@
       bad_idvarval: { n: count(bad), samples: samples(bad) },
       columns: qnams.map(function (q) { return { name: q.qnam, label: q.label }; }),
       preview: pv,
-      drift: drift
+      drift: drift,
+      combine_supp: combine
     };
+  }
+
+  // ---- combine_supp: would metatools::combine_supp() give the dplyr code's result? ----
+  // Twin of sv_supp_combine() (R/supp.R) and, for rules 2 and 3, of the lazy check (R/lazy.R).
+  // The browser cannot tell whether metatools is installed: `installed` is null, R fills it in.
+
+  /** Rule 1: the reason for a check whose status is "error" (the merge code stops). */
+  function combineSuppStopReason(d, parentName) {
+    d = d || {};
+    var n = d.repeats && d.repeats.n, clashes = suppList(d.clashes), two = suppList(d.two_level);
+    var parts = [];
+    if (n !== null && n !== undefined && n > 0) parts.push(n + ' repeated QNAM ' + (n === 1 ? 'record' : 'records'));
+    if (clashes.length) parts.push(clashes.join(', ') + ' already in ' + parentName);
+    if (two.length) parts.push(two.join(', ') + ' on two IDVAR levels');
+    return 'The merge stops: ' + parts.join('; ');
+  }
+
+  var COMBINE_SUPP_COLS = ['STUDYID', 'RDOMAIN', 'USUBJID', 'IDVAR', 'IDVARVAL', 'QNAM', 'QLABEL', 'QVAL', 'QORIG'];
+  var COMBINE_PARENT_COLS = ['STUDYID', 'DOMAIN', 'USUBJID'];
+
+  // A number as exact text, so equal text is equal doubles (sv_supp_hex); -0 is 0, NA is "NA".
+  function suppHex(x) {
+    if (x === null || x === undefined) return 'NA';
+    var n = Number(x);
+    return n === 0 ? '0' : String(n);
+  }
+
+  // For each element of `s`, how many elements of `p` equal it (sv_supp_count).
+  function suppCount(p, s) {
+    var m = new Map();
+    p.forEach(function (x) { m.set(x, (m.get(x) || 0) + 1); });
+    return s.map(function (x) { return m.get(x) || 0; });
+  }
+
+  function suppCombine(c) {
+    var opts = c.opts, suppRows = c.suppRows, parentRows = c.parentRows;
+    var idvarNa = suppRows.some(function (r) {
+      return r.IDVAR !== null && r.IDVAR !== undefined && /^[ \t\r\n]*$/.test(String(r.IDVAR));
+    });
+    var prep = { rdomain: c.nOther > 0, idvar_na: idvarNa };
+    var no = function (reason) { return { ok: false, reason: reason, prep: prep, installed: null }; };
+    // rule 1: the merge stops
+    if (c.check.status === 'error') return no(combineSuppStopReason(c.check, c.parentName));
+    // rule 2: combine_supp() needs data frames
+    var lazy = opts.lazy;
+    if (lazy) {
+      return no('combine_supp() needs data frames: ' + lazy.name + ' is ' +
+        (lazy.kind === 'arrow' ? 'an Arrow table' : 'a duckdb table'));
+    }
+    // rule 3: a preview-only card
+    if (opts.preview) return no('Checked on preview rows only');
+    // rule 4: exactly the SDTM SUPP columns (QEVAL may be there or not)
+    var miss = suppSetdiff(COMBINE_SUPP_COLS, c.sNames);
+    if (miss.length) return no(c.suppName + ' has no ' + miss[0] + ' column');
+    var extra = suppSetdiff(c.sNames, COMBINE_SUPP_COLS.concat(['QEVAL']));
+    if (extra.length) return no(c.suppName + ' has extra columns: ' + extra.join(', '));
+    // rule 5: it joins on STUDYID, DOMAIN and USUBJID
+    miss = suppSetdiff(COMBINE_PARENT_COLS, c.pNames);
+    if (miss.length) return no(c.parentName + ' has no ' + miss[0] + ' column');
+    var why = suppCombineRows(c);
+    if (why === null) why = suppCombineFactor(c);
+    if (why === null) why = suppCombineLabels(c);
+    if (why !== null) return no(why);
+    return { ok: true, reason: null, prep: prep, installed: null };
+  }
+
+  // Rule 7, the rows (sv_supp_combine_rows): for each SUPP row, the parent rows the dplyr code
+  // joins ("ours") and those combine_supp() joins ("theirs") must be the same set.
+  function suppCombineRows(c) {
+    var parentRows = c.parentRows, s = c.suppRows, opts = c.opts, n = s.length;
+    var pTypes = opts.parentTypes || {}, sTypes = opts.suppTypes || {};
+    var typeOf = function (rows, given, col) {
+      var t = given[col];
+      return t === undefined || t === null ? suppGuessType(rows, col) : String(t);
+    };
+    var unsure = null;
+    // R's text of one value (sv_r_chr for theirs; sv_supp_key_chr for ours, where an integer64
+    // key is a double). A double R may write otherwise is remembered for the reason.
+    var text = function (v, type, col, ours) {
+      if (v === null || v === undefined) return null;
+      if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+      var dbl = /^(numeric|double|float)$/.test(type) || (ours && suppKeyType(type) === 'double');
+      if (!dbl || (typeof v !== 'number' && v !== 'Inf' && v !== '-Inf' && v !== 'NaN')) return String(v);
+      var r = rChr(v);
+      if (!r.sure && unsure === null) unsure = col + ' ' + r.text;
+      return r.text;
+    };
+    var column = function (rows, given, col, ours) {
+      var ty = typeOf(rows, given, col);
+      return rows.map(function (r) { return text(r[col], ty, col, ours); });
+    };
+    var enc = function (x) { return x === null ? '\x01' : '\x02' + x; };
+    var paste = function (cols) {
+      return cols.length ? cols[0].map(function (_, j) {
+        return cols.map(function (col) { return col[j]; }).join('\r');
+      }) : [];
+    };
+    var keyCols = function (rows, given) {
+      return paste(c.keys.map(function (k) {
+        return column(rows, given, k, true).map(function (x) { return x === null ? 'NA' : x; });
+      }));
+    };
+    var pkey = keyCols(parentRows, pTypes), skey = keyCols(s, sTypes);
+    var pk_t = paste(['STUDYID', 'DOMAIN', 'USUBJID'].map(function (k) { return column(parentRows, pTypes, k).map(enc); }));
+    var sk_t = paste(['STUDYID', 'RDOMAIN', 'USUBJID'].map(function (k) { return column(s, sTypes, k).map(enc); }));
+    var ivText = column(s, sTypes, 'IDVARVAL');
+    var nO = [], nT = [], nB = [], sO = [], sT = [], lv = {}, pvText = {};
+    for (var i = 0; i < n; i++) { nO.push(0); nT.push(0); nB.push(0); sO.push(''); sT.push(''); }
+    c.levels.forEach(function (iv) {
+      var r = [];
+      for (var j = 0; j < n; j++) if (c.idvar[j] === iv) r.push(j);
+      var joins = r.map(function (j) { return c.matched[j]; });
+      var pO, pT;
+      if (iv === '') {
+        pO = pkey;
+        pT = pk_t;
+        r.forEach(function (j) { sO[j] = skey[j]; sT[j] = sk_t[j]; });
+      } else {
+        var pv = parentRows.map(function (row) { return row[iv]; });
+        if (c.types[iv] === 'character') {
+          var kc = column(parentRows, pTypes, iv, true);
+          pO = pkey.map(function (k, j) { return k + '\r' + (kc[j] === null ? 'NA' : kc[j]); });
+          r.forEach(function (j) { sO[j] = skey[j] + '\r' + (c.val[j] === null ? 'NA' : c.val[j]); });
+        } else {
+          pO = pkey.map(function (k, j) { return k + '\r' + suppHex(pv[j]); });
+          r.forEach(function (j) { sO[j] = skey[j] + '\r' + suppHex(c.num[j]); });
+          joins = r.map(function (j) { return !c.bad[j]; });
+        }
+        pvText[iv] = column(parentRows, pTypes, iv);
+        pT = pk_t.map(function (k, j) { return k + '\r' + enc(strTrim(pvText[iv][j])); });
+        r.forEach(function (j) { sT[j] = sk_t[j] + '\r' + enc(strTrim(ivText[j])); });
+      }
+      var rO = r.map(function (j) { return sO[j]; }), rT = r.map(function (j) { return sT[j]; });
+      var cO = suppCount(pO, rO), cT = suppCount(pT, rT);
+      var cB = suppCount(pO.map(function (x, j) { return x + '\n' + pT[j]; }),
+        r.map(function (j) { return sO[j] + '\n' + sT[j]; }));
+      r.forEach(function (j, k) {
+        nO[j] = joins[k] ? cO[k] : 0;
+        nT[j] = cT[k];
+        nB[j] = joins[k] ? cB[k] : 0;
+      });
+      lv[iv] = { pO: pO, pT: pT };
+    });
+    // a text that may not be R's makes every comparison above uncertain
+    if (unsure !== null) return unsure + " is too close to R's rounding to check in the browser";
+    var say = function (x) { return x === null ? 'NA' : x; };
+    for (i = 0; i < n; i++) {
+      if (nO[i] === nT[i] && nB[i] === nO[i]) continue;
+      var iv = c.idvar[i];
+      if (iv === '') return say(column([s[i]], sTypes, 'USUBJID')[0]) + ' would not match in combine_supp()';
+      var p = lv[iv];
+      var v = 'IDVARVAL "' + say(ivText[i]) + '" ';
+      var key = function (j) { return iv + ' ' + say(j < 0 ? null : pvText[iv][j]); };
+      if (nT[i] === 0) return v + 'would not match ' + key(p.pO.indexOf(sO[i])) + ' in combine_supp()';
+      if (nO[i] === 0) return v + 'would match ' + key(p.pT.indexOf(sT[i])) + ' in combine_supp()';
+      return v + 'would match a different ' + c.parentName + ' record in combine_supp()';
+    }
+    return null;
+  }
+
+  // Rule 7, the classes (sv_supp_combine_factor): a join turns a factor it joins on into text.
+  function suppCombineFactor(c) {
+    var pTypes = c.opts.parentTypes || {};
+    var isFactor = function (col) { return /^(factor|ordered)$/.test(String(pTypes[col])); };
+    for (var i = 0; i < c.levels.length; i++) {
+      var iv = c.levels[i];
+      if (iv !== '' && isFactor(iv)) return iv + ' would be a factor in combine_supp(), not text';
+    }
+    if (isFactor('DOMAIN')) return 'DOMAIN would be text in combine_supp(), not a factor';
+    return null;
+  }
+
+  // Rule 8, the labels (sv_supp_combine_labels): combine_supp() takes the last distinct QLABEL of
+  // a QNAM, in order of first appearance; ours is the plan's. NA and "" both mean no label.
+  function suppCombineLabels(c) {
+    if (c.sNames.indexOf('QLABEL') < 0) return null;
+    var none = function (x) { return x === null || x === undefined || x === ''; };
+    var say = function (x) { return none(x) ? 'none' : '"' + x + '"'; };
+    var lab = c.suppRows.map(function (r) {
+      var l = r.QLABEL;
+      return l === null || l === undefined ? null : String(l);
+    });
+    var qnams = c.plan.qnams;
+    for (var i = 0; i < qnams.length; i++) {
+      var q = qnams[i].qnam, ours = qnams[i].label, seen = new Map(), theirs = null;
+      for (var j = 0; j < lab.length; j++) {
+        if (c.qnam[j] !== q || seen.has(lab[j])) continue;
+        seen.set(lab[j], true);
+        theirs = lab[j];
+      }
+      if (none(ours) && none(theirs)) continue;
+      if (!none(ours) && !none(theirs) && ours === theirs) continue;
+      return q + ' label would be ' + say(theirs) + ' in combine_supp(), not ' + say(ours);
+    }
+    return null;
   }
 
   // ---- the supp merge step: SUPP-- rows folded into the parent (design §6) ----
@@ -3152,6 +3469,10 @@
     columnProfile: columnProfile,
     suppKeyType: suppKeyType,
     suppCheck: suppCheck,
+    combineSuppStopReason: combineSuppStopReason,
+    rAsCharacter: rAsCharacter,
+    rAsCharacterSure: rAsCharacterSure,
+    strTrim: strTrim,
     codebookRow: codebookRow,
     codebookCsv: codebookCsv,
     CODEBOOK_FIELDS: CODEBOOK_FIELDS,

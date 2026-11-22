@@ -437,15 +437,18 @@ supp_canon <- function(x) {
 }
 
 supp_js <- function(parent, supp, supp_name = "suppae", rdomain = NULL, plan = NULL,
-                    sample_n = 5L, parent_name = "ae") {
+                    sample_n = 5L, parent_name = "ae", extra = list()) {
   types <- lapply(parent, function(col) class(col)[1])
   opts <- list(parentName = parent_name, suppName = supp_name, parentTypes = types,
+               suppTypes = lapply(supp, function(col) class(col)[1]),
                sampleN = sample_n, parentCols = names(parent), suppCols = names(supp))
   if (!is.null(rdomain)) opts$rdomain <- rdomain
   if (!is.null(plan)) opts$plan <- plan
+  opts[names(extra)] <- extra
+  # 17 significant digits, so the browser gets the very doubles R has (0.1 + 0.2, not 0.3)
   rows <- function(d) {
     rownames(d) <- NULL
-    jsonlite::toJSON(d, dataframe = "rows", na = "null")
+    jsonlite::toJSON(d, dataframe = "rows", na = "null", digits = I(17))
   }
   run_pipeline_js(sprintf(
     "out = P.suppCheck(%s, %s, %s);", rows(parent), rows(supp),
@@ -457,9 +460,9 @@ supp_parity <- function(label, parent, supp, supp_name = "suppae", rdomain = NUL
                      plan = plan)
   want <- jsonlite::fromJSON(sv_supp_check_json(r), simplifyVector = FALSE)
   got <- supp_js(parent, supp, supp_name, rdomain, plan)
-  # combine_supp: JS twin arrives in Task 3
-  want$combine_supp <- NULL
-  got$combine_supp <- NULL
+  # `installed` is the server's (R adds it to the reply; the browser sends null)
+  want$combine_supp$installed <- NULL
+  got$combine_supp$installed <- NULL
   expect_equal(supp_canon(got), supp_canon(want), info = label)
   invisible(want)
 }
@@ -515,6 +518,18 @@ test_that("suppCheck matches sv_supp_check", {
     drift_type = list(f$ae, f$suppae2, "suppae", NULL, p_t),
     drift_fresh = list(f$ae, f$suppae2, "suppae", NULL, base)
   )
+  # every combine_supp() fixture, eligible or not
+  for (nm in cs_names()) {
+    cases[[nm]] <- list(f[[nm]][[1]], f[[nm]][[2]], if (grepl("suppqual", nm)) "suppqual" else "suppae", "AE")
+  }
+  expect_length(cs_names(), 31L)
+  # numeric USUBJID: 1e+05 as R writes it, on both sides
+  ids <- c(100000, 200000)
+  p <- f$cs_ok[[1]]
+  p$USUBJID <- ids[match(p$USUBJID, unique(p$USUBJID))]
+  s <- f$cs_ok[[2]]
+  s$USUBJID <- ids[match(s$USUBJID, unique(f$cs_ok[[1]]$USUBJID))]
+  cases$cs_num_usubjid <- list(p, s)
   for (nm in names(cases)) {
     a <- cases[[nm]]
     supp_parity(nm, a[[1]], a[[2]], if (length(a) > 2) a[[3]] else "suppae",
@@ -525,12 +540,104 @@ test_that("suppCheck matches sv_supp_check", {
   s <- f$supp_orphan[rep(2, 8), ]
   s$QNAM <- paste0("Q", 1:8)
   r <- sv_supp_check(f$ae, s, parent_name = "ae", supp_name = "suppae", sample_n = 3L)
-  r$combine_supp <- NULL  # combine_supp: JS twin arrives in Task 3
   got <- supp_js(f$ae, s, sample_n = 3L)
+  got$combine_supp$installed <- NULL
   expect_equal(supp_canon(got), supp_canon(jsonlite::fromJSON(sv_supp_check_json(r),
                                                                  simplifyVector = FALSE)))
   expect_length(got$orphan_samples, 3L)
   expect_length(got$preview, 3L)
+})
+
+# Doubles as JSON for the JS helpers: 17 digits, and Inf, -Inf, NaN as strings.
+js_dbls <- function(vals) {
+  jsonlite::toJSON(lapply(vals, function(v) {
+    if (is.nan(v)) "NaN" else if (is.infinite(v)) if (v > 0) "Inf" else "-Inf" else v
+  }), digits = I(17), na = "null", auto_unbox = TRUE)
+}
+
+test_that("rAsCharacter matches R's as.character for doubles", {
+  vals <- c(1, 99999, 100000, 110000, 123456, 1e15, 1e15 + 2, 1e16, 123456789012345678, 0.1, 0.1 + 0.2,
+            1/3, 2/3, -1/3, -100000, 1e-4, 1e-5, 0.0001234, 1.5e-300, 1.7976931348623157e308, 5e-324,
+            -0, 3.14159265358979, 1234.5678, 1e5 + 0.1, Inf, -Inf, NaN, NA)
+  want <- local({ op <- options(scipen = 0); on.exit(options(op)); as.character(vals) })
+  got <- run_pipeline_js(sprintf("out = %s.map(P.rAsCharacter);", js_dbls(vals)))
+  expect_identical(vapply(got, function(x) if (is.null(x)) NA_character_ else x, ""), want)
+  # 15-digit ties round to even; fixed form when it is no wider than scientific
+  ties <- c(1000000000000005, 1000000000000015, 1000000000000025, 100000000000000.5, 100000000000001.5,
+            12345678901234.25, 12345678901234.75, 2^-22, 3 * 2^-22, 7 * 2^-22, 0.1000000000000005,
+            0.3000000000000005, 1234.567890123455, 2^53, 2^60, 12345678901234567890, 1e21, 1e22, 1e-15,
+            999999999999999.9, 0.1234567890123456, -2^-1074, 123456.7, 1e100, 1.5e-99, 1e-100)
+  want <- local({ op <- options(scipen = 0); on.exit(options(op)); as.character(ties) })
+  got <- run_pipeline_js(sprintf("out = %s.map(P.rAsCharacter);", js_dbls(ties)))
+  expect_identical(unlist(got), want)
+})
+
+test_that("rAsCharacter agrees with R on a sweep of doubles wherever it is sure", {
+  set.seed(20261122)
+  x <- c(runif(600) * 10^sample(-25:25, 600, TRUE), -runif(100) * 10^sample(-5:20, 100, TRUE),
+         round(runif(300) * 1e6) / 10^sample(0:8, 300, TRUE), round(runif(200) * 2^53),
+         round(runif(100) * 1e19), (0:99) / 7, 1 / (1:100))
+  want <- local({ op <- options(scipen = 999); on.exit(options(op)); sideview:::sv_r_chr(x) })
+  got <- run_pipeline_js(sprintf(
+    "var xs = %s; out = {text: xs.map(P.rAsCharacter), sure: xs.map(P.rAsCharacterSure)};", js_dbls(x)))
+  sure <- unlist(got$sure)
+  expect_gt(mean(sure), 0.95)
+  expect_identical(unlist(got$text)[sure], want[sure])
+  # a 15-digit tie that R rounds through long double arithmetic is not sure
+  got <- run_pipeline_js("out = [2.384185791015625e-7, 1234567890123456.5, 0.3, 1e5].map(P.rAsCharacterSure);")
+  expect_identical(unlist(got), c(FALSE, FALSE, TRUE, TRUE))
+})
+
+test_that("strTrim matches stringr::str_trim", {
+  skip_if_not_installed("stringr")
+  cps <- c(1:0xD7FF, 0xE000:0xFFFF)
+  ch <- intToUtf8(cps, multiple = TRUE)
+  y <- c(paste0(ch, "1"), paste0("1", ch), paste0("﻿﻿", ch, "1"), " ﻿1")
+  # code points both ways: U+007F and other controls do not survive the trip through stdout
+  got <- run_pipeline_js(sprintf(paste(
+    "out = %s.map(function (a) {",
+    "  var t = P.strTrim(String.fromCodePoint.apply(null, a));",
+    "  return Array.from(t).map(function (c) { return c.codePointAt(0); });",
+    "});"), jsonlite::toJSON(lapply(y, utf8ToInt))))
+  expect_identical(lapply(got, function(a) as.integer(unlist(a))), lapply(stringr::str_trim(y), utf8ToInt))
+  expect_null(run_pipeline_js("out = P.strTrim(null);"))
+})
+
+test_that("suppCheck: rule 1 before rule 2 (lazy) before rule 3 (preview) before the rest", {
+  k <- fx$cs_key01
+  rd <- function(...) supp_js(k[[1]], k[[2]], extra = list(...))$combine_supp
+  r <- rd(lazy = list(name = "ae", kind = "duckdb"))
+  expect_identical(r$reason, "combine_supp() needs data frames: ae is a duckdb table")
+  expect_false(r$ok)
+  expect_identical(r$prep, list(rdomain = FALSE, idvar_na = FALSE))
+  expect_null(r$installed)
+  expect_identical(rd(lazy = list(name = "suppae", kind = "arrow"), preview = TRUE)$reason,
+                   "combine_supp() needs data frames: suppae is an Arrow table")
+  expect_identical(rd(preview = TRUE)$reason, "Checked on preview rows only")
+  expect_identical(rd(lazy = NULL, preview = FALSE)$reason, 'IDVARVAL "01" would not match AESEQ 1 in combine_supp()')
+  # the merge stops: rule 1 wins over a lazy card
+  cl <- fx$cs_clash
+  expect_identical(supp_js(cl[[1]], cl[[2]], extra = list(lazy = list(name = "ae", kind = "duckdb")))$combine_supp$reason,
+                   "The merge stops: AETRTEM already in ae")
+  # the stop text, as R writes it
+  d <- list(repeats = list(n = 2L), clashes = list("A", "B"), two_level = list("C"))
+  expect_identical(run_pipeline_js(sprintf("out = P.combineSuppStopReason(%s, 'ae');",
+                                           jsonlite::toJSON(d, auto_unbox = TRUE))),
+                   sv_supp_combine_stop_reason(d, "ae"))
+  d1 <- list(repeats = list(n = 1L), clashes = list(), two_level = list())
+  expect_identical(run_pipeline_js(sprintf("out = P.combineSuppStopReason(%s, 'ae');",
+                                           jsonlite::toJSON(d1, auto_unbox = TRUE))),
+                   "The merge stops: 1 repeated QNAM record")
+})
+
+test_that("suppCheck: a key value R may write differently is not ok (rule 7)", {
+  p <- fx$cs_ok[[1]]
+  p$AESEQ <- c(2^-22, 2, 1)
+  s <- fx$cs_ok[[2]]
+  s$IDVARVAL[1] <- "2.38418579101562e-07"
+  r <- supp_js(p, s)$combine_supp
+  expect_false(r$ok)
+  expect_identical(r$reason, "AESEQ 2.38418579101562e-07 is too close to R's rounding to check in the browser")
 })
 
 test_that("suppCheck follows R on NA keys", {
