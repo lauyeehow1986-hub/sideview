@@ -208,19 +208,30 @@ supp_same_result <- function(a, b) {
 }
 
 # Compose a pipeline holding one supp step built from the check's plan. `before` / `after` are
-# JS run before / after the step is added; `meta` goes to setTables().
+# JS run before / after the step is added; `meta` goes to setTables(). After the add, `style`
+# goes to setStyle() and `combine` (a JS expression, e.g. "chk.combine_supp" or a JSON object;
+# NULL is null) to setSuppCheck() for the step; `style = NULL` makes neither call.
 supp_compose <- function(chk_json, pipe = "%>%", table = "ae", supp = "suppae", rdomain = "AE",
-                         meta = "{}", before = "", after = "") {
+                         meta = "{}", before = "", after = "", style = "dplyr", combine = NULL) {
+  set <- if (is.null(style)) "" else sprintf("p.setStyle(%s); p.setSuppCheck(st.key, %s);",
+                                             jsonlite::toJSON(style, auto_unbox = TRUE),
+                                             if (is.null(combine)) "null" else combine)
   run_pipeline_js(sprintf(
     "const p = new P.Pipeline(); p.setPipe(%s); p.setTables(%s);
      const chk = %s;
      %s
-     p.add(P.suppStep(%s, %s, %s, chk.plan), 'merge');
+     const st = p.add(P.suppStep(%s, %s, %s, chk.plan), 'merge');
+     %s
      %s
      out = p.compose();",
     jsonlite::toJSON(pipe, auto_unbox = TRUE), meta, chk_json, before,
     jsonlite::toJSON(table, auto_unbox = TRUE), jsonlite::toJSON(supp, auto_unbox = TRUE),
-    jsonlite::toJSON(rdomain, auto_unbox = TRUE), after))
+    jsonlite::toJSON(rdomain, auto_unbox = TRUE), set, after))
+}
+
+# What a run stops with ("" when it runs).
+supp_stop <- function(code, ...) {
+  tryCatch({ supp_run(code, ...); "" }, error = function(e) conditionMessage(e))
 }
 
 # Run composed code with the given tables bound by name.

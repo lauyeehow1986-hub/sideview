@@ -408,6 +408,71 @@ test_that("ok fixtures: the real combine_supp() gives the dplyr code's result", 
   expect_identical(n_seen, 13L)
 })
 
+# The pharmaverse code for the fixture, from the check's own combine_supp field.
+cs_pharma_code <- function(k, pipe = "%>%") {
+  supp_compose(sv_supp_check_json(k$chk), pipe = pipe, supp = k$sn, style = "pharmaverse",
+               combine = "chk.combine_supp")
+}
+
+cs_run <- function(k, code, parent = k$parent, supp = k$supp) {
+  do.call(supp_run, c(list(code), stats::setNames(list(parent, supp), c("ae", k$sn))))
+}
+
+test_that("pharmaverse code equals the dplyr code on every ok fixture", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  n_seen <- 0L
+  for (nm in cs_names()) {
+    k <- cs_case(nm)
+    if (!k$field$ok) next
+    n_seen <- n_seen + 1L
+    for (pipe in c("%>%", "|>")) {
+      code <- cs_pharma_code(k, pipe)
+      expect_parses(code, nm)
+      expect_match(code, "metatools::combine_supp(", fixed = TRUE, info = nm)
+      expect_no_match(code, "_labels", info = nm)
+      theirs <- tryCatch(suppressWarnings(cs_run(k, code)), error = function(e) e)
+      expect_false(inherits(theirs, "error"), info = paste(nm, pipe))
+      if (!inherits(theirs, "error")) expect_true(supp_same_result(theirs, cs_ours(k)), info = paste(nm, pipe))
+    }
+  }
+  expect_identical(n_seen, 13L)
+})
+
+test_that("text-match guard on a later data cut", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  guard <- function(v, k, how) {
+    paste0('IDVARVAL "', v, '" matches AESEQ ', k, " ", how,
+           " in combine_supp(); use the dplyr code style for this merge")
+  }
+  ok <- cs_case("cs_ok")
+  code <- cs_pharma_code(ok)
+  k01 <- cs_case("cs_key01")
+  expect_identical(supp_stop(code, ae = k01$parent, suppae = k01$supp),
+                   'IDVARVAL "01" matches AESEQ 1 as a number but not as text in combine_supp(); use the dplyr code style for this merge')
+  # the mirror: str_trim() takes the no-break space, the numeric conversion does not
+  nb <- cs_case("cs_key_nbsp")
+  expect_identical(supp_stop(code, ae = nb$parent, suppae = nb$supp),
+                   guard("1 ", 1, "as text but not as a number"))
+  # the same cut through |>
+  expect_identical(supp_stop(cs_pharma_code(ok, "|>"), ae = k01$parent, suppae = k01$supp),
+                   guard("01", 1, "as a number but not as text"))
+  # combine_supp() compares as.character() of the key, so the session's scipen decides
+  sci <- cs_case("cs_1e5_sci")
+  code <- cs_pharma_code(sci)
+  local({
+    withr::local_options(scipen = 999)
+    expect_identical(supp_stop(code, ae = sci$parent, suppae = sci$supp),
+                     guard("1e+05", "100000", "as a number but not as text"))
+  })
+  local({
+    withr::local_options(scipen = 0)
+    got <- suppressWarnings(cs_run(sci, code))
+    expect_true(supp_same_result(got, cs_ours(sci)))
+  })
+})
+
 # ---- JS twin: SideviewPipeline.suppCheck ------------------------------------
 
 test_that("suppKeyType maps col_types", {

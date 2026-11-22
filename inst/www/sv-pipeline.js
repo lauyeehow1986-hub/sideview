@@ -403,6 +403,10 @@
     this._seq = 0;
     this.tables = {};
     this.checks = {};   // join-check results by joinSig(): not state (no undo, never saved)
+    // 'dplyr' | 'pharmaverse': how a SUPP merge is written (E1). State, but not undoable (as pipe).
+    this.style = opts.style === 'pharmaverse' ? 'pharmaverse' : 'dplyr';
+    // the merge checks' combine_supp fields by step key: not state (no undo, never saved)
+    this.suppCombine = {};
   }
 
   var LAZY_KINDS = { arrow: 1, duckdb: 1 };
@@ -863,6 +867,12 @@
   Pipeline.prototype.setPipe = function (pipe) {
     this.pipe = pipe === '|>' ? '|>' : '%>%';
     this.emit('pipe');
+  };
+
+  /** The code style, 'dplyr' or 'pharmaverse' (anything else is 'dplyr'). Not undoable, as setPipe(). */
+  Pipeline.prototype.setStyle = function (style) {
+    this.style = style === 'pharmaverse' ? 'pharmaverse' : 'dplyr';
+    this.emit('style');
   };
 
   Pipeline.prototype.enabledCount = function () {
@@ -1627,6 +1637,14 @@
         if (s.kind === 'supp') {
           if (!s.idvars || !s.idvars.length) return;
           var si = rightInfo(s.supp);
+          // the pharmaverse style writes combine_supp() where the check found it gives this result
+          if (self.combineSuppFor(s).ok) {
+            var cp = suppCombinePrep(s, si.ref, self.refFor(t), pipe, self.suppCombine[s.key].prep,
+              si.ref !== self.refFor(s.supp));
+            supps.push({ step: s, code: cp.code });
+            lines.push('metatools::combine_supp(' + cp.ref + ')');
+            return;
+          }
           supps.push({ step: s, src: si.ref, lazy: !!si.kind, arrow: kind === 'arrow' });
           lines = lines.concat(suppJoins(s, kind));
           return;
@@ -1686,6 +1704,7 @@
       // all on a lazy chain prepared for another chain (attributes do not survive a lazy table).
       var withLabels = !(kind && later);
       var preps = supps.map(function (p) {
+        if (p.code !== undefined) return p.code;  // combine_supp() labels its columns itself
         if (withLabels && suppLabels(p.step).length) lines.push(suppLabelLine(p.step));
         return suppPrep(p.step, p.src, p.lazy, self.refFor(t), pipe, withLabels, p.arrow);
       });
@@ -1713,7 +1732,7 @@
   };
 
   Pipeline.prototype.toJSON = function () {
-    return { steps: clone(this.steps), pipe: this.pipe };
+    return { steps: clone(this.steps), pipe: this.pipe, style: this.style };
   };
 
   Pipeline.prototype.load = function (obj) {
@@ -1723,6 +1742,7 @@
       self.steps = (obj.steps || []).map(function (s) { return self.normalize(s); });
     });
     if (obj.pipe) this.setPipe(obj.pipe);
+    if (obj.style) this.setStyle(obj.style);
   };
 
   // ---- join diagnostics ------------------------------------------------------
@@ -2510,6 +2530,71 @@
     this.checks = {};
     this.emit('checks');
     return true;
+  };
+
+  /**
+   * Remember the combine_supp field ({ok, reason, prep: {rdomain, idvar_na}, installed}) of the
+   * merge check for a supp step's key (null forgets it). A stale check is stored as a not-ok field
+   * by the caller. Not pipeline state: no undo, never saved. Emits 'checks' only on a change.
+   */
+  Pipeline.prototype.setSuppCheck = function (key, field) {
+    var had = Object.prototype.hasOwnProperty.call(this.suppCombine, key);
+    if (field === null || field === undefined) {
+      if (!had) return false;
+      delete this.suppCombine[key];
+    } else {
+      if (had && JSON.stringify(this.suppCombine[key]) === JSON.stringify(field)) return false;
+      this.suppCombine[key] = clone(field);
+    }
+    this.emit('checks');
+    return true;
+  };
+
+  // Steps a parent may have before a merge that combine_supp() writes: they keep the checked
+  // rows (or a subset of them) and their columns as they were.
+  var COMBINE_SUPP_BEFORE = { filter: 1, arrange: 1, supp: 1 };
+
+  /**
+   * Rule 6 of the pharmaverse style (E1): { ok, reason }. The merge check looks at the two cards,
+   * so combine_supp() may stand in for the dplyr code only when the SUPP card has no enabled step of
+   * its own and the parent's enabled steps before the merge only filter, sort or merge. Like
+   * strictApplies(), compose() and the UI both ask here.
+   */
+  Pipeline.prototype.combineSuppApplies = function (step) {
+    if (!step || step.kind !== 'supp') return { ok: false, reason: 'combine_supp() applies to SUPP merges only.' };
+    var steps = this.steps.filter(function (x) { return x.enabled !== false; });
+    var at = steps.indexOf(step);
+    if (at < 0) {
+      for (var i = 0; i < steps.length; i++) if (steps[i].id !== undefined && steps[i].id === step.id) { at = i; break; }
+    }
+    var own = steps.some(function (x, j) {
+      return j !== at && x !== step && x.table === step.supp && x.kind !== 'custom' && x.kind !== 'derive';
+    });
+    if (own) return { ok: false, reason: step.supp + ' has steps before the merge' };
+    var earlier = at < 0 ? [] : steps.slice(0, at);
+    var other = earlier.some(function (x) { return x.table === step.table && !COMBINE_SUPP_BEFORE[x.kind]; });
+    if (other) return { ok: false, reason: step.table + ' has steps before the merge that combine_supp() cannot check' };
+    return { ok: true, reason: '' };
+  };
+
+  /**
+   * Whether compose() writes combine_supp() for a supp step: { ok, reason, rule }. ok only in the
+   * pharmaverse style, with an ok combine_supp field stored for the step (setSuppCheck) and rule 6
+   * holding. `rule` names what decided a no: 'style' (the dplyr style; reason null), 'check' (no
+   * field yet, reason null; or a not-ok field, its reason) or 'steps' (rule 6, its reason); null when ok.
+   */
+  Pipeline.prototype.combineSuppFor = function (step) {
+    if (this.style !== 'pharmaverse') return { ok: false, reason: null, rule: 'style' };
+    var key = step && step.key;
+    var f = key !== undefined && Object.prototype.hasOwnProperty.call(this.suppCombine, key) ?
+      this.suppCombine[key] : null;
+    if (!f) return { ok: false, reason: null, rule: 'check' };
+    if (f.ok !== true) {
+      return { ok: false, reason: f.reason === undefined || f.reason === null ? null : String(f.reason), rule: 'check' };
+    }
+    var ap = this.combineSuppApplies(step);
+    if (!ap.ok) return { ok: false, reason: ap.reason, rule: 'steps' };
+    return { ok: true, reason: null, rule: null };
   };
 
   // ---- SUPP-- merge check: twin of sv_supp_check() (R/supp.R) ----------------
@@ -3352,6 +3437,122 @@
     var L = ident(String(s.supp) + '_labels');
     return 'dplyr::mutate(dplyr::across(dplyr::any_of(names(' + L + ')),\n    ~ structure(.x, label = ' +
       L + '[[dplyr::cur_column()]])))';
+  }
+
+  /**
+   * The statements written before the parent's chain in the pharmaverse style (E1 design §5.3), and
+   * what the chain's metatools::combine_supp() call takes: { code, ref }. `src` is the SUPP side's
+   * code (the card, or its _prep chain: `chained`); `prep` the field's {rdomain, idvar_na}. <supp>_q
+   * is written only with a prep line or a SUPP chain; else the guards and the call read `src`.
+   * The guards are the 0.7.0 ones combine_supp() does not do itself (IDVAR values the plan does not
+   * handle, QNAMs at two levels, a repeated QNAM for one record), with no clash guard (combine_supp()
+   * stops on a clash), plus one text-match guard per numeric IDVAR level: the parent records a SUPP
+   * row finds by number (the merge step's conversion, suppKeyConv(), and its overflow rule, keys as
+   * sprintf("%.17g") text so the session's scipen plays no part) must be the records it finds by
+   * text (stringr::str_trim(as.character()), as combine_supp() joins, under the session's scipen),
+   * both on STUDYID, USUBJID and DOMAIN == RDOMAIN with NA matching NA.
+   */
+  function suppCombinePrep(s, src, parentRef, pipe, prep, chained) {
+    var S = String(s.supp);
+    var nl = ' ' + pipe + '\n  ';
+    var gl = ' ' + pipe + '\n    ';
+    var levels = s.idvars.map(function (v) { return v.idvar; });
+    var out = [];
+    var ql = [src];
+    if (prep && prep.rdomain) ql.push('dplyr::filter(RDOMAIN == ' + str(s.rdomain) + ')');
+    if (prep && prep.idvar_na) ql.push('dplyr::mutate(IDVAR = dplyr::na_if(trimws(IDVAR), ""))');
+    var ref = src;
+    if (ql.length > 1 || chained) {
+      ref = ident(S + '_q');
+      out.push(ref + ' <- ' + ql.join(nl));
+    }
+
+    var g = ['local({'];
+    // the guards' own copy: subject level as "", a missing QNAM as "NA" (as the 0.7.0 <supp>_q)
+    g.push('  q <- ' + [ref, 'dplyr::mutate(IDVAR = dplyr::if_else(is.na(IDVAR) | trimws(IDVAR) == "", "", as.character(IDVAR)),\n' +
+      '                  QNAM = dplyr::coalesce(as.character(QNAM), "NA"))'].join(gl));
+    g.push('  other <- setdiff(unique(q$IDVAR), c(' + levels.map(str).join(', ') + '))');
+    if (levels.indexOf('') < 0) g.push('  other[other == ""] <- "(subject level)"');
+    g.push('  if (length(other)) stop(' + str(S + ' has IDVAR values this merge does not handle: ') + ',');
+    g.push('    paste(other, collapse = ", "), ". Refresh the merge step.", call. = FALSE)');
+    if (levels.length > 1) {
+      g.push('  lv <- unique(q[c("QNAM", "IDVAR")])');
+      g.push('  both <- unique(lv$QNAM[duplicated(lv$QNAM)])');
+      g.push('  if (length(both)) stop(' + str(S + ' QNAMs are at two levels: ') +
+        ', paste(both, collapse = ", "), call. = FALSE)');
+    }
+    s.idvars.forEach(function (v) {
+      var iv = v.idvar;
+      var cols = s.keys.map(ident);
+      var dupCols = s.keys.slice();
+      if (iv !== '') { cols.push(ident(iv) + ' = ' + suppKeyExpr(v.type)); dupCols.push(iv); }
+      cols.push('QNAM');
+      dupCols.push('QNAM');
+      var l = ['q', 'dplyr::filter(IDVAR == ' + str(iv) + ')', 'dplyr::transmute(' + cols.join(', ') + ')'];
+      if (iv !== '') l.push(v.type === 'double' ? 'dplyr::filter(abs(' + ident(iv) + ') <= 1e308)' : 'dplyr::filter(!is.na(' + ident(iv) + '))');
+      // the repeat guard runs after conversion, so "01" and "1" are one record
+      g.push('  x <- ' + l.join(gl));
+      g.push('  dup <- x[duplicated(x[c(' + dupCols.map(str).join(', ') + ')]), ]');
+      g.push('  if (nrow(dup)) stop(' + str(S + ' repeats a QNAM for ') + ', nrow(dup), " record(s), first: ",');
+      g.push('    dup$USUBJID[1], ' + (iv !== '' ? str(' ' + iv + ' ') + ', dup[[' + str(iv) + ']][1], ' : '') +
+        '" ", dup$QNAM[1], call. = FALSE)');
+    });
+    var numeric = s.idvars.filter(function (v) { return v.idvar !== '' && (v.type === 'integer' || v.type === 'double'); });
+    if (numeric.length) {
+      g.push('  p <- ' + parentRef);
+      g.push('  enc <- function(v) ifelse(is.na(v), "\\001", paste0("\\002", v))');
+      g.push('  val <- function(v) {');
+      g.push('    if (is.factor(v)) v <- as.character(v)');
+      g.push('    if (!is.numeric(v) && !inherits(v, "integer64")) return(enc(as.character(v)))');
+      g.push('    v <- suppressWarnings(as.numeric(v))');
+      g.push('    v[!is.na(v) & v == 0] <- 0');
+      g.push('    out <- sprintf("%.17g", v)');
+      g.push('    out[is.na(v)] <- NA');
+      g.push('    enc(out)');
+      g.push('  }');
+      g.push('  rec <- function(...) do.call(paste, c(lapply(list(...), val), sep = "\\r"))');
+      g.push('  cnt <- function(a, b) {');
+      g.push('    u <- unique(a)');
+      g.push('    n <- tabulate(match(a, u), nbins = length(u))[match(b, u)]');
+      g.push('    n[is.na(n)] <- 0L');
+      g.push('    n');
+      g.push('  }');
+      g.push('  pb <- rec(p$STUDYID, p$DOMAIN, p$USUBJID)');
+      numeric.forEach(function (v) {
+        var iv = v.idvar, k = 'p[[' + str(iv) + ']]';
+        var msg = function (how) {
+          return 'stop("IDVARVAL \\"", as.character(x$IDVARVAL[i]), ' + str('" matches ' + iv + ' ') +
+            ', as.character(k),\n        ' + str(' ' + how + ' in combine_supp(); use the dplyr code style for this merge') +
+            ', call. = FALSE)';
+        };
+        g.push('  x <- q[q$IDVAR == ' + str(iv) + ', , drop = FALSE]');
+        g.push('  if (nrow(x)) {');
+        g.push('    cv <- ' + suppKeyConv(v.type, 'x$IDVARVAL'));
+        if (v.type === 'double') g.push('    cv[!is.na(cv) & abs(cv) > 1e308] <- NA');
+        g.push('    sb <- rec(x$STUDYID, x$RDOMAIN, x$USUBJID)');
+        g.push('    po <- paste(pb, val(' + k + '), sep = "\\r")');
+        g.push('    so <- ifelse(is.na(cv), NA_character_, paste(sb, val(cv), sep = "\\r"))');
+        g.push('    pt <- paste(pb, enc(stringr::str_trim(as.character(' + k + '))), sep = "\\r")');
+        g.push('    st <- paste(sb, enc(stringr::str_trim(as.character(x$IDVARVAL))), sep = "\\r")');
+        g.push('    no <- cnt(po, so)');
+        g.push('    nt <- cnt(pt, st)');
+        g.push('    nb <- cnt(paste(po, pt, sep = "\\n"), paste(so, st, sep = "\\n"))');
+        g.push('    nb[is.na(so)] <- 0L');
+        g.push('    i <- which(nb < no | nb < nt)[1]');
+        g.push('    if (!is.na(i) && nb[i] < no[i]) {');
+        g.push('      k <- ' + k + '[which(po == so[i] & pt != st[i])[1]]');
+        g.push('      ' + msg('as a number but not as text'));
+        g.push('    }');
+        g.push('    if (!is.na(i)) {');
+        g.push('      k <- ' + k + '[which(pt == st[i] & !(po %in% so[i]))[1]]');
+        g.push('      ' + msg('as text but not as a number'));
+        g.push('    }');
+        g.push('  }');
+      });
+    }
+    g.push('})');
+    out.push(g.join('\n'));
+    return { code: out.join('\n'), ref: ref };
   }
 
   // ---- plain-sentence helpers (twins of R/say.R) ----
