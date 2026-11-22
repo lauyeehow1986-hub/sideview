@@ -516,6 +516,38 @@ test_that("key guard on a text level: a match only when trimmed stops (later cut
                    'IDVARVAL "G2" matches AEGRPID  G2 only when trimmed, as in combine_supp(); use the dplyr code style for this merge')
 })
 
+test_that("an NA IDVARVAL against an NA parent key never differs silently (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  tail <- " in combine_supp(); use the dplyr code style for this merge"
+  # the dplyr code drops an NA key (filter(!is.na())); combine_supp() joins NA to NA
+  k <- cs_case("cs_chr")
+  code <- cs_pharma_code(k)
+  expect_true(cs_same(k, code))
+  p2 <- k$parent
+  p2$AEGRPID[2] <- NA
+  s2 <- k$supp
+  s2$IDVARVAL[1] <- NA
+  expect_identical(supp_stop(code, ae = p2, suppae = s2),
+                   'IDVARVAL "NA" matches AEGRPID NA only when trimmed, as in combine_supp(); use the dplyr code style for this merge')
+  # an NA IDVARVAL with no NA parent key joins nothing either way: it runs and agrees
+  k2 <- k
+  k2$supp <- s2
+  expect_true(cs_same(k2, code))
+  # the integer twin
+  ok <- cs_case("cs_ok")
+  code <- cs_pharma_code(ok)
+  p3 <- ok$parent
+  p3$AESEQ[3] <- NA
+  s3 <- ok$supp
+  s3$IDVARVAL[2] <- NA
+  expect_identical(supp_stop(code, ae = p3, suppae = s3),
+                   paste0('IDVARVAL "NA" matches AESEQ NA as text but not as a number', tail))
+  ok3 <- ok
+  ok3$supp <- s3
+  expect_true(cs_same(ok3, code))
+})
+
 test_that("DOMAIN guard: a joined parent record whose DOMAIN is not RDOMAIN stops (later cut)", {
   skip_if_not_installed("metatools", "0.3.0")
   skip_if_not_installed("tidyr")

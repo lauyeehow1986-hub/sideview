@@ -3553,7 +3553,8 @@
         r.push('    so <- ifelse(kept & !is.na(cv), paste(rec(' + xkeys.join(', ') + '), val(cv), sep = "\\r"), NA_character_)');
       } else {
         r.push('    po <- paste(pk, val(' + k + '), sep = "\\r")');
-        r.push('    so <- ifelse(kept, paste(rec(' + xkeys.join(', ') + '), val(x$IDVARVAL), sep = "\\r"), NA_character_)');
+        // an NA IDVARVAL joins nothing in the dplyr code (its filter(!is.na(<key>))), as an NA cv above
+        r.push('    so <- ifelse(kept & !is.na(x$IDVARVAL), paste(rec(' + xkeys.join(', ') + '), val(x$IDVARVAL), sep = "\\r"), NA_character_)');
       }
       return r;
     };
