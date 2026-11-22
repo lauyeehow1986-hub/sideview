@@ -157,12 +157,19 @@ sv_card_payload <- function(card, preview_rows = NULL) {
 #' -Inf and NaN as null. A column is inexact when it has such a value, or a finite value that
 #' does not survive `formatC(digits = 16, format = "g")`. NA alone is exact (null means NA).
 #' The browser's combine_supp check (sv-pipeline.js) trusts only the other double columns.
+#' An integer64 (bit64) column goes out as plain digits, which the browser reads as a double:
+#' it is inexact when some value has |x| > 2^53 (not checked without bit64).
 #' @return A character vector of column names.
 #' @noRd
 sv_inexact_cols <- function(df) {
   if (!is.data.frame(df) || !ncol(df)) return(character(0))
   bad <- vapply(df, function(x) {
-    if (!is.double(x) || inherits(x, "integer64")) return(FALSE)
+    if (inherits(x, "integer64")) {
+      if (!requireNamespace("bit64", quietly = TRUE)) return(FALSE)
+      x <- x[!is.na(x)]
+      return(length(x) > 0L && any(abs(x) > bit64::as.integer64("9007199254740992")))
+    }
+    if (!is.double(x)) return(FALSE)
     x <- as.numeric(unclass(x))
     if (any(is.nan(x) | is.infinite(x))) return(TRUE)
     x <- x[!is.na(x)]

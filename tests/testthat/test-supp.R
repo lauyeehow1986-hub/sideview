@@ -701,6 +701,38 @@ test_that("sv_inexact_cols() names each double column 16-digit JSON does not car
   expect_match(as.character(htmlwidgets:::toJSON(p["col_inexact"])), '"col_inexact":[]', fixed = TRUE)
 })
 
+test_that("sv_inexact_cols() lists an integer64 column with a value past 2^53", {
+  skip_if_not_installed("bit64")
+  skip_if_not_installed("htmlwidgets")
+  i64 <- bit64::as.integer64
+  d <- data.frame(id = 1:2)
+  d$small <- i64(c("9007199254740992", NA))
+  d$neg_small <- i64(c("-9007199254740992", "1"))
+  d$big <- i64(c("1", "9007199254740993"))
+  d$neg_big <- i64(c("-9007199254740993", NA))
+  d$na <- i64(c(NA, NA))
+  expect_identical(sv_inexact_cols(d), c("big", "neg_big"))
+  # the browser reads the digits as a double: the unlisted columns arrive exact, the listed do not
+  json <- as.character(htmlwidgets:::toJSON(d))
+  cols <- c("small", "neg_small", "big", "neg_big", "na")
+  want <- lapply(d[cols], function(x) ifelse(is.na(x), NA, as.character(x)))
+  got <- run_pipeline_js(sprintf(paste0(
+    "var w = %s, want = %s; out = [];",
+    "Object.keys(want).forEach(function (k) {",
+    "  var ok = w[k].every(function (v, i) {",
+    "    var t = want[k][i]; return t === null ? v === null : v !== null && BigInt(v) === BigInt(t); });",
+    "  if (!ok) out.push(k); });"), json, jsonlite::toJSON(want, na = "null")))
+  expect_setequal(unlist(got), c("big", "neg_big"))
+  # combine_supp in the widget: an integer64 key past 2^53 is not trusted
+  p <- fx$cs_1e5[[1]]
+  p$AESEQ <- i64(c("1", "2", "9007199254740993"))
+  s <- fx$cs_1e5[[2]]
+  s$IDVARVAL <- c("1", "9007199254740993")
+  r <- supp_js(p, s, wire = "widget")$combine_supp
+  expect_false(r$ok)
+  expect_identical(r$reason, "AESEQ has values the browser cannot read exactly")
+})
+
 test_that("suppCheck: rows rounded to 16 digits (the widget) trust only R's exact double columns", {
   skip_if_not_installed("htmlwidgets")
   # the widget's JSON: 0.1 + 0.2 arrives as 0.3, and Inf, NaN and NA all as null
