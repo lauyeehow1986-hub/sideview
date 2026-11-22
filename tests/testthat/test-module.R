@@ -99,7 +99,7 @@ test_that("reactive cards are diffed by name", {
     session$setInputs(sideview_ready = list(nonce = 1))
     session$flushReact()
     n0 <- length(session$userData$custom_messages)
-    expect_equal(n0, 3L) # two cards and the llm notice (no llm_fn)
+    expect_equal(n0, 4L) # two cards, the llm notice (no llm_fn) and the code style
 
     rv(list(b = labs[1:3, ], c = mtcars))
     session$flushReact()
@@ -1289,5 +1289,14 @@ test_that("code_style is emitted before the state, with ns; a bad value errors",
     expect_length(m, 1L)
     expect_identical(m[[1]]$message$style, "pharmaverse")
     expect_identical(m[[1]]$message$ns, session$ns(""))
+  })
+})
+
+test_that("a default module says dplyr before any state", {
+  shiny::testServer(sideviewServer, args = start_module(state = new_sideview_state()), {
+    session$setInputs(sideview_ready = list(nonce = 1))
+    types <- vapply(session$userData$custom_messages, function(m) m$type, "")
+    expect_true(match("sideview_code_style", types) < match("sideview_state_set", types))
+    expect_identical(msgs(session, "sideview_code_style")[[1]]$message$style, "dplyr")
   })
 })

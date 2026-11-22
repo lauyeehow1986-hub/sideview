@@ -109,8 +109,8 @@ sideviewServer <- function(id, cards = list(), state = NULL, llm_fn = NULL, cdis
     sv_register_proxy(session, ns, proxy)
     if (is.null(llm_fn)) ctl$emit("sideview_llm", list(enabled = FALSE))
 
-    # the canvas starts as dplyr: only another style needs saying (before the state, which may override it)
-    if (!identical(code_style, "dplyr")) ctl$emit("sideview_code_style", list(style = code_style))
+    # always said, dplyr included, and before the state (whose own style wins)
+    ctl$emit("sideview_code_style", list(style = code_style))
 
     if (!is.null(state)) {
       state <- sv_module_state(state)
