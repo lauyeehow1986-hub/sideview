@@ -1728,6 +1728,7 @@ test_that("lazy supp check equals in-memory", {
     rd <- if (length(a) > 3) a[[4]] else NULL
     pl <- if (length(a) > 4) a[[5]] else NULL
     want <- sv_supp_check(a[[1]], a[[2]], parent_name = "ae", supp_name = sn, rdomain = rd, plan = pl)
+    want$combine_supp <- NULL  # combine_supp: the lazy twin arrives in Task 2
     for (cb in combos) {
       got <- sv_lazy_supp_check(join_side(a[[1]], cb[1], fx$con, "sp"),
                                 join_side(a[[2]], cb[2], fx$con, "ss"),
@@ -1832,6 +1833,7 @@ test_that("lazy supp check follows sample_n and a larger parent", {
   s <- f$supp_orphan[rep(2, 8), ]
   s$QNAM <- paste0("Q", 1:8)
   want <- sv_supp_check(f$ae, s, parent_name = "ae", supp_name = "suppae", sample_n = 3L)
+  want$combine_supp <- NULL  # combine_supp: the lazy twin arrives in Task 2
   for (how in c("arrow", "duckdb")) {
     got <- sv_lazy_supp_check(join_side(f$ae, how, fx$con, "sp"), join_side(s, how, fx$con, "ss"),
                               parent_name = "ae", supp_name = "suppae", rdomain = "AE", sample_n = 3L)
@@ -1933,6 +1935,7 @@ test_that("lazy supp checks and profiles carry the classes and read as the in-me
   for (nm in names(cases)) {
     a <- cases[[nm]]
     want <- sv_supp_check(a[[1]], a[[2]], parent_name = "ae", supp_name = "suppae")
+    want$combine_supp <- NULL  # combine_supp: the lazy twin arrives in Task 2
     for (how in c("arrow", "duckdb")) {
       got <- sv_lazy_supp_check(join_side(a[[1]], how, fx$con, "sp"), join_side(a[[2]], how, fx$con, "ss"),
                                 parent_name = "ae", supp_name = "suppae", rdomain = "AE")

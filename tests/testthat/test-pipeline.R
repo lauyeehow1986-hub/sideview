@@ -960,29 +960,7 @@ supp_chk_json <- function(parent, supp, parent_name = "ae", supp_name = "suppae"
   sv_supp_check_json(chk)
 }
 
-# Compose a pipeline holding one supp step built from the check's plan. `before` / `after` are
-# JS run before / after the step is added; `meta` goes to setTables().
-supp_compose <- function(chk_json, pipe = "%>%", table = "ae", supp = "suppae", rdomain = "AE",
-                         meta = "{}", before = "", after = "") {
-  run_pipeline_js(sprintf(
-    "const p = new P.Pipeline(); p.setPipe(%s); p.setTables(%s);
-     const chk = %s;
-     %s
-     p.add(P.suppStep(%s, %s, %s, chk.plan), 'merge');
-     %s
-     out = p.compose();",
-    jsonlite::toJSON(pipe, auto_unbox = TRUE), meta, chk_json, before,
-    jsonlite::toJSON(table, auto_unbox = TRUE), jsonlite::toJSON(supp, auto_unbox = TRUE),
-    jsonlite::toJSON(rdomain, auto_unbox = TRUE), after))
-}
-
-# Run composed code with the given tables bound by name.
-supp_run <- function(code, ...) {
-  skip_if_not_installed("tidyr")  # the generated code pivots with tidyr::pivot_wider()
-  env <- list2env(list(...), parent = globalenv())
-  env$`%>%` <- dplyr::`%>%`
-  eval(parse(text = code), envir = env)
-}
+# supp_compose() and supp_run() live in helper-cdisc.R (test-supp.R uses them too).
 
 # What a run stops with ("" when it runs).
 supp_stop <- function(code, ...) {

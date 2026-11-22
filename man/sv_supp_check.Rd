@@ -47,8 +47,13 @@ the data still fits it.}
 A list with \code{status} (\code{"ok"}, \code{"warning"} or \code{"error"}), \code{plan},
 \code{n_parent}, \code{n_supp}, \code{n_matched}, \code{n_orphan}, \code{orphan_samples},
 \code{n_other_rdomain}, \code{repeats}, \code{clashes}, \code{two_level}, \code{bad_idvarval},
-\code{columns}, \code{preview} and \code{drift}; or just \code{list(error = )} when the check
-cannot run.
+\code{columns}, \code{preview}, \code{drift} and \code{combine_supp}; or just \code{list(error = )}
+when the check cannot run. \code{combine_supp} says whether
+\code{metatools::combine_supp()} (0.3.0) would give the same result as the
+generated dplyr code: \code{list(ok, reason, prep = list(rdomain, idvar_na))},
+where \code{reason} (\code{NULL} when \code{ok}) is the first difference and \code{prep} the
+SUPP lines the call needs first (an \code{RDOMAIN} filter; blank \code{IDVAR} to
+\code{NA}).
 
 \code{sv_supp_key_type()}: \code{"integer"}, \code{"double"}, \code{"character"} or \code{NA}
 (a factor counts as character, an integer64 as double).

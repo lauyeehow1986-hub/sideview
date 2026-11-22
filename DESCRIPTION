@@ -52,5 +52,6 @@ Suggests:
     httpuv,
     pkgload,
     lubridate,
-    tidyr
+    tidyr,
+    metatools (>= 0.3.0)
 Config/testthat/edition: 3

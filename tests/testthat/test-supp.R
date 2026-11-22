@@ -222,6 +222,179 @@ test_that("a QNAM with no QLABEL gets an empty label", {
   expect_match(sv_supp_check_json(r), "\"label\":\"\"", fixed = TRUE)
 })
 
+# ---- combine_supp: would metatools::combine_supp() give the dplyr code's result? ----
+
+cs <- function(name, ...) { f <- fx[[name]]; chk(f[[2]], parent = f[[1]], ...)$combine_supp }
+
+test_that("combine_supp field: eligible cases and prep", {
+  expect_true(cs("cs_ok")$ok); expect_null(cs("cs_ok")$reason)
+  expect_true(cs("cs_ok")$prep$idvar_na); expect_false(cs("cs_ok")$prep$rdomain)
+  expect_false(cs("cs_na_idvar")$prep$idvar_na)
+  q <- chk(fx$cs_suppqual[[2]], parent = fx$cs_suppqual[[1]], sn = "suppqual", rdomain = "AE")$combine_supp
+  expect_true(q$ok); expect_true(q$prep$rdomain)
+  for (n in c("cs_qeval", "cs_int", "cs_chr", "cs_1e5_sci", "cs_110000", "cs_orphan",
+              "cs_lab_all_blank", "cs_lab_all_na")) expect_true(cs(n)$ok, info = n)
+  # str_trim() and the integer conversion both drop the spaces; "1.0" finds no record in either
+  for (n in c("cs_key_sp", "cs_key_dec", "cs_na_idvar")) expect_true(cs(n)$ok, info = n)
+  # whitespace-only IDVAR is subject level too, and needs the same prep
+  s <- fx$cs_ok[[2]]
+  s$IDVAR[s$IDVAR == ""] <- " \t"
+  expect_true(chk(s, parent = fx$cs_ok[[1]])$combine_supp$prep$idvar_na)
+})
+
+test_that("combine_supp field: reasons, in rule order", {
+  expect_equal(cs("cs_no_qorig")$reason, "suppae has no QORIG column")
+  expect_equal(cs("cs_extra")$reason, "suppae has extra columns: EXTRA")
+  expect_equal(cs("cs_no_domain")$reason, "ae has no DOMAIN column")
+  expect_equal(cs("cs_no_studyid")$reason, "ae has no STUDYID column")
+  expect_equal(cs("cs_key01")$reason, 'IDVARVAL "01" would not match AESEQ 1 in combine_supp()')
+  expect_equal(cs("cs_1e5")$reason, 'IDVARVAL "100000" would not match AESEQ 1e+05 in combine_supp()')
+  expect_equal(cs("cs_key_nbsp")$reason, 'IDVARVAL "1\u00a0" would match AESEQ 1 in combine_supp()')
+  expect_equal(cs("cs_key_nel")$reason, 'IDVARVAL "1\u0085" would match AESEQ 1 in combine_supp()')
+  # as.character(0.1 + 0.2) is "0.3": the text matches, the number (0.30000000000000004) does not
+  expect_equal(cs("cs_frac")$reason, 'IDVARVAL "0.3" would match AESEQ 0.3 in combine_supp()')
+  # the dplyr code joins a factor key to the text IDVARVAL, so its result has the key as character
+  expect_equal(cs("cs_fac")$reason, "AEGRPID would be a factor in combine_supp(), not text")
+  expect_equal(cs("cs_lab_two")$reason, 'AETRTEM label would be "TE two" in combine_supp(), not "TE one"')
+  expect_equal(cs("cs_lab_blank_last")$reason, 'AETRTEM label would be none in combine_supp(), not "Treatment Emergent"')
+  expect_match(cs("cs_clash")$reason, "^The merge stops: AETRTEM already in ae$")
+  expect_match(cs("cs_repeat")$reason, "^The merge stops: 1 repeated QNAM record$")
+  expect_match(cs("cs_two_level")$reason, "^The merge stops: AETRTEM on two IDVAR levels$")
+  expect_match(cs("cs_domain_lower")$reason, "would not match in combine_supp\\(\\)$")
+  expect_equal(cs("cs_domain_lower")$reason, "SV-001-001 would not match in combine_supp()")
+  for (n in c("cs_no_qorig", "cs_key01", "cs_lab_two", "cs_clash")) expect_false(cs(n)$ok, info = n)
+  # combine_supp() keeps the last of the distinct labels in order of first appearance
+  s <- fx$cs_lab_two[[2]][c(1, 2, 1), ]
+  s$USUBJID <- fx$cs_ok[[1]]$USUBJID
+  s$IDVARVAL <- c("1", "2", "1")
+  expect_equal(chk(s, parent = fx$cs_ok[[1]])$combine_supp$reason,
+               'AETRTEM label would be "TE two" in combine_supp(), not "TE one"')
+  # two parent records for one keyed row: a different record set, not a missing one
+  p <- fx$cs_chr[[1]]
+  p$AEGRPID <- c(" G1", "G1", "G1")
+  s <- fx$cs_chr[[2]][1, ]
+  s$IDVARVAL <- "G1"
+  expect_equal(chk(s, parent = p)$combine_supp$reason,
+               'IDVARVAL "G1" would match a different ae record in combine_supp()')
+  # the stop reason lists every part, in order
+  r <- list(repeats = list(n = 2L), clashes = c("A", "B"), two_level = "C")
+  expect_identical(sv_supp_combine_stop_reason(r, "ae"),
+                   "The merge stops: 2 repeated QNAM records; A, B already in ae; C on two IDVAR levels")
+})
+
+test_that("combine_supp field ignores the session's scipen and restores it", {
+  withr::local_options(scipen = 999)
+  expect_equal(cs("cs_1e5")$reason, 'IDVARVAL "100000" would not match AESEQ 1e+05 in combine_supp()')
+  expect_true(cs("cs_1e5_sci")$ok)
+  expect_equal(getOption("scipen"), 999)
+})
+
+test_that("blank last AE label in a SUPPQUAL counts after the RDOMAIN filter", {
+  f <- fx$cs_suppqual_blank_last
+  want <- 'AETRTEM label would be none in combine_supp(), not "Treatment Emergent"'
+  r <- chk(f[[2]], parent = f[[1]], sn = "suppqual", rdomain = "AE")$combine_supp
+  expect_false(r$ok)
+  expect_true(r$prep$rdomain)
+  expect_equal(r$reason, want)
+  # a CM row after it with the same QNAM and a label is filtered out, so it does not count
+  cm <- f[[2]][f[[2]]$RDOMAIN == "CM", ][1, ]
+  cm$QNAM <- "AETRTEM"
+  cm$QLABEL <- "Treatment Emergent"
+  r2 <- chk(rbind(f[[2]], cm), parent = f[[1]], sn = "suppqual", rdomain = "AE")$combine_supp
+  expect_equal(r2$reason, want)
+})
+
+test_that("sv_str_trim matches stringr::str_trim", {
+  skip_if_not_installed("stringr")
+  x <- paste0(c(" ", "\t", "\u00a0", "\u0085", "\u3000", "\ufeff", "\u2028"), "1", " ")
+  expect_identical(sideview:::sv_str_trim(x), stringr::str_trim(x))
+  # every BMP code point on either side; stringi drops one leading BOM before it trims
+  cps <- c(1:0xD7FF, 0xE000:0xFFFF)
+  ch <- intToUtf8(cps, multiple = TRUE)
+  y <- c(paste0(ch, "1"), paste0("1", ch), paste0("\ufeff\ufeff", ch, "1"), " \ufeff1", NA)
+  expect_identical(sideview:::sv_str_trim(y), stringr::str_trim(y))
+})
+
+test_that("sv_r_chr is as.character() under scipen 0", {
+  withr::local_options(scipen = 999)
+  expect_identical(sideview:::sv_r_chr(c(100000, 110000, 0.1 + 0.2, 1 / 3)),
+                   c("1e+05", "110000", "0.3", "0.333333333333333"))
+  expect_identical(sideview:::sv_r_chr(factor("G1")), "G1")
+  expect_equal(getOption("scipen"), 999)
+})
+
+test_that("print and JSON carry the line and the field", {
+  expect_match(paste(capture.output(print(chk(fx$cs_key01[[2]], parent = fx$cs_key01[[1]]))), collapse = "\n"),
+               'combine_supp\\(\\): no, IDVARVAL "01"')
+  expect_identical(utils::tail(capture.output(print(chk(fx$cs_ok[[2]], parent = fx$cs_ok[[1]]))), 1),
+                   "combine_supp(): yes")
+  expect_identical(utils::tail(capture.output(print(chk(fx$supp_noqnam))), 1),
+                   "combine_supp(): no, Not in suppae: QNAM")
+  j <- jsonlite::fromJSON(sv_supp_check_json(chk(fx$cs_ok[[2]], parent = fx$cs_ok[[1]])), simplifyVector = FALSE)
+  expect_equal(j$combine_supp, list(ok = TRUE, reason = NULL, prep = list(rdomain = FALSE, idvar_na = TRUE)))
+  expect_match(sv_supp_check_json(chk(fx$cs_ok[[2]], parent = fx$cs_ok[[1]])),
+               '"combine_supp":{"ok":true,"reason":null,"prep":{"rdomain":false,"idvar_na":true}}', fixed = TRUE)
+  expect_identical(sideview:::sv_supp_combine_of(list(error = "x")),
+                   list(ok = FALSE, reason = "x", prep = list(rdomain = FALSE, idvar_na = FALSE)))
+})
+
+# The tables a fixture's check and merges need: the parent, the SUPP, the SUPP's name.
+cs_case <- function(name) {
+  f <- fx[[name]]
+  sn <- if (grepl("suppqual", name)) "suppqual" else "suppae"
+  r <- sv_supp_check(f[[1]], f[[2]], parent_name = "ae", supp_name = sn, rdomain = "AE")
+  list(parent = f[[1]], supp = f[[2]], sn = sn, chk = r, field = r$combine_supp)
+}
+
+# metatools::combine_supp() on the SUPP after the field's prep lines; or the error it stops with.
+cs_theirs <- function(k) {
+  s <- k$supp
+  if (k$field$prep$rdomain) s <- dplyr::filter(s, RDOMAIN == "AE")
+  if (k$field$prep$idvar_na) s <- dplyr::mutate(s, IDVAR = dplyr::na_if(trimws(IDVAR), ""))
+  tryCatch(suppressWarnings(metatools::combine_supp(k$parent, s)), error = function(e) e)
+}
+
+# The 0.7.0 dplyr code's result for the fixture.
+cs_ours <- function(k) {
+  code <- supp_compose(sv_supp_check_json(k$chk), supp = k$sn)
+  do.call(supp_run, c(list(code), stats::setNames(list(k$parent, k$supp), c("ae", k$sn))))
+}
+
+cs_names <- function() grep("^cs_", names(fx), value = TRUE)
+
+test_that("not-ok fixtures: the real combine_supp() errors or differs", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  n_seen <- 0L
+  for (nm in cs_names()) {
+    k <- cs_case(nm)
+    if (k$field$ok || startsWith(k$field$reason, "The merge stops: ")) next
+    n_seen <- n_seen + 1L
+    theirs <- cs_theirs(k)
+    if (inherits(theirs, "error")) {
+      succeed()
+      next
+    }
+    expect_false(supp_same_result(theirs, cs_ours(k)), info = nm)
+  }
+  expect_identical(n_seen, 14L)
+})
+
+test_that("ok fixtures: the real combine_supp() gives the dplyr code's result", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  n_seen <- 0L
+  for (nm in cs_names()) {
+    k <- cs_case(nm)
+    if (!k$field$ok) next
+    n_seen <- n_seen + 1L
+    theirs <- cs_theirs(k)
+    expect_false(inherits(theirs, "error"), info = nm)
+    if (!inherits(theirs, "error")) expect_true(supp_same_result(theirs, cs_ours(k)), info = nm)
+  }
+  expect_identical(n_seen, 13L)
+})
+
 # ---- JS twin: SideviewPipeline.suppCheck ------------------------------------
 
 test_that("suppKeyType maps col_types", {
@@ -271,6 +444,9 @@ supp_parity <- function(label, parent, supp, supp_name = "suppae", rdomain = NUL
                      plan = plan)
   want <- jsonlite::fromJSON(sv_supp_check_json(r), simplifyVector = FALSE)
   got <- supp_js(parent, supp, supp_name, rdomain, plan)
+  # combine_supp: JS twin arrives in Task 3
+  want$combine_supp <- NULL
+  got$combine_supp <- NULL
   expect_equal(supp_canon(got), supp_canon(want), info = label)
   invisible(want)
 }
@@ -336,6 +512,7 @@ test_that("suppCheck matches sv_supp_check", {
   s <- f$supp_orphan[rep(2, 8), ]
   s$QNAM <- paste0("Q", 1:8)
   r <- sv_supp_check(f$ae, s, parent_name = "ae", supp_name = "suppae", sample_n = 3L)
+  r$combine_supp <- NULL  # combine_supp: JS twin arrives in Task 3
   got <- supp_js(f$ae, s, sample_n = 3L)
   expect_equal(supp_canon(got), supp_canon(jsonlite::fromJSON(sv_supp_check_json(r),
                                                                  simplifyVector = FALSE)))
@@ -543,9 +720,10 @@ test_that("supp note replaces summarise", {
 })
 
 # ---- class, print and the unchanged browser JSON (Task 6) ----
-# Snapshots of sv_supp_check_json() taken at the base commit, before the class existed.
-snap_supp_ok <- r"({"status":"ok","plan":{"keys":["STUDYID","USUBJID"],"idvars":[{"idvar":"AESEQ","type":"integer"}],"qnams":[{"qnam":"AETRTEM","label":"Treatment Emergent","idvar":"AESEQ"}],"rdomain_col":true},"n_parent":4,"n_supp":4,"n_matched":4,"n_orphan":0,"orphan_samples":[],"n_other_rdomain":0,"repeats":{"n":0,"samples":[]},"clashes":[],"two_level":[],"bad_idvarval":{"n":0,"samples":[]},"columns":[{"name":"AETRTEM","label":"Treatment Emergent"}],"preview":[{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-001","AESEQ":1,"AETERM":"Headache","AEDECOD":"HEADACHE","AESEV":"MILD","AESTDTC":"2024-01-02","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-002","AESEQ":2,"AETERM":"Nausea","AEDECOD":"NAUSEA","AESEV":"MODERATE","AESTDTC":"2024-01-05","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-003","AESEQ":3,"AETERM":"Rash","AEDECOD":"RASH","AESEV":"MILD","AESTDTC":"2024-02-01","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-004","AESEQ":4,"AETERM":"Cough","AEDECOD":"COUGH","AESEV":"SEVERE","AESTDTC":"2024-02-09","AETRTEM":"Y"}],"drift":{"stale":false,"reasons":[]}})"
-snap_supp_orphan <- r"({"status":"warning","plan":{"keys":["STUDYID","USUBJID"],"idvars":[{"idvar":"AESEQ","type":"integer"}],"qnams":[{"qnam":"AETRTEM","label":"Label AETRTEM","idvar":"AESEQ"}],"rdomain_col":true},"n_parent":4,"n_supp":2,"n_matched":1,"n_orphan":1,"orphan_samples":[{"USUBJID":"SV-001-999","IDVAR":"AESEQ","IDVARVAL":"99","QNAM":"AETRTEM"}],"n_other_rdomain":0,"repeats":{"n":0,"samples":[]},"clashes":[],"two_level":[],"bad_idvarval":{"n":0,"samples":[]},"columns":[{"name":"AETRTEM","label":"Label AETRTEM"}],"preview":[{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-001","AESEQ":1,"AETERM":"Headache","AEDECOD":"HEADACHE","AESEV":"MILD","AESTDTC":"2024-01-02","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-002","AESEQ":2,"AETERM":"Nausea","AEDECOD":"NAUSEA","AESEV":"MODERATE","AESTDTC":"2024-01-05","AETRTEM":null},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-003","AESEQ":3,"AETERM":"Rash","AEDECOD":"RASH","AESEV":"MILD","AESTDTC":"2024-02-01","AETRTEM":null},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-004","AESEQ":4,"AETERM":"Cough","AEDECOD":"COUGH","AESEV":"SEVERE","AESTDTC":"2024-02-09","AETRTEM":null}],"drift":{"stale":false,"reasons":[]}})"
+# Snapshots of sv_supp_check_json() taken at the base commit, before the class existed, plus the
+# combine_supp field (E1) at the end.
+snap_supp_ok <- r"({"status":"ok","plan":{"keys":["STUDYID","USUBJID"],"idvars":[{"idvar":"AESEQ","type":"integer"}],"qnams":[{"qnam":"AETRTEM","label":"Treatment Emergent","idvar":"AESEQ"}],"rdomain_col":true},"n_parent":4,"n_supp":4,"n_matched":4,"n_orphan":0,"orphan_samples":[],"n_other_rdomain":0,"repeats":{"n":0,"samples":[]},"clashes":[],"two_level":[],"bad_idvarval":{"n":0,"samples":[]},"columns":[{"name":"AETRTEM","label":"Treatment Emergent"}],"preview":[{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-001","AESEQ":1,"AETERM":"Headache","AEDECOD":"HEADACHE","AESEV":"MILD","AESTDTC":"2024-01-02","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-002","AESEQ":2,"AETERM":"Nausea","AEDECOD":"NAUSEA","AESEV":"MODERATE","AESTDTC":"2024-01-05","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-003","AESEQ":3,"AETERM":"Rash","AEDECOD":"RASH","AESEV":"MILD","AESTDTC":"2024-02-01","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-004","AESEQ":4,"AETERM":"Cough","AEDECOD":"COUGH","AESEV":"SEVERE","AESTDTC":"2024-02-09","AETRTEM":"Y"}],"drift":{"stale":false,"reasons":[]},"combine_supp":{"ok":false,"reason":"suppae has no QORIG column","prep":{"rdomain":false,"idvar_na":false}}})"
+snap_supp_orphan <- r"({"status":"warning","plan":{"keys":["STUDYID","USUBJID"],"idvars":[{"idvar":"AESEQ","type":"integer"}],"qnams":[{"qnam":"AETRTEM","label":"Label AETRTEM","idvar":"AESEQ"}],"rdomain_col":true},"n_parent":4,"n_supp":2,"n_matched":1,"n_orphan":1,"orphan_samples":[{"USUBJID":"SV-001-999","IDVAR":"AESEQ","IDVARVAL":"99","QNAM":"AETRTEM"}],"n_other_rdomain":0,"repeats":{"n":0,"samples":[]},"clashes":[],"two_level":[],"bad_idvarval":{"n":0,"samples":[]},"columns":[{"name":"AETRTEM","label":"Label AETRTEM"}],"preview":[{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-001","AESEQ":1,"AETERM":"Headache","AEDECOD":"HEADACHE","AESEV":"MILD","AESTDTC":"2024-01-02","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-002","AESEQ":2,"AETERM":"Nausea","AEDECOD":"NAUSEA","AESEV":"MODERATE","AESTDTC":"2024-01-05","AETRTEM":null},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-003","AESEQ":3,"AETERM":"Rash","AEDECOD":"RASH","AESEV":"MILD","AESTDTC":"2024-02-01","AETRTEM":null},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-004","AESEQ":4,"AETERM":"Cough","AEDECOD":"COUGH","AESEV":"SEVERE","AESTDTC":"2024-02-09","AETRTEM":null}],"drift":{"stale":false,"reasons":[]},"combine_supp":{"ok":false,"reason":"suppae has no QORIG column","prep":{"rdomain":false,"idvar_na":false}}})"
 
 test_that("a SUPP check carries a class, prints as sentences and sends the same JSON", {
   r <- chk(fx$suppae)
@@ -554,7 +732,8 @@ test_that("a SUPP check carries a class, prints as sentences and sends the same 
   expect_identical(c(r$parent_name, r$supp_name), c("ae", "suppae"))
   expect_output(print(r), "Merging suppae into ae adds")
   expect_identical(capture.output(print(chk(fx$suppae))),
-                   c("Merging suppae into ae adds 1 column: AETRTEM.", "4 of 4 suppae rows match a ae row."))
+                   c("Merging suppae into ae adds 1 column: AETRTEM.", "4 of 4 suppae rows match a ae row.",
+                     "combine_supp(): no, suppae has no QORIG column"))
   expect_output(print(chk(fx$supp_noqnam)), "SUPP check failed: Not in suppae: QNAM.", fixed = TRUE)
   expect_s3_class(chk(fx$supp_noqnam), "sv_supp_check")
   expect_identical(chk(fx$supp_noqnam)$error, "Not in suppae: QNAM")
