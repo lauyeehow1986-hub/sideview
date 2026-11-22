@@ -4,7 +4,8 @@
 - **Sub-project:** E, part 1 of 5 (order agreed 2026-11-22: E1 `combine_supp()`, E2 ADSL merges with
   `admiral::derive_vars_merged()`, then `dm`, `pointblank`, `metacore` spec check). Each part has its own spec,
   plan and PR.
-- **Status:** decisions made in chat, one at a time; this written spec awaits review
+- **Status:** decisions made in chat, one at a time; builder check done (2026-11-22, one question taken to the
+  user: decision 6); awaiting the user's approval
 - **Builds on:** `plans/2026-11-03-cdisc-suppqual-merge-design.md` (the 0.7.0 SUPP merge: step, check twins,
   guards, wire). Read it first; this spec only describes what changes.
 
@@ -29,7 +30,12 @@ stays dplyr and says why. The code sideview writes always means one thing, which
    JS and lazy twins), and tests that call the real `combine_supp()` prove the copy right.
 4. **Two prep lines are allowed** before the call, so ordinary `.xpt`-derived SUPP tables qualify (§5.2).
    Nothing else is written around the call to make it fit; every other difference greys the option out.
+   (Guards that stop the code are not "making it fit"; see decision 6.)
 5. metatools is installed on the dev machine (0.3.0, with metacore 0.3.0).
+6. **The promise also holds when the code is rerun on a later data cut** (asked after the builder check,
+   2026-11-22; the user took the builder's pick). The generated code gets a text-match guard (§5.3) that
+   stops when any keyed SUPP row would match differently as text (`combine_supp()`) than as a number (the
+   dplyr code). It runs in the session doing the work, so it also covers that session's `options(scipen)`.
 
 ## 3. Goals, non-goals, anti-goals
 
@@ -45,7 +51,8 @@ stays dplyr and says why. The code sideview writes always means one thing, which
 - A pharmaverse form for any other step (filter, join, summarise, derive, stack, compare).
 - Fixing a SUPP table to suit `combine_supp()` beyond the two prep lines (no invented `QORIG`, no dropped
   columns, no added `DOMAIN`).
-- metatools as a hard dependency. It goes in `Suggests:`.
+- metatools as a hard dependency. It goes in `Suggests:` as `metatools (>= 0.3.0)`: older versions stop on
+  orphan rows and (before 0.2.0) set no labels.
 
 **Anti-goals (a failure even if it runs)**
 - Generated pharmaverse code whose result differs from what the merge check showed.
@@ -119,6 +126,10 @@ difference is rule 7:
   (`100000` -> `"1e+05"`, `110000` -> `"110000"`, `0.1 + 0.2` -> `"0.3"`, `1/3` -> `"0.333333333333333"`).
   **The JS twin must reproduce R's `as.character()` for doubles exactly**, pinned by a value table generated
   in R (§7). A factor key is compared by its level text; an integer key by its digits;
+- `as.character()` on a double depends on `options(scipen)` (`scipen = 999` gives `"100000"`, not
+  `"1e+05"`). **Both check twins assume the default `scipen = 0`**: the R twin evaluates under
+  `withr::local_options(scipen = 0)` or base `op <- options(scipen = 0); on.exit(options(op))`, so R and JS
+  agree whatever the user's session says. The run-time guard of §5.3 covers sessions with another setting;
 - a repeated QNAM for one record gives a list column in `combine_supp()` (ours stops): our status is already
   `error`, so rule 1 covers it;
 - a QNAM at two IDVAR levels is overwritten silently by `combine_supp()` (ours stops): rule 1;
@@ -126,22 +137,24 @@ difference is rule 7:
   step line says so, §5.4).
 
 **Labels (rule 8).** `combine_supp()` sets each QNAM's label to the **last** QLABEL of that QNAM in SUPP row
-order, blank included, so a blank last label gives `""`; an all-`NA` QLABEL gives `NA`. Ours sets the first
-non-blank QLABEL, and no label when all are blank. Counted as the same: no label and `""`. Otherwise the two
+order, blank included, so a blank last label gives `""`; an all-`NA` QLABEL gives `NA`. Ours takes the first
+non-`NA` QLABEL of each QNAM, and `suppLabels()` drops a blank one, so a blank first label gives no label. Counted as the same: no label and `""`. Otherwise the two
 labels must be identical. (Builder's call to compare after the prep's RDOMAIN filter, since that is what the
 call sees.)
 
 **Column order is not compared.** "Same result" = same rows in the same order, same column set, same values and
 classes, same labels (as above). Both keep the parent's row order (left joins).
 
-**metatools installed:** the R check adds `installed: TRUE|FALSE` (`requireNamespace("metatools", quietly =
-TRUE)`) in the gadget and module; the JS twin leaves it `null` (a saved page cannot know). It never changes
+**metatools installed:** the R check adds `installed: TRUE|FALSE` (metatools 0.3.0 or later is installed:
+`requireNamespace()` plus `utils::packageVersion() >= "0.3.0"`; builder's call) in the gadget and module; the JS twin leaves it `null` (a saved page cannot know). It never changes
 `ok`.
 
 ### 5.3 The generated code
 
-When `style == 'pharmaverse'` and the step's stored check has `combine_supp$ok`, `compose()` writes, in place of
-the dplyr block of 0.7.0 §6.2:
+When `style == 'pharmaverse'` and the merge check the engine holds for the step (`engine.suppChecks`, not the
+step itself) has `combine_supp$ok`, `compose()` writes, in place of the dplyr block of 0.7.0 §6.2, the code
+below. The engine hands the check to the pipeline the way `setJoinCheck()` does for joins. A check whose plan is
+out of date (`drift.stale`) composes as dplyr. Builder's calls, from reading the code.
 
 ```r
 suppae_q <- suppae %>%
@@ -151,6 +164,12 @@ local({
   # the 0.7.0 guards that combine_supp() does not do itself:
   # IDVAR values the plan does not handle; QNAMs at two levels; a repeated QNAM for one record
   # (on STUDYID, USUBJID, IDVAR, trimmed IDVARVAL, QNAM). No clash guard: combine_supp() stops on a clash.
+  # Text-match guard (user decision 6), one per keyed IDVAR level whose parent key is numeric:
+  # for the SUPP rows of that level, the parent record found by text
+  #   stringr::str_trim(as.character(IDVARVAL)) == stringr::str_trim(as.character(<key>))
+  # must be the parent record found by the dplyr code's numeric conversion (the 0.7.0 key conversion);
+  # otherwise stop("IDVARVAL \"01\" matches AESEQ 1 as a number but not as text in combine_supp(); ",
+  #                "use the dplyr code style for this merge").
 })
 ae %>%
   metatools::combine_supp(suppae_q)
@@ -158,6 +177,11 @@ ae %>%
 
 - With neither prep line and no SUPP chain, `suppae_q` is not written and the call takes `suppae` directly
   (builder's call whether the guards then read `suppae` directly).
+- The text-match guard is written only for levels whose parent key is numeric (integer or double); character
+  and factor keys are compared as text by both styles. It uses `stringr::str_trim()` (metatools imports
+  stringr, so it is installed wherever the call can run), to trim exactly as `combine_supp()` does. Its exact
+  form is the builder's; it must `parse()`, run on data frames, and stop on the rule-7 fixtures when the check
+  is bypassed (§7). It runs in the user's session with the user's `scipen`, which is the point.
 - `combine_supp()` labels the columns itself: no `<supp>_labels` vector, no label `mutate`.
 - The guards are kept on purpose (builder's proposal, see §9): the plan is fixed when the step is added, and
   without them a changed SUPP table could give a list column or an overwritten QNAM with only a warning.
@@ -168,7 +192,7 @@ ae %>%
 ### 5.4 Where it shows
 
 - **Step line (Pipeline tab, list view):** in pharmaverse style, an eligible step adds `· combine_supp()`; an
-  ineligible one adds `· dplyr: <reason>`. When R says `installed: FALSE`: `· needs metatools to run`. When the
+  ineligible one adds `· dplyr: <reason>`. When R says `installed: FALSE`: `· needs metatools 0.3.0 or later to run`. When the
   check counted orphans or bad `IDVARVAL` rows: the existing warning text, plus `(combine_supp() warns)`.
 - **Merge check panel (Discrepancy tab):** one line, `combine_supp(): yes` or `combine_supp(): no, <reason>`,
   shown in both styles.
@@ -203,6 +227,10 @@ repeats, two levels, a clash.
   values, classes, labels with `""` = none; column order ignored). For every fixture where it says not ok, show
   that the real `combine_supp()` (after the prep) errors or differs. This proves both directions of the copied
   rules.
+- **Later data cut (decision 6):** compose pharmaverse code on an eligible fixture, then run it on a changed
+  SUPP table with `IDVARVAL "01"` for `AESEQ` 1, and on the eligible one under `options(scipen = 999)` with
+  `AESEQ` 100000: the text-match guard stops with its message where text and numeric matching differ, and
+  passes (same result as dplyr) where they agree. The checks themselves give the same field under any `scipen`.
 - **Twins:** the `combine_supp` field is equal across R and JS on every fixture, and lazy twin gives rule 2.
 - **`as.character()` table:** a test generates R's `as.character()` for a fixed set of doubles (integers around
   1e5, 1e15, 1e16, fractions, 1/3, 0.1 + 0.2, negatives, 1e-4, 1e-5) and the JS helper must give the same text.
@@ -230,9 +258,15 @@ repeats, two levels, a clash.
 - metatools goes in `Suggests:`; when it is missing the option stays available and the step line says it is
   needed to run.
 - Column order is not compared; a missing label and `""` count as the same.
-- In a saved widget page or on preview rows the option is greyed out (rule 3), since the full data was not
-  checked.
+- On preview rows the option is greyed out (rule 3), since the full data was not checked. A saved widget page
+  whose tables all fit under `max_rows` holds every row, so it is eligible like the gadget. (An earlier draft
+  said every widget page was greyed out; that was wrong.)
 - The 0.7.0 guards for new IDVAR levels, two-level QNAMs and repeats stay in the pharmaverse code.
+- The text-match guard (decision 6) is in that guard block, uses `stringr::str_trim()`, and is written only for
+  numeric keys.
+- Both checks assume `scipen = 0`; the guard covers other settings at run time.
+- metatools `(>= 0.3.0)`; `installed` is FALSE for an older version.
+- When metatools is installed but older than 0.3.0, the step line says `needs metatools 0.3.0 or later to run`.
 - The setting is called "Code" in the bar with values `dplyr` / `pharmaverse`; the R argument is `code_style`.
 
 ## 10. Files
