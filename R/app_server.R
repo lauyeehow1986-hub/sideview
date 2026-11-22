@@ -375,8 +375,9 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
                                  supp_name = supp_name, rdomain = rdomain, plan = plan)
       )
       reply <- sv_supp_reply(chk)
-      cs_field <- if (is.null(reply$combine_supp)) sv_supp_combine_of(chk) else reply$combine_supp
-      if (is.null(chk$error) && !identical(chk$status, "error") &&
+      # an {error} check has no combine_supp (as in both twins): the reply gets none either
+      cs_field <- reply$combine_supp
+      if (!is.null(cs_field) && !identical(chk$status, "error") &&
           (isTRUE(cp$is_lazy) || isTRUE(cs$is_lazy))) {
         # rule 2 holds for a lazy card even when a lost link made the check run on the preview
         cs_field$ok <- FALSE
@@ -387,9 +388,11 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
         }
       }
       # whether this machine can run the pharmaverse code; the check itself never knows
-      cs_field$installed <- requireNamespace("metatools", quietly = TRUE) &&
-        utils::packageVersion("metatools") >= "0.3.0"
-      reply$combine_supp <- cs_field
+      if (!is.null(cs_field)) {
+        cs_field$installed <- requireNamespace("metatools", quietly = TRUE) &&
+          utils::packageVersion("metatools") >= "0.3.0"
+        reply$combine_supp <- cs_field
+      }
       if (is.null(reply$error)) {
         reply$derive_offers <- tryCatch(
           as.list(sv_derive_offers_supp(chk, parent_name, supp_name, rdomain)),

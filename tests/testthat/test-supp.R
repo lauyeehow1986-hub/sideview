@@ -744,7 +744,9 @@ test_that("server takes the step's rdomain hint only where the tags allow it", {
   plain <- sv_cdisc_cards(list(ae = fx$ae, suppqual = fx$suppqual), cdisc = FALSE)
   expect_null(plain[[2]]$cdisc)
   shiny::testServer(sideview_server(plain, cdisc = FALSE), {
-    expect_identical(ask(session, "h1")$error, "suppqual has no rows for QUAL")
+    r1 <- ask(session, "h1")
+    expect_identical(r1$error, "suppqual has no rows for QUAL")
+    expect_null(r1$combine_supp)   # an {error} reply has no combine_supp, as in both twins
     r <- ask(session, "h2", "AE")
     expect_identical(r$id, "h2")
     expect_identical(r$status, "ok")
