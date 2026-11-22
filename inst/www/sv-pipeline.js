@@ -2659,6 +2659,36 @@
     return isFinite(d) && Math.abs(d) <= SUPP_DBL_MAX ? d : null;
   }
 
+  // Whether R's as.numeric() surely reads this decimal text as the double Number() reads. R's
+  // R_strtod gathers the digits in long double and then multiplies or divides by a power of ten,
+  // so a value that is not exact is rounded twice and can land on the neighbouring double (about
+  // 1 text in 8000, short ones such as "6.228e-9" too). Sure only where nothing is rounded: the
+  // digits make an integer below 2^64 (exact in long double), the power of ten is at most 10^27
+  // (exact), the value is itself a double, and it has at most 15 significant digits.
+  // test-supp.R holds this to R over a sweep of texts.
+  function suppNumSure(v) {
+    if (!HAS_BIGINT || v === null || v === undefined) return false;
+    var m = /^[+-]?([0-9]*)(?:[.]([0-9]*))?(?:[eE]([+-]?[0-9]+))?$/.exec(String(v).replace(SUPP_WS_EDGES, ''));
+    if (!m) return false;
+    var frac = m[2] || '', digits = (m[1] + frac).replace(/^0+/, '');
+    if (digits === '') return true; // zero
+    if (digits.length > 20 || digits.replace(/0+$/, '').length > 15) return false;
+    var expn = (m[3] === undefined ? 0 : Number(m[3])) - frac.length;
+    if (!isFinite(expn) || Math.abs(expn) > 27) return false;
+    var num = BigInt(digits), den = BigInt(1), zero = BigInt(0), one = BigInt(1), two = BigInt(2);
+    if (num >= BigInt('18446744073709551616')) return false;
+    if (expn >= 0) num = num * pow10n(expn); else den = pow10n(-expn);
+    // a double: num / den = odd * 2^j with odd < 2^53, so the 5s of den must divide num
+    var five = BigInt(5);
+    while (den % five === zero) {
+      if (num % five !== zero) return false;
+      num = num / five;
+      den = den / five;
+    }
+    while (num % two === zero) num = num / two;
+    return num < BigInt('9007199254740992') && (den & (den - one)) === zero;
+  }
+
   // IDVARVAL text converted to the key type; null means it did not convert.
   function suppConvert(v, type) {
     if (v === null || v === undefined) return null;
@@ -3071,6 +3101,14 @@
           joins = r.map(function (j) { return !c.bad[j]; });
         }
         pvText[iv] = column(parentRows, pTypes, iv);
+        // a double IDVARVAL that R may read as another double (suppNumSure) makes ours uncertain
+        if (c.types[iv] === 'double' && unsure === null) {
+          r.forEach(function (j) {
+            if (unsure === null && !c.bad[j] && !suppNumSure(s[j].IDVARVAL)) {
+              unsure = tooClose('IDVARVAL', String(s[j].IDVARVAL).replace(SUPP_WS_EDGES, ''));
+            }
+          });
+        }
         pT = pk_t.map(function (k, j) { return k + '\r' + enc(strTrim(pvText[iv][j])); });
         r.forEach(function (j) { sT[j] = sk_t[j] + '\r' + enc(strTrim(ivText[j])); });
       }
@@ -3515,6 +3553,7 @@
     combineSuppStopReason: combineSuppStopReason,
     rAsCharacter: rAsCharacter,
     rAsCharacterSure: rAsCharacterSure,
+    suppNumSure: suppNumSure,
     strTrim: strTrim,
     codebookRow: codebookRow,
     codebookCsv: codebookCsv,

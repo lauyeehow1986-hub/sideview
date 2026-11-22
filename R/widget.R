@@ -133,7 +133,11 @@ sideview_widget <- function(...,
   card_list <- sv_cdisc_finalize(card_list, cdisc)
   card_list <- lapply(card_list, function(card) {
     card <- sv_card_payload(card)
-    sv_cap_card_rows(card, max_rows)
+    card <- sv_cap_card_rows(card, max_rows)
+    # the double columns the browser cannot read back exactly, on the rows the widget sends
+    # (always a JSON array); only the widget checks combine_supp in the browser
+    if (is.data.frame(card$data)) card$col_inexact <- as.list(sv_inexact_cols(card$data))
+    card
   })
   sv_announce_row_cap(card_list, max_rows)
   

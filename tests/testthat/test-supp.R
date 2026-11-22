@@ -466,7 +466,8 @@ supp_js <- function(parent, supp, supp_name = "suppae", rdomain = NULL, plan = N
     jsonlite::toJSON(opts, auto_unbox = TRUE, na = "null", null = "null")))
 }
 
-supp_parity <- function(label, parent, supp, supp_name = "suppae", rdomain = NULL, plan = NULL) {
+supp_parity <- function(label, parent, supp, supp_name = "suppae", rdomain = NULL, plan = NULL,
+                        js_reason = NULL) {
   r <- sv_supp_check(parent, supp, parent_name = "ae", supp_name = supp_name, rdomain = rdomain,
                      plan = plan)
   want <- jsonlite::fromJSON(sv_supp_check_json(r), simplifyVector = FALSE)
@@ -474,6 +475,14 @@ supp_parity <- function(label, parent, supp, supp_name = "suppae", rdomain = NUL
   # `installed` is the server's (R adds it to the reply; the browser sends null)
   want$combine_supp$installed <- NULL
   got$combine_supp$installed <- NULL
+  # the browser's combine_supp may be not ok where R is sure (an IDVARVAL R_strtod may read
+  # otherwise, suppNumSure): then it says so, and the rest still equals R
+  if (!is.null(js_reason)) {
+    expect_false(got$combine_supp$ok, label = label)
+    expect_identical(got$combine_supp$reason, js_reason, label = label)
+    want$combine_supp$ok <- FALSE
+    want$combine_supp$reason <- js_reason
+  }
   expect_equal(supp_canon(got), supp_canon(want), info = label)
   invisible(want)
 }
@@ -541,10 +550,13 @@ test_that("suppCheck matches sv_supp_check", {
   s <- f$cs_ok[[2]]
   s$USUBJID <- ids[match(s$USUBJID, unique(f$cs_ok[[1]]$USUBJID))]
   cases$cs_num_usubjid <- list(p, s)
+  # cs_frac's IDVARVAL "0.3" is not a double exactly, so R_strtod may round it otherwise
+  fail_safe <- c(cs_frac = "IDVARVAL 0.3 is too close to R's rounding to check in the browser")
   for (nm in names(cases)) {
     a <- cases[[nm]]
     supp_parity(nm, a[[1]], a[[2]], if (length(a) > 2) a[[3]] else "suppae",
-                if (length(a) > 3) a[[4]] else NULL, if (length(a) > 4) a[[5]] else NULL)
+                if (length(a) > 3) a[[4]] else NULL, if (length(a) > 4) a[[5]] else NULL,
+                js_reason = if (nm %in% names(fail_safe)) fail_safe[[nm]])
   }
 
   # sample_n truncates samples and the preview alike
@@ -668,8 +680,12 @@ test_that("sv_inexact_cols() names each double column 16-digit JSON does not car
   d$int <- 1:3
   d$chr <- c("a", "b", NA)
   d$lgl <- c(TRUE, NA, FALSE)
+  # 16 digits that R's as.numeric() reads back as x but JSON.parse (and yajl) does not
+  rs <- c(0.47360295429825783, 8.3669512206688525e+37, 5853.6245371215045, 230778.35096046329)
+  for (i in seq_along(rs)) d[[sprintf("strtod%d", i)]] <- c(rs[i], 1, 1)
+  expect_true(all(as.numeric(formatC(rs, digits = 16, format = "g")) == rs))
   bad <- sv_inexact_cols(d)
-  expect_true(all(c("three", "big_frac", "frac", "inf", "ninf", "nan") %in% bad))
+  expect_true(all(c("three", "big_frac", "frac", "inf", "ninf", "nan", sprintf("strtod%d", 1:4)) %in% bad))
   # eighths, whole numbers to 2^53 and past it while 16 digits hold, 1e300, 5e-324 and 0.1 are
   # exact; 1e15 + k + 0.25 needs 17 digits
   expect_false(any(c("half", "na_only", "int", "chr", "lgl", sprintf("x%03d", c(151:200, 251:256))) %in% bad))
@@ -693,12 +709,23 @@ test_that("sv_inexact_cols() names each double column 16-digit JSON does not car
     "    var t = want[k][i]; return t === null ? v === null : v !== null && v === Number(t); });",
     "  if (!ok) out.push(k); });"), json, jsonlite::toJSON(want, na = "null")))
   expect_setequal(unlist(got), bad)
-  # the payload carries it as a JSON array, also with one name or none
-  p <- sv_card_payload(sv_normalize(data.frame(a = 0.1 + 0.2, b = 1, c = "x"), name = "t"))
-  expect_identical(p$col_inexact, list("a"))
-  expect_match(as.character(htmlwidgets:::toJSON(p["col_inexact"])), '"col_inexact":["a"]', fixed = TRUE)
-  p <- sv_card_payload(sv_normalize(data.frame(b = 1), name = "u"))
-  expect_match(as.character(htmlwidgets:::toJSON(p["col_inexact"])), '"col_inexact":[]', fixed = TRUE)
+  # the widget's cards carry it as a JSON array, also with one name or none
+  card <- function(w) w$x$cards[[1]]
+  wire <- function(w) as.character(htmlwidgets:::toJSON(card(w)["col_inexact"]))
+  w <- sideview_widget(t = data.frame(a = 0.1 + 0.2, b = 1, c = "x"))
+  expect_identical(card(w)$col_inexact, list("a"))
+  expect_match(wire(w), '"col_inexact":["a"]', fixed = TRUE)
+  w <- sideview_widget(u = data.frame(b = 1))
+  expect_match(wire(w), '"col_inexact":[]', fixed = TRUE)
+  # ... worked out on the rows the widget embeds, after max_rows
+  big <- data.frame(a = c(1, 2, 0.1 + 0.2))
+  expect_identical(card(sideview_widget(big = big))$col_inexact, list("a"))
+  w <- suppressMessages(sideview_widget(big = big, max_rows = 2))
+  expect_identical(nrow(card(w)$data), 2L)
+  expect_identical(card(w)$col_inexact, list())
+  # the gadget and the module check combine_supp in R: their payloads leave it out
+  expect_null(sv_card_payload(sv_normalize(big, name = "big"))$col_inexact)
+  expect_null(sv_card_payload(sv_normalize(big, name = "big"), preview_rows = 2)$col_inexact)
 })
 
 test_that("sv_inexact_cols() lists an integer64 column with a value past 2^53", {
@@ -754,10 +781,14 @@ test_that("suppCheck: rows rounded to 16 digits (the widget) trust only R's exac
   lossy <- "AESEQ has values the browser cannot read exactly"
   # R lists the column, so the browser does not guess: 2.9999999999999996 arrives as 3,
   # 1234567890123456.2 as 1234567890123456, 0.1 + 0.2 as 0.3, Inf and NaN as null
+  # 0.47360295429825783 and 8.3669512206688525e+37 come back from 16 digits as x in R's
+  # as.numeric() but not in JSON.parse, so R's parser cannot be the test (R26)
   cases <- list(three = keyed_dbl(2.9999999999999996, "3"),
                 big_frac = keyed_dbl(1234567890123456.2, "1234567890123456.2"),
                 cs_frac = fx$cs_frac,
-                inf = keyed_dbl(Inf, "Inf"), nan = keyed_dbl(NaN, "NaN"))
+                inf = keyed_dbl(Inf, "Inf"), nan = keyed_dbl(NaN, "NaN"),
+                strtod1 = keyed_dbl(0.47360295429825783, "0.47360295429825783"),
+                strtod2 = keyed_dbl(8.3669512206688525e+37, "8.3669512206688525e+37"))
   for (nm in names(cases)) {
     k <- cases[[nm]]
     expect_identical(sv_inexact_cols(k[[1]]), "AESEQ", info = nm)
@@ -769,7 +800,7 @@ test_that("suppCheck: rows rounded to 16 digits (the widget) trust only R's exac
   # columns R does not list are exact on the wire (null in them is NA): the same answer as R
   same <- list(cs_ok = fx$cs_ok, cs_1e5 = fx$cs_1e5, cs_1e5_sci = fx$cs_1e5_sci,
                cs_110000 = fx$cs_110000, half = keyed_dbl(0.5, "0.5"),
-               two53 = keyed_dbl(2^53, "9007199254740992"), na = keyed_dbl(NA, "2"))
+               two40 = keyed_dbl(2^40, "1099511627776"), na = keyed_dbl(NA, "2"))
   for (nm in names(same)) {
     k <- same[[nm]]
     expect_identical(sv_inexact_cols(k[[1]]), character(0), info = nm)
@@ -787,6 +818,86 @@ test_that("suppCheck: rows rounded to 16 digits (the widget) trust only R's exac
   expect_identical(r$reason, lossy)
   # exact rows (the gadget's 17 digits, no `rounded`) need no list
   expect_true(supp_js(k[[1]], k[[2]])$combine_supp$ok)
+})
+
+test_that("suppCheck: an IDVARVAL R_strtod may read as another double is not sure (rule 7)", {
+  keyed_dbl <- function(x, t) {
+    p <- fx$cs_1e5[[1]]
+    p$AESEQ <- c(1, 2, x)
+    s <- fx$cs_1e5[[2]]
+    s$IDVARVAL <- c("1", t)
+    list(p, s)
+  }
+  unsure <- function(t) sprintf("IDVARVAL %s is too close to R's rounding to check in the browser", t)
+  # R reads "0.4736029542982578" as 0.47360295429825783, so dplyr matches; Number() reads its
+  # neighbour. Exact 17-digit rows: R is not ok, the browser must not say ok
+  # (x is R's own reading of the text; an R literal goes through R_strtod too, so it is not used)
+  for (a in c("0.4736029542982578", "8.366951220668853e+37")) {
+    x <- as.numeric(a)
+    # the browser reads the text as another double (x's 17 digits read back exactly in JS)
+    js <- run_pipeline_js(sprintf("out = [Number('%s') === Number('%s')];", a, sprintf("%.17g", x)))
+    expect_false(js[[1]], info = a)
+    k <- keyed_dbl(x, a)
+    expect_false(sv_supp_check(k[[1]], k[[2]], parent_name = "ae", supp_name = "suppae")$combine_supp$ok)
+    r <- supp_js(k[[1]], k[[2]])$combine_supp
+    expect_false(r$ok, info = a)
+    expect_identical(r$reason, unsure(a), info = a)
+  }
+  # 16 digits are never sure, even an exact 2^53 (R is ok there; the browser is not)
+  k <- keyed_dbl(2^53, " 9007199254740992 ")
+  expect_true(sv_supp_check(k[[1]], k[[2]], parent_name = "ae", supp_name = "suppae")$combine_supp$ok)
+  expect_identical(supp_js(k[[1]], k[[2]])$combine_supp$reason, unsure("9007199254740992"))
+  got <- run_pipeline_js(paste0("out = ['0.5', '1e5', '100000e-2', '-0', '0.375', '1099511627776', ",
+    "'6.228e-9', '0.3', '0.4736029542982578', '1234567890123456', '1e28', '1' + '0'.repeat(20), ",
+    "'1.5e-30'].map(P.suppNumSure);"))
+  expect_identical(unlist(got), c(rep(TRUE, 6), rep(FALSE, 7)))
+})
+
+test_that("suppNumSure(): every text the browser calls sure is the double R reads", {
+  # random decimal texts: 1 to 20 significant digits, exponents across the double range, in
+  # scientific, integer-mantissa, fixed (with and without trailing zeros) and leading-zero forms;
+  # plus the exact texts of dyadic fractions and of integers, which are the sure region
+  set.seed(27)
+  n <- 20000L
+  nsig <- sample(1:20, n, TRUE)
+  digs <- vapply(nsig, function(k) paste0(sample(1:9, 1), paste(sample(0:9, k - 1, TRUE), collapse = "")), "")
+  e <- sample(-330:310, n, TRUE)
+  form <- sample(c("sci", "int_e", "fixed", "fixed_tz", "lead0_e"), n, TRUE)
+  mk <- function(d, k, e, f) {
+    switch(f,
+      sci = paste0(substr(d, 1, 1), if (k > 1) paste0(".", substr(d, 2, k)) else "", "e", e),
+      int_e = paste0(d, "e", e - k + 1),
+      lead0_e = paste0("0.000", d, "e", e + 4),
+      {
+        d2 <- if (f == "fixed_tz") paste0(d, "000") else d
+        k2 <- nchar(d2)
+        if (e >= k2 - 1) paste0(d2, strrep("0", e - k2 + 1))
+        else if (e >= 0) paste0(substr(d2, 1, e + 1), ".", substr(d2, e + 2, k2))
+        else paste0("0.", strrep("0", -e - 1), d2)
+      })
+  }
+  rnd <- mapply(mk, digs, nsig, e, form, USE.NAMES = FALSE)
+  small <- mapply(mk, digs[1:5000], pmin(nsig[1:5000], 15L), sample(-25:25, 5000, TRUE),
+                  form[1:5000], USE.NAMES = FALSE)
+  q <- sample.int(2^20, 5000, TRUE) / 2^sample(0:40, 5000, TRUE)
+  dy <- sub("[.]$", "", sub("0+$", "", sprintf("%.45f", q)))
+  w <- sprintf("%.0f", sample.int(2^31 - 1, 2000, TRUE) * sample(c(1, 10, 1000, 1e6), 2000, TRUE))
+  txt <- c(rnd, small, dy, paste0("-", dy[1:1000]), paste0(dy[1:1000], "e-2"), w,
+           paste0(w, "00e-2"), paste0(w, ".0"), paste0(w, "e3"))
+  x <- as.numeric(txt)
+  hex <- apply(matrix(as.character(writeBin(x, raw(), endian = "big")), nrow = 8), 2, paste, collapse = "")
+  got <- run_pipeline_js(sprintf(paste0(
+    "var t = %s, h = %s, b = Buffer.alloc(8), sure = 0, differ = 0, bad = [];",
+    "t.forEach(function (s, i) {",
+    "  b.writeDoubleBE(Number(s)); var same = b.toString('hex') === h[i];",
+    "  if (!same) differ++;",
+    "  if (P.suppNumSure(s)) { sure++; if (!same) bad.push(s); } });",
+    "out = {sure: sure, differ: differ, bad: bad};"), jsonlite::toJSON(txt), jsonlite::toJSON(hex)))
+  # the sweep has teeth: R and Number() part on some texts, short ones among them ...
+  expect_gt(got$differ, 10)
+  # ... but never on one called sure, and the sure region is not empty
+  expect_identical(unlist(got$bad), NULL)
+  expect_gt(got$sure, 10000)
 })
 
 test_that("suppCheck: combine_supp needs a type for every column rules 7 and 8 read", {

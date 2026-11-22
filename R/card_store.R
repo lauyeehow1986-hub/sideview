@@ -146,19 +146,20 @@ sv_card_payload <- function(card, preview_rows = NULL) {
     card$data <- utils::head(card$data, preview_rows)
     card$remote <- TRUE
   }
-  # the double columns the browser cannot read back exactly (always a JSON array)
-  if (is.data.frame(card$data)) card$col_inexact <- as.list(sv_inexact_cols(card$data))
   card
 }
 
 #' The double columns that 16-digit JSON does not carry exactly
 #'
-#' htmlwidgets (and the module's messages) write doubles with 16 significant digits, and Inf,
-#' -Inf and NaN as null. A column is inexact when it has such a value, or a finite value that
-#' does not survive `formatC(digits = 16, format = "g")`. NA alone is exact (null means NA).
-#' The browser's combine_supp check (sv-pipeline.js) trusts only the other double columns.
-#' An integer64 (bit64) column goes out as plain digits, which the browser reads as a double:
-#' it is inexact when some value has |x| > 2^53 (not checked without bit64).
+#' htmlwidgets writes doubles with 16 significant digits, and Inf, -Inf and NaN as null. A
+#' column is inexact when it has such a value, or a finite value that does not come back from
+#' that JSON as the same double. The test is the wire itself: jsonlite writes the values as
+#' htmlwidgets does and parses them back (yajl's parse is correctly rounded, as `JSON.parse` is;
+#' R's own `as.numeric()` is not). NA alone is exact (null means NA). An integer64 (bit64)
+#' column goes out as plain digits, which the browser reads as a double: it is inexact when some
+#' value has |x| > 2^53 (not checked without bit64). `sideview_widget()` sends the result as
+#' each card's `col_inexact`, on the rows it embeds; the browser's combine_supp check
+#' (sv-pipeline.js) trusts only the other double columns.
 #' @return A character vector of column names.
 #' @noRd
 sv_inexact_cols <- function(df) {
@@ -173,7 +174,9 @@ sv_inexact_cols <- function(df) {
     x <- as.numeric(unclass(x))
     if (any(is.nan(x) | is.infinite(x))) return(TRUE)
     x <- x[!is.na(x)]
-    length(x) > 0L && any(as.numeric(formatC(x, digits = 16, format = "g")) != x)
+    if (!length(x)) return(FALSE)
+    back <- jsonlite::fromJSON(jsonlite::toJSON(x, digits = 16, use_signif = TRUE, na = "null"))
+    length(back) != length(x) || !is.numeric(back) || any(is.na(back) | back != x)
   }, logical(1))
   names(df)[bad]
 }
