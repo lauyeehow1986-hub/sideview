@@ -2706,8 +2706,10 @@
   // parentTypes: {col: colType}, suppTypes: {col: colType} (R class names; guessed when absent),
   // parentCols, suppCols, plan, sampleN, lazy: {name, kind: 'duckdb'|'arrow'} or null (a lazy
   // card: combine_supp rule 2), preview: true when a card holds only its preview rows (rule 3),
-  // rounded: true when the rows came through 16-digit JSON (the widget: rule 7 then trusts only
-  // whole doubles below 2^53)}. Without both type maps combine_supp is not ok.
+  // rounded: true when the rows came through 16-digit JSON (the widget), inexact: {parent: [...],
+  // supp: [...]}, each card's col_inexact (rule 7 then trusts only the double columns not listed;
+  // with rounded and no inexact it trusts none)}. combine_supp is not ok unless both type maps
+  // name every column rules 7 and 8 read.
   function suppCheck(parentRows, suppRows, opts) {
     opts = opts || {};
     parentRows = parentRows || [];
@@ -2972,9 +2974,17 @@
     // rule 5: it joins on STUDYID, DOMAIN and USUBJID
     miss = suppSetdiff(COMBINE_PARENT_COLS, c.pNames);
     if (miss.length) return no(c.parentName + ' has no ' + miss[0] + ' column');
-    // rules 7 and 8 need R's text of each value, so R's class of each column
-    var known = function (t) { return t !== null && t !== undefined && typeof t === 'object'; };
-    if (!known(opts.parentTypes) || !known(opts.suppTypes)) return no('Column types are not known in the browser');
+    // rules 7 and 8 need R's text of each value, so R's class of every column they read
+    var typed = function (types, cols) {
+      if (types === null || types === undefined || typeof types !== 'object' || Array.isArray(types)) return false;
+      return cols.every(function (k) { var t = types[k]; return t !== null && t !== undefined && t !== ''; });
+    };
+    var pNeed = ['STUDYID', 'USUBJID', 'DOMAIN'].concat(c.keys,
+      c.levels.filter(function (iv) { return iv !== ''; }));
+    var sNeed = ['STUDYID', 'USUBJID', 'RDOMAIN', 'IDVARVAL', 'QLABEL'].concat(c.keys);
+    if (!typed(opts.parentTypes, pNeed) || !typed(opts.suppTypes, sNeed)) {
+      return no('Column types are not known in the browser');
+    }
     var why = suppCombineRows(c);
     if (why === null) why = suppCombineFactor(c);
     if (why === null) why = suppCombineLabels(c);
@@ -2993,20 +3003,21 @@
     };
     var unsure = null;
     var tooClose = function (col, t) { return col + ' ' + t + " is too close to R's rounding to check in the browser"; };
-    // opts.rounded: the rows came through 16-digit JSON (the widget), so a double is exact only
-    // when it is a whole number below 2^53, and NA, Inf and NaN all arrived as null
+    // opts.rounded: the rows came through 16-digit JSON (the widget), where Inf and NaN arrive as
+    // null and some doubles arrive changed. opts.inexact = {parent: [...], supp: [...]} names the
+    // double columns R found not to survive that (sv_inexact_cols()); the others are exact and
+    // null in them is NA. Without the list no double column can be trusted.
     var rounded = !!opts.rounded;
+    var inexact = opts.inexact;
+    var lossy = function (side, col) {
+      var l = inexact !== null && inexact !== undefined && typeof inexact === 'object' ? inexact[side] : null;
+      if (typeof l === 'string') l = [l];
+      return !Array.isArray(l) || l.indexOf(col) >= 0;
+    };
     // R's text of one value (sv_r_chr for theirs; sv_supp_key_chr for ours, where an integer64
     // key is a double). A value whose text may not be R's is remembered for the reason.
     var text = function (v, type, col, ours) {
       var dbl = /^(numeric|double|float)$/.test(type) || (ours && suppKeyType(type) === 'double');
-      if (rounded && unsure === null && suppKeyType(type) === 'double') {
-        if (v === null || v === undefined) {
-          unsure = col + ' has missing or infinite values the browser cannot check';
-        } else if (typeof v === 'number' && (v % 1 !== 0 || Math.abs(v) >= 9007199254740992)) {
-          unsure = tooClose(col, rAsCharacter(v));
-        }
-      }
       if (v === null || v === undefined) return null;
       if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
       if (!dbl || (typeof v !== 'number' && v !== 'Inf' && v !== '-Inf' && v !== 'NaN')) return String(v);
@@ -3016,6 +3027,10 @@
     };
     var column = function (rows, given, col, ours) {
       var ty = typeOf(rows, given, col);
+      if (rounded && unsure === null && rows.length && suppKeyType(ty) === 'double' &&
+          lossy(rows === parentRows ? 'parent' : 'supp', col)) {
+        unsure = col + ' has values the browser cannot read exactly';
+      }
       return rows.map(function (r) { return text(r[col], ty, col, ours); });
     };
     var enc = function (x) { return x === null ? '\x01' : '\x02' + x; };

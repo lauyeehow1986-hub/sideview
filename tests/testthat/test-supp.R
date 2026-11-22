@@ -445,8 +445,12 @@ supp_js <- function(parent, supp, supp_name = "suppae", rdomain = NULL, plan = N
   if (!is.null(rdomain)) opts$rdomain <- rdomain
   if (!is.null(plan)) opts$plan <- plan
   # wire = "widget": rows as the widget payload sends them (htmlwidgets' toJSON2: 16 significant
-  # digits; NA, Inf and NaN as null), with `rounded: true` as the engine passes it
-  if (identical(wire, "widget")) opts$rounded <- TRUE
+  # digits; NA, Inf and NaN as null), with `rounded: true` and each card's `col_inexact` as the
+  # engine passes them
+  if (identical(wire, "widget")) {
+    opts$rounded <- TRUE
+    opts$inexact <- list(parent = I(sv_inexact_cols(parent)), supp = I(sv_inexact_cols(supp)))
+  }
   opts[names(extra)] <- extra
   # else 17 significant digits, so the browser gets the very doubles R has (0.1 + 0.2, not 0.3)
   rows <- function(d) {
@@ -647,7 +651,57 @@ test_that("suppCheck: a key value R may write differently is not ok (rule 7)", {
   expect_identical(r$reason, "AESEQ 2.38418579101562e-07 is too close to R's rounding to check in the browser")
 })
 
-test_that("suppCheck: rows rounded to 16 digits (the widget) keep rule 7 to exact doubles", {
+test_that("sv_inexact_cols() names each double column 16-digit JSON does not carry exactly", {
+  skip_if_not_installed("htmlwidgets")
+  set.seed(20261122)
+  r <- c(runif(150) * 10^sample(-20:20, 150, TRUE), round(runif(50) * 1e6) / 8,
+         1e15 + sample.int(1e6, 50) + 0.25, -2^53, 2^53, 2^53 + 2, 1e300, 5e-324, 0.1)
+  d <- as.data.frame(setNames(lapply(r, function(v) c(v, NA, 1)), sprintf("x%03d", seq_along(r))))
+  d$half <- c(0.5, NA, 1)
+  d$three <- c(2.9999999999999996, 1, 1)
+  d$big_frac <- c(1234567890123456.2, 1, 1)
+  d$frac <- c(0.1 + 0.2, 1, 1)
+  d$inf <- c(Inf, 1, 1)
+  d$ninf <- c(-Inf, 1, 1)
+  d$nan <- c(NaN, 1, 1)
+  d$na_only <- NA_real_
+  d$int <- 1:3
+  d$chr <- c("a", "b", NA)
+  d$lgl <- c(TRUE, NA, FALSE)
+  bad <- sv_inexact_cols(d)
+  expect_true(all(c("three", "big_frac", "frac", "inf", "ninf", "nan") %in% bad))
+  # eighths, whole numbers to 2^53 and past it while 16 digits hold, 1e300, 5e-324 and 0.1 are
+  # exact; 1e15 + k + 0.25 needs 17 digits
+  expect_false(any(c("half", "na_only", "int", "chr", "lgl", sprintf("x%03d", c(151:200, 251:256))) %in% bad))
+  expect_true(all(sprintf("x%03d", 201:250) %in% bad))
+  rnd <- sprintf("x%03d", 1:150)
+  expect_true(any(rnd %in% bad) && !all(rnd %in% bad))
+  # the real wire: every column not listed comes back as the very doubles R has (null = NA) ...
+  json <- as.character(htmlwidgets:::toJSON(d))
+  back <- jsonlite::parse_json(json)
+  num <- function(v) vapply(v, function(x) if (is.null(x)) NA_real_ else as.numeric(x), numeric(1))
+  dbl <- names(d)[vapply(d, is.double, logical(1))]
+  for (nm in setdiff(dbl, bad)) expect_identical(num(back[[nm]]), d[[nm]], info = nm)
+  # ... and every column listed does not
+  for (nm in bad) expect_false(identical(num(back[[nm]]), d[[nm]]), info = nm)
+  # the same in the browser's JSON.parse, against R's 17-digit text of each value
+  want <- lapply(d[dbl], function(x) ifelse(is.na(x) & !is.nan(x), NA, sprintf("%.17g", x)))
+  got <- run_pipeline_js(sprintf(paste0(
+    "var w = %s, want = %s; out = [];",
+    "Object.keys(want).forEach(function (k) {",
+    "  var ok = w[k].every(function (v, i) {",
+    "    var t = want[k][i]; return t === null ? v === null : v !== null && v === Number(t); });",
+    "  if (!ok) out.push(k); });"), json, jsonlite::toJSON(want, na = "null")))
+  expect_setequal(unlist(got), bad)
+  # the payload carries it as a JSON array, also with one name or none
+  p <- sv_card_payload(sv_normalize(data.frame(a = 0.1 + 0.2, b = 1, c = "x"), name = "t"))
+  expect_identical(p$col_inexact, list("a"))
+  expect_match(as.character(htmlwidgets:::toJSON(p["col_inexact"])), '"col_inexact":["a"]', fixed = TRUE)
+  p <- sv_card_payload(sv_normalize(data.frame(b = 1), name = "u"))
+  expect_match(as.character(htmlwidgets:::toJSON(p["col_inexact"])), '"col_inexact":[]', fixed = TRUE)
+})
+
+test_that("suppCheck: rows rounded to 16 digits (the widget) trust only R's exact double columns", {
   skip_if_not_installed("htmlwidgets")
   # the widget's JSON: 0.1 + 0.2 arrives as 0.3, and Inf, NaN and NA all as null
   expect_identical(as.character(htmlwidgets:::toJSON(data.frame(a = c(0.1 + 0.2, Inf, NaN, NA)))),
@@ -656,40 +710,54 @@ test_that("suppCheck: rows rounded to 16 digits (the widget) keep rule 7 to exac
                                                  dataframe = "columns", na = "null", digits = 16,
                                                  use_signif = TRUE)),
                    '{"a":[0.3,null,null,null]}')
-  # cs_frac: R says IDVARVAL "0.3" would match AESEQ 0.3; the browser cannot tell 0.3 from 0.1 + 0.2
-  fr <- fx$cs_frac
-  expect_false(sv_supp_check(fr[[1]], fr[[2]], parent_name = "ae", supp_name = "suppae")$combine_supp$ok)
-  r <- supp_js(fr[[1]], fr[[2]], wire = "widget")$combine_supp
-  expect_false(r$ok)
-  expect_identical(r$reason, "AESEQ 0.3 is too close to R's rounding to check in the browser")
-  # Inf and NaN keys arrive as null
-  for (v in list(c(Inf, "Inf"), c(NaN, "NaN"))) {
+  r_says <- function(k) sv_supp_check(k[[1]], k[[2]], parent_name = "ae", supp_name = "suppae")$combine_supp
+  # a parent AESEQ x keyed by SUPP IDVARVAL t
+  keyed_dbl <- function(x, t) {
     p <- fx$cs_1e5[[1]]
-    p$AESEQ <- c(1, 2, as.numeric(v[1]))
+    p$AESEQ <- c(1, 2, x)
     s <- fx$cs_1e5[[2]]
-    s$IDVARVAL <- c("1", v[2])
-    expect_false(sv_supp_check(p, s, parent_name = "ae", supp_name = "suppae")$combine_supp$ok)
-    r <- supp_js(p, s, wire = "widget")$combine_supp
-    expect_false(r$ok)
-    expect_identical(r$reason, "AESEQ has missing or infinite values the browser cannot check")
+    s$IDVARVAL <- c("1", t)
+    list(p, s)
   }
-  # whole doubles below 2^53 are exact on the wire: the same answer as R
-  for (nm in c("cs_ok", "cs_1e5", "cs_1e5_sci", "cs_110000")) {
-    k <- fx[[nm]]
-    want <- sv_supp_check(k[[1]], k[[2]], parent_name = "ae", supp_name = "suppae")$combine_supp
+  lossy <- "AESEQ has values the browser cannot read exactly"
+  # R lists the column, so the browser does not guess: 2.9999999999999996 arrives as 3,
+  # 1234567890123456.2 as 1234567890123456, 0.1 + 0.2 as 0.3, Inf and NaN as null
+  cases <- list(three = keyed_dbl(2.9999999999999996, "3"),
+                big_frac = keyed_dbl(1234567890123456.2, "1234567890123456.2"),
+                cs_frac = fx$cs_frac,
+                inf = keyed_dbl(Inf, "Inf"), nan = keyed_dbl(NaN, "NaN"))
+  for (nm in names(cases)) {
+    k <- cases[[nm]]
+    expect_identical(sv_inexact_cols(k[[1]]), "AESEQ", info = nm)
+    expect_false(r_says(k)$ok, info = nm)
+    r <- supp_js(k[[1]], k[[2]], wire = "widget")$combine_supp
+    expect_false(r$ok, info = nm)
+    expect_identical(r$reason, lossy, info = nm)
+  }
+  # columns R does not list are exact on the wire (null in them is NA): the same answer as R
+  same <- list(cs_ok = fx$cs_ok, cs_1e5 = fx$cs_1e5, cs_1e5_sci = fx$cs_1e5_sci,
+               cs_110000 = fx$cs_110000, half = keyed_dbl(0.5, "0.5"),
+               two53 = keyed_dbl(2^53, "9007199254740992"), na = keyed_dbl(NA, "2"))
+  for (nm in names(same)) {
+    k <- same[[nm]]
+    expect_identical(sv_inexact_cols(k[[1]]), character(0), info = nm)
+    want <- r_says(k)
     got <- supp_js(k[[1]], k[[2]], wire = "widget")$combine_supp
     expect_identical(got$ok, want$ok, info = nm)
     expect_identical(got$reason, want$reason, info = nm)
   }
+  expect_true(r_says(same$half)$ok)
   expect_true(supp_js(fx$cs_ok[[1]], fx$cs_ok[[2]], wire = "widget")$combine_supp$ok)
-  # a whole double past 2^53 may have lost digits
-  p <- fx$cs_1e5[[1]]
-  p$AESEQ <- c(1, 2, 2^53)
-  r <- supp_js(p, fx$cs_1e5[[2]], wire = "widget")$combine_supp
-  expect_identical(r$reason, "AESEQ 9007199254740992 is too close to R's rounding to check in the browser")
+  # rounded rows with no list from R: no double column can be trusted
+  k <- same$half
+  r <- supp_js(k[[1]], k[[2]], wire = "widget", extra = list(inexact = NULL))$combine_supp
+  expect_false(r$ok)
+  expect_identical(r$reason, lossy)
+  # exact rows (the gadget's 17 digits, no `rounded`) need no list
+  expect_true(supp_js(k[[1]], k[[2]])$combine_supp$ok)
 })
 
-test_that("suppCheck: combine_supp needs both column type maps", {
+test_that("suppCheck: combine_supp needs a type for every column rules 7 and 8 read", {
   k <- fx$cs_ok
   for (miss in c("parentTypes", "suppTypes")) {
     extra <- list()
@@ -699,16 +767,45 @@ test_that("suppCheck: combine_supp needs both column type maps", {
     expect_identical(r$reason, "Column types are not known in the browser", info = miss)
     # prep as computed (cs_ok has a subject-level row with IDVAR "")
     expect_identical(r$prep, list(rdomain = FALSE, idvar_na = TRUE), info = miss)
+    # an empty map ({} on the wire)
+    extra[miss] <- list(structure(list(), names = character(0)))
+    r <- supp_js(k[[1]], k[[2]], extra = extra)$combine_supp
+    expect_identical(r$reason, "Column types are not known in the browser", info = paste(miss, "{}"))
   }
+  expect_identical(as.character(jsonlite::toJSON(list(t = structure(list(), names = character(0))),
+                                                 auto_unbox = TRUE)), '{"t":{}}')
+  # a map without one of the columns read: the parent's keys and IDVAR column, the SUPP's
+  # keys, IDVARVAL and QLABEL
+  k <- fx$cs_1e5
+  reads <- list(parentTypes = c("STUDYID", "USUBJID", "DOMAIN", "AESEQ"),
+                suppTypes = c("STUDYID", "USUBJID", "RDOMAIN", "IDVARVAL", "QLABEL"))
+  for (side in names(reads)) {
+    for (col in reads[[side]]) {
+      types <- lapply(k[[if (side == "parentTypes") 1L else 2L]], function(x) class(x)[1])
+      types[[col]] <- NULL
+      r <- supp_js(k[[1]], k[[2]], extra = setNames(list(types), side))$combine_supp
+      expect_false(r$ok)
+      expect_identical(r$reason, "Column types are not known in the browser", info = paste(side, col))
+    }
+  }
+  # a column neither rule reads may be left out
+  types <- lapply(k[[1]], function(x) class(x)[1])
+  other <- setdiff(names(types), reads$parentTypes)
+  expect_true(length(other) > 0L)
+  types[other] <- NULL
+  want <- sv_supp_check(k[[1]], k[[2]], parent_name = "ae", supp_name = "suppae")$combine_supp
+  r <- supp_js(k[[1]], k[[2]], extra = list(parentTypes = types))$combine_supp
+  expect_identical(r$ok, want$ok)
+  expect_identical(r$reason, want$reason)
   # after rule 5 (the parent's columns), before rule 7
   r <- supp_js(fx$cs_no_domain[[1]], fx$cs_no_domain[[2]], extra = list(suppTypes = NULL))$combine_supp
   expect_identical(r$reason, "ae has no DOMAIN column")
-  expect_true(supp_js(k[[1]], k[[2]])$combine_supp$ok)
+  expect_true(supp_js(fx$cs_ok[[1]], fx$cs_ok[[2]])$combine_supp$ok)
 })
 
 test_that("suppCheck: a blank IDVAR is blank as R's trimws() sees it", {
   # "\f" and NBSP are not blank to trimws(): R looks for a parent column of that name
-  for (w in c("\f", "\v", " ", " ", "  ", "\t\r\n")) {
+  for (w in c("\f", "\v", "\u00a0", "\u2028", "  ", "\t\r\n")) {
     s <- fx$cs_ok[[2]]
     s$IDVAR[3] <- w
     supp_parity(sprintf("subject IDVAR %s", paste(utf8ToInt(w), collapse = " ")), fx$cs_ok[[1]], s)

@@ -146,7 +146,29 @@ sv_card_payload <- function(card, preview_rows = NULL) {
     card$data <- utils::head(card$data, preview_rows)
     card$remote <- TRUE
   }
+  # the double columns the browser cannot read back exactly (always a JSON array)
+  if (is.data.frame(card$data)) card$col_inexact <- as.list(sv_inexact_cols(card$data))
   card
+}
+
+#' The double columns that 16-digit JSON does not carry exactly
+#'
+#' htmlwidgets (and the module's messages) write doubles with 16 significant digits, and Inf,
+#' -Inf and NaN as null. A column is inexact when it has such a value, or a finite value that
+#' does not survive `formatC(digits = 16, format = "g")`. NA alone is exact (null means NA).
+#' The browser's combine_supp check (sv-pipeline.js) trusts only the other double columns.
+#' @return A character vector of column names.
+#' @noRd
+sv_inexact_cols <- function(df) {
+  if (!is.data.frame(df) || !ncol(df)) return(character(0))
+  bad <- vapply(df, function(x) {
+    if (!is.double(x) || inherits(x, "integer64")) return(FALSE)
+    x <- as.numeric(unclass(x))
+    if (any(is.nan(x) | is.infinite(x))) return(TRUE)
+    x <- x[!is.na(x)]
+    length(x) > 0L && any(as.numeric(formatC(x, digits = 16, format = "g")) != x)
+  }, logical(1))
+  names(df)[bad]
 }
 
 #' One private lazy (duckdb / arrow) env per Shiny session
