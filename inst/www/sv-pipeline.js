@@ -3101,10 +3101,15 @@
           joins = r.map(function (j) { return !c.bad[j]; });
         }
         pvText[iv] = column(parentRows, pTypes, iv);
-        // a double IDVARVAL that R may read as another double (suppNumSure) makes ours uncertain
+        // a double IDVARVAL that R may read as another double (suppNumSure) makes ours uncertain;
+        // a row the browser marks bad too: near the 1e308 cut R may read the text as a double
+        // it keeps where Number() reads one past the cut. No sure text is past the cut (sure
+        // means below 2^64 * 10^27), so a sure row is never bad for its size.
         if (c.types[iv] === 'double' && unsure === null) {
           r.forEach(function (j) {
-            if (unsure === null && !c.bad[j] && !suppNumSure(s[j].IDVARVAL)) {
+            var t = s[j].IDVARVAL;
+            if (unsure === null && t !== null && t !== undefined && SUPP_DBL_RE.test(String(t)) &&
+                !suppNumSure(t)) {
               unsure = tooClose('IDVARVAL', String(s[j].IDVARVAL).replace(SUPP_WS_EDGES, ''));
             }
           });

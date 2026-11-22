@@ -853,6 +853,47 @@ test_that("suppCheck: an IDVARVAL R_strtod may read as another double is not sur
   expect_identical(unlist(got), c(rep(TRUE, 6), rep(FALSE, 7)))
 })
 
+test_that("suppCheck: rule 7 checks the sure region on an IDVARVAL the browser marks bad", {
+  keyed_dbl <- function(x, t) {
+    p <- fx$cs_1e5[[1]]
+    p$AESEQ <- c(1, 2, x)
+    s <- fx$cs_1e5[[2]]
+    s$IDVARVAL <- c("1", t)
+    list(p, s)
+  }
+  unsure <- function(t) sprintf("IDVARVAL %s is too close to R's rounding to check in the browser", t)
+  r_says <- function(k) sv_supp_check(k[[1]], k[[2]], parent_name = "ae", supp_name = "suppae")$combine_supp
+  # near the 1e308 cut R_strtod reads this text as 1e308 (kept, so dplyr matches it), where
+  # Number() reads the next double up (past the cut, bad): combine_supp() would not match it
+  a <- "1.0000000000000001108e308"
+  x <- as.numeric(a)
+  expect_identical(x, 1e308)
+  js <- run_pipeline_js(sprintf("out = [Number('%s') > 1e308, Number('%s') === 1e308];", a, sprintf("%.17g", x)))
+  expect_identical(unlist(js), c(TRUE, TRUE))
+  k <- keyed_dbl(x, a)
+  expect_false(r_says(k)$ok)
+  for (w in c("exact", "widget")) {
+    got <- supp_js(k[[1]], k[[2]], wire = w)
+    expect_false(got$combine_supp$ok, info = w)
+    expect_identical(got$combine_supp$reason, unsure(a), info = w)
+    # the main check keeps its counts (the 1e308 twin gap there is not rule 7's)
+    expect_equal(got$bad_idvarval$n, 1, info = w)
+  }
+  # a text both sides read as Inf is bad on both: R says ok, the browser fails safe (not sure)
+  k <- keyed_dbl(3, " 1e999 ")
+  expect_true(r_says(k)$ok)
+  for (w in c("exact", "widget")) {
+    got <- supp_js(k[[1]], k[[2]], wire = w)$combine_supp
+    expect_false(got$ok, info = w)
+    expect_identical(got$reason, unsure("1e999"), info = w)
+  }
+  # no text the browser calls sure is past the cut, so a sure row is never bad for its size
+  got <- run_pipeline_js(paste0("out = ['1e22', '999999999999999e22', ",
+    "'1e308', '2e308', '1e999'].map(function (t) { return [P.suppNumSure(t), Number(t) <= 1e308]; });"))
+  expect_identical(lapply(got, unlist), list(c(TRUE, TRUE), c(FALSE, TRUE), c(FALSE, TRUE),
+                                             c(FALSE, FALSE), c(FALSE, FALSE)))
+})
+
 test_that("suppNumSure(): every text the browser calls sure is the double R reads", {
   # random decimal texts: 1 to 20 significant digits, exponents across the double range, in
   # scientific, integer-mantissa, fixed (with and without trailing zeros) and leading-zero forms;
