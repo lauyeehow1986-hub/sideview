@@ -460,7 +460,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
         if (is.data.frame(co$data) && is.data.frame(cn$data)) by <- sv_compare_key(co$data, cn$data, co$cdisc, cn$cdisc)
       }
       cards <- Filter(Negate(is.null), lapply(unique(c(old, new)), function(nm) if (card_store$has(nm)) card_store$get(nm)))
-      run <- function(con) {
+      compare_run <- function(con) {
         cl <- sv_compare_clean(old, new, by, card_store, con, card_full)
         summary <- if (is.null(con)) {
           sv_compare_rows(cl$cards[[1L]]$data, cl$cards[[2L]]$data, cl$plan)$summary
@@ -470,7 +470,7 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
         }
         list(cl = cl, summary = summary)
       }
-      got <- lazy_or_preview(cards, function() run(con_env), function() run(NULL))
+      got <- lazy_or_preview(cards, function() compare_run(con_env), function() compare_run(NULL))
       cl <- got$cl
       refs <- vapply(cl$cards, function(cd) cd$code_ref %||% sv_escape_ident(cd$name), "")
       kinds <- vapply(cl$cards, function(cd) {

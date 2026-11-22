@@ -345,15 +345,15 @@ sv_say_compare_text <- function(s) {
   out <- c(
     sprintf("%s -> %s, key %s", s$old_name, s$new_name, paste(s$by, collapse = " + ")),
     paste0("Rows:    ", sv_say_num(s$n_old), " -> ", sv_say_num(s$n_new), "   added ", sv_say_num(s$added),
-           " · removed ", sv_say_num(s$removed), " · changed ", sv_say_num(s$changed),
-           " · same ", sv_say_num(s$same)),
-    paste0("Columns: added ", none(s$only_new), " · removed ", none(s$only_old),
-           " · type changed ", none(tc)))
+           " \u00b7 removed ", sv_say_num(s$removed), " \u00b7 changed ", sv_say_num(s$changed),
+           " \u00b7 same ", sv_say_num(s$same)),
+    paste0("Columns: added ", none(s$only_new), " \u00b7 removed ", none(s$only_old),
+           " \u00b7 type changed ", none(tc)))
   pc <- unlist(s$per_column)
   pc <- pc[pc > 0]
   pc <- pc[order(-pc)]
   out <- c(out, paste0("Changed values by column:  ",
-                       if (length(pc)) paste(sprintf("%s %s", names(pc), vapply(pc, sv_say_num, "")), collapse = " · ")
+                       if (length(pc)) paste(sprintf("%s %s", names(pc), vapply(pc, sv_say_num, "")), collapse = " \u00b7 ")
                        else "none"))
   if (s$repeated_keys > 0) {
     rows <- function(n) paste0(sv_say_num(n), if (n == 1) " row" else " rows")

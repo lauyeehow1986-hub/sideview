@@ -50,6 +50,7 @@ remotes::install_github("lauyeehow1986-hub/sideview")
 - **Date-Window Joins**: Click the calendar on a join step to join on a date rule (a window of days, between, nearest before or after, overlaps). The join check shows the rows the rule dropped, and **Strict** adds dplyr's `relationship` and `unmatched` checks.
 - **Rows Behind the Counts**: A join check or a SUPP check offers buttons that open the unmatched, outside-the-window, orphan or bad-`IDVARVAL` rows as a card of their own, with code that rebuilds them (`sv_unmatched()`, `sv_supp_orphans()` in the console). Works with lazy `arrow` and `duckdb` tables and in the list view.
 - **Stack Tables**: `sv_stack_check()` / `sv_stack()` and the Stack tab line up columns, flag type, label and near-miss differences, and open the stacked table as a card.
+- **Compare Data Cuts**: `sv_compare()` and the Compare tab count rows added, removed and changed by key, list type changes, and open each set of rows as a card
 - **Composable Pipeline**: Every sort, filter, join, rename, recode, mutate, reshape or summarise becomes a step you can toggle, reorder or delete, with undo/redo and a `%>%` / `|>` choice. Sorts and filters run on the full data in R, not just the rows on screen.
 - **Data Quality**:
   - Header sparklines and missingness badges.

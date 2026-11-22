@@ -4,7 +4,7 @@ template:
 
 navbar:
   structure:
-    left: [intro, tour, cdisc, screenreader, reference, news]
+    left: [intro, tour, cdisc, screenreader, derived, reference, news]
   components:
     tour:
       text: Visual tour
@@ -15,6 +15,9 @@ navbar:
     screenreader:
       text: Screen reader
       href: articles/screen-reader.html
+    derived:
+      text: Derived cards
+      href: articles/derived-cards.html
 
 reference:
   - title: "Interactive Canvas & Gadget"

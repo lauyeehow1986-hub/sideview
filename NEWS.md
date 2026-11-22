@@ -1,8 +1,8 @@
 # sideview 0.10.0 (development)
 
-Derived cards, first part (D1): the rows behind a check count become a card of their own. Development version; the
-release number is decided at merge time. Checked with real-browser tests (headless Chrome) and unit tests; the manual
-RStudio pass is still to do.
+Derived cards: the rows behind a check count become a card of their own (D1), tables stack with a check (D2), and two
+cuts of a table compare by key (D3). Development version; the release number is decided at merge time. Checked with
+real-browser tests (headless Chrome) and unit tests; the D3 manual RStudio pass is still to do.
 
 ## Open the rows behind a count
 
@@ -52,6 +52,24 @@ the manual RStudio pass is still to do.
   session that made it; a number cast to text can differ between in-memory ("1e+05") and duckdb ("100000") for very
   large or small values; duckdb tables carry no labels (Arrow tables do); a saved state with a stack of lazy
   date-time columns carries the zone rules (about 20 KB per time column per input).
+
+## Compare data cuts
+
+Derived cards, third part (D3): compare two cuts of a table by key. Checked with real-browser tests (headless Chrome)
+and unit tests; the manual RStudio pass is still to do.
+
+* `sv_compare(old, new, by)` matches the rows of two tables on a key (1 to 20 columns) and counts the rows added (key
+  only in `new`), removed (key only in `old`), changed (key in both, a value differs) and the same. It also lists
+  the columns added, removed or with a changed type, the changed values by column, and keys that repeat. It prints a
+  summary; nothing is modified. With no `by`, the key is suggested from the cards' CDISC tags.
+* The drawer has a **Compare** tab (and the list view a Compare builder): pick the old and new table, Check, change
+  the key, and **Open** each set of rows as a card: `<new>_added`, `<old>_removed` and `<new>_changed` (the changed
+  rows carry the old and new value side by side). The steps are `derive` steps with `op = "compare_added"`,
+  `"compare_removed"` or `"compare_changed"`; their R code is plain `dplyr`, and the code R writes and the code
+  the browser writes are byte-equal. A duckdb or Arrow input stays lazy and is never collected. The result is
+  announced.
+* New input `compare_request` and new message `sideview_compare` (see CLAUDE.md). The widget has no R: no Compare
+  tab; a saved compare step stays in the code but the table is not shown, with a notice.
 
 # sideview 0.9.0
 

@@ -1,0 +1,82 @@
+---
+title: "Unmatched rows, stacking and comparing data cuts"
+description: >
+  Open the rows behind a check count as a card, stack tables with a check, and compare two cuts of a table by key.
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+library(sideview)
+```
+
+A check on the canvas gives you counts. A **derived card** gives you the rows behind them, as a card of its own,
+with code that rebuilds it. Everything below uses small synthetic tables built in the page (no real patients).
+
+## Rows behind a count
+
+A join check or a SUPP check offers buttons that open the rows behind its counts: the rows of either table with no
+match, the rows a date rule dropped, and the SUPP rows with no parent row or with an `IDVARVAL` that does not
+convert. The card is named for what it holds (`ae_unmatched_dm`) and is built by R from the tables as loaded, so a
+duckdb or Arrow input stays lazy. From the console, `sv_unmatched()` and `sv_supp_orphans()` return the same rows.
+
+```{r unmatched}
+dm <- data.frame(USUBJID = c("S-01", "S-02", "S-03"), AGE = c(34, 51, 62))
+ae <- data.frame(USUBJID = c("S-01", "S-02", "S-09"), AESEQ = 1L,
+                 AETERM = c("Headache", "Nausea", "Rash"))
+sv_unmatched(ae, dm, by = "USUBJID")
+```
+
+```{r unmatched-gadget, eval = FALSE}
+sideview(dm, ae)   # connect USUBJID to USUBJID, then use the buttons on the join check
+```
+
+## Stacking tables
+
+`sv_stack_check()` lines up the columns of 2 to 8 tables and reports, per column, its type in each table and what a
+stack would do: the same type, a cast to a common type, a name that differs only by case offered as a rename, and a
+column missing from some tables. Nothing changes until you pick a fix. `sv_stack()` stacks the tables with the
+check's fixes, adds a `source` column naming each row's table, and turns a value that cannot be cast into `NA`.
+
+```{r stack}
+wave1 <- data.frame(ID = 1:2, AGE = c(40L, 52L))
+wave2 <- data.frame(ID = 3:4, Age = c(61, 47))
+chk <- sv_stack_check(wave1 = wave1, wave2 = wave2)
+sv_stack(wave1 = wave1, wave2 = wave2, check = chk)
+```
+
+In the gadget, the drawer has a **Stack** tab: pick tables, Check, change a fix, and **Open** adds the stacked
+table as a card.
+
+## Comparing data cuts
+
+`sv_compare(old, new, by)` matches the rows of two cuts of a table on a key and counts the rows **added** (key only
+in `new`), **removed** (key only in `old`) and **changed** (key in both, a value differs). It also lists columns that
+were added, removed or changed type, and the changed values by column. Nothing is modified.
+
+```{r compare-data}
+ae_old <- data.frame(USUBJID = c("S-01", "S-02", "S-03", "S-04"), AESEQ = 1L,
+                     AETERM = c("Headache", "Nausea", "Rash", "Cough"),
+                     AESEV = c("MILD", "MODERATE", "MILD", "SEVERE"),
+                     stringsAsFactors = FALSE)
+ae_new <- data.frame(USUBJID = c("S-01", "S-02", "S-04", "S-05"), AESEQ = 1L,
+                     AETERM = c("Headache", "Nausea", "Cough", "Dizziness"),
+                     AESEV = c("MILD", "SEVERE", "SEVERE", "MILD"),
+                     stringsAsFactors = FALSE)
+```
+
+```{r compare}
+sv_compare(ae_old, ae_new, by = c("USUBJID", "AESEQ"))
+```
+
+Here `S-05` is new, `S-03` is gone, and `S-02` changed severity. In the gadget, the drawer's **Compare** tab does
+the same: pick the old and the new table, Check, change the key if the suggestion is wrong (with no key picked, a
+CDISC tag suggests one), and **Open** each set of rows as a card: `ae_new_added`, `ae_old_removed` and
+`ae_new_changed` (the changed rows carry the old and new value side by side). Each card is one `derive` step whose R
+code is plain `dplyr`, and a duckdb or Arrow input stays lazy.
+
+```{r compare-gadget, eval = FALSE}
+sideview(ae_old, ae_new)   # open the drawer, choose the Compare tab
+```
+
+The widget has no R, so it has no Compare tab; a saved compare step stays in the code, with a notice that the table
+is not shown.

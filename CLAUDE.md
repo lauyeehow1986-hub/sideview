@@ -113,6 +113,9 @@ rstudio bridge: R/rstudio.R
   `sv_supp_ws` / `SUPP_WS` (never `\s`/`trim()`), and generated `grepl()` uses `perl = TRUE`; `abs(x) > 1e308` is bad.
   An Arrow int64/uint64 key is always a double key (as duckdb BIGINT). Clashes with columns made by earlier chain
   steps are caught in the browser (`columnsBefore()`), not by the code guard. Change a twin together with the others.
+- **Compare (D3):** same twin rule. `sv_compare_code()` (R) and `compareCode()` (reached through `deriveExpr()` for the
+  compare ops, sv-pipeline.js) are byte-equal; `sv_compare_plan()` / `sv_lazy_compare_plan()` and `sv_compare_rows()` /
+  `sv_lazy_compare()` are twins; all of them are tested, so change them together.
 - **Stack (D2):** same twin rule. `sv_stack_check()` / `sv_stack()` (R/stack.R) and the `stack` derive op. The column plan
   is `sv_stack_plan()` (in memory) and `sv_lazy_stack_plan()` (duckdb / Arrow): twins, held to each other by
   test-stack.R and test-lazy.R. The rows are `sv_stack_rows()` (in memory) and `sv_lazy_stack()` (one duckdb

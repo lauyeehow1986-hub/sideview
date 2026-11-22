@@ -85,6 +85,10 @@ Or install the development version from GitHub:
   [`sv_stack()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_stack.md)
   and the Stack tab line up columns, flag type, label and near-miss
   differences, and open the stacked table as a card.
+- **Compare Data Cuts**:
+  [`sv_compare()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_compare.md)
+  and the Compare tab count rows added, removed and changed by key, list
+  type changes, and open each set of rows as a card
 - **Composable Pipeline**: Every sort, filter, join, rename, recode,
   mutate, reshape or summarise becomes a step you can toggle, reorder or
   delete, with undo/redo and a `%>%` / `|>` choice. Sorts and filters
