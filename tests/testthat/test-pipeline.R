@@ -1608,11 +1608,13 @@ test_that("pharmaverse code parses with and without each prep line, %>% and |>",
   }
   expect_match(code, 'suppae_q <- suppae |>\n  dplyr::filter(RDOMAIN == "AE") |>\n  dplyr::mutate(IDVAR = dplyr::na_if(trimws(IDVAR), ""))',
                fixed = TRUE)
-  # a character level writes no text-match guard
+  # a character level writes the trim guard and the DOMAIN guard, not the by-number guard
   code <- supp_compose(supp_chk_json(fx$cs_chr[[1]], fx$cs_chr[[2]]), style = "pharmaverse",
                        combine = cs_field_js())
   expect_parses(code)
-  expect_no_match(code, "%.17g", fixed = TRUE)
+  expect_no_match(code, "as a number but not as text", fixed = TRUE)
+  expect_match(code, "only when trimmed, as in combine_supp(); use the dplyr code style for this merge", fixed = TRUE)
+  expect_match(code, " does not match RDOMAIN ", fixed = TRUE)
   expect_match(code, "metatools::combine_supp(suppae)", fixed = TRUE)
 })
 
@@ -1706,9 +1708,12 @@ test_that("style round-trips through toJSON/load; a state without style is dplyr
     const json = JSON.parse(JSON.stringify(p.toJSON()));
     const q = new P.Pipeline(); q.load(json);
     const old = new P.Pipeline(); old.load({ steps: json.steps, pipe: '%%>%%' });
+    const was = new P.Pipeline({ style: 'pharmaverse' }); was.load({ steps: json.steps, pipe: '%%>%%' });
+    const bad = new P.Pipeline({ style: 'pharmaverse' }); bad.load({ steps: json.steps, style: 'tidy' });
     const c3 = p.setSuppCheck(st.key, null);
     const c4 = p.setSuppCheck(st.key, null);
-    out = { keys: Object.keys(json), style: json.style, q: q.style, old: old.style, fresh: new P.Pipeline().style,
+    out = { keys: Object.keys(json), style: json.style, q: q.style, old: old.style, was: was.style, bad: bad.style,
+            fresh: new P.Pipeline().style,
             opt: new P.Pipeline({ style: 'pharmaverse' }).style, bogus: (() => { const r = new P.Pipeline();
               r.setStyle('tidy'); return r.style; })(),
             undo: p.undoStack.length - undo0, seen: seen, c: [c1, c2, c3, c4],
@@ -1717,6 +1722,9 @@ test_that("style round-trips through toJSON/load; a state without style is dplyr
   expect_identical(out$style, "pharmaverse")
   expect_identical(out$q, "pharmaverse")
   expect_identical(out$old, "dplyr")
+  # a state without a valid style loads as dplyr even into a pharmaverse pipeline
+  expect_identical(out$was, "dplyr")
+  expect_identical(out$bad, "dplyr")
   expect_identical(out$fresh, "dplyr")
   expect_identical(out$opt, "pharmaverse")
   expect_identical(out$bogus, "dplyr")

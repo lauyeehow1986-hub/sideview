@@ -1742,7 +1742,8 @@
       self.steps = (obj.steps || []).map(function (s) { return self.normalize(s); });
     });
     if (obj.pipe) this.setPipe(obj.pipe);
-    if (obj.style) this.setStyle(obj.style);
+    // a state without a style (0.7.0 or earlier) is the dplyr style; setStyle() maps others to it
+    this.setStyle(obj.style);
   };
 
   // ---- join diagnostics ------------------------------------------------------
@@ -3445,12 +3446,15 @@
    * code (the card, or its _prep chain: `chained`); `prep` the field's {rdomain, idvar_na}. <supp>_q
    * is written only with a prep line or a SUPP chain; else the guards and the call read `src`.
    * The guards are the 0.7.0 ones combine_supp() does not do itself (IDVAR values the plan does not
-   * handle, QNAMs at two levels, a repeated QNAM for one record), with no clash guard (combine_supp()
-   * stops on a clash), plus one text-match guard per numeric IDVAR level: the parent records a SUPP
-   * row finds by number (the merge step's conversion, suppKeyConv(), and its overflow rule, keys as
-   * sprintf("%.17g") text so the session's scipen plays no part) must be the records it finds by
-   * text (stringr::str_trim(as.character()), as combine_supp() joins, under the session's scipen),
-   * both on STUDYID, USUBJID and DOMAIN == RDOMAIN with NA matching NA.
+   * handle, QNAMs at two levels, a repeated QNAM for one record: on the converted key for a numeric
+   * level, the trimmed IDVARVAL for a text level), with no clash guard (combine_supp() stops on a
+   * clash). Then the later-cut guards. A DOMAIN guard: each parent record the dplyr code joins a
+   * SUPP row to must have the row's RDOMAIN as DOMAIN (NA never matches). And one key guard per
+   * keyed level: the records a row finds as the dplyr code joins (the merge keys plus the key: by
+   * number with suppKeyConv() and its overflow rule, keys as sprintf("%.17g") text so the session's
+   * scipen plays no part, or by exact text) must be the records it finds as combine_supp() joins
+   * (STUDYID, DOMAIN == RDOMAIN, USUBJID and stringr::str_trim(as.character()) on both keys, under
+   * the session's scipen). NA matches NA in both.
    */
   function suppCombinePrep(s, src, parentRef, pipe, prep, chained) {
     var S = String(s.supp);
@@ -3485,71 +3489,128 @@
       var iv = v.idvar;
       var cols = s.keys.map(ident);
       var dupCols = s.keys.slice();
-      if (iv !== '') { cols.push(ident(iv) + ' = ' + suppKeyExpr(v.type)); dupCols.push(iv); }
+      // a numeric level keys on the converted IDVARVAL ("01" and "1" are one record), a text level
+      // on the trimmed IDVARVAL, as combine_supp() joins ("G2" and "G2 " are one record)
+      if (iv !== '') {
+        cols.push(ident(iv) + ' = ' + (v.type === 'character' ?
+          'stringr::str_trim(as.character(IDVARVAL))' : suppKeyExpr(v.type)));
+        dupCols.push(iv);
+      }
       cols.push('QNAM');
       dupCols.push('QNAM');
       var l = ['q', 'dplyr::filter(IDVAR == ' + str(iv) + ')', 'dplyr::transmute(' + cols.join(', ') + ')'];
       if (iv !== '') l.push(v.type === 'double' ? 'dplyr::filter(abs(' + ident(iv) + ') <= 1e308)' : 'dplyr::filter(!is.na(' + ident(iv) + '))');
-      // the repeat guard runs after conversion, so "01" and "1" are one record
       g.push('  x <- ' + l.join(gl));
       g.push('  dup <- x[duplicated(x[c(' + dupCols.map(str).join(', ') + ')]), ]');
       g.push('  if (nrow(dup)) stop(' + str(S + ' repeats a QNAM for ') + ', nrow(dup), " record(s), first: ",');
       g.push('    dup$USUBJID[1], ' + (iv !== '' ? str(' ' + iv + ' ') + ', dup[[' + str(iv) + ']][1], ' : '') +
         '" ", dup$QNAM[1], call. = FALSE)');
     });
-    var numeric = s.idvars.filter(function (v) { return v.idvar !== '' && (v.type === 'integer' || v.type === 'double'); });
-    if (numeric.length) {
-      g.push('  p <- ' + parentRef);
-      g.push('  enc <- function(v) ifelse(is.na(v), "\\001", paste0("\\002", v))');
-      g.push('  val <- function(v) {');
-      g.push('    if (is.factor(v)) v <- as.character(v)');
-      g.push('    if (!is.numeric(v) && !inherits(v, "integer64")) return(enc(as.character(v)))');
-      g.push('    v <- suppressWarnings(as.numeric(v))');
-      g.push('    v[!is.na(v) & v == 0] <- 0');
-      g.push('    out <- sprintf("%.17g", v)');
-      g.push('    out[is.na(v)] <- NA');
-      g.push('    enc(out)');
+    // Later-cut guards. "Ours" (po/so) models the dplyr code's join: the rows its RDOMAIN filter
+    // keeps (dk), on the merge keys plus, for a keyed level, the converted IDVARVAL (numeric, keys
+    // as sprintf("%.17g") text so scipen plays no part) or the exact text. "Theirs" (pt/st) models
+    // combine_supp(): STUDYID, DOMAIN == RDOMAIN, USUBJID and the trimmed key text. NA matches NA.
+    var P = String(s.table);
+    var pkeys = s.keys.map(function (c) { return 'p[[' + str(c) + ']]'; });
+    var xkeys = s.keys.map(function (c) { return 'x[[' + str(c) + ']]'; });
+    g.push('  p <- ' + parentRef);
+    g.push('  enc <- function(v) ifelse(is.na(v), "\\001", paste0("\\002", v))');
+    g.push('  val <- function(v) {');
+    g.push('    if (is.factor(v)) v <- as.character(v)');
+    g.push('    if (!is.numeric(v) && !inherits(v, "integer64")) return(enc(as.character(v)))');
+    g.push('    v <- suppressWarnings(as.numeric(v))');
+    g.push('    v[!is.na(v) & v == 0] <- 0');
+    g.push('    out <- sprintf("%.17g", v)');
+    g.push('    out[is.na(v)] <- NA');
+    g.push('    enc(out)');
+    g.push('  }');
+    g.push('  rec <- function(...) do.call(paste, c(lapply(list(...), val), sep = "\\r"))');
+    g.push('  cnt <- function(a, b) {');
+    g.push('    u <- unique(a)');
+    g.push('    n <- tabulate(match(a, u), nbins = length(u))[match(b, u)]');
+    g.push('    n[is.na(n)] <- 0L');
+    g.push('    n');
+    g.push('  }');
+    // a DOMAIN or RDOMAIN that is NA never counts as a match in the DOMAIN guard
+    g.push('  dom <- function(v, na) { v <- as.character(v); ifelse(is.na(v), na, paste0("\\002", v)) }');
+    g.push('  shown <- function(v) if (is.na(v)) "NA" else paste0("\\"", v, "\\"")');
+    g.push('  dk <- ' + (s.rdomain_col ? '!is.na(q$RDOMAIN) & as.character(q$RDOMAIN) == ' + str(s.rdomain) :
+      'rep(TRUE, nrow(q))'));
+    g.push('  pk <- rec(' + pkeys.join(', ') + ')');
+    g.push('  pd <- rec(p$STUDYID, p$DOMAIN, p$USUBJID)');
+    g.push('  pdom <- dom(p$DOMAIN, "\\003")');
+    // one level's rows (x, kept by the dplyr code's filter or not) and its "ours" keys (po, so)
+    var ours = function (v) {
+      var iv = v.idvar, k = 'p[[' + str(iv) + ']]';
+      var r = ['    x <- q[xi, , drop = FALSE]', '    kept <- dk[xi]'];
+      if (iv === '') {
+        r.push('    po <- pk');
+        r.push('    so <- ifelse(kept, rec(' + xkeys.join(', ') + '), NA_character_)');
+      } else if (v.type === 'integer' || v.type === 'double') {
+        r.push('    cv <- ' + suppKeyConv(v.type, 'x$IDVARVAL'));
+        if (v.type === 'double') r.push('    cv[!is.na(cv) & abs(cv) > 1e308] <- NA');
+        r.push('    po <- paste(pk, val(' + k + '), sep = "\\r")');
+        r.push('    so <- ifelse(kept & !is.na(cv), paste(rec(' + xkeys.join(', ') + '), val(cv), sep = "\\r"), NA_character_)');
+      } else {
+        r.push('    po <- paste(pk, val(' + k + '), sep = "\\r")');
+        r.push('    so <- ifelse(kept, paste(rec(' + xkeys.join(', ') + '), val(x$IDVARVAL), sep = "\\r"), NA_character_)');
+      }
+      return r;
+    };
+    // the DOMAIN guard: every parent record the dplyr code joins a SUPP row to must have that
+    // row's RDOMAIN as its DOMAIN, or combine_supp() would not join it
+    s.idvars.forEach(function (v) {
+      g.push('  xi <- which(q$IDVAR == ' + str(v.idvar) + ')');
+      g.push('  if (length(xi)) {');
+      ours(v).forEach(function (x) { g.push(x); });
+      g.push('    sdom <- dom(x$RDOMAIN, "\\004")');
+      g.push('    i <- which(cnt(paste(po, pdom, sep = "\\n"), paste(so, sdom, sep = "\\n")) < cnt(po, so))[1]');
+      g.push('    if (!is.na(i)) {');
+      g.push('      j <- which(po == so[i] & pdom != sdom[i])[1]');
+      g.push('      stop("DOMAIN ", shown(p$DOMAIN[j]), ' + str(' in ' + P + ' does not match RDOMAIN ') +
+        ', shown(x$RDOMAIN[i]),');
+      g.push('        " in combine_supp(); use the dplyr code style for this merge", call. = FALSE)');
+      g.push('    }');
       g.push('  }');
-      g.push('  rec <- function(...) do.call(paste, c(lapply(list(...), val), sep = "\\r"))');
-      g.push('  cnt <- function(a, b) {');
-      g.push('    u <- unique(a)');
-      g.push('    n <- tabulate(match(a, u), nbins = length(u))[match(b, u)]');
-      g.push('    n[is.na(n)] <- 0L');
-      g.push('    n');
-      g.push('  }');
-      g.push('  pb <- rec(p$STUDYID, p$DOMAIN, p$USUBJID)');
-      numeric.forEach(function (v) {
-        var iv = v.idvar, k = 'p[[' + str(iv) + ']]';
-        var msg = function (how) {
-          return 'stop("IDVARVAL \\"", as.character(x$IDVARVAL[i]), ' + str('" matches ' + iv + ' ') +
-            ', as.character(k),\n        ' + str(' ' + how + ' in combine_supp(); use the dplyr code style for this merge') +
-            ', call. = FALSE)';
-        };
-        g.push('  x <- q[q$IDVAR == ' + str(iv) + ', , drop = FALSE]');
-        g.push('  if (nrow(x)) {');
-        g.push('    cv <- ' + suppKeyConv(v.type, 'x$IDVARVAL'));
-        if (v.type === 'double') g.push('    cv[!is.na(cv) & abs(cv) > 1e308] <- NA');
-        g.push('    sb <- rec(x$STUDYID, x$RDOMAIN, x$USUBJID)');
-        g.push('    po <- paste(pb, val(' + k + '), sep = "\\r")');
-        g.push('    so <- ifelse(is.na(cv), NA_character_, paste(sb, val(cv), sep = "\\r"))');
-        g.push('    pt <- paste(pb, enc(stringr::str_trim(as.character(' + k + '))), sep = "\\r")');
-        g.push('    st <- paste(sb, enc(stringr::str_trim(as.character(x$IDVARVAL))), sep = "\\r")');
-        g.push('    no <- cnt(po, so)');
-        g.push('    nt <- cnt(pt, st)');
+    });
+    // the key guards, one per keyed level: the records a SUPP row finds must be the same both ways
+    s.idvars.forEach(function (v) {
+      var iv = v.idvar, k = 'p[[' + str(iv) + ']]';
+      if (iv === '') return;
+      var tail = ' in combine_supp(); use the dplyr code style for this merge';
+      var msg = function (how) {
+        return 'stop("IDVARVAL \\"", as.character(x$IDVARVAL[i]), ' + str('" matches ' + iv + ' ') +
+          ', as.character(k),\n        ' + str(' ' + how) + ', call. = FALSE)';
+      };
+      g.push('  xi <- which(q$IDVAR == ' + str(iv) + ')');
+      g.push('  if (length(xi)) {');
+      ours(v).forEach(function (x) { g.push(x); });
+      g.push('    pt <- paste(pd, enc(stringr::str_trim(as.character(' + k + '))), sep = "\\r")');
+      g.push('    st <- paste(rec(x$STUDYID, x$RDOMAIN, x$USUBJID), enc(stringr::str_trim(as.character(x$IDVARVAL))), sep = "\\r")');
+      g.push('    no <- cnt(po, so)');
+      g.push('    nt <- cnt(pt, st)');
+      if (v.type === 'integer' || v.type === 'double') {
         g.push('    nb <- cnt(paste(po, pt, sep = "\\n"), paste(so, st, sep = "\\n"))');
         g.push('    nb[is.na(so)] <- 0L');
         g.push('    i <- which(nb < no | nb < nt)[1]');
         g.push('    if (!is.na(i) && nb[i] < no[i]) {');
         g.push('      k <- ' + k + '[which(po == so[i] & pt != st[i])[1]]');
-        g.push('      ' + msg('as a number but not as text'));
+        g.push('      ' + msg('as a number but not as text' + tail));
         g.push('    }');
         g.push('    if (!is.na(i)) {');
         g.push('      k <- ' + k + '[which(pt == st[i] & !(po %in% so[i]))[1]]');
-        g.push('      ' + msg('as text but not as a number'));
+        g.push('      ' + msg('as text but not as a number' + tail));
         g.push('    }');
-        g.push('  }');
-      });
-    }
+      } else {
+        // after the DOMAIN guard the exact-text matches are a subset of the trimmed ones
+        g.push('    i <- which(no < nt)[1]');
+        g.push('    if (!is.na(i)) {');
+        g.push('      k <- ' + k + '[which(pt == st[i] & !(po %in% so[i]))[1]]');
+        g.push('      ' + msg('only when trimmed, as in combine_supp(); use the dplyr code style for this merge'));
+        g.push('    }');
+      }
+      g.push('  }');
+    });
     g.push('})');
     out.push(g.join('\n'));
     return { code: out.join('\n'), ref: ref };

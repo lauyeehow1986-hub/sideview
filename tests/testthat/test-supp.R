@@ -473,6 +473,130 @@ test_that("text-match guard on a later data cut", {
   })
 })
 
+# A case like cs_case() for a parent and SUPP built in the test.
+cs_case_of <- function(parent, supp, sn = "suppae") {
+  r <- sv_supp_check(parent, supp, parent_name = "ae", supp_name = sn, rdomain = "AE")
+  list(parent = parent, supp = supp, sn = sn, chk = r, field = r$combine_supp)
+}
+
+cs_same <- function(k, code) {
+  got <- tryCatch(suppressWarnings(cs_run(k, code)), error = function(e) e)
+  !inherits(got, "error") && supp_same_result(got, cs_ours(k))
+}
+
+test_that("repeat guard keys a text level on the trimmed IDVARVAL (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  k <- cs_case("cs_chr")
+  code <- cs_pharma_code(k)
+  expect_true(cs_same(k, code))
+  # "G2" and "G2 " are one record to combine_supp(): a repeat, not a silent duplicate
+  s2 <- rbind(k$supp, k$supp[1, ])
+  s2$IDVARVAL[3] <- "G2 "
+  s2$QVAL[3] <- "N"
+  expect_identical(supp_stop(code, ae = k$parent, suppae = s2),
+                   "suppae repeats a QNAM for 1 record(s), first: SV-001-001 AEGRPID G2 AETRTEM")
+})
+
+test_that("key guard on a text level: a match only when trimmed stops (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  k <- cs_case("cs_chr")
+  code <- cs_pharma_code(k)
+  expect_true(cs_same(k, code))
+  s2 <- k$supp
+  s2$IDVARVAL[1] <- "G2 "
+  msg <- 'IDVARVAL "G2 " matches AEGRPID G2 only when trimmed, as in combine_supp(); use the dplyr code style for this merge'
+  expect_identical(supp_stop(code, ae = k$parent, suppae = s2), msg)
+  expect_identical(supp_stop(cs_pharma_code(k, "|>"), ae = k$parent, suppae = s2), msg)
+  # the parent key padded instead: the same guard, the parent's text in the copy
+  p2 <- k$parent
+  p2$AEGRPID[2] <- " G2"
+  expect_identical(supp_stop(code, ae = p2, suppae = k$supp),
+                   'IDVARVAL "G2" matches AEGRPID  G2 only when trimmed, as in combine_supp(); use the dplyr code style for this merge')
+})
+
+test_that("DOMAIN guard: a joined parent record whose DOMAIN is not RDOMAIN stops (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  k <- cs_case("cs_ok")
+  code <- cs_pharma_code(k)
+  expect_true(cs_same(k, code))
+  tail <- " in combine_supp(); use the dplyr code style for this merge"
+  # a keyed record
+  p2 <- k$parent
+  p2$DOMAIN[3] <- "XX"
+  expect_identical(supp_stop(code, ae = p2, suppae = k$supp),
+                   paste0('DOMAIN "XX" in ae does not match RDOMAIN "AE"', tail))
+  # subject level: the row joins both records of subject 1
+  p3 <- k$parent
+  p3$DOMAIN[2] <- "XX"
+  expect_identical(supp_stop(code, ae = p3, suppae = k$supp),
+                   paste0('DOMAIN "XX" in ae does not match RDOMAIN "AE"', tail))
+  # an NA DOMAIN never matches, and prints without quotes
+  p4 <- k$parent
+  p4$DOMAIN[3] <- NA
+  expect_identical(supp_stop(code, ae = p4, suppae = k$supp),
+                   paste0('DOMAIN NA in ae does not match RDOMAIN "AE"', tail))
+  expect_identical(supp_stop(cs_pharma_code(k, "|>"), ae = p2, suppae = k$supp),
+                   paste0('DOMAIN "XX" in ae does not match RDOMAIN "AE"', tail))
+  # a record no SUPP row joins may have any DOMAIN
+  p5 <- rbind(k$parent, transform(k$parent[3, ], DOMAIN = "XX", AESEQ = 7L))
+  expect_true(cs_same(cs_case_of(p5, k$supp), code))
+})
+
+test_that("key guards with two numeric levels in one block", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  ok <- cs_case("cs_ok")
+  parent <- ok$parent
+  parent$AEGRPN <- c(10, 20, 10)
+  grpn <- ok$supp[1:2, ]
+  grpn$IDVAR <- "AEGRPN"
+  grpn$IDVARVAL <- c("20", "10")
+  grpn$USUBJID <- parent$USUBJID[2:3]
+  grpn$QNAM <- "AEGRPQ"
+  grpn$QLABEL <- "Group qualifier"
+  grpn$QVAL <- c("A", "B")
+  k <- cs_case_of(parent, rbind(ok$supp, grpn))
+  expect_true(k$field$ok)
+  code <- cs_pharma_code(k)
+  expect_parses(code, "two numeric levels")
+  expect_identical(lengths(regmatches(code, gregexpr("as a number but not as text", code, fixed = TRUE))), 2L)
+  expect_true(cs_same(k, code))
+  tail <- " in combine_supp(); use the dplyr code style for this merge"
+  # the second level stops while the first passes
+  s2 <- k$supp
+  s2$IDVARVAL[s2$IDVAR == "AEGRPN"][1] <- "20.0"
+  expect_identical(supp_stop(code, ae = k$parent, suppae = s2),
+                   paste0('IDVARVAL "20.0" matches AEGRPN 20 as a number but not as text', tail))
+  # and the first level is still checked
+  s3 <- k$supp
+  s3$IDVARVAL[s3$IDVAR == "AESEQ"][1] <- "01"
+  expect_identical(supp_stop(code, ae = k$parent, suppae = s3),
+                   paste0('IDVARVAL "01" matches AESEQ 1 as a number but not as text', tail))
+})
+
+test_that("the overflow line of a double level parses and runs (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  ok <- cs_case("cs_ok")
+  k <- cs_case_of(transform(ok$parent, AESEQ = as.numeric(AESEQ)), ok$supp)
+  expect_true(k$field$ok)
+  code <- cs_pharma_code(k)
+  expect_match(code, "cv[!is.na(cv) & abs(cv) > 1e308] <- NA", fixed = TRUE)
+  expect_parses(code, "overflow")
+  expect_true(cs_same(k, code))
+  # "1e999" is Inf: the dplyr code joins it to nothing, and so does combine_supp()
+  s2 <- k$supp
+  s2$IDVARVAL[1] <- "1e999"
+  k2 <- k
+  k2$supp <- s2
+  expect_warning(got <- supp_stop(code, ae = k$parent, suppae = s2), "not merged")
+  expect_identical(got, "")
+  expect_true(cs_same(k2, code))
+})
+
 # ---- JS twin: SideviewPipeline.suppCheck ------------------------------------
 
 test_that("suppKeyType maps col_types", {
