@@ -644,6 +644,15 @@ test_that("server answers supp_check_request", {
     expect_identical(last$message$id, "r1")
     expect_identical(last$message$status, "ok")
     expect_true(length(last$message$plan) > 0)
+    # the combine_supp field, plus whether metatools (0.3.0 or later) is installed here
+    cs <- last$message$combine_supp
+    expect_true(is.logical(cs$ok) && length(cs$ok) == 1L)
+    expect_true(is.logical(cs$installed) && length(cs$installed) == 1L && !is.na(cs$installed))
+    expect_identical(cs$installed, requireNamespace("metatools", quietly = TRUE) &&
+                       utils::packageVersion("metatools") >= "0.3.0")
+    expect_true(is.logical(cs$prep$rdomain) && is.logical(cs$prep$idvar_na))
+    # the installed flag is the server's, not the check's
+    expect_null(sv_supp_check(fx$ae, fx$suppae, "ae", "suppae")$combine_supp$installed)
     # the plan from the reply, as JSON text, gives a drift of "not stale"
     plan_json <- as.character(jsonlite::toJSON(sv_supp_check(fx$ae, fx$suppae, "ae", "suppae")$plan,
                                                auto_unbox = TRUE))
@@ -652,6 +661,70 @@ test_that("server answers supp_check_request", {
     last <- msgs[[length(msgs)]]
     expect_identical(last$message$id, "r2")
     expect_false(last$message$drift$stale)
+  })
+})
+
+test_that("server says combine_supp() needs data frames for a lazy card, also after a lost link", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  cs_last <- function(session) {
+    msgs <- session$userData$custom_messages
+    msgs[[length(msgs)]]$message
+  }
+  mk <- function(pair, env = parent.frame()) {
+    con <- DBI::dbConnect(duckdb::duckdb())
+    withr::defer(suppressWarnings(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE)), envir = env)
+    DBI::dbWriteTable(con, "p", pair[[1]])
+    DBI::dbWriteTable(con, "s", pair[[2]])
+    list(con = con,
+         cards = list(sv_normalize(dplyr::tbl(con, "p"), name = "ae"),
+                      sv_normalize(dplyr::tbl(con, "s"), name = "suppae")))
+  }
+  ask <- function(session, id) {
+    session$setInputs(supp_check_request = list(id = id, parent = "ae", supp = "suppae", rdomain = "AE"))
+    cs_last(session)
+  }
+  want_rule2 <- "combine_supp() needs data frames: ae is a duckdb table"
+  # the link is alive: the lazy twin answers
+  m <- mk(fx$cs_ok)
+  shiny::testServer(sideview_server(m$cards), {
+    r <- ask(session, "l1")
+    expect_identical(r$status, "ok")
+    expect_false(r$combine_supp$ok)
+    expect_identical(r$combine_supp$reason, want_rule2)
+    expect_identical(r$combine_supp$installed, requireNamespace("metatools", quietly = TRUE) &&
+                       utils::packageVersion("metatools") >= "0.3.0")
+    expect_false(r$combine_supp$prep$rdomain)
+    expect_true(r$combine_supp$prep$idvar_na)   # the subject-level row has IDVAR ""
+  })
+  # the link is lost: the preview answers, and rule 2 still holds for a lazy card
+  m <- mk(fx$cs_ok)
+  shiny::testServer(sideview_server(m$cards), {
+    DBI::dbDisconnect(m$con, shutdown = TRUE)
+    r <- ask(session, "l2")
+    expect_identical(r$status, "ok")
+    expect_false(r$combine_supp$ok)
+    expect_identical(r$combine_supp$reason, want_rule2)
+    expect_true(is.logical(r$combine_supp$installed))
+  })
+  # a lazy SUPP with a plain parent names the SUPP card
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(suppressWarnings(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE)))
+  DBI::dbWriteTable(con, "s", fx$cs_ok[[2]])
+  mixed <- list(sv_normalize(fx$cs_ok[[1]], name = "ae"), sv_normalize(dplyr::tbl(con, "s"), name = "suppae"))
+  shiny::testServer(sideview_server(mixed), {
+    DBI::dbDisconnect(con, shutdown = TRUE)
+    r <- ask(session, "l3")
+    expect_identical(r$combine_supp$reason, "combine_supp() needs data frames: suppae is a duckdb table")
+  })
+  # rule 1 comes first: a check that stops says so, lazy or not
+  m <- mk(fx$cs_clash)
+  shiny::testServer(sideview_server(m$cards), {
+    DBI::dbDisconnect(m$con, shutdown = TRUE)
+    r <- ask(session, "l4")
+    expect_identical(r$status, "error")
+    expect_false(r$combine_supp$ok)
+    expect_match(r$combine_supp$reason, "^The merge stops: AETRTEM already in ae$")
   })
 })
 

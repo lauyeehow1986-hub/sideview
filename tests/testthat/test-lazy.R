@@ -20,6 +20,13 @@ lazy_fixture <- function(env = parent.frame()) {
   list(df = df, con = con)
 }
 
+# A SUPP check without the two fields that differ by design between the twins (rule 2 decides
+# `ok` and `reason` on lazy data); `combine_supp$prep` stays and must be equal.
+supp_prep_only <- function(chk) {
+  if (!is.null(chk$combine_supp)) chk$combine_supp <- list(prep = chk$combine_supp$prep)
+  chk
+}
+
 test_that("lazy cards keep their source", {
   skip_if_not_installed("duckdb")
   skip_if_not_installed("dbplyr")
@@ -1728,16 +1735,68 @@ test_that("lazy supp check equals in-memory", {
     rd <- if (length(a) > 3) a[[4]] else NULL
     pl <- if (length(a) > 4) a[[5]] else NULL
     want <- sv_supp_check(a[[1]], a[[2]], parent_name = "ae", supp_name = sn, rdomain = rd, plan = pl)
-    want$combine_supp <- NULL  # combine_supp: the lazy twin arrives in Task 2
+    want <- supp_prep_only(want)
     for (cb in combos) {
       got <- sv_lazy_supp_check(join_side(a[[1]], cb[1], fx$con, "sp"),
                                 join_side(a[[2]], cb[2], fx$con, "ss"),
                                 parent_name = "ae", supp_name = sn,
                                 rdomain = if (is.null(rd)) sub("^SUPP", "", toupper(sn)) else rd,
                                 plan = pl)
-      expect_equal(got, want, tolerance = 1e-12, label = paste(nm, cb[1], "x", cb[2]))
+      expect_equal(supp_prep_only(got), want, tolerance = 1e-12, label = paste(nm, cb[1], "x", cb[2]))
     }
   }
+})
+
+test_that("lazy supp check says combine_supp() needs data frames, and flags prep as memory does", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  fx <- lazy_fixture()
+  f <- sv_cdisc_fixtures()
+  kind_name <- c(duckdb = "a duckdb table", arrow = "an Arrow table")
+  combos <- list(c("arrow", "df"), c("duckdb", "df"), c("df", "arrow"), c("df", "duckdb"),
+                 c("arrow", "arrow"), c("duckdb", "duckdb"))
+  for (nm in c("cs_ok", "cs_na_idvar", "cs_suppqual", "cs_clash", "cs_two_level")) {
+    a <- f[[nm]]
+    want <- sv_supp_check(a[[1]], a[[2]], parent_name = "ae", supp_name = "suppae", rdomain = "AE")
+    for (cb in combos) {
+      got <- sv_lazy_supp_check(join_side(a[[1]], cb[1], fx$con, "sp"), join_side(a[[2]], cb[2], fx$con, "ss"),
+                                parent_name = "ae", supp_name = "suppae", rdomain = "AE")
+      lab <- paste(nm, cb[1], "x", cb[2])
+      expect_equal(got$combine_supp$prep, want$combine_supp$prep, tolerance = 1e-12, label = lab)
+      expect_false(got$combine_supp$ok, label = lab)
+      if (identical(got$status, "error")) {
+        # rule 1 comes before rule 2
+        expect_identical(got$combine_supp$reason, want$combine_supp$reason, label = lab)
+        expect_match(got$combine_supp$reason, "^The merge stops: ", label = lab)
+      } else {
+        # the table named is the parent if it is lazy, else the SUPP card
+        tbl <- if (cb[1] != "df") c("ae", cb[1]) else c("suppae", cb[2])
+        expect_identical(got$combine_supp$reason,
+                         paste0("combine_supp() needs data frames: ", tbl[1], " is ", kind_name[[tbl[2]]]),
+                         label = lab)
+      }
+    }
+  }
+  # the flags are what the fixtures say, so the comparison above is not vacuous
+  mem_prep <- function(nm, sn = "suppae") {
+    sv_supp_check(f[[nm]][[1]], f[[nm]][[2]], "ae", sn, rdomain = "AE")$combine_supp$prep
+  }
+  expect_true(mem_prep("cs_ok")$idvar_na)    # the subject-level row has IDVAR ""
+  expect_false(mem_prep("cs_int")$idvar_na)
+  expect_false(mem_prep("cs_ok")$rdomain)
+  expect_true(sv_supp_check(f$cs_suppqual[[1]], f$cs_suppqual[[2]], "ae", "suppqual", rdomain = "AE")$combine_supp$prep$rdomain)
+  got <- sv_lazy_supp_check(join_side(f$cs_suppqual[[1]], "duckdb", fx$con, "sp"),
+                            join_side(f$cs_suppqual[[2]], "duckdb", fx$con, "ss"),
+                            parent_name = "ae", supp_name = "suppqual", rdomain = "AE")
+  expect_true(got$combine_supp$prep$rdomain)
+  expect_false(got$combine_supp$prep$idvar_na)
+  # a check that cannot run has no combine_supp, as in memory
+  err <- sv_lazy_supp_check(join_side(f$ae, "duckdb", fx$con, "sp"),
+                            join_side(f$supp_noqnam, "duckdb", fx$con, "ss"),
+                            parent_name = "ae", supp_name = "suppae", rdomain = "AE")
+  expect_null(err$combine_supp)
 })
 
 test_that("lazy supp check reads a float32 key as the double it collects to, like memory", {
@@ -1833,11 +1892,11 @@ test_that("lazy supp check follows sample_n and a larger parent", {
   s <- f$supp_orphan[rep(2, 8), ]
   s$QNAM <- paste0("Q", 1:8)
   want <- sv_supp_check(f$ae, s, parent_name = "ae", supp_name = "suppae", sample_n = 3L)
-  want$combine_supp <- NULL  # combine_supp: the lazy twin arrives in Task 2
+  want <- supp_prep_only(want)
   for (how in c("arrow", "duckdb")) {
     got <- sv_lazy_supp_check(join_side(f$ae, how, fx$con, "sp"), join_side(s, how, fx$con, "ss"),
                               parent_name = "ae", supp_name = "suppae", rdomain = "AE", sample_n = 3L)
-    expect_equal(got, want, tolerance = 1e-12, label = how)
+    expect_equal(supp_prep_only(got), want, tolerance = 1e-12, label = how)
     expect_identical(nrow(got$preview), 3L)
   }
 })
@@ -1935,13 +1994,14 @@ test_that("lazy supp checks and profiles carry the classes and read as the in-me
   for (nm in names(cases)) {
     a <- cases[[nm]]
     want <- sv_supp_check(a[[1]], a[[2]], parent_name = "ae", supp_name = "suppae")
-    want$combine_supp <- NULL  # combine_supp: the lazy twin arrives in Task 2
+    want <- supp_prep_only(want)
     for (how in c("arrow", "duckdb")) {
       got <- sv_lazy_supp_check(join_side(a[[1]], how, fx$con, "sp"), join_side(a[[2]], how, fx$con, "ss"),
                                 parent_name = "ae", supp_name = "suppae", rdomain = "AE")
       expect_s3_class(got, "sv_supp_check")
       expect_identical(sv_say_supp(got, "ae", "suppae"), sv_say_supp(want, "ae", "suppae"),
                        info = paste(nm, how))
+      got <- supp_prep_only(got)
       expect_identical(capture.output(print(got)), capture.output(print(want)), info = paste(nm, how))
       expect_identical(sv_supp_check_json(got), sv_supp_check_json(want), info = paste(nm, how))
     }

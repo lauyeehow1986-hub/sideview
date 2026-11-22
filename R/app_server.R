@@ -375,6 +375,21 @@ sideview_server_impl <- function(input, output, session, cards, llm_fn, insert_f
                                  supp_name = supp_name, rdomain = rdomain, plan = plan)
       )
       reply <- sv_supp_reply(chk)
+      cs_field <- if (is.null(reply$combine_supp)) sv_supp_combine_of(chk) else reply$combine_supp
+      if (is.null(chk$error) && !identical(chk$status, "error") &&
+          (isTRUE(cp$is_lazy) || isTRUE(cs$is_lazy))) {
+        # rule 2 holds for a lazy card even when a lost link made the check run on the preview
+        cs_field$ok <- FALSE
+        cs_field$reason <- if (isTRUE(cp$is_lazy)) {
+          sv_lazy_combine_reason(parent_name, cp$lazy_source)
+        } else {
+          sv_lazy_combine_reason(supp_name, cs$lazy_source)
+        }
+      }
+      # whether this machine can run the pharmaverse code; the check itself never knows
+      cs_field$installed <- requireNamespace("metatools", quietly = TRUE) &&
+        utils::packageVersion("metatools") >= "0.3.0"
+      reply$combine_supp <- cs_field
       if (is.null(reply$error)) {
         reply$derive_offers <- tryCatch(
           as.list(sv_derive_offers_supp(chk, parent_name, supp_name, rdomain)),
