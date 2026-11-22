@@ -548,6 +548,45 @@ test_that("an NA IDVARVAL against an NA parent key never differs silently (later
   expect_true(cs_same(ok3, code))
 })
 
+test_that("a QNAM repeated among rows the dplyr code drops stops (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  # combine_supp() pivots NA and unconvertible IDVARVALs too: a repeat there is a list column
+  repeat_of <- function(supp, val) {
+    s <- rbind(supp, supp[1, ])
+    s$IDVARVAL[c(1, nrow(s))] <- val
+    s$QVAL[nrow(s)] <- "N"
+    s
+  }
+  # a character level, two NA IDVARVALs
+  k <- cs_case("cs_chr")
+  code <- cs_pharma_code(k)
+  expect_identical(supp_stop(code, ae = k$parent, suppae = repeat_of(k$supp, NA)),
+                   "suppae repeats a QNAM for 1 record(s), first: SV-001-001 AEGRPID NA AETRTEM")
+  # an integer level, two NA IDVARVALs, and two that do not convert
+  ok <- cs_case("cs_ok")
+  code <- cs_pharma_code(ok)
+  expect_identical(supp_stop(code, ae = ok$parent, suppae = repeat_of(ok$supp, NA)),
+                   "suppae repeats a QNAM for 1 record(s), first: SV-001-001 AESEQ NA AETRTEM")
+  expect_identical(supp_stop(code, ae = ok$parent, suppae = repeat_of(ok$supp, "x")),
+                   "suppae repeats a QNAM for 1 record(s), first: SV-001-001 AESEQ x AETRTEM")
+  expect_identical(supp_stop(cs_pharma_code(ok, "|>"), ae = ok$parent, suppae = repeat_of(ok$supp, "x")),
+                   "suppae repeats a QNAM for 1 record(s), first: SV-001-001 AESEQ x AETRTEM")
+  # one such row, not repeated, joins nothing either way: it runs and agrees
+  for (val in list(NA_character_, "x")) {
+    s1 <- ok$supp
+    s1$IDVARVAL[1] <- val
+    k1 <- ok
+    k1$supp <- s1
+    expect_true(cs_same(k1, code), info = val)
+  }
+  s1 <- k$supp
+  s1$IDVARVAL[1] <- NA
+  k1 <- k
+  k1$supp <- s1
+  expect_true(cs_same(k1, cs_pharma_code(k)))
+})
+
 test_that("DOMAIN guard: a joined parent record whose DOMAIN is not RDOMAIN stops (later cut)", {
   skip_if_not_installed("metatools", "0.3.0")
   skip_if_not_installed("tidyr")

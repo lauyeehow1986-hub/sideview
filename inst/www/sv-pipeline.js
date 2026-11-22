@@ -3505,6 +3505,15 @@
       g.push('  if (nrow(dup)) stop(' + str(S + ' repeats a QNAM for ') + ', nrow(dup), " record(s), first: ",');
       g.push('    dup$USUBJID[1], ' + (iv !== '' ? str(' ' + iv + ' ') + ', dup[[' + str(iv) + ']][1], ' : '') +
         '" ", dup$QNAM[1], call. = FALSE)');
+      if (iv === '') return;
+      // combine_supp() pivots every row of the level, the NA, unconvertible and overflowing
+      // IDVARVALs the check above drops too, so a QNAM repeated among them would make a list
+      // column: repeat-check all rows on the trimmed text, an NA counting as a value
+      g.push('  x <- ' + ['q', 'dplyr::filter(IDVAR == ' + str(iv) + ')',
+        'dplyr::transmute(STUDYID, USUBJID, ' + ident(iv) + ' = stringr::str_trim(as.character(IDVARVAL)), QNAM)'].join(gl));
+      g.push('  dup <- x[duplicated(x[c("STUDYID", "USUBJID", ' + str(iv) + ', "QNAM")]), ]');
+      g.push('  if (nrow(dup)) stop(' + str(S + ' repeats a QNAM for ') + ', nrow(dup), " record(s), first: ",');
+      g.push('    dup$USUBJID[1], ' + str(' ' + iv + ' ') + ', dup[[' + str(iv) + ']][1], " ", dup$QNAM[1], call. = FALSE)');
     });
     // Later-cut guards. "Ours" (po/so) models the dplyr code's join: the rows its RDOMAIN filter
     // keeps (dk), on the merge keys plus, for a keyed level, the converted IDVARVAL (numeric, keys
