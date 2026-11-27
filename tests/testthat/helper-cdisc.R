@@ -194,7 +194,8 @@ supp_same_result <- function(a, b) {
   if (nrow(a) != nrow(b) || ncol(a) != ncol(b) || !setequal(names(a), names(b))) return(FALSE)
   label <- function(x) {
     l <- attr(x, "label", exact = TRUE)
-    if (is.null(l) || (length(l) == 1L && (is.na(l) || !nzchar(l)))) NA_character_ else l
+    # a label that is not text (a factor QLABEL makes one) is compared as it is, never as none
+    if (is.null(l) || (length(l) == 1L && (is.na(l) || (is.character(l) && !nzchar(l))))) NA_character_ else l
   }
   bare <- function(x) {
     attr(x, "label") <- NULL

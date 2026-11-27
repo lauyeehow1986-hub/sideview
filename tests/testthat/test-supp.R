@@ -668,6 +668,160 @@ test_that("the overflow line of a double level parses and runs (later cut)", {
   expect_true(cs_same(k2, code))
 })
 
+# A later cut of a case: its check (and so its code) stays, its tables change.
+cs_cut <- function(k, parent = k$parent, supp = k$supp) {
+  k$parent <- parent
+  k$supp <- supp
+  k
+}
+
+# What the code stops with on the cut ("" when it runs), warnings muffled.
+cs_cut_stop <- function(k, code) {
+  suppressWarnings(do.call(supp_stop, c(list(code), stats::setNames(list(k$parent, k$supp), c("ae", k$sn)))))
+}
+
+# The cut's SUPP with one row like its first, the given columns changed.
+cs_row_like <- function(supp, ...) {
+  r <- supp[1, ]
+  a <- list(...)
+  for (nm in names(a)) r[[nm]] <- a[[nm]]
+  rbind(supp, r)
+}
+
+cs_tail <- "; use the dplyr code style for this merge"
+
+test_that("label guard: combine_supp()'s label must be the plan's (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  ok <- cs_case("cs_ok")
+  codes <- list(cs_pharma_code(ok), cs_pharma_code(ok, "|>"))
+  s <- ok$supp
+  relabel <- function(i, v) { x <- s; x$QLABEL[i] <- v; x }
+  stops <- list(
+    # the last AETRTEM label wins in combine_supp(); the dplyr code keeps the plan's
+    list(relabel(2, "TE two"), 'AETRTEM label would be "TE two" in combine_supp(), not "Treatment Emergent"'),
+    list(relabel(1:2, "TE two"), 'AETRTEM label would be "TE two" in combine_supp(), not "Treatment Emergent"'),
+    list(relabel(2, "Treatment Emergent "),
+         'AETRTEM label would be "Treatment Emergent " in combine_supp(), not "Treatment Emergent"'),
+    list(relabel(2, ""), 'AETRTEM label would be none in combine_supp(), not "Treatment Emergent"'),
+    list(relabel(1:2, NA), 'AETRTEM label would be none in combine_supp(), not "Treatment Emergent"'),
+    list(relabel(3, "Other"), 'AESUBJQ label would be "Other" in combine_supp(), not "Subject qualifier"'),
+    # a new QNAM: the dplyr code has no label for it
+    list(cs_row_like(s, QNAM = "AENEW", QLABEL = "New", QVAL = "A"),
+         'AENEW label would be "New" in combine_supp(), not none'),
+    list(cs_row_like(s[3:1, ], QNAM = "AESUB2", QLABEL = "New", QVAL = "A"),
+         'AESUB2 label would be "New" in combine_supp(), not none'),
+    # factors: combine_supp() labels with the factor, or indexes the columns by its codes
+    list(transform(s, QLABEL = factor(QLABEL)), "suppae QLABEL is a factor, so combine_supp() would set factor labels"),
+    list(transform(s, QNAM = factor(QNAM)), "suppae QNAM is a factor, so combine_supp() would label the wrong columns"))
+  for (x in stops) {
+    for (code in codes) expect_identical(cs_cut_stop(cs_cut(ok, supp = x[[1]]), code), paste0(x[[2]], cs_tail))
+  }
+  # the same label both ways: it runs and agrees
+  same <- list(relabel(1, "TE two"), relabel(1, ""), relabel(1, NA),
+               cs_row_like(s, QNAM = "AENEW", QLABEL = "", QVAL = "A"),
+               cs_row_like(s, QNAM = "AENEW", QLABEL = NA, QVAL = "A"))
+  for (x in same) expect_true(cs_same(cs_cut(ok, supp = x), codes[[1]]))
+  # a SUPPQUAL: the labels combine_supp() sees are those after the RDOMAIN filter
+  sq <- cs_case("cs_suppqual")
+  code <- cs_pharma_code(sq)
+  cm <- sq$supp
+  cm$QLABEL[cm$RDOMAIN == "CM"] <- "zz"
+  expect_true(cs_same(cs_cut(sq, supp = cm), code))
+  ae2 <- sq$supp
+  ae2$QLABEL[2] <- "TE two"
+  expect_identical(cs_cut_stop(cs_cut(sq, supp = ae2), code),
+                   paste0('AETRTEM label would be "TE two" in combine_supp(), not "Treatment Emergent"', cs_tail))
+})
+
+test_that("type guards: a key or DOMAIN whose type a join would change stops (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  ok <- cs_case("cs_ok")
+  code <- cs_pharma_code(ok)
+  p <- ok$parent
+  # combine_supp() joins DOMAIN to RDOMAIN: a factor DOMAIN comes back as text
+  expect_identical(cs_cut_stop(cs_cut(ok, parent = transform(p, DOMAIN = factor(DOMAIN))), code),
+                   paste0("DOMAIN in ae would not keep its type (factor) in combine_supp()", cs_tail))
+  expect_identical(cs_cut_stop(cs_cut(ok, parent = transform(p, DOMAIN = factor(DOMAIN))), cs_pharma_code(ok, "|>")),
+                   paste0("DOMAIN in ae would not keep its type (factor) in combine_supp()", cs_tail))
+  # a factor RDOMAIN with the same levels keeps it a factor: the same both ways
+  expect_true(cs_same(cs_cut(ok, parent = transform(p, DOMAIN = factor(DOMAIN)),
+                             supp = transform(ok$supp, RDOMAIN = factor(RDOMAIN))), code))
+  # a numeric level: the dplyr code joins the key to an integer, combine_supp() as text
+  expect_identical(cs_cut_stop(cs_cut(ok, parent = transform(p, AESEQ = factor(AESEQ))), code),
+                   paste0("AESEQ in ae (factor) would not join in the dplyr code", cs_tail))
+  expect_identical(cs_cut_stop(cs_cut(ok, parent = transform(p, AESEQ = as.character(AESEQ))), code),
+                   paste0("AESEQ in ae (character) would not join in the dplyr code", cs_tail))
+  expect_true(cs_same(cs_cut(ok, parent = transform(p, AESEQ = as.numeric(AESEQ))), code))
+  # checked on a double key, run on an integer one: the dplyr code's join makes it double
+  dk <- cs_case_of(transform(p, AESEQ = as.numeric(AESEQ)), ok$supp)
+  expect_true(dk$field$ok)
+  expect_identical(cs_cut_stop(cs_cut(dk, parent = p), cs_pharma_code(dk)),
+                   paste0("AESEQ in ae would not keep its type (integer) in the dplyr code", cs_tail))
+  # a text level: the dplyr code joins the key to IDVARVAL
+  chr <- cs_case("cs_chr")
+  code <- cs_pharma_code(chr)
+  cp <- chr$parent
+  expect_identical(cs_cut_stop(cs_cut(chr, parent = transform(cp, AEGRPID = factor(AEGRPID))), code),
+                   paste0("AEGRPID in ae would not keep its type (factor) in the dplyr code", cs_tail))
+  expect_identical(cs_cut_stop(cs_cut(chr, parent = transform(cp, AEGRPID = c(1, 2, 1))), code),
+                   paste0("AEGRPID in ae (numeric) would not join in the dplyr code", cs_tail))
+  expect_true(cs_same(cs_cut(chr, parent = transform(cp, AEGRPID = factor(AEGRPID)),
+                             supp = transform(chr$supp, IDVARVAL = factor(IDVARVAL))), code))
+  # STUDYID and USUBJID are joined by both: their type may change
+  for (col in c("STUDYID", "USUBJID")) {
+    p2 <- p
+    p2[[col]] <- factor(p2[[col]])
+    expect_true(cs_same(cs_cut(ok, parent = p2), cs_pharma_code(ok)), info = col)
+  }
+})
+
+test_that("column guard: a QNAM only combine_supp() makes a column of stops (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  ok <- cs_case("cs_ok")
+  code <- cs_pharma_code(ok)
+  s <- ok$supp
+  msg <- paste0("suppae QNAM AENEW would be a column in combine_supp() but not in the dplyr code", cs_tail)
+  # rows the dplyr code drops before it pivots: a key that does not convert, an NA key
+  for (v in list("x", NA_character_)) {
+    expect_identical(cs_cut_stop(cs_cut(ok, supp = cs_row_like(s, QNAM = "AENEW", QLABEL = "", IDVARVAL = v)), code),
+                     msg, info = v)
+  }
+  # rows its RDOMAIN filter drops: no rdomain prep line here, so combine_supp() sees them
+  expect_false(ok$field$prep$rdomain)
+  for (v in list(NA_character_, "ae", "CM")) {
+    expect_identical(cs_cut_stop(cs_cut(ok, supp = cs_row_like(s, QNAM = "AENEW", QLABEL = "", RDOMAIN = v)), code),
+                     msg, info = v)
+    expect_identical(cs_cut_stop(cs_cut(ok, supp = cs_row_like(s, QNAM = "AENEW", QLABEL = "", RDOMAIN = v)),
+                                 cs_pharma_code(ok, "|>")), msg, info = v)
+  }
+  # a foreign row of a known QNAM that joins nothing: the same both ways
+  expect_true(cs_same(cs_cut(ok, supp = cs_row_like(s, RDOMAIN = "CM", USUBJID = "SV-X", IDVARVAL = "5")), code))
+  # a new QNAM on a row both join: the same both ways
+  expect_true(cs_same(cs_cut(ok, supp = cs_row_like(s, QNAM = "AENEW", QLABEL = "", IDVARVAL = "2")), code))
+})
+
+test_that("a foreign subject-level row combine_supp() would join stops (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  ok <- cs_case("cs_ok")
+  code <- cs_pharma_code(ok)
+  p <- ok$parent
+  u <- p$USUBJID[3]
+  p2 <- rbind(p, transform(p[3, ], DOMAIN = "CM", AESEQ = 9L))
+  s2 <- cs_row_like(ok$supp[3:1, ], RDOMAIN = "CM", USUBJID = u)
+  expect_identical(cs_cut_stop(cs_cut(ok, parent = p2, supp = s2), code),
+                   paste0("suppae has a row for USUBJID ", u, " that would match ae in combine_supp() but not in the dplyr code",
+                          cs_tail))
+  # with no CM record to match, the guard lets it through (combine_supp() 0.3.0 itself then fails
+  # on an unmerged subject-level row: a loud stop, not a silent difference)
+  got <- cs_cut_stop(cs_cut(ok, supp = s2), code)
+  expect_match(got, "IDVARVAL", fixed = TRUE)
+  expect_no_match(got, "use the dplyr code style", fixed = TRUE)
+})
+
 # ---- JS twin: SideviewPipeline.suppCheck ------------------------------------
 
 test_that("suppKeyType maps col_types", {

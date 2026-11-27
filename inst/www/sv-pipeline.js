@@ -3454,7 +3454,11 @@
    * number with suppKeyConv() and its overflow rule, keys as sprintf("%.17g") text so the session's
    * scipen plays no part, or by exact text) must be the records it finds as combine_supp() joins
    * (STUDYID, DOMAIN == RDOMAIN, USUBJID and stringr::str_trim(as.character()) on both keys, under
-   * the session's scipen). NA matches NA in both.
+   * the session's scipen). NA matches NA in both. Then the type guards (DOMAIN and each IDVAR key
+   * keep their type through the joins), a subject-level guard for rows only combine_supp() sees
+   * (no RDOMAIN prep line), the column guard (no QNAM column the dplyr code lacks) and the label
+   * guards (combine_supp()'s last QLABEL must be the plan's label; no factor QNAM or QLABEL).
+   * They only stop: they never reshape the data.
    */
   function suppCombinePrep(s, src, parentRef, pipe, prep, chained) {
     var S = String(s.supp);
@@ -3548,6 +3552,30 @@
     g.push('  pk <- rec(' + pkeys.join(', ') + ')');
     g.push('  pd <- rec(p$STUDYID, p$DOMAIN, p$USUBJID)');
     g.push('  pdom <- dom(p$DOMAIN, "\\003")');
+    // Type guards. A join casts its keys to their common type (dplyr 1.1): combine_supp() joins
+    // DOMAIN to RDOMAIN, the dplyr code each IDVAR key to the converted IDVARVAL (a number for a
+    // numeric level, the IDVARVAL itself for a text one). Each column must keep its type there.
+    // STUDYID and USUBJID are joined by both. A key that cannot join stops the dplyr code: stop here.
+    // (a missing column is left to the code's own errors; a label attribute plays no part)
+    g.push('  keeps <- function(a, b) {');
+    g.push('    if (is.null(a)) return(TRUE)');
+    g.push('    ty <- tryCatch(vctrs::vec_ptype_common(a, b), error = function(e) NULL)');
+    g.push('    if (is.null(ty)) return(NA)');
+    g.push('    identical(class(ty), class(a)) && identical(levels(ty), levels(a))');
+    g.push('  }');
+    g.push('  if (isFALSE(keeps(p$DOMAIN, ' + ref + '$RDOMAIN))) stop(' + str('DOMAIN in ' + P + ' would not keep its type (') +
+      ', class(p$DOMAIN)[1],');
+    g.push('    ") in combine_supp(); use the dplyr code style for this merge", call. = FALSE)');
+    s.idvars.forEach(function (v) {
+      var iv = v.idvar, k = 'p[[' + str(iv) + ']]';
+      if (iv === '') return;
+      var b = v.type === 'integer' ? 'integer()' : v.type === 'double' ? 'double()' : ref + '$IDVARVAL';
+      g.push('  kt <- keeps(' + k + ', ' + b + ')');
+      g.push('  if (is.na(kt)) stop(' + str(iv + ' in ' + P + ' (') + ', class(' + k + ')[1],');
+      g.push('    ") would not join in the dplyr code; use the dplyr code style for this merge", call. = FALSE)');
+      g.push('  if (!kt) stop(' + str(iv + ' in ' + P + ' would not keep its type (') + ', class(' + k + ')[1],');
+      g.push('    ") in the dplyr code; use the dplyr code style for this merge", call. = FALSE)');
+    });
     // one level's rows (x, kept by the dplyr code's filter or not) and its "ours" keys (po, so)
     var ours = function (v) {
       var iv = v.idvar, k = 'p[[' + str(iv) + ']]';
@@ -3569,10 +3597,22 @@
     };
     // the DOMAIN guard: every parent record the dplyr code joins a SUPP row to must have that
     // row's RDOMAIN as its DOMAIN, or combine_supp() would not join it
+    // It also collects the QNAMs of the rows the dplyr code pivots (kq): the column guard below.
+    var foreign = !(prep && prep.rdomain);
+    g.push('  kq <- character()');
     s.idvars.forEach(function (v) {
       g.push('  xi <- which(q$IDVAR == ' + str(v.idvar) + ')');
       g.push('  if (length(xi)) {');
       ours(v).forEach(function (x) { g.push(x); });
+      g.push('    kq <- c(kq, x$QNAM[!is.na(so)])');
+      if (v.idvar === '' && foreign) {
+        // with no RDOMAIN prep line combine_supp() sees the rows the dplyr code's filter drops;
+        // the key guards cover a keyed one, this a subject-level one
+        g.push('    j <- which(!kept & cnt(pd, rec(x$STUDYID, x$RDOMAIN, x$USUBJID)) > 0)[1]');
+        g.push('    if (!is.na(j)) stop(' + str(S + ' has a row for USUBJID ') + ', as.character(x$USUBJID[j]),');
+        g.push('      ' + str(' that would match ' + P + ' in combine_supp() but not in the dplyr code; ' +
+          'use the dplyr code style for this merge') + ', call. = FALSE)');
+      }
       g.push('    sdom <- dom(x$RDOMAIN, "\\004")');
       g.push('    i <- which(cnt(paste(po, pdom, sep = "\\n"), paste(so, sdom, sep = "\\n")) < cnt(po, so))[1]');
       g.push('    if (!is.na(i)) {');
@@ -3621,6 +3661,33 @@
       }
       g.push('  }');
     });
+    // The column guard: combine_supp() makes a column of every QNAM it is given, the dplyr code of
+    // the QNAMs of the rows it pivots (kq: kept by its RDOMAIN filter, with a key that converts)
+    var tl = '; use the dplyr code style for this merge';
+    g.push('  nq <- setdiff(unique(q$QNAM), kq)');
+    g.push('  if (length(nq)) stop(' + str(S + ' QNAM ') + ', nq[1],');
+    g.push('    ' + str(' would be a column in combine_supp() but not in the dplyr code' + tl) + ', call. = FALSE)');
+    // The label guards: combine_supp() labels each QNAM with its last QLABEL in
+    // unique(supp[c("QNAM", "QLABEL")]), as it is (a factor too, and a factor QNAM picks the column
+    // by its code); the dplyr code with the plan's label. NA and "" are no label.
+    g.push('  if (is.factor(' + ref + '$QNAM)) stop(' +
+      str(S + ' QNAM is a factor, so combine_supp() would label the wrong columns' + tl) + ', call. = FALSE)');
+    g.push('  if (is.factor(' + ref + '$QLABEL)) stop(' +
+      str(S + ' QLABEL is a factor, so combine_supp() would set factor labels' + tl) + ', call. = FALSE)');
+    var labs = suppLabels(s);
+    g.push('  ours <- ' + (labs.length ? 'c(' + labs.map(function (x) {
+      return ident(x.qnam) + ' = ' + str(x.label);
+    }).join(', ') + ')' : 'character()'));
+    g.push('  said <- function(v) if (nzchar(v)) paste0("\\"", v, "\\"") else "none"');
+    // (a SUPP with no QLABEL is left to combine_supp()'s own column check)
+    g.push('  lab <- if ("QLABEL" %in% names(' + ref + ')) unique(' + ref + '[c("QNAM", "QLABEL")]) else list(QNAM = NULL)');
+    g.push('  for (n in unique(lab$QNAM[!is.na(lab$QNAM)])) {');
+    g.push('    a <- if (n %in% names(ours)) ours[[n]] else ""');
+    g.push('    b <- as.character(utils::tail(lab$QLABEL[lab$QNAM %in% n], 1))');
+    g.push('    if (is.na(b)) b <- ""');
+    g.push('    if (!identical(a, b)) stop(n, " label would be ", said(b), " in combine_supp(), not ", said(a),');
+    g.push('      ' + str(tl) + ', call. = FALSE)');
+    g.push('  }');
     g.push('})');
     out.push(g.join('\n'));
     return { code: out.join('\n'), ref: ref };
