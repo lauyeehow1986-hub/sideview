@@ -822,6 +822,49 @@ test_that("a foreign subject-level row combine_supp() would join stops (later cu
   expect_no_match(got, "use the dplyr code style", fixed = TRUE)
 })
 
+test_that("grouped or rowwise inputs stop (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  # with (cs_suppqual) and without (cs_ok, cs_chr) the RDOMAIN prep line
+  expect_true(cs_case("cs_suppqual")$field$prep$rdomain)
+  expect_false(cs_case("cs_ok")$field$prep$rdomain)
+  why <- ", which combine_supp() and the dplyr code treat differently"
+  for (nm in c("cs_ok", "cs_suppqual", "cs_chr")) {
+    k <- cs_case(nm)
+    expect_true(k$field$ok, info = nm)
+    p <- k$parent
+    s <- k$supp
+    for (pipe in c("%>%", "|>")) {
+      code <- cs_pharma_code(k, pipe)
+      expect_parses(code, nm)
+      lab <- paste(nm, pipe)
+      # a grouped parent: the dplyr code's label step loses the labels across groups
+      expect_identical(cs_cut_stop(cs_cut(k, parent = dplyr::group_by(p, USUBJID)), code),
+                       paste0("ae is grouped by USUBJID", why, cs_tail), info = lab)
+      expect_identical(cs_cut_stop(cs_cut(k, parent = dplyr::rowwise(p)), code),
+                       paste0("ae is rowwise", why, cs_tail), info = lab)
+      expect_identical(cs_cut_stop(cs_cut(k, parent = dplyr::rowwise(p, USUBJID)), code),
+                       paste0("ae is rowwise (by USUBJID)", why, cs_tail), info = lab)
+      # a grouped SUPP: the dplyr code keeps the group columns
+      for (g in c("RDOMAIN", "IDVAR", "IDVARVAL")) {
+        expect_identical(cs_cut_stop(cs_cut(k, supp = dplyr::group_by(s, dplyr::across(dplyr::all_of(g)))), code),
+                         paste0(k$sn, " is grouped by ", g, why, cs_tail), info = paste(lab, g))
+        expect_identical(cs_cut_stop(cs_cut(k, supp = dplyr::rowwise(s, dplyr::all_of(g))), code),
+                         paste0(k$sn, " is rowwise (by ", g, ")", why, cs_tail), info = paste(lab, g))
+      }
+      # both grouped: the parent is named first
+      expect_identical(cs_cut_stop(cs_cut(k, parent = dplyr::group_by(p, USUBJID),
+                                          supp = dplyr::group_by(s, USUBJID)), code),
+                       paste0("ae is grouped by USUBJID", why, cs_tail), info = lab)
+    }
+    # the same both ways, and no stop: one group, a rowwise SUPP with no group columns, a tibble
+    code <- cs_pharma_code(k)
+    expect_true(cs_same(cs_cut(k, parent = dplyr::group_by(p, STUDYID)), code), info = nm)
+    expect_true(cs_same(cs_cut(k, supp = dplyr::rowwise(s)), code), info = nm)
+    expect_true(cs_same(cs_cut(k, parent = tibble::as_tibble(p), supp = tibble::as_tibble(s)), code), info = nm)
+  }
+})
+
 # ---- JS twin: SideviewPipeline.suppCheck ------------------------------------
 
 test_that("suppKeyType maps col_types", {
@@ -1373,10 +1416,10 @@ test_that("suppCheck: combine_supp needs a type for every column rules 7 and 8 r
   expect_identical(as.character(jsonlite::toJSON(list(t = structure(list(), names = character(0))),
                                                  auto_unbox = TRUE)), '{"t":{}}')
   # a map without one of the columns read: the parent's keys and IDVAR column, the SUPP's
-  # keys, IDVARVAL and QLABEL
+  # keys, IDVARVAL, QLABEL and QNAM
   k <- fx$cs_1e5
   reads <- list(parentTypes = c("STUDYID", "USUBJID", "DOMAIN", "AESEQ"),
-                suppTypes = c("STUDYID", "USUBJID", "RDOMAIN", "IDVARVAL", "QLABEL"))
+                suppTypes = c("STUDYID", "USUBJID", "RDOMAIN", "IDVARVAL", "QLABEL", "QNAM"))
   for (side in names(reads)) {
     for (col in reads[[side]]) {
       types <- lapply(k[[if (side == "parentTypes") 1L else 2L]], function(x) class(x)[1])
@@ -1518,6 +1561,91 @@ test_that("an NA QNAM counts as the text NA in R and JS (as pivot_wider names it
   w2 <- supp_parity("na_qnam_repeat", fx$ae, s2)
   expect_identical(w2$repeats$n, 1L)
   expect_identical(w2$repeats$samples[[1]]$QNAM, "NA")
+})
+
+test_that("a parent IDVARVAL column: the check says no and the guard stops (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  why <- "ae has an IDVARVAL column, which combine_supp() would drop"
+  for (nm in c("cs_ok", "cs_chr", "cs_suppqual")) {
+    k <- cs_case(nm)
+    p2 <- k$parent
+    p2$IDVARVAL <- rep_len(c("a", "b", "c"), nrow(p2))
+    for (pipe in c("%>%", "|>")) {
+      expect_identical(cs_cut_stop(cs_cut(k, parent = p2), cs_pharma_code(k, pipe)), paste0(why, cs_tail),
+                       info = paste(nm, pipe))
+    }
+    # checked on that parent: not ok, so the pharmaverse style writes the dplyr code
+    k2 <- cs_case_of(p2, k$supp, k$sn)
+    expect_false(k2$field$ok, info = nm)
+    expect_identical(k2$field$reason, why, info = nm)
+    # combine_supp() does drop it, the dplyr code keeps it
+    expect_false("IDVARVAL" %in% names(cs_theirs(k2)), info = nm)
+    expect_true("IDVARVAL" %in% names(cs_ours(k2)), info = nm)
+    supp_parity(paste(nm, "parent IDVARVAL"), p2, k$supp, supp_name = k$sn, rdomain = "AE")
+  }
+})
+
+test_that("a factor QNAM or QLABEL: the check says no, as the guard stops", {
+  p <- fx$cs_ok[[1]]
+  s <- fx$cs_ok[[2]]
+  qnam <- "suppae QNAM is a factor, so combine_supp() would label the wrong columns"
+  qlabel <- "suppae QLABEL is a factor, so combine_supp() would set factor labels"
+  all_fac <- as.data.frame(lapply(s, function(x) if (is.character(x)) factor(x) else x))
+  cases <- list(
+    list(transform(s, QNAM = factor(QNAM)), qnam),
+    list(transform(s, QLABEL = factor(QLABEL)), qlabel),
+    list(transform(s, QNAM = factor(QNAM), QLABEL = factor(QLABEL)), qnam),
+    # as read.csv(stringsAsFactors = TRUE) gives it
+    list(all_fac, qnam))
+  for (x in cases) {
+    r <- sv_supp_check(p, x[[1]], parent_name = "ae", supp_name = "suppae", rdomain = "AE")
+    expect_false(r$combine_supp$ok)
+    expect_identical(r$combine_supp$reason, x[[2]])
+    supp_parity(x[[2]], p, x[[1]], rdomain = "AE")
+  }
+  # a factor DOMAIN too still says its own reason first
+  r <- sv_supp_check(transform(p, DOMAIN = factor(DOMAIN)), all_fac, "ae", "suppae", rdomain = "AE")
+  expect_identical(r$combine_supp$reason, "DOMAIN would be text in combine_supp(), not a factor")
+  # the browser needs QNAM's type: without it, it does not guess
+  types <- lapply(s, function(x) class(x)[1])
+  types$QNAM <- NULL
+  r <- supp_js(p, s, extra = list(suppTypes = types))$combine_supp
+  expect_identical(r$reason, "Column types are not known in the browser")
+  # factor QVAL, IDVAR or RDOMAIN give the same result both ways: still ok
+  for (col in c("QVAL", "IDVAR", "RDOMAIN")) {
+    s2 <- s
+    s2[[col]] <- factor(s2[[col]])
+    expect_true(sv_supp_check(p, s2, "ae", "suppae", rdomain = "AE")$combine_supp$ok, info = col)
+    supp_parity(paste("factor", col), p, s2, rdomain = "AE")
+  }
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  ok <- cs_case("cs_ok")
+  for (x in cases) {
+    expect_identical(cs_cut_stop(cs_cut(ok, supp = x[[1]]), cs_pharma_code(ok)), paste0(x[[2]], cs_tail))
+  }
+})
+
+test_that("the widget and gadget payloads carry a factor QNAM's type to the browser", {
+  p <- fx$cs_ok[[1]]
+  s <- transform(fx$cs_ok[[2]], QNAM = factor(QNAM), QLABEL = factor(QLABEL))
+  w <- sideview_widget(ae = p, suppae = s)
+  card <- Filter(function(cd) identical(cd$name, "suppae"), w$x$cards)[[1]]
+  types <- as.list(card$col_types)
+  expect_identical(types$QNAM, "factor")
+  expect_identical(types$QLABEL, "factor")
+  # on the wire as the engine reads it (cardData.col_types)
+  j <- jsonlite::fromJSON(as.character(htmlwidgets:::toJSON(w$x)), simplifyVector = FALSE)
+  jc <- Filter(function(cd) identical(cd$name, "suppae"), j$cards)[[1]]
+  expect_identical(jc$col_types$QNAM, "factor")
+  # the browser's check with exactly those types says no
+  r <- supp_js(p, s, extra = list(suppTypes = types, parentTypes = as.list(w$x$cards[[1]]$col_types)))$combine_supp
+  expect_false(r$ok)
+  expect_identical(r$reason, "suppae QNAM is a factor, so combine_supp() would label the wrong columns")
+  # the gadget: the card header carries the type (the gadget's own check runs in R)
+  html <- as.character(sideview_ui(cards = list(sv_normalize(s, name = "suppae"))))
+  expect_match(html, 'data-col-name="QNAM" data-col-type="factor"', fixed = TRUE)
 })
 
 # ---- server, Auto Map rows, join note (Task 6) ----

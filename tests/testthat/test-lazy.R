@@ -1799,6 +1799,83 @@ test_that("lazy supp check says combine_supp() needs data frames, and flags prep
   expect_null(err$combine_supp)
 })
 
+test_that("lazy supp check: a factor QNAM or a parent IDVARVAL keeps the data-frame reason, prep as memory", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("stringr")
+  fx <- lazy_fixture()
+  f <- sv_cdisc_fixtures()
+  p <- f$cs_ok[[1]]
+  s <- f$cs_ok[[2]]
+  p_idv <- p
+  p_idv$IDVARVAL <- rep_len(c("a", "b", "c"), nrow(p_idv))
+  cases <- list(
+    factor_qnam = list(p, transform(s, QNAM = factor(QNAM)),
+                       "suppae QNAM is a factor, so combine_supp() would label the wrong columns"),
+    factor_qlabel = list(p, transform(s, QLABEL = factor(QLABEL)),
+                         "suppae QLABEL is a factor, so combine_supp() would set factor labels"),
+    parent_idvarval = list(p_idv, s, "ae has an IDVARVAL column, which combine_supp() would drop"))
+  kind_name <- c(duckdb = "a duckdb table", arrow = "an Arrow table")
+  combos <- list(c("arrow", "df"), c("duckdb", "df"), c("df", "arrow"), c("df", "duckdb"),
+                 c("arrow", "arrow"), c("duckdb", "duckdb"))
+  for (nm in names(cases)) {
+    a <- cases[[nm]]
+    want <- sv_supp_check(a[[1]], a[[2]], parent_name = "ae", supp_name = "suppae", rdomain = "AE")
+    # in memory the new rule says no
+    expect_false(want$combine_supp$ok, label = nm)
+    expect_identical(want$combine_supp$reason, a[[3]], label = nm)
+    for (cb in combos) {
+      got <- sv_lazy_supp_check(join_side(a[[1]], cb[1], fx$con, "sp"), join_side(a[[2]], cb[2], fx$con, "ss"),
+                                parent_name = "ae", supp_name = "suppae", rdomain = "AE")
+      lab <- paste(nm, cb[1], "x", cb[2])
+      expect_equal(supp_prep_only(got), supp_prep_only(want), tolerance = 1e-12, label = lab)
+      # lazy data never reaches the rule: rule 2 decides first
+      expect_false(got$combine_supp$ok, label = lab)
+      tbl <- if (cb[1] != "df") c("ae", cb[1]) else c("suppae", cb[2])
+      expect_identical(got$combine_supp$reason,
+                       paste0("combine_supp() needs data frames: ", tbl[1], " is ", kind_name[[tbl[2]]]),
+                       label = lab)
+    }
+  }
+})
+
+test_that("the pharmaverse grouped and IDVARVAL guards pass a lazy parent", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("arrow")
+  fx <- lazy_fixture()
+  f <- sv_cdisc_fixtures()
+  p <- f$cs_ok[[1]]
+  s <- f$cs_ok[[2]]
+  chk <- sv_supp_check(p, s, parent_name = "ae", supp_name = "suppae", rdomain = "AE")
+  expect_true(chk$combine_supp$ok)
+  for (pipe in c("%>%", "|>")) {
+    code <- supp_compose(sv_supp_check_json(chk), pipe = pipe, style = "pharmaverse", combine = "chk.combine_supp")
+    lines <- strsplit(code, "\n", fixed = TRUE)[[1]]
+    open <- which(lines == "local({")[1]
+    q <- which(startsWith(lines, "  q <- "))[1]
+    expect_true(!is.na(open) && !is.na(q) && q > open + 1L, label = pipe)
+    # the guards before the guards' own copy of the SUPP, then a marker: they must not stop
+    head_code <- paste(c(lines[seq_len(q - 1L)], "  'passed'", "})"), collapse = "\n")
+    expect_match(head_code, "combine_supp() and the dplyr code treat differently", fixed = TRUE)
+    expect_match(head_code, "has an IDVARVAL column", fixed = TRUE)
+    DBI::dbWriteTable(fx$con, "gp", p, overwrite = TRUE)
+    lazies <- list(duckdb = dplyr::tbl(fx$con, "gp"),
+                   duckdb_grouped = dplyr::group_by(dplyr::tbl(fx$con, "gp"), USUBJID),
+                   arrow = arrow::arrow_table(p),
+                   arrow_grouped = dplyr::group_by(arrow::arrow_table(p), USUBJID))
+    for (nm in names(lazies)) {
+      env <- list2env(list(ae = lazies[[nm]], suppae = s), parent = globalenv())
+      env$`%>%` <- dplyr::`%>%`
+      # no stop and no warning (names() of a tbl_lazy warns, so the IDVARVAL guard must not call it)
+      got <- tryCatch(eval(parse(text = head_code), envir = env), error = function(e) conditionMessage(e),
+                      warning = function(w) paste("warning:", conditionMessage(w)))
+      expect_identical(got, "passed", label = paste(pipe, nm))
+    }
+  }
+})
+
 test_that("lazy supp check reads a float32 key as the double it collects to, like memory", {
   skip_if_not_installed("duckdb")
   skip_if_not_installed("dbplyr")

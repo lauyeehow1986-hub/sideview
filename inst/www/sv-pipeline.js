@@ -3090,6 +3090,8 @@
     // rule 5: it joins on STUDYID, DOMAIN and USUBJID
     miss = suppSetdiff(COMBINE_PARENT_COLS, c.pNames);
     if (miss.length) return no(c.parentName + ' has no ' + miss[0] + ' column');
+    // it drops a parent IDVARVAL column (ret$IDVARVAL <- NULL); the dplyr code keeps it
+    if (c.pNames.indexOf('IDVARVAL') >= 0) return no(c.parentName + ' has an IDVARVAL column, which combine_supp() would drop');
     // rules 7 and 8 need R's text of each value, so R's class of every column they read
     var typed = function (types, cols) {
       if (types === null || types === undefined || typeof types !== 'object' || Array.isArray(types)) return false;
@@ -3097,7 +3099,7 @@
     };
     var pNeed = ['STUDYID', 'USUBJID', 'DOMAIN'].concat(c.keys,
       c.levels.filter(function (iv) { return iv !== ''; }));
-    var sNeed = ['STUDYID', 'USUBJID', 'RDOMAIN', 'IDVARVAL', 'QLABEL'].concat(c.keys);
+    var sNeed = ['STUDYID', 'USUBJID', 'RDOMAIN', 'IDVARVAL', 'QLABEL', 'QNAM'].concat(c.keys);
     if (!typed(opts.parentTypes, pNeed) || !typed(opts.suppTypes, sNeed)) {
       return no('Column types are not known in the browser');
     }
@@ -3232,14 +3234,19 @@
   }
 
   // Rule 7, the classes (sv_supp_combine_factor): a join turns a factor it joins on into text.
+  // Rule 8, the classes: combine_supp() picks a factor QNAM's column by its code and sets a factor
+  // QLABEL as the label.
   function suppCombineFactor(c) {
     var pTypes = c.opts.parentTypes || {};
-    var isFactor = function (col) { return /^(factor|ordered)$/.test(String(pTypes[col])); };
+    var sTypes = c.opts.suppTypes || {};
+    var isFactor = function (col, types) { return /^(factor|ordered)$/.test(String((types || pTypes)[col])); };
     for (var i = 0; i < c.levels.length; i++) {
       var iv = c.levels[i];
       if (iv !== '' && isFactor(iv)) return iv + ' would be a factor in combine_supp(), not text';
     }
     if (isFactor('DOMAIN')) return 'DOMAIN would be text in combine_supp(), not a factor';
+    if (isFactor('QNAM', sTypes)) return c.suppName + ' QNAM is a factor, so combine_supp() would label the wrong columns';
+    if (isFactor('QLABEL', sTypes)) return c.suppName + ' QLABEL is a factor, so combine_supp() would set factor labels';
     return null;
   }
 
@@ -3448,8 +3455,9 @@
    * The guards are the 0.7.0 ones combine_supp() does not do itself (IDVAR values the plan does not
    * handle, QNAMs at two levels, a repeated QNAM for one record: on the converted key for a numeric
    * level, the trimmed IDVARVAL for a text level), with no clash guard (combine_supp() stops on a
-   * clash). Then the later-cut guards. A DOMAIN guard: each parent record the dplyr code joins a
-   * SUPP row to must have the row's RDOMAIN as DOMAIN (NA never matches). And one key guard per
+   * clash). Then the later-cut guards. First the input guards: a parent grouped into more than one
+   * group or a grouped SUPP (rowwise with group columns too), and a parent IDVARVAL column. A
+   * DOMAIN guard: each parent record the dplyr code joins a SUPP row to must have the row's RDOMAIN as DOMAIN (NA never matches). And one key guard per
    * keyed level: the records a row finds as the dplyr code joins (the merge keys plus the key: by
    * number with suppKeyConv() and its overflow rule, keys as sprintf("%.17g") text so the session's
    * scipen plays no part, or by exact text) must be the records it finds as combine_supp() joins
@@ -3475,7 +3483,24 @@
       out.push(ref + ' <- ' + ql.join(nl));
     }
 
+    var P = String(s.table);
+    var tl = '; use the dplyr code style for this merge';
     var g = ['local({'];
+    // Grouped inputs: the dplyr code's label step loses the labels across the parent's groups, and
+    // its pivot keeps a grouped SUPP's group columns; combine_supp() does neither. One group
+    // (or a rowwise SUPP with no group columns) gives the same result. A lazy table is not a
+    // grouped_df, so these pass it. And combine_supp() drops a parent IDVARVAL column (checked on a
+    // data frame only: names() of a tbl_lazy warns).
+    g.push('  p <- ' + parentRef);
+    g.push('  grp <- function(x) {');
+    g.push('    v <- paste(dplyr::group_vars(x), collapse = ", ")');
+    g.push('    if (!inherits(x, "rowwise_df")) paste("grouped by", v) else if (nzchar(v)) paste0("rowwise (by ", v, ")") else "rowwise"');
+    g.push('  }');
+    g.push('  if (inherits(p, c("grouped_df", "rowwise_df")) && dplyr::n_groups(p) > 1L) stop(' + str(P + ' is ') + ', grp(p),');
+    g.push('    ' + str(', which combine_supp() and the dplyr code treat differently' + tl) + ', call. = FALSE)');
+    g.push('  if (inherits(' + ref + ', c("grouped_df", "rowwise_df")) && length(dplyr::group_vars(' + ref + '))) stop(' + str(S + ' is ') + ', grp(' + ref + '),');
+    g.push('    ' + str(', which combine_supp() and the dplyr code treat differently' + tl) + ', call. = FALSE)');
+    g.push('  if (is.data.frame(p) && "IDVARVAL" %in% names(p)) stop(' + str(P + ' has an IDVARVAL column, which combine_supp() would drop' + tl) + ', call. = FALSE)');
     // the guards' own copy: subject level as "", a missing QNAM as "NA" (as the 0.7.0 <supp>_q)
     g.push('  q <- ' + [ref, 'dplyr::mutate(IDVAR = dplyr::if_else(is.na(IDVAR) | trimws(IDVAR) == "", "", as.character(IDVAR)),\n' +
       '                  QNAM = dplyr::coalesce(as.character(QNAM), "NA"))'].join(gl));
@@ -3523,10 +3548,8 @@
     // keeps (dk), on the merge keys plus, for a keyed level, the converted IDVARVAL (numeric, keys
     // as sprintf("%.17g") text so scipen plays no part) or the exact text. "Theirs" (pt/st) models
     // combine_supp(): STUDYID, DOMAIN == RDOMAIN, USUBJID and the trimmed key text. NA matches NA.
-    var P = String(s.table);
     var pkeys = s.keys.map(function (c) { return 'p[[' + str(c) + ']]'; });
     var xkeys = s.keys.map(function (c) { return 'x[[' + str(c) + ']]'; });
-    g.push('  p <- ' + parentRef);
     g.push('  enc <- function(v) ifelse(is.na(v), "\\001", paste0("\\002", v))');
     g.push('  val <- function(v) {');
     g.push('    if (is.factor(v)) v <- as.character(v)');
@@ -3663,7 +3686,6 @@
     });
     // The column guard: combine_supp() makes a column of every QNAM it is given, the dplyr code of
     // the QNAMs of the rows it pivots (kq: kept by its RDOMAIN filter, with a key that converts)
-    var tl = '; use the dplyr code style for this merge';
     g.push('  nq <- setdiff(unique(q$QNAM), kq)');
     g.push('  if (length(nq)) stop(' + str(S + ' QNAM ') + ', nq[1],');
     g.push('    ' + str(' would be a column in combine_supp() but not in the dplyr code' + tl) + ', call. = FALSE)');

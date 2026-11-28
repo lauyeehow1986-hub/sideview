@@ -423,8 +423,12 @@ sv_supp_combine <- function(parent, supp, side, conv, matched, keys, parent_name
   # rule 5: it joins on STUDYID, DOMAIN and USUBJID
   miss <- setdiff(sv_supp_combine_parent_cols, names(parent))
   if (length(miss)) return(no(paste0(parent_name, " has no ", miss[1], " column")))
+  # it drops a parent IDVARVAL column (ret$IDVARVAL <- NULL); the dplyr code keeps it
+  if ("IDVARVAL" %in% names(parent)) {
+    return(no(paste0(parent_name, " has an IDVARVAL column, which combine_supp() would drop")))
+  }
   why <- sv_supp_combine_rows(parent, side, conv, matched, keys, parent_name)
-  if (is.null(why)) why <- sv_supp_combine_factor(parent, side)
+  if (is.null(why)) why <- sv_supp_combine_factor(parent, supp, supp_name, side)
   if (is.null(why)) why <- sv_supp_combine_labels(side, plan)
   if (!is.null(why)) return(no(why))
   list(ok = TRUE, reason = NULL, prep = prep)
@@ -497,12 +501,16 @@ sv_supp_combine_rows <- function(parent, side, conv, matched, keys, parent_name)
 # Rule 7, the classes: a join changes a factor it joins to text. The dplyr code joins a factor
 # IDVAR key to the text IDVARVAL (so returns it as character), which combine_supp() does not;
 # combine_supp() joins the parent's DOMAIN to RDOMAIN (so returns a factor DOMAIN as character),
-# which the dplyr code does not. STUDYID and USUBJID are joined by both.
-sv_supp_combine_factor <- function(parent, side) {
+# which the dplyr code does not. STUDYID and USUBJID are joined by both. Rule 8, the classes:
+# combine_supp() picks a factor QNAM's column by its integer code and sets a factor QLABEL as the
+# label, so the labels differ (`supp` is the SUPP as given, before the RDOMAIN filter).
+sv_supp_combine_factor <- function(parent, supp, supp_name, side) {
   for (iv in side$levels[nzchar(side$levels)]) {
     if (is.factor(parent[[iv]])) return(paste0(iv, " would be a factor in combine_supp(), not text"))
   }
   if (is.factor(parent$DOMAIN)) return("DOMAIN would be text in combine_supp(), not a factor")
+  if (is.factor(supp$QNAM)) return(paste0(supp_name, " QNAM is a factor, so combine_supp() would label the wrong columns"))
+  if (is.factor(supp$QLABEL)) return(paste0(supp_name, " QLABEL is a factor, so combine_supp() would set factor labels"))
   NULL
 }
 
