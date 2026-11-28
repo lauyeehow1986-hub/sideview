@@ -1196,12 +1196,18 @@ test_that("sv_inexact_cols() names each double column 16-digit JSON does not car
   # 16 digits that R's as.numeric() reads back as x but JSON.parse (and yajl) does not
   rs <- c(0.47360295429825783, 8.3669512206688525e+37, 5853.6245371215045, 230778.35096046329)
   for (i in seq_along(rs)) d[[sprintf("strtod%d", i)]] <- c(rs[i], 1, 1)
-  expect_true(all(as.numeric(formatC(rs, digits = 16, format = "g")) == rs))
+  # which numbers R's parser reads one double off depends on the platform: with 80-bit long
+  # double (x86) the premises here hold; macOS arm64 parses in plain double and reads others off
+  x87 <- isTRUE(.Machine$longdouble.digits == 64L)
+  if (x87) expect_true(all(as.numeric(formatC(rs, digits = 16, format = "g")) == rs))
   bad <- sv_inexact_cols(d)
   expect_true(all(c("three", "big_frac", "frac", "inf", "ninf", "nan", sprintf("strtod%d", 1:4)) %in% bad))
   # eighths, whole numbers to 2^53 and past it while 16 digits hold, 1e300, 5e-324 and 0.1 are
   # exact; 1e15 + k + 0.25 needs 17 digits
-  expect_false(any(c("half", "na_only", "int", "chr", "lgl", sprintf("x%03d", c(151:200, 251:256))) %in% bad))
+  # (x254 is 1e300, which only x86 R reads as the double 16 digits give back; the round trips
+  # below hold it either way)
+  exact <- sprintf("x%03d", c(151:200, 251:253, 255:256, if (x87) 254))
+  expect_false(any(c("half", "na_only", "int", "chr", "lgl", exact) %in% bad))
   expect_true(all(sprintf("x%03d", 201:250) %in% bad))
   rnd <- sprintf("x%03d", 1:150)
   expect_true(any(rnd %in% bad) && !all(rnd %in% bad))
@@ -1380,9 +1386,12 @@ test_that("suppCheck: rule 7 checks the sure region on an IDVARVAL the browser m
   # Number() reads the next double up (past the cut, bad): combine_supp() would not match it
   a <- "1.0000000000000001108e308"
   x <- as.numeric(a)
-  expect_identical(x, 1e308)
-  js <- run_pipeline_js(sprintf("out = [Number('%s') > 1e308, Number('%s') === 1e308];", a, sprintf("%.17g", x)))
-  expect_identical(unlist(js), c(TRUE, TRUE))
+  # only with 80-bit long double: without it R reads this text past the cut too
+  if (isTRUE(.Machine$longdouble.digits == 64L)) {
+    expect_identical(x, 1e308)
+    js <- run_pipeline_js(sprintf("out = [Number('%s') > 1e308, Number('%s') === 1e308];", a, sprintf("%.17g", x)))
+    expect_identical(unlist(js), c(TRUE, TRUE))
+  }
   k <- keyed_dbl(x, a)
   expect_false(r_says(k)$ok)
   for (w in c("exact", "widget")) {
