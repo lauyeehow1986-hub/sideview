@@ -622,6 +622,13 @@ sv_join_js <- function(pairs) {
     return e.connections.length; })()", sv_acc_eng, jsonlite::toJSON(pairs))
 }
 
+# Wait until R has answered the check of every join step. A reply announces its sentence when it
+# lands, so before this it can become the last announcement after any later action.
+sv_wait_join_checks <- function(b) {
+  sv_wait_js(b, sprintf("(() => { const e = %s; return Object.keys(e.joinDiagPending).length === 0 &&
+    e.pipeline.steps.filter(s => s.kind === 'join').every(s => !!e.joinDiag[e.joinDiagSig(s)]); })()", sv_acc_eng))
+}
+
 sv_ann_log <- function(b) unlist(sv_js(b, paste0(sv_acc_eng, ".announceLog.slice()")))
 
 sv_spy_send <- function(b) {
@@ -772,6 +779,7 @@ test_that("Delete removes one join; with several a menu lists each plus all", {
   expect_identical(sv_last_ann(b), "No joins on patients.patient_id.")
   # one
   expect_equal(sv_js(b, sv_join_js(list(c("patients", "patient_id", "visits", "pid")))), 1)
+  expect_true(sv_wait_join_checks(b))
   sv_key(b, "Delete")
   expect_equal(conns(), 0)
   expect_identical(sv_last_ann(b), "Removed 1 join on patients.patient_id.")
@@ -780,6 +788,8 @@ test_that("Delete removes one join; with several a menu lists each plus all", {
   # several: a menu
   sv_js(b, sv_join_js(list(c("patients", "patient_id", "visits", "pid"), c("labs", "patient_id", "patients", "patient_id"))))
   expect_equal(conns(), 2)
+  # the labs join stays after the removal below, so its check must have spoken before that
+  expect_true(sv_wait_join_checks(b))
   sv_key(b, "Delete")
   expect_true(sv_js(b, sprintf("!!%s", menu_js)))
   items <- unlist(sv_js(b, sprintf("[...%s.querySelectorAll('button[role=\"menuitem\"]')].map(x => x.textContent)", menu_js)))
@@ -802,6 +812,7 @@ test_that("Delete removes one join; with several a menu lists each plus all", {
   expect_identical(sv_js(b, paste0(sv_acc_eng, ".connections[0].fromTable")), "labs")
   # All joins on this column
   sv_js(b, sv_join_js(list(c("patients", "patient_id", "visits", "pid"))))
+  expect_true(sv_wait_join_checks(b))
   sv_key(b, "Delete")
   sv_key(b, "End")
   expect_identical(sv_js(b, "document.activeElement.textContent"), "All joins on this column")

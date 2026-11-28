@@ -861,7 +861,7 @@ test_that("grouped or rowwise inputs stop (later cut)", {
     code <- cs_pharma_code(k)
     expect_true(cs_same(cs_cut(k, parent = dplyr::group_by(p, STUDYID)), code), info = nm)
     expect_true(cs_same(cs_cut(k, supp = dplyr::rowwise(s)), code), info = nm)
-    expect_true(cs_same(cs_cut(k, parent = tibble::as_tibble(p), supp = tibble::as_tibble(s)), code), info = nm)
+    expect_true(cs_same(cs_cut(k, parent = dplyr::as_tibble(p), supp = dplyr::as_tibble(s)), code), info = nm)
   }
 })
 
