@@ -21,21 +21,36 @@ yet checked by hand in RStudio.
   without one loads as `"dplyr"`). The pipeline bar has a **Code**
   select to change it, and the style is saved in the pipeline state.
 - In the pharmaverse style an eligible SUPP– merge is written as
-  `<parent chain> %>% metatools::combine_supp(<supp>)`, after only the
-  prep lines it needs (a `dplyr::filter(RDOMAIN == "AE")`, and `IDVAR`
-  blanks set to `NA`) and a guard block. Every other step stays `dplyr`.
-- sideview writes `combine_supp()` only when its result equals the
-  `dplyr` code’s result. Otherwise the merge stays `dplyr` and the step
-  line says why (for example
-  `dplyr: IDVARVAL "01" would not match AESEQ 1 in combine_supp()`). The
-  generated guards stop the code, with a message, on a later data cut
-  where the two would differ.
-- The SUPP check has a `combine_supp` field (`ok`, `reason`, `prep`,
-  `installed`) in R, for lazy tables and in the browser. The Discrepancy
+  `<parent chain> %>% metatools::combine_supp(<supp>)`. The argument is
+  `<supp>_q` when the code needs a prep line (a
+  `dplyr::filter(RDOMAIN == ...)`, or `IDVAR` blanks set to `NA`) or the
+  SUPP table has a step chain. A guard block comes before the pipeline.
+  Every other step stays `dplyr`.
+- sideview writes `combine_supp()` only when the merge check finds its
+  result equal to the `dplyr` code’s. Otherwise the merge stays `dplyr`
+  and the step line says why (for example
+  `dplyr: IDVARVAL "01" would not match AESEQ 1 in combine_supp()`). A
+  merge that needs refreshing also stays `dplyr`.
+- When the code runs, the guard block stops it for the later-data-cut
+  changes that were found and tested: grouped or rowwise inputs, a
+  parent `IDVARVAL` column, `IDVAR` values the merge does not handle, a
+  QNAM on two levels or repeated for a record, a `DOMAIN` or key column
+  that would not keep its type, `DOMAIN`/`RDOMAIN` and key matching that
+  differs, a QNAM column the `dplyr` code would not make, factor `QNAM`
+  or `QLABEL`, and changed labels. This does not prove that no other
+  difference is possible, so run the merge check again on a new data
+  cut. Not every message gives the same advice (see the CDISC article).
+  `combine_supp()` also stops by itself on some changes.
+- The SUPP check has a `combine_supp` field.
+  [`sv_supp_check()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_check.md),
+  also for lazy tables, returns `{ok, reason, prep}`. The browser check
+  returns the same with `installed: null`, and only the gadget and
+  module server sets `installed` to `TRUE` or `FALSE`. The Discrepancy
   merge panel and [`print()`](https://rdrr.io/r/base/print.html) of the
   check show `combine_supp(): yes` or `combine_supp(): no, <reason>` in
-  both styles. `metatools` (0.3.0 or later) stays in `Suggests`; the
-  step line says when it is not installed.
+  both styles. `metatools` (0.3.0 or later) stays in `Suggests`. In the
+  gadget or a module, in the pharmaverse style, the step line of an
+  eligible merge says when it is not installed; the widget cannot know.
 - New message `sideview_code_style` (see CLAUDE.md).
 
 ## sideview 0.10.0 (development)

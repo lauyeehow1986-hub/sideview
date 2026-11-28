@@ -186,10 +186,13 @@ rstudio bridge: R/rstudio.R
     the new data.
   - The list view shows the same offers as real buttons (`appendOffers()`, `data-sv-lv-action="derive-open"`); a
     duplicate open zooms the existing card and announces it.
-- **Pharmaverse code (0.11.0):** same twin rule. `combine_supp` is a field of every SUPP check: `sv_supp_check()`
-  (R/supp.R), `sv_lazy_supp_check()` (R/lazy.R) and `SideviewPipeline.suppCheck()` (sv-pipeline.js) return the same
-  `{ok, reason, prep, installed}` (JS sends `installed: null`, the R handler adds it); test-supp.R / test-lazy.R hold them
-  together. Governing rule: write `metatools::combine_supp()` only when its result equals the dplyr code's; otherwise
+- **Pharmaverse code (0.11.0):** same twin rule. `combine_supp` is a field of every SUPP check without an `{error}`.
+  `sv_supp_check()` (R/supp.R) and `sv_lazy_supp_check()` (R/lazy.R) return only `{ok, reason, prep}` (the lazy one is
+  never ok); `SideviewPipeline.suppCheck()` (sv-pipeline.js) returns the same plus `installed: null`; only the server
+  handler (R/app_server.R) sets `installed` to `TRUE`/`FALSE`. test-supp.R / test-lazy.R hold the twins together.
+  The guard block (`suppCombinePrep()`) only calls `stop()`: it covers the later-cut changes that were found and tested,
+  not every possible one, and its label guard compares with the step's captured plan.
+  Governing rule: write `metatools::combine_supp()` only when its result equals the dplyr code's; otherwise
   the step stays dplyr and says why. `Pipeline.style` (`"dplyr"` / `"pharmaverse"`, `setStyle()`, no undo) is part of the
   pipeline state without a schema bump; a state without one loads as dplyr. `setSuppCheck(key, field|null)` is not state.
   `combineSuppApplies(step)` is rule 6 (steps before the merge) and `combineSuppFor(step)` is the one decision that
