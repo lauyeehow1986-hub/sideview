@@ -439,6 +439,62 @@ test_that("pharmaverse code equals the dplyr code on every ok fixture", {
   expect_identical(n_seen, 13L)
 })
 
+test_that("rule 6: the steps allowed after the merge give the dplyr code's result, labels included", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  k <- cs_case("cs_ok")
+  ae <- k$parent
+  # a second SUPP for the same parent, with a QNAM and label of its own
+  suppfa <- data.frame(STUDYID = ae$STUDYID[1], RDOMAIN = "AE", USUBJID = ae$USUBJID[c(1, 3)], IDVAR = "AESEQ",
+                       IDVARVAL = c("2", "1"), QNAM = "AEXTRA", QLABEL = "Extra flag", QVAL = c("Y", "N"),
+                       QORIG = "CRF", stringsAsFactors = FALSE)
+  chk2 <- sv_supp_check(ae, suppfa, parent_name = "ae", supp_name = "suppfa", rdomain = "AE")
+  expect_true(chk2$combine_supp$ok)
+  js <- sv_supp_check_json(k$chk)
+  second <- sprintf("const chk2 = %s; const st2 = p.add(P.suppStep('ae', 'suppfa', 'AE', chk2.plan), 'm2');
+                     p.setSuppCheck(st2.key, chk2.combine_supp);", sv_supp_check_json(chk2))
+  afters <- list(
+    filter = "p.add({kind:'filter', table:'ae', conds:['AETRTEM == \"Y\"'], combine:'and'});",
+    arrange = "p.add({kind:'arrange', table:'ae', cols:[{col:'AETERM', dir:'desc'}]});",
+    supp = second,
+    all = paste(second, "p.add({kind:'filter', table:'ae', conds:['!is.na(AEXTRA)'], combine:'and'});",
+                "p.add({kind:'arrange', table:'ae', cols:[{col:'AETERM', dir:'desc'}]});"))
+  for (nm in names(afters)) {
+    for (pipe in c("%>%", "|>")) {
+      info <- paste(nm, pipe)
+      d <- supp_compose(js, pipe = pipe, style = "dplyr", combine = "chk.combine_supp", after = afters[[nm]])
+      ph <- supp_compose(js, pipe = pipe, style = "pharmaverse", combine = "chk.combine_supp", after = afters[[nm]])
+      expect_parses(ph, info)
+      expect_match(ph, "metatools::combine_supp(suppae_q)", fixed = TRUE, info = info)
+      if (nm %in% c("supp", "all")) expect_match(ph, "metatools::combine_supp(suppfa", fixed = TRUE, info = info)
+      expect_no_match(ph, "_labels", info = info)
+      a <- supp_run(d, ae = ae, suppae = k$supp, suppfa = suppfa)
+      b <- tryCatch(suppressWarnings(supp_run(ph, ae = ae, suppae = k$supp, suppfa = suppfa)),
+                    error = function(e) e)
+      expect_false(inherits(b, "error"), info = info)
+      if (!inherits(b, "error")) {
+        expect_true(supp_same_result(a, b), info = info)
+        expect_identical(attr(b$AETRTEM, "label"), "Treatment Emergent", info = info)
+      }
+    }
+  }
+})
+
+test_that("rule 6: a step after the merge that changes labels writes the dplyr code", {
+  skip_if_not_installed("tidyr")
+  k <- cs_case("cs_ok")
+  js <- sv_supp_check_json(k$chk)
+  afters <- c(
+    mutate = "p.add({kind:'mutate', table:'ae', name:'AETRTEM', expr:'dplyr::if_else(AETRTEM == \"Y\", \"yes\", \"no\")'});",
+    rename = "p.add({kind:'rename', table:'ae', from:'AETRTEM', to:'TRTEM'});")
+  for (nm in names(afters)) {
+    d <- supp_compose(js, style = "dplyr", combine = "chk.combine_supp", after = afters[[nm]])
+    ph <- supp_compose(js, style = "pharmaverse", combine = "chk.combine_supp", after = afters[[nm]])
+    expect_identical(ph, d, info = nm)
+    expect_no_match(ph, "combine_supp", fixed = TRUE, info = nm)
+  }
+})
+
 test_that("text-match guard on a later data cut", {
   skip_if_not_installed("metatools", "0.3.0")
   skip_if_not_installed("tidyr")
@@ -750,9 +806,9 @@ test_that("type guards: a key or DOMAIN whose type a join would change stops (la
                              supp = transform(ok$supp, RDOMAIN = factor(RDOMAIN))), code))
   # a numeric level: the dplyr code joins the key to an integer, combine_supp() as text
   expect_identical(cs_cut_stop(cs_cut(ok, parent = transform(p, AESEQ = factor(AESEQ))), code),
-                   paste0("AESEQ in ae (factor) would not join in the dplyr code", cs_tail))
+                   paste0("AESEQ in ae (factor) cannot be joined to the IDVARVAL values; convert it before the merge"))
   expect_identical(cs_cut_stop(cs_cut(ok, parent = transform(p, AESEQ = as.character(AESEQ))), code),
-                   paste0("AESEQ in ae (character) would not join in the dplyr code", cs_tail))
+                   paste0("AESEQ in ae (character) cannot be joined to the IDVARVAL values; convert it before the merge"))
   expect_true(cs_same(cs_cut(ok, parent = transform(p, AESEQ = as.numeric(AESEQ))), code))
   # checked on a double key, run on an integer one: the dplyr code's join makes it double
   dk <- cs_case_of(transform(p, AESEQ = as.numeric(AESEQ)), ok$supp)
@@ -766,7 +822,7 @@ test_that("type guards: a key or DOMAIN whose type a join would change stops (la
   expect_identical(cs_cut_stop(cs_cut(chr, parent = transform(cp, AEGRPID = factor(AEGRPID))), code),
                    paste0("AEGRPID in ae would not keep its type (factor) in the dplyr code", cs_tail))
   expect_identical(cs_cut_stop(cs_cut(chr, parent = transform(cp, AEGRPID = c(1, 2, 1))), code),
-                   paste0("AEGRPID in ae (numeric) would not join in the dplyr code", cs_tail))
+                   paste0("AEGRPID in ae (numeric) cannot be joined to the IDVARVAL values; convert it before the merge"))
   expect_true(cs_same(cs_cut(chr, parent = transform(cp, AEGRPID = factor(AEGRPID)),
                              supp = transform(chr$supp, IDVARVAL = factor(IDVARVAL))), code))
   # STUDYID and USUBJID are joined by both: their type may change

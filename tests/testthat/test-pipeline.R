@@ -1677,7 +1677,8 @@ test_that("combineSuppApplies: rule 6, and combineSuppFor: the one decision", {
   expect_identical(out$supp, list(ok = FALSE, reason = "suppae has steps before the merge"))
   expect_identical(out$suppAfter$reason, "suppae has steps before the merge")
   expect_true(out$off$ok)
-  expect_true(out$mutAfter$ok)
+  expect_identical(out$mutAfter,
+                   list(ok = FALSE, reason = "ae has steps after the merge that combine_supp() cannot check"))
   expect_false(out$notSupp$ok)
   expect_true(out$forOk$ok)
   expect_null(out$forOk$reason)
@@ -1691,6 +1692,65 @@ test_that("combineSuppApplies: rule 6, and combineSuppFor: the one decision", {
   expect_identical(out$forRule[c("ok", "reason", "rule")],
                    list(ok = FALSE, reason = "ae has steps before the merge that combine_supp() cannot check",
                         rule = "steps"))
+})
+
+test_that("combineSuppApplies: rule 6 also holds the parent's steps after the merge", {
+  fx <- sv_cdisc_fixtures()
+  chk <- supp_chk_json(fx$cs_ok[[1]], fx$cs_ok[[2]])
+  out <- run_pipeline_js(sprintf("
+    const chk = %s;
+    const mk = (after) => {
+      const p = new P.Pipeline();
+      const st = p.add(P.suppStep('ae', 'suppae', 'AE', chk.plan), 'merge');
+      after(p);
+      return { p: p, st: st };
+    };
+    const add = (s) => (p) => p.add(s);
+    const ap = (m) => m.p.combineSuppApplies(m.st);
+    const mut = {kind:'mutate', table:'ae', name:'AETRTEM', expr:'dplyr::if_else(AETRTEM == \"Y\", \"yes\", \"no\")'};
+    const ren = {kind:'rename', table:'ae', from:'AETRTEM', to:'TRTEM'};
+    const sum = {kind:'summarise', table:'ae', groups:['USUBJID'], aggs:[{fn:'n'}]};
+    const flt = {kind:'filter', table:'ae', conds:['AETRTEM == \"Y\"'], combine:'and'};
+    const arr = {kind:'arrange', table:'ae', cols:[{col:'AETERM'}]};
+    const off = mk(add(mut)); off.p.toggle(off.p.steps[1].id);
+    const gone = mk(add(mut)); gone.p.remove(gone.p.steps[1].id);
+    const other = mk(add({kind:'mutate', table:'dm', name:'X', expr:'1'}));
+    const custom = mk(add({kind:'custom', code:'x <- 1'}));
+    const two = mk((p) => p.add(P.suppStep('ae', 'suppfa', 'AE', chk.plan), 'merge2'));
+    const fr = (m) => { m.p.setStyle('pharmaverse'); m.p.setSuppCheck(m.st.key, chk.combine_supp); return m.p.combineSuppFor(m.st); };
+    out = {
+      mutate: ap(mk(add(mut))), rename: ap(mk(add(ren))), summarise: ap(mk(add(sum))),
+      join: ap(mk((p) => p.addJoinKey('ae', 'dm', 'USUBJID', 'USUBJID'))),
+      filter: ap(mk(add(flt))), arrange: ap(mk(add(arr))), supp: ap(two),
+      off: ap(off), gone: ap(gone), other: ap(other), custom: ap(custom),
+      forMut: fr(mk(add(mut))), forFlt: fr(mk(add(flt)))
+    };", chk))
+  why <- "ae has steps after the merge that combine_supp() cannot check"
+  for (nm in c("mutate", "rename", "summarise", "join")) {
+    expect_identical(out[[nm]], list(ok = FALSE, reason = why), info = nm)
+  }
+  for (nm in c("filter", "arrange", "supp", "off", "gone", "other", "custom")) {
+    expect_identical(out[[nm]], list(ok = TRUE, reason = ""), info = nm)
+  }
+  expect_identical(out$forMut[c("ok", "reason", "rule")], list(ok = FALSE, reason = why, rule = "steps"))
+  expect_true(out$forFlt$ok)
+})
+
+test_that("a step after the merge: compose() writes combine_supp() only for the allowed kinds", {
+  fx <- sv_cdisc_fixtures()
+  chk <- supp_chk_json(fx$cs_ok[[1]], fx$cs_ok[[2]])
+  mut <- "p.add({kind:'mutate', table:'ae', name:'X', expr:'1'});"
+  arr <- "p.add({kind:'arrange', table:'ae', cols:[{col:'AETERM'}]});"
+  for (pipe in c("%>%", "|>")) {
+    expect_identical(supp_compose(chk, pipe = pipe, style = "pharmaverse", combine = "chk.combine_supp", after = mut),
+                     supp_compose(chk, pipe = pipe, style = NULL, after = mut))
+    expect_match(supp_compose(chk, pipe = pipe, style = "pharmaverse", combine = "chk.combine_supp", after = arr),
+                 "metatools::combine_supp(suppae_q)", fixed = TRUE)
+    # disabled again: combine_supp() is back
+    expect_match(supp_compose(chk, pipe = pipe, style = "pharmaverse", combine = "chk.combine_supp",
+                              after = paste(mut, "p.toggle(p.steps[1].id);")),
+                 "metatools::combine_supp(suppae_q)", fixed = TRUE)
+  }
 })
 
 test_that("style round-trips through toJSON/load; a state without style is dplyr", {

@@ -2551,15 +2551,18 @@
     return true;
   };
 
-  // Steps a parent may have before a merge that combine_supp() writes: they keep the checked
-  // rows (or a subset of them) and their columns as they were.
+  // Steps a parent may have before or after a merge that combine_supp() writes: they keep the
+  // checked rows (or a subset of them) and their columns, and the QNAM labels, as they were.
   var COMBINE_SUPP_BEFORE = { filter: 1, arrange: 1, supp: 1 };
 
   /**
    * Rule 6 of the pharmaverse style (E1): { ok, reason }. The merge check looks at the two cards,
    * so combine_supp() may stand in for the dplyr code only when the SUPP card has no enabled step of
-   * its own and the parent's enabled steps before the merge only filter, sort or merge. Like
-   * strictApplies(), compose() and the UI both ask here.
+   * its own and the parent's enabled steps before the merge only filter, sort or merge. The same
+   * holds after the merge: the dplyr code sets the QNAM labels where the parent's chain ends,
+   * combine_supp() at the merge, so a later mutate or rename can make the labels differ. Steps that
+   * do not render on the parent's chain (custom, derive) do not count. Like strictApplies(),
+   * compose() and the UI both ask here.
    */
   Pipeline.prototype.combineSuppApplies = function (step) {
     if (!step || step.kind !== 'supp') return { ok: false, reason: 'combine_supp() applies to SUPP merges only.' };
@@ -2575,6 +2578,11 @@
     var earlier = at < 0 ? [] : steps.slice(0, at);
     var other = earlier.some(function (x) { return x.table === step.table && !COMBINE_SUPP_BEFORE[x.kind]; });
     if (other) return { ok: false, reason: step.table + ' has steps before the merge that combine_supp() cannot check' };
+    var later = at < 0 ? [] : steps.slice(at + 1);
+    var after = later.some(function (x) {
+      return x.table === step.table && x.kind !== 'custom' && x.kind !== 'derive' && !COMBINE_SUPP_BEFORE[x.kind];
+    });
+    if (after) return { ok: false, reason: step.table + ' has steps after the merge that combine_supp() cannot check' };
     return { ok: true, reason: '' };
   };
 
@@ -3595,7 +3603,7 @@
       var b = v.type === 'integer' ? 'integer()' : v.type === 'double' ? 'double()' : ref + '$IDVARVAL';
       g.push('  kt <- keeps(' + k + ', ' + b + ')');
       g.push('  if (is.na(kt)) stop(' + str(iv + ' in ' + P + ' (') + ', class(' + k + ')[1],');
-      g.push('    ") would not join in the dplyr code; use the dplyr code style for this merge", call. = FALSE)');
+      g.push('    ") cannot be joined to the IDVARVAL values; convert it before the merge", call. = FALSE)');
       g.push('  if (!kt) stop(' + str(iv + ' in ' + P + ' would not keep its type (') + ', class(' + k + ')[1],');
       g.push('    ") in the dplyr code; use the dplyr code style for this merge", call. = FALSE)');
     });

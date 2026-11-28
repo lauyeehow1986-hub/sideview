@@ -2045,6 +2045,31 @@ function runAllScenarios() {
   s16_e.refreshSuppStep(s16_step.id);
   s16_r.refresh_restores_ok = s16_e.pipeline.suppCombine[s16_key].ok === true &&
     s16_e.generatedCode.indexOf('metatools::combine_supp(') >= 0;
+  // rule 6 after the merge: a mutate on the parent turns the step line, the panel line and the code to dplyr;
+  // disabled or removed, combine_supp() is back. A sort after the merge keeps it.
+  const s16_after = 'ae has steps after the merge that combine_supp() cannot check';
+  const s16_isPh = function () {
+    return s16_e.generatedCode.indexOf('metatools::combine_supp(') >= 0 &&
+      s16_a.el.querySelector('.sideview-code-text').textContent.indexOf('metatools::combine_supp(') >= 0;
+  };
+  const s16_mut = s16_e.pipeline.add({ kind: 'mutate', table: 'ae', name: 'AETRTEM', expr: 'tolower(AETRTEM)' });
+  s16_r.after_mutate_is_dplyr = !s16_isPh() && s16_e.generatedCode.indexOf('suppae_labels') >= 0 &&
+    s16_e.suppLineText(s16_step) === s16_line + ' · dplyr: ' + s16_after &&
+    s16_un((s16_e.renderJoinCheck(), s16_pl())) === 'combine_supp(): no, ' + s16_after;
+  s16_r.after_mutate_in_list = (function () {
+    const b = s16_a.el.querySelector('.sideview-step-diag[data-step-action="supp-diag"]');
+    return !!b && b.textContent === '3 of 3 SUPP rows matched · dplyr: ' + s16_after;
+  })();
+  s16_e.pipeline.toggle(s16_mut.id);
+  s16_r.after_disabled_is_pharmaverse = s16_isPh() && s16_e.suppLineText(s16_step) === s16_line + ' · combine_supp()' &&
+    (s16_e.renderJoinCheck(), s16_pl()) === 'combine_supp(): yes';
+  s16_e.pipeline.toggle(s16_mut.id);
+  s16_r.after_enabled_again_is_dplyr = !s16_isPh();
+  s16_e.pipeline.remove(s16_mut.id);
+  s16_r.after_removed_is_pharmaverse = s16_isPh() && s16_e.suppLineText(s16_step) === s16_line + ' · combine_supp()';
+  const s16_arr = s16_e.pipeline.add({ kind: 'arrange', table: 'ae', cols: [{ col: 'AETERM', dir: 'asc' }] });
+  s16_r.after_arrange_is_pharmaverse = s16_isPh() && s16_e.suppLineText(s16_step) === s16_line + ' · combine_supp()';
+  s16_e.pipeline.remove(s16_arr.id);
   // an {error} reply is not ok, with its text (R34)
   s16_reply(s16_e, s16_key, s16_step, { error: 'The R session is not connected.' });
   s16_r.error_reply_not_ok = s16_e.pipeline.suppCombine[s16_key].ok === false &&
