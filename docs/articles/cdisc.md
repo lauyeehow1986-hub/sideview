@@ -222,8 +222,14 @@ result equal to the `dplyr` code’s. Where it would not be, the step
 stays `dplyr` and the step line says why, for example
 `dplyr: IDVARVAL "01" would not match AESEQ 1 in combine_supp()`. The
 merge panel in the Discrepancy tab shows `combine_supp(): yes` or
-`combine_supp(): no, <reason>` in both styles, and so does `print(chk)`.
-The reasons are:
+`combine_supp(): no, <reason>` in both styles. `print(chk)` shows the
+same line for the reasons
+[`sv_supp_check()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_check.md)
+finds on data frames: the first row and the rows from
+`<supp> has no <COL> column` to the label row. The other reasons come
+from the lazy check, the browser check or the pipeline, and
+[`print()`](https://rdrr.io/r/base/print.html) does not show them. The
+reasons are:
 
 | Reason | When |
 |:---|:---|
@@ -246,7 +252,9 @@ The reasons are:
 | `<COL> has values the browser cannot read exactly` | Browser check only. |
 | `<supp> has steps before the merge` | The SUPP card has an enabled step other than a custom or derived one. |
 | `<parent> has steps before the merge that combine_supp() cannot check` | An earlier enabled step on the parent is not a filter, a sort or a SUPP merge. Those three are allowed. |
+| `<parent> has steps after the merge that combine_supp() cannot check` | A later enabled step on the parent is not a filter, a sort or a SUPP merge. The `dplyr` code sets the QNAM labels where the parent’s chain ends and `combine_supp()` sets them at the merge, so a later step such as a mutate or a rename of a QNAM column could leave the two results with different labels. Those three are allowed. |
 | `Merge needs refreshing` | The data no longer fits the step’s plan. The step line shows this text without the `dplyr:` prefix, and the code stays `dplyr`. |
+| the check’s error | The merge check itself failed (an `{error}` check). `print(chk)` shows `combine_supp(): no, <the error>`; the panel and the step line show `Merge check unavailable`, and the code stays `dplyr`. |
 
 For a `SUPPQUAL` table with rows of other domains, the generated code in
 this example is 130 lines, 125 of them the guard block from `local({` to
@@ -263,11 +271,13 @@ stop for a QNAM on two `IDVAR` levels, for a subject-level row that only
 `combine_supp()` would merge, or for a text key that matches only when
 trimmed. Most messages end “use the dplyr code style for this merge”.
 The message for an unhandled `IDVAR` says “Refresh the merge step.”
-instead, and those for a repeated QNAM or a QNAM on two levels give no
-advice. Some guards are stricter than needed, and in some of the cases
-they stop, the `dplyr` code fails too. `combine_supp()` also stops by
-itself on some changes, such as a new parent column with the name of a
-QNAM.
+instead, the one for a parent key whose type cannot be joined to the
+`IDVARVAL` values (where both codes would fail) says “convert it before
+the merge”, and those for a repeated QNAM or a QNAM on two levels give
+no advice. Some guards are stricter than needed, and in some of the
+cases they stop, the `dplyr` code fails too. `combine_supp()` also stops
+by itself on some changes, such as a new parent column with the name of
+a QNAM.
 
 The guards are not a proof that no other difference is possible. On a
 new data cut, run the merge check again before you rely on the code. A

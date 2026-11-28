@@ -30,7 +30,14 @@ yet checked by hand in RStudio.
   result equal to the `dplyr` code’s. Otherwise the merge stays `dplyr`
   and the step line says why (for example
   `dplyr: IDVARVAL "01" would not match AESEQ 1 in combine_supp()`). A
-  merge that needs refreshing also stays `dplyr`.
+  merge that needs refreshing also stays `dplyr`, and so does a merge
+  whose SUPP card has steps of its own or whose parent has an enabled
+  step before or after the merge other than a filter, a sort or another
+  SUPP merge
+  (`dplyr: ae has steps after the merge that combine_supp() cannot check`):
+  the `dplyr` code sets the QNAM labels where the parent’s chain ends,
+  `combine_supp()` at the merge, so a later mutate or rename could
+  change them.
 - When the code runs, the guard block stops it for the later-data-cut
   changes that were found and tested: grouped or rowwise inputs, a
   parent `IDVARVAL` column, `IDVAR` values the merge does not handle, a
@@ -41,14 +48,17 @@ yet checked by hand in RStudio.
   difference is possible, so run the merge check again on a new data
   cut. Not every message gives the same advice (see the CDISC article).
   `combine_supp()` also stops by itself on some changes.
-- The SUPP check has a `combine_supp` field.
-  [`sv_supp_check()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_check.md),
-  also for lazy tables, returns `{ok, reason, prep}`. The browser check
-  returns the same with `installed: null`, and only the gadget and
-  module server sets `installed` to `TRUE` or `FALSE`. The Discrepancy
-  merge panel and [`print()`](https://rdrr.io/r/base/print.html) of the
-  check show `combine_supp(): yes` or `combine_supp(): no, <reason>` in
-  both styles. `metatools` (0.3.0 or later) stays in `Suggests`. In the
+- The SUPP check has a `combine_supp` field, `{ok, reason, prep}`, from
+  the R checks:
+  [`sv_supp_check()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_check.md)
+  for data frames, and the internal lazy check that the gadget and
+  module use for a lazy card (never ok:
+  `combine_supp() needs data frames`). The browser check returns the
+  same with `installed: null`, and only the gadget and module server
+  sets `installed` to `TRUE` or `FALSE`. The Discrepancy merge panel and
+  [`print()`](https://rdrr.io/r/base/print.html) of the check show
+  `combine_supp(): yes` or `combine_supp(): no, <reason>` in both
+  styles. `metatools` (0.3.0 or later) stays in `Suggests`. In the
   gadget or a module, in the pharmaverse style, the step line of an
   eligible merge says when it is not installed; the widget cannot know.
 - New message `sideview_code_style` (see CLAUDE.md).

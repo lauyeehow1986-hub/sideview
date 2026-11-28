@@ -386,8 +386,13 @@ for example
 <code>dplyr: IDVARVAL "01" would not match AESEQ 1 in combine_supp()</code>.
 The merge panel in the Discrepancy tab shows
 <code>combine_supp(): yes</code> or
-<code>combine_supp(): no, &lt;reason&gt;</code> in both styles, and so
-does <code>print(chk)</code>. The reasons are:</p>
+<code>combine_supp(): no, &lt;reason&gt;</code> in both styles.
+<code>print(chk)</code> shows the same line for the reasons
+<code><a href="../reference/sv_supp_check.html">sv_supp_check()</a></code> finds on data frames: the first row and the
+rows from <code>&lt;supp&gt; has no &lt;COL&gt; column</code> to the
+label row. The other reasons come from the lazy check, the browser check
+or the pipeline, and <code><a href="https://rdrr.io/r/base/print.html" class="external-link">print()</a></code> does not show them. The
+reasons are:</p>
 <table class="table">
 <colgroup>
 <col width="50%">
@@ -495,10 +500,27 @@ or derived one.</td>
 a sort or a SUPP merge. Those three are allowed.</td>
 </tr>
 <tr class="even">
+<td align="left"><code>&lt;parent&gt; has steps after the merge that combine_supp() cannot check</code></td>
+<td align="left">A later enabled step on the parent is not a filter, a
+sort or a SUPP merge. The <code>dplyr</code> code sets the QNAM labels
+where the parent’s chain ends and <code>combine_supp()</code> sets them
+at the merge, so a later step such as a mutate or a rename of a QNAM
+column could leave the two results with different labels. Those three
+are allowed.</td>
+</tr>
+<tr class="odd">
 <td align="left"><code>Merge needs refreshing</code></td>
 <td align="left">The data no longer fits the step’s plan. The step line
 shows this text without the <code>dplyr:</code> prefix, and the code
 stays <code>dplyr</code>.</td>
+</tr>
+<tr class="even">
+<td align="left">the check’s error</td>
+<td align="left">The merge check itself failed (an <code>{error}</code>
+check). <code>print(chk)</code> shows
+<code>combine_supp(): no, &lt;the error&gt;</code>; the panel and the
+step line show <code>Merge check unavailable</code>, and the code stays
+<code>dplyr</code>.</td>
 </tr>
 </tbody>
 </table>
@@ -534,11 +556,14 @@ stop for a QNAM on two <code>IDVAR</code> levels, for a subject-level
 row that only <code>combine_supp()</code> would merge, or for a text key
 that matches only when trimmed. Most messages end “use the dplyr code
 style for this merge”. The message for an unhandled <code>IDVAR</code>
-says “Refresh the merge step.” instead, and those for a repeated QNAM or
-a QNAM on two levels give no advice. Some guards are stricter than
-needed, and in some of the cases they stop, the <code>dplyr</code> code
-fails too. <code>combine_supp()</code> also stops by itself on some
-changes, such as a new parent column with the name of a QNAM.</p>
+says “Refresh the merge step.” instead, the one for a parent key whose
+type cannot be joined to the <code>IDVARVAL</code> values (where both
+codes would fail) says “convert it before the merge”, and those for a
+repeated QNAM or a QNAM on two levels give no advice. Some guards are
+stricter than needed, and in some of the cases they stop, the
+<code>dplyr</code> code fails too. <code>combine_supp()</code> also
+stops by itself on some changes, such as a new parent column with the
+name of a QNAM.</p>
 <p>The guards are not a proof that no other difference is possible. On a
 new data cut, run the merge check again before you rely on the code. A
 changed <code>QLABEL</code> does not by itself make the step need

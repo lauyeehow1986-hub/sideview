@@ -187,15 +187,17 @@ rstudio bridge: R/rstudio.R
   - The list view shows the same offers as real buttons (`appendOffers()`, `data-sv-lv-action="derive-open"`); a
     duplicate open zooms the existing card and announces it.
 - **Pharmaverse code (0.11.0):** same twin rule. `combine_supp` is a field of every SUPP check without an `{error}`.
-  `sv_supp_check()` (R/supp.R) and `sv_lazy_supp_check()` (R/lazy.R) return only `{ok, reason, prep}` (the lazy one is
-  never ok); `SideviewPipeline.suppCheck()` (sv-pipeline.js) returns the same plus `installed: null`; only the server
+  `sv_supp_check()` (R/supp.R, data frames: it does not dispatch to the lazy check) and the internal
+  `sv_lazy_supp_check()` (R/lazy.R, used by the server handler for a lazy card; never ok, `combine_supp() needs data
+  frames`) return only `{ok, reason, prep}`; `SideviewPipeline.suppCheck()` (sv-pipeline.js) returns the same plus `installed: null`; only the server
   handler (R/app_server.R) sets `installed` to `TRUE`/`FALSE`. test-supp.R / test-lazy.R hold the twins together.
   The guard block (`suppCombinePrep()`) only calls `stop()`: it covers the later-cut changes that were found and tested,
   not every possible one, and its label guard compares with the step's captured plan.
   Governing rule: write `metatools::combine_supp()` only when its result equals the dplyr code's; otherwise
   the step stays dplyr and says why. `Pipeline.style` (`"dplyr"` / `"pharmaverse"`, `setStyle()`, no undo) is part of the
   pipeline state without a schema bump; a state without one loads as dplyr. `setSuppCheck(key, field|null)` is not state.
-  `combineSuppApplies(step)` is rule 6 (steps before the merge) and `combineSuppFor(step)` is the one decision that
+  `combineSuppApplies(step)` is rule 6 (no enabled step on the SUPP card; on the parent, only filter, arrange and
+  supp steps before or after the merge, since the dplyr code labels the QNAMs where the parent chain ends) and `combineSuppFor(step)` is the one decision that
   `compose()` and the step line both ask (a stale check, i.e. drift, gives dplyr with `Merge needs refreshing`): do not
   duplicate it. A merge with no check, or a lazy / preview / failing one, stays dplyr. The R-only `installed` flag only
   changes the step-line text. Change a twin together with the others.
