@@ -331,6 +331,8 @@ test_that("list paging of a lazy card asks R for windows", {
   expect_identical(sv_js(b, sprintf("%s.querySelector('table').getAttribute('aria-rowcount')", sec)), "200001")
   btn <- function(label) sprintf("[...%s.querySelectorAll('button')].find(b => b.textContent === '%s')", sec, label)
   first_rows <- function() sv_js(b, sprintf("[...%s.querySelectorAll('tbody tr')].map(tr => ({ i: tr.getAttribute('aria-rowindex'), c: [...tr.cells].map(td => td.textContent) }))", sec))
+  # A page can span two 200-row blocks (two requests): wait for every row, not just the first.
+  page_loaded <- function(index) sprintf("(() => { const t = [...%s.querySelectorAll('tbody tr')]; return t.length === 25 && t[0].getAttribute('aria-rowindex') === '%d' && t.every(r => r.cells[0].textContent !== '\u2026'); })()", sec, index)
   # Go to row 176 (block 0), then Next crosses into block 1: a window request
   set_row <- function(n) sv_js(b, sprintf("(() => { const i = %s.querySelector('input[type=number]');
     i.value = '%d'; i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()", sec, n))
@@ -338,7 +340,7 @@ test_that("list paging of a lazy card asks R for windows", {
   sv_js(b, sprintf("%s.click(); true", btn("Go")))
   n0 <- sv_js(b, "window.__reqs.length")
   sv_js(b, sprintf("%s.click(); true", btn("Next rows")))
-  expect_true(sv_wait_js(b, sprintf("(() => { const r = %s.querySelector('tbody tr'); return !!r && r.getAttribute('aria-rowindex') === '202' && r.cells[0].textContent !== '\u2026'; })()", sec)))
+  expect_true(sv_wait_js(b, page_loaded(202)))
   expect_gt(sv_js(b, "window.__reqs.length"), n0)
   rows <- first_rows()
   expect_equal(length(rows), 25)
@@ -347,7 +349,7 @@ test_that("list paging of a lazy card asks R for windows", {
   # far away: Go to row 4000
   set_row(4000)
   sv_js(b, sprintf("%s.click(); true", btn("Go")))
-  expect_true(sv_wait_js(b, sprintf("(() => { const r = %s.querySelector('tbody tr'); return !!r && r.getAttribute('aria-rowindex') === '4001' && r.cells[0].textContent !== '\u2026'; })()", sec)))
+  expect_true(sv_wait_js(b, page_loaded(4001)))
   rows <- first_rows()
   expect_identical(vapply(rows, function(r) r$c[[1]], ""), as.character(4000:4024))
   expect_identical(vapply(rows, function(r) r$c[[2]], ""), as.character(x[4000:4024]))

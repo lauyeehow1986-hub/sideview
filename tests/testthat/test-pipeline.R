@@ -960,34 +960,7 @@ supp_chk_json <- function(parent, supp, parent_name = "ae", supp_name = "suppae"
   sv_supp_check_json(chk)
 }
 
-# Compose a pipeline holding one supp step built from the check's plan. `before` / `after` are
-# JS run before / after the step is added; `meta` goes to setTables().
-supp_compose <- function(chk_json, pipe = "%>%", table = "ae", supp = "suppae", rdomain = "AE",
-                         meta = "{}", before = "", after = "") {
-  run_pipeline_js(sprintf(
-    "const p = new P.Pipeline(); p.setPipe(%s); p.setTables(%s);
-     const chk = %s;
-     %s
-     p.add(P.suppStep(%s, %s, %s, chk.plan), 'merge');
-     %s
-     out = p.compose();",
-    jsonlite::toJSON(pipe, auto_unbox = TRUE), meta, chk_json, before,
-    jsonlite::toJSON(table, auto_unbox = TRUE), jsonlite::toJSON(supp, auto_unbox = TRUE),
-    jsonlite::toJSON(rdomain, auto_unbox = TRUE), after))
-}
-
-# Run composed code with the given tables bound by name.
-supp_run <- function(code, ...) {
-  skip_if_not_installed("tidyr")  # the generated code pivots with tidyr::pivot_wider()
-  env <- list2env(list(...), parent = globalenv())
-  env$`%>%` <- dplyr::`%>%`
-  eval(parse(text = code), envir = env)
-}
-
-# What a run stops with ("" when it runs).
-supp_stop <- function(code, ...) {
-  tryCatch({ supp_run(code, ...); "" }, error = function(e) conditionMessage(e))
-}
+# supp_compose(), supp_run() and supp_stop() live in helper-cdisc.R (test-supp.R uses them too).
 
 # The merge written by hand: one pivot per IDVAR level, joined on the converted key.
 supp_hand_merge <- function(parent, supp, keys = c("STUDYID", "USUBJID"), idvar = "AESEQ",
@@ -1595,6 +1568,231 @@ test_that("supp step state round trip", {
   expect_equal(out$undo, 1)
   expect_equal(unlist(out$qnams), "AETRTEM")
   expect_identical(out$kind, "supp")
+})
+
+# ---- the pharmaverse code style (E1): combine_supp() for an eligible merge ----
+
+cs_field_js <- function(ok = TRUE, rdomain = FALSE, idvar_na = FALSE, reason = NULL) {
+  jsonlite::toJSON(list(ok = ok, reason = reason, prep = list(rdomain = rdomain, idvar_na = idvar_na)),
+                   auto_unbox = TRUE, null = "null")
+}
+
+test_that("pharmaverse code parses with and without each prep line, %>% and |>", {
+  fx <- sv_cdisc_fixtures()
+  chk <- supp_chk_json(fx$cs_ok[[1]], fx$cs_ok[[2]])
+  for (pipe in c("%>%", "|>")) {
+    for (rd in c(FALSE, TRUE)) {
+      for (na in c(FALSE, TRUE)) {
+        info <- paste(pipe, rd, na)
+        code <- supp_compose(chk, pipe = pipe, style = "pharmaverse",
+                             combine = cs_field_js(rdomain = rd, idvar_na = na))
+        expect_parses(code, info)
+        expect_match(code, "metatools::combine_supp\\(", info = info)
+        expect_no_match(code, "_labels", info = info)
+        expect_no_match(code, "pivot_wider|left_join", info = info)
+        expect_identical(grepl('dplyr::filter(RDOMAIN == "AE")', code, fixed = TRUE), rd, info = info)
+        expect_identical(grepl('dplyr::mutate(IDVAR = dplyr::na_if(trimws(IDVAR), ""))', code, fixed = TRUE),
+                         na, info = info)
+        # no prep line, no SUPP chain: no suppae_q, the guards and the call read suppae
+        expect_identical(grepl("suppae_q", code, fixed = TRUE), rd || na, info = info)
+        call <- if (rd || na) "metatools::combine_supp(suppae_q)" else "metatools::combine_supp(suppae)"
+        expect_match(code, paste0("ae ", pipe, "\n  ", call), fixed = TRUE, info = info)
+        expect_identical(grepl("%>%", code, fixed = TRUE), pipe == "%>%", info = info)
+        # the text-match guard on the numeric AESEQ level, scipen-free by number
+        expect_match(code, 'sprintf("%.17g", ', fixed = TRUE, info = info)
+        expect_match(code, "stringr::str_trim(as.character(", fixed = TRUE, info = info)
+        expect_match(code, "as a number but not as text in combine_supp(); use the dplyr code style for this merge",
+                     fixed = TRUE, info = info)
+      }
+    }
+  }
+  expect_match(code, 'suppae_q <- suppae |>\n  dplyr::filter(RDOMAIN == "AE") |>\n  dplyr::mutate(IDVAR = dplyr::na_if(trimws(IDVAR), ""))',
+               fixed = TRUE)
+  # a character level writes the trim guard and the DOMAIN guard, not the by-number guard
+  code <- supp_compose(supp_chk_json(fx$cs_chr[[1]], fx$cs_chr[[2]]), style = "pharmaverse",
+                       combine = cs_field_js())
+  expect_parses(code)
+  expect_no_match(code, "as a number but not as text", fixed = TRUE)
+  expect_match(code, "only when trimmed, as in combine_supp(); use the dplyr code style for this merge", fixed = TRUE)
+  expect_match(code, " does not match RDOMAIN ", fixed = TRUE)
+  expect_match(code, "metatools::combine_supp(suppae)", fixed = TRUE)
+})
+
+test_that("dplyr style, a not-ok field, a missing field, or drift compose the 0.7.0 code", {
+  fx <- sv_cdisc_fixtures()
+  chk <- supp_chk_json(fx$cs_ok[[1]], fx$cs_ok[[2]])
+  mut <- "p.add({kind:'mutate', table:'ae', name:'X', expr:'1'});"
+  for (pipe in c("%>%", "|>")) {
+    base <- supp_compose(chk, pipe = pipe, style = NULL)
+    expect_match(base, "suppae_labels <-", fixed = TRUE)
+    ok <- cs_field_js(idvar_na = TRUE)
+    expect_identical(supp_compose(chk, pipe = pipe, style = "dplyr", combine = ok), base)
+    expect_identical(supp_compose(chk, pipe = pipe, style = "dplyr"), base)
+    expect_identical(supp_compose(chk, pipe = pipe, style = "pharmaverse",
+                                  combine = cs_field_js(ok = FALSE, reason = "x")), base)
+    expect_identical(supp_compose(chk, pipe = pipe, style = "pharmaverse"), base)
+    drift <- cs_field_js(ok = FALSE, reason = "Merge needs refreshing", idvar_na = TRUE)
+    expect_identical(supp_compose(chk, pipe = pipe, style = "pharmaverse", combine = drift), base)
+    # rule 6: a mutate before the merge
+    expect_identical(supp_compose(chk, pipe = pipe, style = "pharmaverse", combine = ok, before = mut),
+                     supp_compose(chk, pipe = pipe, style = NULL, before = mut))
+    # the check's own field when it is not ok
+    k01 <- supp_chk_json(fx$cs_key01[[1]], fx$cs_key01[[2]])
+    expect_identical(supp_compose(k01, pipe = pipe, style = "pharmaverse", combine = "chk.combine_supp"),
+                     supp_compose(k01, pipe = pipe, style = NULL))
+  }
+})
+
+test_that("combineSuppApplies: rule 6, and combineSuppFor: the one decision", {
+  fx <- sv_cdisc_fixtures()
+  chk <- supp_chk_json(fx$cs_ok[[1]], fx$cs_ok[[2]])
+  out <- run_pipeline_js(sprintf("
+    const chk = %s;
+    const mk = (before, after) => {
+      const p = new P.Pipeline();
+      (before || []).forEach(s => p.add(s));
+      const st = p.add(P.suppStep('ae', 'suppae', 'AE', chk.plan), 'merge');
+      (after || []).forEach(s => p.add(s));
+      return { p: p, st: st };
+    };
+    const flt = (t) => ({kind:'filter', table:t, conds:['AESEQ > 0'], combine:'and'});
+    const mut = {kind:'mutate', table:'ae', name:'X', expr:'1'};
+    const arr = {kind:'arrange', table:'ae', cols:[{col:'AESEQ'}]};
+    const ap = (m) => m.p.combineSuppApplies(m.st);
+    const off = mk([mut]); off.p.toggle(off.p.steps[0].id);
+    const field = chk.combine_supp;
+    const fr = (m, style, f) => { m.p.setStyle(style); m.p.setSuppCheck(m.st.key, f); return m.p.combineSuppFor(m.st); };
+    out = {
+      plain: ap(mk()), filter: ap(mk([flt('ae'), arr])), mutate: ap(mk([mut])),
+      supp: ap(mk([flt('suppae')])), suppAfter: ap(mk([], [flt('suppae')])),
+      off: ap(off), mutAfter: ap(mk([], [mut])), notSupp: mk().p.combineSuppApplies(mut),
+      forOk: fr(mk(), 'pharmaverse', field), forDplyr: fr(mk(), 'dplyr', field),
+      forNone: fr(mk(), 'pharmaverse', null),
+      forBad: fr(mk([mut]), 'pharmaverse', {ok: false, reason: 'Merge needs refreshing', prep: field.prep}),
+      forRule: fr(mk([mut]), 'pharmaverse', field)
+    };", chk))
+  expect_true(out$plain$ok)
+  expect_true(out$filter$ok)
+  expect_identical(out$mutate, list(ok = FALSE, reason = "ae has steps before the merge that combine_supp() cannot check"))
+  expect_identical(out$supp, list(ok = FALSE, reason = "suppae has steps before the merge"))
+  expect_identical(out$suppAfter$reason, "suppae has steps before the merge")
+  expect_true(out$off$ok)
+  expect_identical(out$mutAfter,
+                   list(ok = FALSE, reason = "ae has steps after the merge that combine_supp() cannot check"))
+  expect_false(out$notSupp$ok)
+  expect_true(out$forOk$ok)
+  expect_null(out$forOk$reason)
+  expect_false(out$forDplyr$ok)
+  expect_identical(out$forDplyr$rule, "style")
+  expect_false(out$forNone$ok)
+  expect_identical(out$forNone$rule, "check")
+  # the stored field's reason comes first, then rule 6
+  expect_identical(out$forBad[c("ok", "reason", "rule")],
+                   list(ok = FALSE, reason = "Merge needs refreshing", rule = "check"))
+  expect_identical(out$forRule[c("ok", "reason", "rule")],
+                   list(ok = FALSE, reason = "ae has steps before the merge that combine_supp() cannot check",
+                        rule = "steps"))
+})
+
+test_that("combineSuppApplies: rule 6 also holds the parent's steps after the merge", {
+  fx <- sv_cdisc_fixtures()
+  chk <- supp_chk_json(fx$cs_ok[[1]], fx$cs_ok[[2]])
+  out <- run_pipeline_js(sprintf("
+    const chk = %s;
+    const mk = (after) => {
+      const p = new P.Pipeline();
+      const st = p.add(P.suppStep('ae', 'suppae', 'AE', chk.plan), 'merge');
+      after(p);
+      return { p: p, st: st };
+    };
+    const add = (s) => (p) => p.add(s);
+    const ap = (m) => m.p.combineSuppApplies(m.st);
+    const mut = {kind:'mutate', table:'ae', name:'AETRTEM', expr:'dplyr::if_else(AETRTEM == \"Y\", \"yes\", \"no\")'};
+    const ren = {kind:'rename', table:'ae', from:'AETRTEM', to:'TRTEM'};
+    const sum = {kind:'summarise', table:'ae', groups:['USUBJID'], aggs:[{fn:'n'}]};
+    const flt = {kind:'filter', table:'ae', conds:['AETRTEM == \"Y\"'], combine:'and'};
+    const arr = {kind:'arrange', table:'ae', cols:[{col:'AETERM'}]};
+    const off = mk(add(mut)); off.p.toggle(off.p.steps[1].id);
+    const gone = mk(add(mut)); gone.p.remove(gone.p.steps[1].id);
+    const other = mk(add({kind:'mutate', table:'dm', name:'X', expr:'1'}));
+    const custom = mk(add({kind:'custom', code:'x <- 1'}));
+    const two = mk((p) => p.add(P.suppStep('ae', 'suppfa', 'AE', chk.plan), 'merge2'));
+    const fr = (m) => { m.p.setStyle('pharmaverse'); m.p.setSuppCheck(m.st.key, chk.combine_supp); return m.p.combineSuppFor(m.st); };
+    out = {
+      mutate: ap(mk(add(mut))), rename: ap(mk(add(ren))), summarise: ap(mk(add(sum))),
+      join: ap(mk((p) => p.addJoinKey('ae', 'dm', 'USUBJID', 'USUBJID'))),
+      filter: ap(mk(add(flt))), arrange: ap(mk(add(arr))), supp: ap(two),
+      off: ap(off), gone: ap(gone), other: ap(other), custom: ap(custom),
+      forMut: fr(mk(add(mut))), forFlt: fr(mk(add(flt)))
+    };", chk))
+  why <- "ae has steps after the merge that combine_supp() cannot check"
+  for (nm in c("mutate", "rename", "summarise", "join")) {
+    expect_identical(out[[nm]], list(ok = FALSE, reason = why), info = nm)
+  }
+  for (nm in c("filter", "arrange", "supp", "off", "gone", "other", "custom")) {
+    expect_identical(out[[nm]], list(ok = TRUE, reason = ""), info = nm)
+  }
+  expect_identical(out$forMut[c("ok", "reason", "rule")], list(ok = FALSE, reason = why, rule = "steps"))
+  expect_true(out$forFlt$ok)
+})
+
+test_that("a step after the merge: compose() writes combine_supp() only for the allowed kinds", {
+  fx <- sv_cdisc_fixtures()
+  chk <- supp_chk_json(fx$cs_ok[[1]], fx$cs_ok[[2]])
+  mut <- "p.add({kind:'mutate', table:'ae', name:'X', expr:'1'});"
+  arr <- "p.add({kind:'arrange', table:'ae', cols:[{col:'AETERM'}]});"
+  for (pipe in c("%>%", "|>")) {
+    expect_identical(supp_compose(chk, pipe = pipe, style = "pharmaverse", combine = "chk.combine_supp", after = mut),
+                     supp_compose(chk, pipe = pipe, style = NULL, after = mut))
+    expect_match(supp_compose(chk, pipe = pipe, style = "pharmaverse", combine = "chk.combine_supp", after = arr),
+                 "metatools::combine_supp(suppae_q)", fixed = TRUE)
+    # disabled again: combine_supp() is back
+    expect_match(supp_compose(chk, pipe = pipe, style = "pharmaverse", combine = "chk.combine_supp",
+                              after = paste(mut, "p.toggle(p.steps[1].id);")),
+                 "metatools::combine_supp(suppae_q)", fixed = TRUE)
+  }
+})
+
+test_that("style round-trips through toJSON/load; a state without style is dplyr", {
+  fx <- sv_cdisc_fixtures()
+  chk <- supp_chk_json(fx$cs_ok[[1]], fx$cs_ok[[2]])
+  out <- run_pipeline_js(sprintf("
+    const chk = %s;
+    const seen = [];
+    const p = new P.Pipeline({ onChange: (x, label) => seen.push(label) });
+    const st = p.add(P.suppStep('ae', 'suppae', 'AE', chk.plan), 'merge');
+    const undo0 = p.undoStack.length;
+    p.setStyle('pharmaverse');
+    const c1 = p.setSuppCheck(st.key, chk.combine_supp);
+    const c2 = p.setSuppCheck(st.key, JSON.parse(JSON.stringify(chk.combine_supp)));
+    const json = JSON.parse(JSON.stringify(p.toJSON()));
+    const q = new P.Pipeline(); q.load(json);
+    const old = new P.Pipeline(); old.load({ steps: json.steps, pipe: '%%>%%' });
+    const was = new P.Pipeline({ style: 'pharmaverse' }); was.load({ steps: json.steps, pipe: '%%>%%' });
+    const bad = new P.Pipeline({ style: 'pharmaverse' }); bad.load({ steps: json.steps, style: 'tidy' });
+    const c3 = p.setSuppCheck(st.key, null);
+    const c4 = p.setSuppCheck(st.key, null);
+    out = { keys: Object.keys(json), style: json.style, q: q.style, old: old.style, was: was.style, bad: bad.style,
+            fresh: new P.Pipeline().style,
+            opt: new P.Pipeline({ style: 'pharmaverse' }).style, bogus: (() => { const r = new P.Pipeline();
+              r.setStyle('tidy'); return r.style; })(),
+            undo: p.undoStack.length - undo0, seen: seen, c: [c1, c2, c3, c4],
+            saved: JSON.stringify(json).indexOf('combine') };", chk))
+  expect_identical(unlist(out$keys), c("steps", "pipe", "style"))
+  expect_identical(out$style, "pharmaverse")
+  expect_identical(out$q, "pharmaverse")
+  expect_identical(out$old, "dplyr")
+  # a state without a valid style loads as dplyr even into a pharmaverse pipeline
+  expect_identical(out$was, "dplyr")
+  expect_identical(out$bad, "dplyr")
+  expect_identical(out$fresh, "dplyr")
+  expect_identical(out$opt, "pharmaverse")
+  expect_identical(out$bogus, "dplyr")
+  # setStyle and setSuppCheck push no undo; 'checks' only on a change; the field is never saved
+  expect_equal(out$undo, 0)
+  expect_identical(unlist(out$seen), c("merge", "style", "checks", "checks"))
+  expect_identical(unlist(out$c), c(TRUE, FALSE, TRUE, FALSE))
+  expect_equal(out$saved, -1)
 })
 
 # ---- derive steps (D1 task 7) ----

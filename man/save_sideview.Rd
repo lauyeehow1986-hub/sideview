@@ -13,6 +13,7 @@ save_sideview(
   max_rows = 5000,
   cdisc = "auto",
   view = getOption("sideview.view", "canvas"),
+  code_style = NULL,
   ...
 )
 }
@@ -38,6 +39,10 @@ keeps the cap it was built with.}
 
 \item{view}{Starting view when \code{widget} is table data (see \code{\link[=sideview_widget]{sideview_widget()}}).
 A widget you built yourself keeps its own.}
+
+\item{code_style}{\code{NULL} (default) keeps the widget's own style (\code{"dplyr"} for table data); \code{"dplyr"}
+or \code{"pharmaverse"} sets it (see \code{\link[=sideview_widget]{sideview_widget()}}). A workspace the widget carries
+that records a style still wins in the browser.}
 
 \item{...}{Additional arguments passed to \code{htmlwidgets::saveWidget()}.}
 }

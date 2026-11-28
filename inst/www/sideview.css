@@ -1484,12 +1484,18 @@ html.sv-standalone body {
   cursor: default;
 }
 
-.sideview-container .sideview-pipe-choice {
+.sideview-container .sideview-pipe-choice,
+.sideview-container .sideview-code-choice {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   font-size: 11px;
   color: var(--sv-text-muted);
+}
+
+/* the bar must fit at 560px: the controls wrap, the count stays on the right */
+.sideview-container.sv-narrow .sideview-pipeline-bar {
+  flex-wrap: wrap;
 }
 
 .sideview-container .sideview-step-count {
@@ -1546,7 +1552,8 @@ html.sv-standalone body {
 }
 
 .sideview-container .sideview-step select,
-.sideview-container .sideview-pipe-select {
+.sideview-container .sideview-pipe-select,
+.sideview-container .sideview-code-select {
   font-size: 11px;
   padding: 1px 2px;
   border: 1px solid var(--sv-border);
@@ -2019,6 +2026,13 @@ html.sv-standalone body {
   color: var(--sv-text-muted);
   font-size: 12px;
   font-weight: 600;
+}
+
+.sideview-container .sideview-suppcheck-combine {
+  margin: 4px 0;
+  color: var(--sv-text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .sideview-container .sideview-suppcheck-problems li {

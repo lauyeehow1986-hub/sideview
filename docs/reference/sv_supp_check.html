@@ -19,7 +19,7 @@ that do not convert to the type of the parent column."><meta property="og:image"
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.10.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.11.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -122,8 +122,13 @@ the data still fits it.</p></dd>
     <p>A list with <code>status</code> (<code>"ok"</code>, <code>"warning"</code> or <code>"error"</code>), <code>plan</code>,
 <code>n_parent</code>, <code>n_supp</code>, <code>n_matched</code>, <code>n_orphan</code>, <code>orphan_samples</code>,
 <code>n_other_rdomain</code>, <code>repeats</code>, <code>clashes</code>, <code>two_level</code>, <code>bad_idvarval</code>,
-<code>columns</code>, <code>preview</code> and <code>drift</code>; or just <code>list(error = )</code> when the check
-cannot run.</p>
+<code>columns</code>, <code>preview</code>, <code>drift</code> and <code>combine_supp</code>; or just <code>list(error = )</code>
+when the check cannot run. <code>combine_supp</code> says whether
+<code><a href="https://pharmaverse.github.io/metatools/reference/combine_supp.html" class="external-link">metatools::combine_supp()</a></code> (0.3.0) would give the same result as the
+generated dplyr code: <code>list(ok, reason, prep = list(rdomain, idvar_na))</code>,
+where <code>reason</code> (<code>NULL</code> when <code>ok</code>) is the first difference and <code>prep</code> the
+SUPP lines the call needs first (an <code>RDOMAIN</code> filter; blank <code>IDVAR</code> to
+<code>NA</code>).</p>
 <p><code>sv_supp_key_type()</code>: <code>"integer"</code>, <code>"double"</code>, <code>"character"</code> or <code>NA</code>
 (a factor counts as character, an integer64 as double).
 <code>sv_supp_check_json()</code>: the check as JSON text, one-element arrays kept as

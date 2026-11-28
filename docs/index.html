@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.10.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.11.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -103,6 +103,8 @@
 </li>
 <li>
 <strong>CDISC Awareness</strong>: SDTM, SEND and ADaM tables get a domain badge (<code>DM</code>, <code>AE</code>, <code>ADSL</code>, …) and variable labels, and <code><a href="reference/sv_read_cdisc.html">sv_read_cdisc()</a></code> reads <code>.xpt</code>, <code>.sas7bdat</code>, Dataset-JSON and parquet files. See the <a href="https://lauyeehow1986-hub.github.io/sideview/articles/cdisc.html">CDISC article</a>. Auto Map suggests CDISC join keys, and a <strong>Merge into AE</strong> button folds a <code>SUPPAE</code> (or <code>SUPPQUAL</code>) table into its parent with a merge check. It is for awareness, not conformance checking.</li>
+<li>
+<strong>Pharmaverse Code</strong>: <code>code_style = "pharmaverse"</code> (or the Code select in the pipeline bar) writes a SUPP– merge with <code><a href="https://pharmaverse.github.io/metatools/reference/combine_supp.html" class="external-link">metatools::combine_supp()</a></code> when its result equals the <code>dplyr</code> code’s, and says why when it does not. Running that code needs <code>metatools</code> 0.3.0 or later.</li>
 <li>
 <strong>Date-Window Joins</strong>: Click the calendar on a join step to join on a date rule (a window of days, between, nearest before or after, overlaps). The join check shows the rows the rule dropped, and <strong>Strict</strong> adds dplyr’s <code>relationship</code> and <code>unmatched</code> checks.</li>
 <li>

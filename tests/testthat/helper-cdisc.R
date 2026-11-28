@@ -103,7 +103,7 @@ sv_cdisc_fixtures <- function() {
   suppae_nostudy <- suppae[, setdiff(names(suppae), "STUDYID")]
   supp_na_idvar <- supp_cols("AE", usub[1], NA_character_, "", "AESOC2", qval = "Skin")
   suppbw <- supp_cols("BW", usub[1:2], "BWSEQ", c("1", "2"), "BWFLAG")
-  list(lb = lb, vs = vs, sv = sv, relrec = relrec, adsl_nostudy = adsl_nostudy,
+  c(list(lb = lb, vs = vs, sv = sv, relrec = relrec, adsl_nostudy = adsl_nostudy,
        dm_upper_lower = dm_upper_lower, ae_lower = ae_lower,
        dm = dm, ae = ae, suppae = suppae, labs = labs, ts = ts, xy = xy, adsl = adsl,
        adlb = adlb, adtte = adtte, adae = adae, adlb_pfx = adlb_pfx,
@@ -115,7 +115,132 @@ sv_cdisc_fixtures <- function() {
        mtcars = mtcars, iris = iris,
        ae_nostudy = ae[, setdiff(names(ae), "STUDYID")],
        studyid_only = data.frame(STUDYID = sid, x = 1:n),
-       keys_only = data.frame(STUDYID = sid, USUBJID = usub, VAL = 1:n, stringsAsFactors = FALSE))
+       keys_only = data.frame(STUDYID = sid, USUBJID = usub, VAL = 1:n, stringsAsFactors = FALSE)),
+    sv_cs_fixtures(sid[1], usub))
+}
+
+# ---- combine_supp() fixtures (synthetic): list(parent, supp) pairs ----
+# The parent has two AE records for subject 1 and one for subject 2. The SUPP has the full
+# SDTM column set (QORIG, no QEVAL), as an .xpt file gives it: two keyed AETRTEM rows and one
+# subject-level row with IDVAR "".
+sv_cs_fixtures <- function(sid, usub) {
+  parent <- function(...) {
+    p <- data.frame(STUDYID = sid, DOMAIN = "AE", USUBJID = usub[c(1, 1, 2)], AESEQ = c(1L, 2L, 1L),
+                    AETERM = c("Headache", "Nausea", "Rash"), stringsAsFactors = FALSE)
+    a <- list(...)
+    for (nm in names(a)) p[[nm]] <- a[[nm]]
+    p
+  }
+  rows <- function(usubjid, idvar, idvarval, qnam, qlabel, qval, rdomain = "AE") {
+    data.frame(STUDYID = sid, RDOMAIN = rdomain, USUBJID = usubjid, IDVAR = idvar, IDVARVAL = idvarval,
+               QNAM = qnam, QLABEL = qlabel, QVAL = qval, QORIG = "CRF", stringsAsFactors = FALSE)
+  }
+  keyed <- function(idvarval = c("1", "1"), qlabel = "Treatment Emergent", idvar = "AESEQ",
+                    usubjid = usub[1:2]) {
+    rows(usubjid, idvar, idvarval, "AETRTEM", qlabel, c("Y", "N"))
+  }
+  subj <- function(idvar = "") rows(usub[1], idvar, "", "AESUBJQ", "Subject qualifier", "Z")
+  ok <- rbind(keyed(), subj())
+  cm <- rows(usub[1:2], "CMSEQ", c("1", "2"), "CMPRESP", "Pre-specified", "Y", rdomain = "CM")
+  grp <- c("G1", "G2", "G1")
+  dbl <- function(x) parent(AESEQ = c(1, 2, x))
+  list(
+    cs_ok = list(parent(), ok),
+    cs_na_idvar = list(parent(), rbind(keyed(), subj(NA_character_))),
+    cs_suppqual = list(parent(), rbind(keyed(), cm)),
+    cs_suppqual_blank_last = list(parent(), rbind(keyed(qlabel = c("Treatment Emergent", "")), cm)),
+    # bad keys
+    cs_key01 = list(parent(), keyed(c("01", "1"))),
+    cs_key_sp = list(parent(), keyed(c(" 1 ", "1"))),
+    cs_key_dec = list(parent(), keyed(c("1.0", "1"))),
+    cs_key_nbsp = list(parent(), keyed(c("1\u00a0", "1"))),
+    cs_key_nel = list(parent(), keyed(c("1\u0085", "1"))),
+    # numeric keys: subject 2's AESEQ is the third parent row
+    cs_1e5 = list(dbl(100000), keyed(c("1", "100000"))),
+    cs_1e5_sci = list(dbl(100000), keyed(c("1", "1e+05"))),
+    cs_110000 = list(dbl(110000), keyed(c("1", "110000"))),
+    cs_frac = list(dbl(0.1 + 0.2), keyed(c("1", "0.3"))),
+    # key types
+    cs_int = list(parent(), keyed()),
+    cs_fac = list(parent(AEGRPID = factor(grp)), keyed(c("G2", "G1"), idvar = "AEGRPID")),
+    cs_chr = list(parent(AEGRPID = grp), keyed(c("G2", "G1"), idvar = "AEGRPID")),
+    # combine_supp() joins DOMAIN to RDOMAIN, so its result has DOMAIN as character
+    cs_fac_domain = list(parent(DOMAIN = factor("AE")), ok),
+    # columns
+    cs_no_qorig = list(parent(), ok[setdiff(names(ok), "QORIG")]),
+    cs_qeval = list(parent(), cbind(ok, QEVAL = "", stringsAsFactors = FALSE)),
+    cs_extra = list(parent(), cbind(ok, EXTRA = 1)),
+    cs_no_domain = list(parent()[c("STUDYID", "USUBJID", "AESEQ", "AETERM")], ok),
+    cs_no_studyid = list(parent()[c("DOMAIN", "USUBJID", "AESEQ", "AETERM")], ok),
+    # labels
+    cs_lab_two = list(parent(), keyed(qlabel = c("TE one", "TE two"))),
+    cs_lab_blank_last = list(parent(), keyed(qlabel = c("Treatment Emergent", ""))),
+    cs_lab_all_blank = list(parent(), keyed(qlabel = "")),
+    cs_lab_all_na = list(parent(), keyed(qlabel = NA_character_)),
+    # merge outcomes
+    cs_orphan = list(parent(), keyed(c("1", "9"))),
+    cs_repeat = list(parent(), keyed(usubjid = usub[c(1, 1)])),
+    cs_two_level = list(parent(), rbind(keyed(), transform(subj(), QNAM = "AETRTEM"))),
+    cs_clash = list(parent(AETRTEM = "x"), keyed()),
+    cs_domain_lower = list(parent(DOMAIN = "ae"), subj())
+  )
+}
+
+# Two merge results are the same: the same rows in the same order, the same column set (order
+# ignored), the same values and classes, and the same label per column (NULL, NA and "" are none).
+supp_same_result <- function(a, b) {
+  a <- as.data.frame(a, stringsAsFactors = FALSE)
+  b <- as.data.frame(b, stringsAsFactors = FALSE)
+  if (nrow(a) != nrow(b) || ncol(a) != ncol(b) || !setequal(names(a), names(b))) return(FALSE)
+  label <- function(x) {
+    l <- attr(x, "label", exact = TRUE)
+    # a label that is not text (a factor QLABEL makes one) is compared as it is, never as none
+    if (is.null(l) || (length(l) == 1L && (is.na(l) || (is.character(l) && !nzchar(l))))) NA_character_ else l
+  }
+  bare <- function(x) {
+    attr(x, "label") <- NULL
+    x
+  }
+  for (nm in names(a)) {
+    if (!identical(label(a[[nm]]), label(b[[nm]]))) return(FALSE)
+    if (!identical(bare(a[[nm]]), bare(b[[nm]]))) return(FALSE)
+  }
+  TRUE
+}
+
+# Compose a pipeline holding one supp step built from the check's plan. `before` / `after` are
+# JS run before / after the step is added; `meta` goes to setTables(). After the add, `style`
+# goes to setStyle() and `combine` (a JS expression, e.g. "chk.combine_supp" or a JSON object;
+# NULL is null) to setSuppCheck() for the step; `style = NULL` makes neither call.
+supp_compose <- function(chk_json, pipe = "%>%", table = "ae", supp = "suppae", rdomain = "AE",
+                         meta = "{}", before = "", after = "", style = "dplyr", combine = NULL) {
+  set <- if (is.null(style)) "" else sprintf("p.setStyle(%s); p.setSuppCheck(st.key, %s);",
+                                             jsonlite::toJSON(style, auto_unbox = TRUE),
+                                             if (is.null(combine)) "null" else combine)
+  run_pipeline_js(sprintf(
+    "const p = new P.Pipeline(); p.setPipe(%s); p.setTables(%s);
+     const chk = %s;
+     %s
+     const st = p.add(P.suppStep(%s, %s, %s, chk.plan), 'merge');
+     %s
+     %s
+     out = p.compose();",
+    jsonlite::toJSON(pipe, auto_unbox = TRUE), meta, chk_json, before,
+    jsonlite::toJSON(table, auto_unbox = TRUE), jsonlite::toJSON(supp, auto_unbox = TRUE),
+    jsonlite::toJSON(rdomain, auto_unbox = TRUE), set, after))
+}
+
+# What a run stops with ("" when it runs).
+supp_stop <- function(code, ...) {
+  tryCatch({ supp_run(code, ...); "" }, error = function(e) conditionMessage(e))
+}
+
+# Run composed code with the given tables bound by name.
+supp_run <- function(code, ...) {
+  skip_if_not_installed("tidyr")  # the generated code pivots with tidyr::pivot_wider()
+  env <- list2env(list(...), parent = globalenv())
+  env$`%>%` <- dplyr::`%>%`
+  eval(parse(text = code), envir = env)
 }
 
 # Normalise a named list of tables into cards with final CDISC tags (as the gadget does).

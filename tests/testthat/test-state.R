@@ -545,3 +545,16 @@ test_that("sv_derive_from_state keeps the exact table name: a name make.names wo
   out <- sv_derive_from_state(cards, list(pipeline = list(steps = list(step("my table"), step("my_table")))))
   expect_identical(vapply(out, function(cd) cd$name, ""), c("ae", "dm", "my_table"))
 })
+
+test_that("pipeline style round-trips through the state JSON; a state without it gains none", {
+  st <- new_sideview_state(pipeline = list(code = "", active_tab = "pipeline", steps = list(), pipe = "|>",
+                                           style = "pharmaverse"))
+  back <- sv_state_from_json(sv_state_json(st))
+  expect_identical(back$pipeline$style, "pharmaverse")
+  old <- new_sideview_state(pipeline = list(code = "", active_tab = "pipeline", steps = list(), pipe = "|>"))
+  json <- sv_state_json(old)
+  expect_false(grepl("style", json, fixed = TRUE))
+  back <- sv_state_from_json(json)
+  expect_null(back$pipeline$style)
+  expect_false(grepl("style", sv_state_json(back), fixed = TRUE))
+})

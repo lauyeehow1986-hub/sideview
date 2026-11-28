@@ -403,6 +403,10 @@
     this._seq = 0;
     this.tables = {};
     this.checks = {};   // join-check results by joinSig(): not state (no undo, never saved)
+    // 'dplyr' | 'pharmaverse': how a SUPP merge is written (E1). State, but not undoable (as pipe).
+    this.style = opts.style === 'pharmaverse' ? 'pharmaverse' : 'dplyr';
+    // the merge checks' combine_supp fields by step key: not state (no undo, never saved)
+    this.suppCombine = {};
   }
 
   var LAZY_KINDS = { arrow: 1, duckdb: 1 };
@@ -863,6 +867,12 @@
   Pipeline.prototype.setPipe = function (pipe) {
     this.pipe = pipe === '|>' ? '|>' : '%>%';
     this.emit('pipe');
+  };
+
+  /** The code style, 'dplyr' or 'pharmaverse' (anything else is 'dplyr'). Not undoable, as setPipe(). */
+  Pipeline.prototype.setStyle = function (style) {
+    this.style = style === 'pharmaverse' ? 'pharmaverse' : 'dplyr';
+    this.emit('style');
   };
 
   Pipeline.prototype.enabledCount = function () {
@@ -1627,6 +1637,14 @@
         if (s.kind === 'supp') {
           if (!s.idvars || !s.idvars.length) return;
           var si = rightInfo(s.supp);
+          // the pharmaverse style writes combine_supp() where the check found it gives this result
+          if (self.combineSuppFor(s).ok) {
+            var cp = suppCombinePrep(s, si.ref, self.refFor(t), pipe, self.suppCombine[s.key].prep,
+              si.ref !== self.refFor(s.supp));
+            supps.push({ step: s, code: cp.code });
+            lines.push('metatools::combine_supp(' + cp.ref + ')');
+            return;
+          }
           supps.push({ step: s, src: si.ref, lazy: !!si.kind, arrow: kind === 'arrow' });
           lines = lines.concat(suppJoins(s, kind));
           return;
@@ -1686,6 +1704,7 @@
       // all on a lazy chain prepared for another chain (attributes do not survive a lazy table).
       var withLabels = !(kind && later);
       var preps = supps.map(function (p) {
+        if (p.code !== undefined) return p.code;  // combine_supp() labels its columns itself
         if (withLabels && suppLabels(p.step).length) lines.push(suppLabelLine(p.step));
         return suppPrep(p.step, p.src, p.lazy, self.refFor(t), pipe, withLabels, p.arrow);
       });
@@ -1713,7 +1732,7 @@
   };
 
   Pipeline.prototype.toJSON = function () {
-    return { steps: clone(this.steps), pipe: this.pipe };
+    return { steps: clone(this.steps), pipe: this.pipe, style: this.style };
   };
 
   Pipeline.prototype.load = function (obj) {
@@ -1723,6 +1742,8 @@
       self.steps = (obj.steps || []).map(function (s) { return self.normalize(s); });
     });
     if (obj.pipe) this.setPipe(obj.pipe);
+    // a state without a style (0.7.0 or earlier) is the dplyr style; setStyle() maps others to it
+    this.setStyle(obj.style);
   };
 
   // ---- join diagnostics ------------------------------------------------------
@@ -2512,6 +2533,79 @@
     return true;
   };
 
+  /**
+   * Remember the combine_supp field ({ok, reason, prep: {rdomain, idvar_na}, installed}) of the
+   * merge check for a supp step's key (null forgets it). A stale check is stored as a not-ok field
+   * by the caller. Not pipeline state: no undo, never saved. Emits 'checks' only on a change.
+   */
+  Pipeline.prototype.setSuppCheck = function (key, field) {
+    var had = Object.prototype.hasOwnProperty.call(this.suppCombine, key);
+    if (field === null || field === undefined) {
+      if (!had) return false;
+      delete this.suppCombine[key];
+    } else {
+      if (had && JSON.stringify(this.suppCombine[key]) === JSON.stringify(field)) return false;
+      this.suppCombine[key] = clone(field);
+    }
+    this.emit('checks');
+    return true;
+  };
+
+  // Steps a parent may have before or after a merge that combine_supp() writes: they keep the
+  // checked rows (or a subset of them) and their columns, and the QNAM labels, as they were.
+  var COMBINE_SUPP_BEFORE = { filter: 1, arrange: 1, supp: 1 };
+
+  /**
+   * Rule 6 of the pharmaverse style (E1): { ok, reason }. The merge check looks at the two cards,
+   * so combine_supp() may stand in for the dplyr code only when the SUPP card has no enabled step of
+   * its own and the parent's enabled steps before the merge only filter, sort or merge. The same
+   * holds after the merge: the dplyr code sets the QNAM labels where the parent's chain ends,
+   * combine_supp() at the merge, so a later mutate or rename can make the labels differ. Steps that
+   * do not render on the parent's chain (custom, derive) do not count. Like strictApplies(),
+   * compose() and the UI both ask here.
+   */
+  Pipeline.prototype.combineSuppApplies = function (step) {
+    if (!step || step.kind !== 'supp') return { ok: false, reason: 'combine_supp() applies to SUPP merges only.' };
+    var steps = this.steps.filter(function (x) { return x.enabled !== false; });
+    var at = steps.indexOf(step);
+    if (at < 0) {
+      for (var i = 0; i < steps.length; i++) if (steps[i].id !== undefined && steps[i].id === step.id) { at = i; break; }
+    }
+    var own = steps.some(function (x, j) {
+      return j !== at && x !== step && x.table === step.supp && x.kind !== 'custom' && x.kind !== 'derive';
+    });
+    if (own) return { ok: false, reason: step.supp + ' has steps before the merge' };
+    var earlier = at < 0 ? [] : steps.slice(0, at);
+    var other = earlier.some(function (x) { return x.table === step.table && !COMBINE_SUPP_BEFORE[x.kind]; });
+    if (other) return { ok: false, reason: step.table + ' has steps before the merge that combine_supp() cannot check' };
+    var later = at < 0 ? [] : steps.slice(at + 1);
+    var after = later.some(function (x) {
+      return x.table === step.table && x.kind !== 'custom' && x.kind !== 'derive' && !COMBINE_SUPP_BEFORE[x.kind];
+    });
+    if (after) return { ok: false, reason: step.table + ' has steps after the merge that combine_supp() cannot check' };
+    return { ok: true, reason: '' };
+  };
+
+  /**
+   * Whether compose() writes combine_supp() for a supp step: { ok, reason, rule }. ok only in the
+   * pharmaverse style, with an ok combine_supp field stored for the step (setSuppCheck) and rule 6
+   * holding. `rule` names what decided a no: 'style' (the dplyr style; reason null), 'check' (no
+   * field yet, reason null; or a not-ok field, its reason) or 'steps' (rule 6, its reason); null when ok.
+   */
+  Pipeline.prototype.combineSuppFor = function (step) {
+    if (this.style !== 'pharmaverse') return { ok: false, reason: null, rule: 'style' };
+    var key = step && step.key;
+    var f = key !== undefined && Object.prototype.hasOwnProperty.call(this.suppCombine, key) ?
+      this.suppCombine[key] : null;
+    if (!f) return { ok: false, reason: null, rule: 'check' };
+    if (f.ok !== true) {
+      return { ok: false, reason: f.reason === undefined || f.reason === null ? null : String(f.reason), rule: 'check' };
+    }
+    var ap = this.combineSuppApplies(step);
+    if (!ap.ok) return { ok: false, reason: ap.reason, rule: 'steps' };
+    return { ok: true, reason: null, rule: null };
+  };
+
   // ---- SUPP-- merge check: twin of sv_supp_check() (R/supp.R) ----------------
 
   function suppKeyType(colType) {
@@ -2536,26 +2630,165 @@
   // Inf where Number() keeps it, so the top of the range is cut off on both sides alike.
   var SUPP_DBL_MAX = 1e308;
 
+  // ---- R's as.character() for a double, under scipen = 0 (twin of sv_r_chr, R/supp.R) ----
+  // R keeps the fewest significant digits, at most 15, that give the value rounded to 15 digits
+  // (ties to even), and writes the fixed form when it is no wider than the scientific one. The
+  // digits are worked out exactly here (BigInt). R works them out in long double arithmetic and
+  // prints with the C library, so a value within a hair of a rounding tie may come out otherwise
+  // there: such a value is not sure (rAsCharacterSure), and the combine_supp field says not ok.
+  var HAS_BIGINT = typeof BigInt === 'function';
+  var P10 = [];
+  function pow10n(k) {
+    if (!P10.length) P10.push(BigInt(1));
+    while (P10.length <= k) P10.push(P10[P10.length - 1] * BigInt(10));
+    return P10[k];
+  }
+
+  // x > 0, finite: x = num / den exactly, den a power of 2
+  function dblExact(x) {
+    var dv = new DataView(new ArrayBuffer(8));
+    dv.setFloat64(0, x);
+    var hi = dv.getUint32(0), ex = (hi >>> 20) & 0x7ff;
+    var m = BigInt(hi & 0xfffff) * BigInt(4294967296) + BigInt(dv.getUint32(4));
+    var e = -1074;
+    if (ex !== 0) { m = m + BigInt(4503599627370496); e = ex - 1075; }
+    return e >= 0 ? { num: m << BigInt(e), den: BigInt(1) } : { num: m, den: BigInt(1) << BigInt(-e) };
+  }
+
+  // a / b rounded to an integer, ties to even; `tie`: exactly half way; `half(n, d)`: the
+  // fraction a / b - floor(a / b) is within n / d of one half
+  function roundEven(a, b) {
+    var q = a / b, two = (a % b) * BigInt(2);
+    if (two > b || (two === b && q % BigInt(2) === BigInt(1))) q = q + BigInt(1);
+    var gap = two > b ? two - b : b - two;
+    return { q: q, tie: two === b, half: function (n, d) { return gap * BigInt(d) <= b * BigInt(2 * n); } };
+  }
+
+  function rChr(x) {
+    if (x === null || x === undefined) return { text: null, sure: true };
+    if (x === 'Inf' || x === '-Inf' || x === 'NaN') return { text: x, sure: true };
+    x = Number(x);
+    if (isNaN(x)) return { text: 'NaN', sure: true };
+    if (!isFinite(x)) return { text: x > 0 ? 'Inf' : '-Inf', sure: true };
+    if (x === 0) return { text: '0', sure: true };
+    if (!HAS_BIGINT) return { text: String(x), sure: false };
+    var neg = x < 0 ? 1 : 0, ex = dblExact(Math.abs(x));
+    var cmp10 = function (p) {   // sign of |x| - 10^p
+      var l = p >= 0 ? ex.num : ex.num * pow10n(-p), r = p >= 0 ? ex.den * pow10n(p) : ex.den;
+      return l < r ? -1 : (l > r ? 1 : 0);
+    };
+    var e10 = Math.floor(Math.log10(Math.abs(x)));
+    while (cmp10(e10) < 0) e10--;
+    while (cmp10(e10 + 1) >= 0) e10++;
+    // the 15 significant digits: R's alpha = |x| / 10^kp, rounded
+    var kp = e10 - 14;
+    var a = roundEven(kp >= 0 ? ex.num : ex.num * pow10n(-kp), kp >= 0 ? ex.den * pow10n(kp) : ex.den);
+    var q = a.q;
+    if (q === pow10n(15)) { q = pow10n(14); e10++; }
+    var mant = q.toString().replace(/0+$/, ''), nsig = mant.length;
+    var sciW = neg + (nsig > 1 ? nsig + 1 : 1) + (Math.abs(e10) >= 100 ? 5 : 4);
+    var rgt = Math.max(0, nsig - e10 - 1);
+    var fixW = neg + (e10 >= 0 ? e10 + 1 : 1) + (rgt > 0 ? rgt + 1 : 0);
+    // R scales by a power of ten held exactly only for |kp| < 10; past -308 it scales in double
+    var sure = kp <= -308 ? !a.half(3, 10) : (a.tie ? Math.abs(kp) < 10 : !a.half(1, 1000));
+    var text;
+    if (fixW <= sciW) {
+      var f = roundEven(ex.num * pow10n(rgt), ex.den);
+      text = f.q.toString();
+      if (rgt > 0) {
+        while (text.length <= rgt) text = '0' + text;
+        text = text.slice(0, text.length - rgt) + '.' + text.slice(text.length - rgt);
+      }
+      // the C library rounds the printed digits on its own: a near-tie there may differ; and
+      // past 19 integer digits R's printf on Windows is not exact (about 1 in 8 at 20 digits)
+      if (f.half(1, 50) || e10 >= 19) sure = false;
+    } else {
+      var ae = Math.abs(e10);
+      text = mant.charAt(0) + (nsig > 1 ? '.' + mant.slice(1) : '') + 'e' + (e10 < 0 ? '-' : '+') +
+        (ae < 10 ? '0' : '') + ae;
+      if (a.tie && nsig === 15) sure = false;
+    }
+    return { text: (neg ? '-' : '') + text, sure: sure };
+  }
+
+  /** R's as.character(x) for a double x (scipen = 0); null for NA. Also takes "Inf", "-Inf", "NaN". */
+  function rAsCharacter(x) { return rChr(x).text; }
+
+  /** Whether rAsCharacter(x) is known to equal R's text (false near a rounding tie). */
+  function rAsCharacterSure(x) { return rChr(x).sure; }
+
+  // The Unicode White_Space set that stringr::str_trim() trims; twin of sv_str_trim_ws (R/supp.R).
+  // Not trim(), which also takes the BOM and not U+0085; not SUPP_WS, the ASCII class of the keys.
+  var STR_TRIM_WS = '[\\t\\n\\x0b\\f\\r \\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]';
+  var STR_TRIM_EDGES = new RegExp('^' + STR_TRIM_WS + '+|' + STR_TRIM_WS + '+$', 'g');
+
+  /** stringr::str_trim(s): also drops one leading BOM, as stringi does; null for NA. */
+  function strTrim(s) {
+    if (s === null || s === undefined) return null;
+    return String(s).replace(/^\ufeff/, '').replace(STR_TRIM_EDGES, '');
+  }
+
   // A missing value is the string "NA" once keys are pasted together, as in R.
   function suppChr(v) {
     return v === null || v === undefined ? 'NA' : String(v);
   }
 
-  // IDVARVAL text converted to the key type; null means it did not convert.
-  function suppConvert(v, type) {
+  // A key value as the check pastes it: a double as R's as.character() writes it (15 digits).
+  function suppKeyText(v, type) {
+    return type === 'double' && typeof v === 'number' ? rAsCharacter(v) : suppChr(v);
+  }
+
+  // IDVARVAL converted to a numeric key type as a number; null means it did not convert.
+  function suppConvertNum(v, type) {
     if (v === null || v === undefined) return null;
     var s = String(v);
-    if (type === 'character') return s;
     if (type === 'integer') {
       if (!SUPP_INT_RE.test(s)) return null;
       var n = parseInt(s.replace(SUPP_WS_EDGES, ''), 10);
-      if (!isFinite(n) || Math.abs(n) > 2147483647) return null;
-      return String(n);
+      return isFinite(n) && Math.abs(n) <= 2147483647 ? n : null;
     }
     if (!SUPP_DBL_RE.test(s)) return null;
     var d = Number(s.replace(SUPP_WS_EDGES, ''));
     // 1e999 overflows to Infinity: bad, as in R; so is anything past SUPP_DBL_MAX
-    return isFinite(d) && Math.abs(d) <= SUPP_DBL_MAX ? String(d) : null;
+    return isFinite(d) && Math.abs(d) <= SUPP_DBL_MAX ? d : null;
+  }
+
+  // Whether R's as.numeric() surely reads this decimal text as the double Number() reads. R's
+  // R_strtod gathers the digits in long double and then multiplies or divides by a power of ten,
+  // so a value that is not exact is rounded twice and can land on the neighbouring double (about
+  // 1 text in 8000, short ones such as "6.228e-9" too). Sure only where nothing is rounded: the
+  // digits make an integer below 2^64 (exact in long double), the power of ten is at most 10^27
+  // (exact), the value is itself a double, and it has at most 15 significant digits.
+  // test-supp.R holds this to R over a sweep of texts.
+  function suppNumSure(v) {
+    if (!HAS_BIGINT || v === null || v === undefined) return false;
+    var m = /^[+-]?([0-9]*)(?:[.]([0-9]*))?(?:[eE]([+-]?[0-9]+))?$/.exec(String(v).replace(SUPP_WS_EDGES, ''));
+    if (!m) return false;
+    var frac = m[2] || '', digits = (m[1] + frac).replace(/^0+/, '');
+    if (digits === '') return true; // zero
+    if (digits.length > 20 || digits.replace(/0+$/, '').length > 15) return false;
+    var expn = (m[3] === undefined ? 0 : Number(m[3])) - frac.length;
+    if (!isFinite(expn) || Math.abs(expn) > 27) return false;
+    var num = BigInt(digits), den = BigInt(1), zero = BigInt(0), one = BigInt(1), two = BigInt(2);
+    if (num >= BigInt('18446744073709551616')) return false;
+    if (expn >= 0) num = num * pow10n(expn); else den = pow10n(-expn);
+    // a double: num / den = odd * 2^j with odd < 2^53, so the 5s of den must divide num
+    var five = BigInt(5);
+    while (den % five === zero) {
+      if (num % five !== zero) return false;
+      num = num / five;
+      den = den / five;
+    }
+    while (num % two === zero) num = num / two;
+    return num < BigInt('9007199254740992') && (den & (den - one)) === zero;
+  }
+
+  // IDVARVAL text converted to the key type; null means it did not convert.
+  function suppConvert(v, type) {
+    if (v === null || v === undefined) return null;
+    if (type === 'character') return String(v);
+    var n = suppConvertNum(v, type);
+    return n === null ? null : suppKeyText(n, type);
   }
 
   function suppUnique(a) {
@@ -2594,7 +2827,13 @@
   }
 
   // parentRows / suppRows: arrays of row objects. opts: {parentName, suppName, rdomain,
-  // parentTypes: {col: colType}, parentCols, suppCols, plan, sampleN}.
+  // parentTypes: {col: colType}, suppTypes: {col: colType} (R class names; guessed when absent),
+  // parentCols, suppCols, plan, sampleN, lazy: {name, kind: 'duckdb'|'arrow'} or null (a lazy
+  // card: combine_supp rule 2), preview: true when a card holds only its preview rows (rule 3),
+  // rounded: true when the rows came through 16-digit JSON (the widget), inexact: {parent: [...],
+  // supp: [...]}, each card's col_inexact (rule 7 then trusts only the double columns not listed;
+  // with rounded and no inexact it trusts none)}. combine_supp is not ok unless both type maps
+  // name every column rules 7 and 8 read.
   function suppCheck(parentRows, suppRows, opts) {
     opts = opts || {};
     parentRows = parentRows || [];
@@ -2627,7 +2866,8 @@
 
     var idvar = suppRows.map(function (r) {
       var v = r.IDVAR;
-      return v === null || v === undefined || String(v).trim() === '' ? '' : String(v);
+      // blank as R's trimws() sees it: space, tab, CR and LF only (trim() would also take NBSP)
+      return v === null || v === undefined || /^[ \t\r\n]*$/.test(String(v)) ? '' : String(v);
     });
     var qnam = suppRows.map(function (r) { return suppChr(r.QNAM); });
     var levels = suppUnique(idvar);
@@ -2646,18 +2886,30 @@
     }
 
     var keys = ['STUDYID', 'USUBJID'].filter(function (c) { return pNames.indexOf(c) >= 0 && sNames.indexOf(c) >= 0; });
-    var keyOf = function (row) { return keys.map(function (c) { return suppChr(row[c]); }).join('\r'); };
-    var pkey = parentRows.map(keyOf), skey = suppRows.map(keyOf);
+    // key text as sv_supp_key_chr() writes it: a double key in R's 15 digits, on each side by its type
+    var keyKinds = function (rows, given) {
+      return keys.map(function (c) {
+        var t = (given || {})[c];
+        return suppKeyType(t === undefined || t === null ? suppGuessType(rows, c) : t);
+      });
+    };
+    var pKinds = keyKinds(parentRows, opts.parentTypes), sKinds = keyKinds(suppRows, opts.suppTypes);
+    var keyFn = function (kinds) {
+      return function (row) { return keys.map(function (c, n) { return suppKeyText(row[c], kinds[n]); }).join('\r'); };
+    };
+    var keyOf = keyFn(pKinds);
+    var pkey = parentRows.map(keyOf), skey = suppRows.map(keyFn(sKinds));
 
-    var val = [], bad = [], matched = [];
-    for (i = 0; i < nSupp; i++) { val.push(''); bad.push(false); matched.push(false); }
+    // num: the converted value as a number on a numeric level (the combine_supp rows compare it)
+    var val = [], bad = [], matched = [], num = [];
+    for (i = 0; i < nSupp; i++) { val.push(''); bad.push(false); matched.push(false); num.push(null); }
     var pset = {};
     pkey.forEach(function (x) { pset[x] = true; });
     levels.forEach(function (iv) {
       var pairs = null;
       if (iv !== '') {
         pairs = {};
-        parentRows.forEach(function (r, j) { pairs[pkey[j] + '\r' + suppChr(r[iv])] = true; });
+        parentRows.forEach(function (r, j) { pairs[pkey[j] + '\r' + suppKeyText(r[iv], types[iv])] = true; });
       }
       for (var j = 0; j < nSupp; j++) {
         if (idvar[j] !== iv) continue;
@@ -2665,6 +2917,7 @@
         var cv = suppConvert(suppRows[j].IDVARVAL, types[iv]);
         val[j] = cv;
         bad[j] = cv === null;
+        if (types[iv] !== 'character') num[j] = suppConvertNum(suppRows[j].IDVARVAL, types[iv]);
         matched[j] = cv !== null && !!pairs[skey[j] + '\r' + cv];
       }
     });
@@ -2755,9 +3008,17 @@
         look[sk] = qv === null || qv === undefined ? null : String(qv);
       }
       pv.forEach(function (o, j) {
-        var pk = iv !== '' ? pvKey[j] + '\r' + suppChr(o[iv]) : pvKey[j];
+        var pk = iv !== '' ? pvKey[j] + '\r' + suppKeyText(o[iv], types[iv]) : pvKey[j];
         o[q] = Object.prototype.hasOwnProperty.call(look, pk) ? look[pk] : null;
       });
+    });
+
+    var combine = suppCombine({
+      parentRows: parentRows, suppRows: suppRows, pNames: pNames, sNames: sNames,
+      parentName: parentName, suppName: suppName, levels: levels, idvar: idvar, qnam: qnam,
+      types: types, keys: keys, matched: matched, val: val, bad: bad, num: num, plan: newPlan,
+      nOther: nOther, opts: opts,
+      check: { status: status, repeats: { n: count(dup) }, clashes: clashes, two_level: twoLevel }
     });
 
     return {
@@ -2775,8 +3036,251 @@
       bad_idvarval: { n: count(bad), samples: samples(bad) },
       columns: qnams.map(function (q) { return { name: q.qnam, label: q.label }; }),
       preview: pv,
-      drift: drift
+      drift: drift,
+      combine_supp: combine
     };
+  }
+
+  // ---- combine_supp: would metatools::combine_supp() give the dplyr code's result? ----
+  // Twin of sv_supp_combine() (R/supp.R) and, for rules 2 and 3, of the lazy check (R/lazy.R).
+  // The browser cannot tell whether metatools is installed: `installed` is null, R fills it in.
+
+  /** Rule 1: the reason for a check whose status is "error" (the merge code stops). */
+  function combineSuppStopReason(d, parentName) {
+    d = d || {};
+    var n = d.repeats && d.repeats.n, clashes = suppList(d.clashes), two = suppList(d.two_level);
+    var parts = [];
+    if (n !== null && n !== undefined && n > 0) parts.push(n + ' repeated QNAM ' + (n === 1 ? 'record' : 'records'));
+    if (clashes.length) parts.push(clashes.join(', ') + ' already in ' + parentName);
+    if (two.length) parts.push(two.join(', ') + ' on two IDVAR levels');
+    return 'The merge stops: ' + parts.join('; ');
+  }
+
+  var COMBINE_SUPP_COLS = ['STUDYID', 'RDOMAIN', 'USUBJID', 'IDVAR', 'IDVARVAL', 'QNAM', 'QLABEL', 'QVAL', 'QORIG'];
+  var COMBINE_PARENT_COLS = ['STUDYID', 'DOMAIN', 'USUBJID'];
+
+  // A number as exact text, so equal text is equal doubles (sv_supp_hex); -0 is 0, NA is "NA".
+  function suppHex(x) {
+    if (x === null || x === undefined) return 'NA';
+    var n = Number(x);
+    return n === 0 ? '0' : String(n);
+  }
+
+  // For each element of `s`, how many elements of `p` equal it (sv_supp_count).
+  function suppCount(p, s) {
+    var m = new Map();
+    p.forEach(function (x) { m.set(x, (m.get(x) || 0) + 1); });
+    return s.map(function (x) { return m.get(x) || 0; });
+  }
+
+  function suppCombine(c) {
+    var opts = c.opts, suppRows = c.suppRows, parentRows = c.parentRows;
+    var idvarNa = suppRows.some(function (r) {
+      return r.IDVAR !== null && r.IDVAR !== undefined && /^[ \t\r\n]*$/.test(String(r.IDVAR));
+    });
+    var prep = { rdomain: c.nOther > 0, idvar_na: idvarNa };
+    var no = function (reason) { return { ok: false, reason: reason, prep: prep, installed: null }; };
+    // rule 1: the merge stops
+    if (c.check.status === 'error') return no(combineSuppStopReason(c.check, c.parentName));
+    // rule 2: combine_supp() needs data frames
+    var lazy = opts.lazy;
+    if (lazy) {
+      return no('combine_supp() needs data frames: ' + lazy.name + ' is ' +
+        (lazy.kind === 'arrow' ? 'an Arrow table' : 'a duckdb table'));
+    }
+    // rule 3: a preview-only card
+    if (opts.preview) return no('Checked on preview rows only');
+    // rule 4: exactly the SDTM SUPP columns (QEVAL may be there or not)
+    var miss = suppSetdiff(COMBINE_SUPP_COLS, c.sNames);
+    if (miss.length) return no(c.suppName + ' has no ' + miss[0] + ' column');
+    var extra = suppSetdiff(c.sNames, COMBINE_SUPP_COLS.concat(['QEVAL']));
+    if (extra.length) return no(c.suppName + ' has extra columns: ' + extra.join(', '));
+    // rule 5: it joins on STUDYID, DOMAIN and USUBJID
+    miss = suppSetdiff(COMBINE_PARENT_COLS, c.pNames);
+    if (miss.length) return no(c.parentName + ' has no ' + miss[0] + ' column');
+    // it drops a parent IDVARVAL column (ret$IDVARVAL <- NULL); the dplyr code keeps it
+    if (c.pNames.indexOf('IDVARVAL') >= 0) return no(c.parentName + ' has an IDVARVAL column, which combine_supp() would drop');
+    // rules 7 and 8 need R's text of each value, so R's class of every column they read
+    var typed = function (types, cols) {
+      if (types === null || types === undefined || typeof types !== 'object' || Array.isArray(types)) return false;
+      return cols.every(function (k) { var t = types[k]; return t !== null && t !== undefined && t !== ''; });
+    };
+    var pNeed = ['STUDYID', 'USUBJID', 'DOMAIN'].concat(c.keys,
+      c.levels.filter(function (iv) { return iv !== ''; }));
+    var sNeed = ['STUDYID', 'USUBJID', 'RDOMAIN', 'IDVARVAL', 'QLABEL', 'QNAM'].concat(c.keys);
+    if (!typed(opts.parentTypes, pNeed) || !typed(opts.suppTypes, sNeed)) {
+      return no('Column types are not known in the browser');
+    }
+    var why = suppCombineRows(c);
+    if (why === null) why = suppCombineFactor(c);
+    if (why === null) why = suppCombineLabels(c);
+    if (why !== null) return no(why);
+    return { ok: true, reason: null, prep: prep, installed: null };
+  }
+
+  // Rule 7, the rows (sv_supp_combine_rows): for each SUPP row, the parent rows the dplyr code
+  // joins ("ours") and those combine_supp() joins ("theirs") must be the same set.
+  function suppCombineRows(c) {
+    var parentRows = c.parentRows, s = c.suppRows, opts = c.opts, n = s.length;
+    var pTypes = opts.parentTypes || {}, sTypes = opts.suppTypes || {};
+    var typeOf = function (rows, given, col) {
+      var t = given[col];
+      return t === undefined || t === null ? suppGuessType(rows, col) : String(t);
+    };
+    var unsure = null;
+    var tooClose = function (col, t) { return col + ' ' + t + " is too close to R's rounding to check in the browser"; };
+    // opts.rounded: the rows came through 16-digit JSON (the widget), where Inf and NaN arrive as
+    // null and some doubles arrive changed. opts.inexact = {parent: [...], supp: [...]} names the
+    // double columns R found not to survive that (sv_inexact_cols()); the others are exact and
+    // null in them is NA. Without the list no double column can be trusted.
+    var rounded = !!opts.rounded;
+    var inexact = opts.inexact;
+    var lossy = function (side, col) {
+      var l = inexact !== null && inexact !== undefined && typeof inexact === 'object' ? inexact[side] : null;
+      if (typeof l === 'string') l = [l];
+      return !Array.isArray(l) || l.indexOf(col) >= 0;
+    };
+    // R's text of one value (sv_r_chr for theirs; sv_supp_key_chr for ours, where an integer64
+    // key is a double). A value whose text may not be R's is remembered for the reason.
+    var text = function (v, type, col, ours) {
+      var dbl = /^(numeric|double|float)$/.test(type) || (ours && suppKeyType(type) === 'double');
+      if (v === null || v === undefined) return null;
+      if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+      if (!dbl || (typeof v !== 'number' && v !== 'Inf' && v !== '-Inf' && v !== 'NaN')) return String(v);
+      var r = rChr(v);
+      if (!r.sure && unsure === null) unsure = tooClose(col, r.text);
+      return r.text;
+    };
+    var column = function (rows, given, col, ours) {
+      var ty = typeOf(rows, given, col);
+      if (rounded && unsure === null && rows.length && suppKeyType(ty) === 'double' &&
+          lossy(rows === parentRows ? 'parent' : 'supp', col)) {
+        unsure = col + ' has values the browser cannot read exactly';
+      }
+      return rows.map(function (r) { return text(r[col], ty, col, ours); });
+    };
+    var enc = function (x) { return x === null ? '\x01' : '\x02' + x; };
+    var paste = function (cols) {
+      return cols.length ? cols[0].map(function (_, j) {
+        return cols.map(function (col) { return col[j]; }).join('\r');
+      }) : [];
+    };
+    var keyCols = function (rows, given) {
+      return paste(c.keys.map(function (k) {
+        return column(rows, given, k, true).map(function (x) { return x === null ? 'NA' : x; });
+      }));
+    };
+    var pkey = keyCols(parentRows, pTypes), skey = keyCols(s, sTypes);
+    var pk_t = paste(['STUDYID', 'DOMAIN', 'USUBJID'].map(function (k) { return column(parentRows, pTypes, k).map(enc); }));
+    var sk_t = paste(['STUDYID', 'RDOMAIN', 'USUBJID'].map(function (k) { return column(s, sTypes, k).map(enc); }));
+    var ivText = column(s, sTypes, 'IDVARVAL');
+    var nO = [], nT = [], nB = [], sO = [], sT = [], lv = {}, pvText = {};
+    for (var i = 0; i < n; i++) { nO.push(0); nT.push(0); nB.push(0); sO.push(''); sT.push(''); }
+    c.levels.forEach(function (iv) {
+      var r = [];
+      for (var j = 0; j < n; j++) if (c.idvar[j] === iv) r.push(j);
+      var joins = r.map(function (j) { return c.matched[j]; });
+      var pO, pT;
+      if (iv === '') {
+        pO = pkey;
+        pT = pk_t;
+        r.forEach(function (j) { sO[j] = skey[j]; sT[j] = sk_t[j]; });
+      } else {
+        var pv = parentRows.map(function (row) { return row[iv]; });
+        if (c.types[iv] === 'character') {
+          var kc = column(parentRows, pTypes, iv, true);
+          pO = pkey.map(function (k, j) { return k + '\r' + (kc[j] === null ? 'NA' : kc[j]); });
+          r.forEach(function (j) { sO[j] = skey[j] + '\r' + (c.val[j] === null ? 'NA' : c.val[j]); });
+        } else {
+          pO = pkey.map(function (k, j) { return k + '\r' + suppHex(pv[j]); });
+          r.forEach(function (j) { sO[j] = skey[j] + '\r' + suppHex(c.num[j]); });
+          joins = r.map(function (j) { return !c.bad[j]; });
+        }
+        pvText[iv] = column(parentRows, pTypes, iv);
+        // a double IDVARVAL that R may read as another double (suppNumSure) makes ours uncertain;
+        // a row the browser marks bad too: near the 1e308 cut R may read the text as a double
+        // it keeps where Number() reads one past the cut. No sure text is past the cut (sure
+        // means below 2^64 * 10^27), so a sure row is never bad for its size.
+        if (c.types[iv] === 'double' && unsure === null) {
+          r.forEach(function (j) {
+            var t = s[j].IDVARVAL;
+            if (unsure === null && t !== null && t !== undefined && SUPP_DBL_RE.test(String(t)) &&
+                !suppNumSure(t)) {
+              unsure = tooClose('IDVARVAL', String(s[j].IDVARVAL).replace(SUPP_WS_EDGES, ''));
+            }
+          });
+        }
+        pT = pk_t.map(function (k, j) { return k + '\r' + enc(strTrim(pvText[iv][j])); });
+        r.forEach(function (j) { sT[j] = sk_t[j] + '\r' + enc(strTrim(ivText[j])); });
+      }
+      var rO = r.map(function (j) { return sO[j]; }), rT = r.map(function (j) { return sT[j]; });
+      var cO = suppCount(pO, rO), cT = suppCount(pT, rT);
+      var cB = suppCount(pO.map(function (x, j) { return x + '\n' + pT[j]; }),
+        r.map(function (j) { return sO[j] + '\n' + sT[j]; }));
+      r.forEach(function (j, k) {
+        nO[j] = joins[k] ? cO[k] : 0;
+        nT[j] = cT[k];
+        nB[j] = joins[k] ? cB[k] : 0;
+      });
+      lv[iv] = { pO: pO, pT: pT };
+    });
+    // a text that may not be R's makes every comparison above uncertain
+    if (unsure !== null) return unsure;
+    var say = function (x) { return x === null ? 'NA' : x; };
+    for (i = 0; i < n; i++) {
+      if (nO[i] === nT[i] && nB[i] === nO[i]) continue;
+      var iv = c.idvar[i];
+      if (iv === '') return say(column([s[i]], sTypes, 'USUBJID')[0]) + ' would not match in combine_supp()';
+      var p = lv[iv];
+      var v = 'IDVARVAL "' + say(ivText[i]) + '" ';
+      var key = function (j) { return iv + ' ' + say(j < 0 ? null : pvText[iv][j]); };
+      if (nT[i] === 0) return v + 'would not match ' + key(p.pO.indexOf(sO[i])) + ' in combine_supp()';
+      if (nO[i] === 0) return v + 'would match ' + key(p.pT.indexOf(sT[i])) + ' in combine_supp()';
+      return v + 'would match a different ' + c.parentName + ' record in combine_supp()';
+    }
+    return null;
+  }
+
+  // Rule 7, the classes (sv_supp_combine_factor): a join turns a factor it joins on into text.
+  // Rule 8, the classes: combine_supp() picks a factor QNAM's column by its code and sets a factor
+  // QLABEL as the label.
+  function suppCombineFactor(c) {
+    var pTypes = c.opts.parentTypes || {};
+    var sTypes = c.opts.suppTypes || {};
+    var isFactor = function (col, types) { return /^(factor|ordered)$/.test(String((types || pTypes)[col])); };
+    for (var i = 0; i < c.levels.length; i++) {
+      var iv = c.levels[i];
+      if (iv !== '' && isFactor(iv)) return iv + ' would be a factor in combine_supp(), not text';
+    }
+    if (isFactor('DOMAIN')) return 'DOMAIN would be text in combine_supp(), not a factor';
+    if (isFactor('QNAM', sTypes)) return c.suppName + ' QNAM is a factor, so combine_supp() would label the wrong columns';
+    if (isFactor('QLABEL', sTypes)) return c.suppName + ' QLABEL is a factor, so combine_supp() would set factor labels';
+    return null;
+  }
+
+  // Rule 8, the labels (sv_supp_combine_labels): combine_supp() takes the last distinct QLABEL of
+  // a QNAM, in order of first appearance; ours is the plan's. NA and "" both mean no label.
+  function suppCombineLabels(c) {
+    if (c.sNames.indexOf('QLABEL') < 0) return null;
+    var none = function (x) { return x === null || x === undefined || x === ''; };
+    var say = function (x) { return none(x) ? 'none' : '"' + x + '"'; };
+    var lab = c.suppRows.map(function (r) {
+      var l = r.QLABEL;
+      return l === null || l === undefined ? null : String(l);
+    });
+    var qnams = c.plan.qnams;
+    for (var i = 0; i < qnams.length; i++) {
+      var q = qnams[i].qnam, ours = qnams[i].label, seen = new Map(), theirs = null;
+      for (var j = 0; j < lab.length; j++) {
+        if (c.qnam[j] !== q || seen.has(lab[j])) continue;
+        seen.set(lab[j], true);
+        theirs = lab[j];
+      }
+      if (none(ours) && none(theirs)) continue;
+      if (!none(ours) && !none(theirs) && ours === theirs) continue;
+      return q + ' label would be ' + say(theirs) + ' in combine_supp(), not ' + say(ours);
+    }
+    return null;
   }
 
   // ---- the supp merge step: SUPP-- rows folded into the parent (design §6) ----
@@ -2949,6 +3453,274 @@
     var L = ident(String(s.supp) + '_labels');
     return 'dplyr::mutate(dplyr::across(dplyr::any_of(names(' + L + ')),\n    ~ structure(.x, label = ' +
       L + '[[dplyr::cur_column()]])))';
+  }
+
+  /**
+   * The statements written before the parent's chain in the pharmaverse style (E1 design §5.3), and
+   * what the chain's metatools::combine_supp() call takes: { code, ref }. `src` is the SUPP side's
+   * code (the card, or its _prep chain: `chained`); `prep` the field's {rdomain, idvar_na}. <supp>_q
+   * is written only with a prep line or a SUPP chain; else the guards and the call read `src`.
+   * The guards are the 0.7.0 ones combine_supp() does not do itself (IDVAR values the plan does not
+   * handle, QNAMs at two levels, a repeated QNAM for one record: on the converted key for a numeric
+   * level, the trimmed IDVARVAL for a text level), with no clash guard (combine_supp() stops on a
+   * clash). Then the later-cut guards. First the input guards: a parent grouped into more than one
+   * group or a grouped SUPP (rowwise with group columns too), and a parent IDVARVAL column. A
+   * DOMAIN guard: each parent record the dplyr code joins a SUPP row to must have the row's RDOMAIN as DOMAIN (NA never matches). And one key guard per
+   * keyed level: the records a row finds as the dplyr code joins (the merge keys plus the key: by
+   * number with suppKeyConv() and its overflow rule, keys as sprintf("%.17g") text so the session's
+   * scipen plays no part, or by exact text) must be the records it finds as combine_supp() joins
+   * (STUDYID, DOMAIN == RDOMAIN, USUBJID and stringr::str_trim(as.character()) on both keys, under
+   * the session's scipen). NA matches NA in both. Then the type guards (DOMAIN and each IDVAR key
+   * keep their type through the joins), a subject-level guard for rows only combine_supp() sees
+   * (no RDOMAIN prep line), the column guard (no QNAM column the dplyr code lacks) and the label
+   * guards (combine_supp()'s last QLABEL must be the plan's label; no factor QNAM or QLABEL).
+   * They only stop: they never reshape the data.
+   */
+  function suppCombinePrep(s, src, parentRef, pipe, prep, chained) {
+    var S = String(s.supp);
+    var nl = ' ' + pipe + '\n  ';
+    var gl = ' ' + pipe + '\n    ';
+    var levels = s.idvars.map(function (v) { return v.idvar; });
+    var out = [];
+    var ql = [src];
+    if (prep && prep.rdomain) ql.push('dplyr::filter(RDOMAIN == ' + str(s.rdomain) + ')');
+    if (prep && prep.idvar_na) ql.push('dplyr::mutate(IDVAR = dplyr::na_if(trimws(IDVAR), ""))');
+    var ref = src;
+    if (ql.length > 1 || chained) {
+      ref = ident(S + '_q');
+      out.push(ref + ' <- ' + ql.join(nl));
+    }
+
+    var P = String(s.table);
+    var tl = '; use the dplyr code style for this merge';
+    var g = ['local({'];
+    // Grouped inputs: the dplyr code's label step loses the labels across the parent's groups, and
+    // its pivot keeps a grouped SUPP's group columns; combine_supp() does neither. One group
+    // (or a rowwise SUPP with no group columns) gives the same result. A lazy table is not a
+    // grouped_df, so these pass it. And combine_supp() drops a parent IDVARVAL column (checked on a
+    // data frame only: names() of a tbl_lazy warns).
+    g.push('  p <- ' + parentRef);
+    g.push('  grp <- function(x) {');
+    g.push('    v <- paste(dplyr::group_vars(x), collapse = ", ")');
+    g.push('    if (!inherits(x, "rowwise_df")) paste("grouped by", v) else if (nzchar(v)) paste0("rowwise (by ", v, ")") else "rowwise"');
+    g.push('  }');
+    g.push('  if (inherits(p, c("grouped_df", "rowwise_df")) && dplyr::n_groups(p) > 1L) stop(' + str(P + ' is ') + ', grp(p),');
+    g.push('    ' + str(', which combine_supp() and the dplyr code treat differently' + tl) + ', call. = FALSE)');
+    g.push('  if (inherits(' + ref + ', c("grouped_df", "rowwise_df")) && length(dplyr::group_vars(' + ref + '))) stop(' + str(S + ' is ') + ', grp(' + ref + '),');
+    g.push('    ' + str(', which combine_supp() and the dplyr code treat differently' + tl) + ', call. = FALSE)');
+    g.push('  if (is.data.frame(p) && "IDVARVAL" %in% names(p)) stop(' + str(P + ' has an IDVARVAL column, which combine_supp() would drop' + tl) + ', call. = FALSE)');
+    // the guards' own copy: subject level as "", a missing QNAM as "NA" (as the 0.7.0 <supp>_q)
+    g.push('  q <- ' + [ref, 'dplyr::mutate(IDVAR = dplyr::if_else(is.na(IDVAR) | trimws(IDVAR) == "", "", as.character(IDVAR)),\n' +
+      '                  QNAM = dplyr::coalesce(as.character(QNAM), "NA"))'].join(gl));
+    g.push('  other <- setdiff(unique(q$IDVAR), c(' + levels.map(str).join(', ') + '))');
+    if (levels.indexOf('') < 0) g.push('  other[other == ""] <- "(subject level)"');
+    g.push('  if (length(other)) stop(' + str(S + ' has IDVAR values this merge does not handle: ') + ',');
+    g.push('    paste(other, collapse = ", "), ". Refresh the merge step.", call. = FALSE)');
+    if (levels.length > 1) {
+      g.push('  lv <- unique(q[c("QNAM", "IDVAR")])');
+      g.push('  both <- unique(lv$QNAM[duplicated(lv$QNAM)])');
+      g.push('  if (length(both)) stop(' + str(S + ' QNAMs are at two levels: ') +
+        ', paste(both, collapse = ", "), call. = FALSE)');
+    }
+    s.idvars.forEach(function (v) {
+      var iv = v.idvar;
+      var cols = s.keys.map(ident);
+      var dupCols = s.keys.slice();
+      // a numeric level keys on the converted IDVARVAL ("01" and "1" are one record), a text level
+      // on the trimmed IDVARVAL, as combine_supp() joins ("G2" and "G2 " are one record)
+      if (iv !== '') {
+        cols.push(ident(iv) + ' = ' + (v.type === 'character' ?
+          'stringr::str_trim(as.character(IDVARVAL))' : suppKeyExpr(v.type)));
+        dupCols.push(iv);
+      }
+      cols.push('QNAM');
+      dupCols.push('QNAM');
+      var l = ['q', 'dplyr::filter(IDVAR == ' + str(iv) + ')', 'dplyr::transmute(' + cols.join(', ') + ')'];
+      if (iv !== '') l.push(v.type === 'double' ? 'dplyr::filter(abs(' + ident(iv) + ') <= 1e308)' : 'dplyr::filter(!is.na(' + ident(iv) + '))');
+      g.push('  x <- ' + l.join(gl));
+      g.push('  dup <- x[duplicated(x[c(' + dupCols.map(str).join(', ') + ')]), ]');
+      g.push('  if (nrow(dup)) stop(' + str(S + ' repeats a QNAM for ') + ', nrow(dup), " record(s), first: ",');
+      g.push('    dup$USUBJID[1], ' + (iv !== '' ? str(' ' + iv + ' ') + ', dup[[' + str(iv) + ']][1], ' : '') +
+        '" ", dup$QNAM[1], call. = FALSE)');
+      if (iv === '') return;
+      // combine_supp() pivots every row of the level, the NA, unconvertible and overflowing
+      // IDVARVALs the check above drops too, so a QNAM repeated among them would make a list
+      // column: repeat-check all rows on the trimmed text, an NA counting as a value
+      g.push('  x <- ' + ['q', 'dplyr::filter(IDVAR == ' + str(iv) + ')',
+        'dplyr::transmute(STUDYID, USUBJID, ' + ident(iv) + ' = stringr::str_trim(as.character(IDVARVAL)), QNAM)'].join(gl));
+      g.push('  dup <- x[duplicated(x[c("STUDYID", "USUBJID", ' + str(iv) + ', "QNAM")]), ]');
+      g.push('  if (nrow(dup)) stop(' + str(S + ' repeats a QNAM for ') + ', nrow(dup), " record(s), first: ",');
+      g.push('    dup$USUBJID[1], ' + str(' ' + iv + ' ') + ', dup[[' + str(iv) + ']][1], " ", dup$QNAM[1], call. = FALSE)');
+    });
+    // Later-cut guards. "Ours" (po/so) models the dplyr code's join: the rows its RDOMAIN filter
+    // keeps (dk), on the merge keys plus, for a keyed level, the converted IDVARVAL (numeric, keys
+    // as sprintf("%.17g") text so scipen plays no part) or the exact text. "Theirs" (pt/st) models
+    // combine_supp(): STUDYID, DOMAIN == RDOMAIN, USUBJID and the trimmed key text. NA matches NA.
+    var pkeys = s.keys.map(function (c) { return 'p[[' + str(c) + ']]'; });
+    var xkeys = s.keys.map(function (c) { return 'x[[' + str(c) + ']]'; });
+    g.push('  enc <- function(v) ifelse(is.na(v), "\\001", paste0("\\002", v))');
+    g.push('  val <- function(v) {');
+    g.push('    if (is.factor(v)) v <- as.character(v)');
+    g.push('    if (!is.numeric(v) && !inherits(v, "integer64")) return(enc(as.character(v)))');
+    g.push('    v <- suppressWarnings(as.numeric(v))');
+    g.push('    v[!is.na(v) & v == 0] <- 0');
+    g.push('    out <- sprintf("%.17g", v)');
+    g.push('    out[is.na(v)] <- NA');
+    g.push('    enc(out)');
+    g.push('  }');
+    g.push('  rec <- function(...) do.call(paste, c(lapply(list(...), val), sep = "\\r"))');
+    g.push('  cnt <- function(a, b) {');
+    g.push('    u <- unique(a)');
+    g.push('    n <- tabulate(match(a, u), nbins = length(u))[match(b, u)]');
+    g.push('    n[is.na(n)] <- 0L');
+    g.push('    n');
+    g.push('  }');
+    // a DOMAIN or RDOMAIN that is NA never counts as a match in the DOMAIN guard
+    g.push('  dom <- function(v, na) { v <- as.character(v); ifelse(is.na(v), na, paste0("\\002", v)) }');
+    g.push('  shown <- function(v) if (is.na(v)) "NA" else paste0("\\"", v, "\\"")');
+    g.push('  dk <- ' + (s.rdomain_col ? '!is.na(q$RDOMAIN) & as.character(q$RDOMAIN) == ' + str(s.rdomain) :
+      'rep(TRUE, nrow(q))'));
+    g.push('  pk <- rec(' + pkeys.join(', ') + ')');
+    g.push('  pd <- rec(p$STUDYID, p$DOMAIN, p$USUBJID)');
+    g.push('  pdom <- dom(p$DOMAIN, "\\003")');
+    // Type guards. A join casts its keys to their common type (dplyr 1.1): combine_supp() joins
+    // DOMAIN to RDOMAIN, the dplyr code each IDVAR key to the converted IDVARVAL (a number for a
+    // numeric level, the IDVARVAL itself for a text one). Each column must keep its type there.
+    // STUDYID and USUBJID are joined by both. A key that cannot join stops the dplyr code: stop here.
+    // (a missing column is left to the code's own errors; a label attribute plays no part)
+    g.push('  keeps <- function(a, b) {');
+    g.push('    if (is.null(a)) return(TRUE)');
+    g.push('    ty <- tryCatch(vctrs::vec_ptype_common(a, b), error = function(e) NULL)');
+    g.push('    if (is.null(ty)) return(NA)');
+    g.push('    identical(class(ty), class(a)) && identical(levels(ty), levels(a))');
+    g.push('  }');
+    g.push('  if (isFALSE(keeps(p$DOMAIN, ' + ref + '$RDOMAIN))) stop(' + str('DOMAIN in ' + P + ' would not keep its type (') +
+      ', class(p$DOMAIN)[1],');
+    g.push('    ") in combine_supp(); use the dplyr code style for this merge", call. = FALSE)');
+    s.idvars.forEach(function (v) {
+      var iv = v.idvar, k = 'p[[' + str(iv) + ']]';
+      if (iv === '') return;
+      var b = v.type === 'integer' ? 'integer()' : v.type === 'double' ? 'double()' : ref + '$IDVARVAL';
+      g.push('  kt <- keeps(' + k + ', ' + b + ')');
+      g.push('  if (is.na(kt)) stop(' + str(iv + ' in ' + P + ' (') + ', class(' + k + ')[1],');
+      g.push('    ") cannot be joined to the IDVARVAL values; convert it before the merge", call. = FALSE)');
+      g.push('  if (!kt) stop(' + str(iv + ' in ' + P + ' would not keep its type (') + ', class(' + k + ')[1],');
+      g.push('    ") in the dplyr code; use the dplyr code style for this merge", call. = FALSE)');
+    });
+    // one level's rows (x, kept by the dplyr code's filter or not) and its "ours" keys (po, so)
+    var ours = function (v) {
+      var iv = v.idvar, k = 'p[[' + str(iv) + ']]';
+      var r = ['    x <- q[xi, , drop = FALSE]', '    kept <- dk[xi]'];
+      if (iv === '') {
+        r.push('    po <- pk');
+        r.push('    so <- ifelse(kept, rec(' + xkeys.join(', ') + '), NA_character_)');
+      } else if (v.type === 'integer' || v.type === 'double') {
+        r.push('    cv <- ' + suppKeyConv(v.type, 'x$IDVARVAL'));
+        if (v.type === 'double') r.push('    cv[!is.na(cv) & abs(cv) > 1e308] <- NA');
+        r.push('    po <- paste(pk, val(' + k + '), sep = "\\r")');
+        r.push('    so <- ifelse(kept & !is.na(cv), paste(rec(' + xkeys.join(', ') + '), val(cv), sep = "\\r"), NA_character_)');
+      } else {
+        r.push('    po <- paste(pk, val(' + k + '), sep = "\\r")');
+        // an NA IDVARVAL joins nothing in the dplyr code (its filter(!is.na(<key>))), as an NA cv above
+        r.push('    so <- ifelse(kept & !is.na(x$IDVARVAL), paste(rec(' + xkeys.join(', ') + '), val(x$IDVARVAL), sep = "\\r"), NA_character_)');
+      }
+      return r;
+    };
+    // the DOMAIN guard: every parent record the dplyr code joins a SUPP row to must have that
+    // row's RDOMAIN as its DOMAIN, or combine_supp() would not join it
+    // It also collects the QNAMs of the rows the dplyr code pivots (kq): the column guard below.
+    var foreign = !(prep && prep.rdomain);
+    g.push('  kq <- character()');
+    s.idvars.forEach(function (v) {
+      g.push('  xi <- which(q$IDVAR == ' + str(v.idvar) + ')');
+      g.push('  if (length(xi)) {');
+      ours(v).forEach(function (x) { g.push(x); });
+      g.push('    kq <- c(kq, x$QNAM[!is.na(so)])');
+      if (v.idvar === '' && foreign) {
+        // with no RDOMAIN prep line combine_supp() sees the rows the dplyr code's filter drops;
+        // the key guards cover a keyed one, this a subject-level one
+        g.push('    j <- which(!kept & cnt(pd, rec(x$STUDYID, x$RDOMAIN, x$USUBJID)) > 0)[1]');
+        g.push('    if (!is.na(j)) stop(' + str(S + ' has a row for USUBJID ') + ', as.character(x$USUBJID[j]),');
+        g.push('      ' + str(' that would match ' + P + ' in combine_supp() but not in the dplyr code; ' +
+          'use the dplyr code style for this merge') + ', call. = FALSE)');
+      }
+      g.push('    sdom <- dom(x$RDOMAIN, "\\004")');
+      g.push('    i <- which(cnt(paste(po, pdom, sep = "\\n"), paste(so, sdom, sep = "\\n")) < cnt(po, so))[1]');
+      g.push('    if (!is.na(i)) {');
+      g.push('      j <- which(po == so[i] & pdom != sdom[i])[1]');
+      g.push('      stop("DOMAIN ", shown(p$DOMAIN[j]), ' + str(' in ' + P + ' does not match RDOMAIN ') +
+        ', shown(x$RDOMAIN[i]),');
+      g.push('        " in combine_supp(); use the dplyr code style for this merge", call. = FALSE)');
+      g.push('    }');
+      g.push('  }');
+    });
+    // the key guards, one per keyed level: the records a SUPP row finds must be the same both ways
+    s.idvars.forEach(function (v) {
+      var iv = v.idvar, k = 'p[[' + str(iv) + ']]';
+      if (iv === '') return;
+      var tail = ' in combine_supp(); use the dplyr code style for this merge';
+      var msg = function (how) {
+        return 'stop("IDVARVAL \\"", as.character(x$IDVARVAL[i]), ' + str('" matches ' + iv + ' ') +
+          ', as.character(k),\n        ' + str(' ' + how) + ', call. = FALSE)';
+      };
+      g.push('  xi <- which(q$IDVAR == ' + str(iv) + ')');
+      g.push('  if (length(xi)) {');
+      ours(v).forEach(function (x) { g.push(x); });
+      g.push('    pt <- paste(pd, enc(stringr::str_trim(as.character(' + k + '))), sep = "\\r")');
+      g.push('    st <- paste(rec(x$STUDYID, x$RDOMAIN, x$USUBJID), enc(stringr::str_trim(as.character(x$IDVARVAL))), sep = "\\r")');
+      g.push('    no <- cnt(po, so)');
+      g.push('    nt <- cnt(pt, st)');
+      if (v.type === 'integer' || v.type === 'double') {
+        g.push('    nb <- cnt(paste(po, pt, sep = "\\n"), paste(so, st, sep = "\\n"))');
+        g.push('    nb[is.na(so)] <- 0L');
+        g.push('    i <- which(nb < no | nb < nt)[1]');
+        g.push('    if (!is.na(i) && nb[i] < no[i]) {');
+        g.push('      k <- ' + k + '[which(po == so[i] & pt != st[i])[1]]');
+        g.push('      ' + msg('as a number but not as text' + tail));
+        g.push('    }');
+        g.push('    if (!is.na(i)) {');
+        g.push('      k <- ' + k + '[which(pt == st[i] & !(po %in% so[i]))[1]]');
+        g.push('      ' + msg('as text but not as a number' + tail));
+        g.push('    }');
+      } else {
+        // after the DOMAIN guard the exact-text matches are a subset of the trimmed ones
+        g.push('    i <- which(no < nt)[1]');
+        g.push('    if (!is.na(i)) {');
+        g.push('      k <- ' + k + '[which(pt == st[i] & !(po %in% so[i]))[1]]');
+        g.push('      ' + msg('only when trimmed, as in combine_supp(); use the dplyr code style for this merge'));
+        g.push('    }');
+      }
+      g.push('  }');
+    });
+    // The column guard: combine_supp() makes a column of every QNAM it is given, the dplyr code of
+    // the QNAMs of the rows it pivots (kq: kept by its RDOMAIN filter, with a key that converts)
+    g.push('  nq <- setdiff(unique(q$QNAM), kq)');
+    g.push('  if (length(nq)) stop(' + str(S + ' QNAM ') + ', nq[1],');
+    g.push('    ' + str(' would be a column in combine_supp() but not in the dplyr code' + tl) + ', call. = FALSE)');
+    // The label guards: combine_supp() labels each QNAM with its last QLABEL in
+    // unique(supp[c("QNAM", "QLABEL")]), as it is (a factor too, and a factor QNAM picks the column
+    // by its code); the dplyr code with the plan's label. NA and "" are no label.
+    g.push('  if (is.factor(' + ref + '$QNAM)) stop(' +
+      str(S + ' QNAM is a factor, so combine_supp() would label the wrong columns' + tl) + ', call. = FALSE)');
+    g.push('  if (is.factor(' + ref + '$QLABEL)) stop(' +
+      str(S + ' QLABEL is a factor, so combine_supp() would set factor labels' + tl) + ', call. = FALSE)');
+    var labs = suppLabels(s);
+    g.push('  ours <- ' + (labs.length ? 'c(' + labs.map(function (x) {
+      return ident(x.qnam) + ' = ' + str(x.label);
+    }).join(', ') + ')' : 'character()'));
+    g.push('  said <- function(v) if (nzchar(v)) paste0("\\"", v, "\\"") else "none"');
+    // (a SUPP with no QLABEL is left to combine_supp()'s own column check)
+    g.push('  lab <- if ("QLABEL" %in% names(' + ref + ')) unique(' + ref + '[c("QNAM", "QLABEL")]) else list(QNAM = NULL)');
+    g.push('  for (n in unique(lab$QNAM[!is.na(lab$QNAM)])) {');
+    g.push('    a <- if (n %in% names(ours)) ours[[n]] else ""');
+    g.push('    b <- as.character(utils::tail(lab$QLABEL[lab$QNAM %in% n], 1))');
+    g.push('    if (is.na(b)) b <- ""');
+    g.push('    if (!identical(a, b)) stop(n, " label would be ", said(b), " in combine_supp(), not ", said(a),');
+    g.push('      ' + str(tl) + ', call. = FALSE)');
+    g.push('  }');
+    g.push('})');
+    out.push(g.join('\n'));
+    return { code: out.join('\n'), ref: ref };
   }
 
   // ---- plain-sentence helpers (twins of R/say.R) ----
@@ -3152,6 +3924,11 @@
     columnProfile: columnProfile,
     suppKeyType: suppKeyType,
     suppCheck: suppCheck,
+    combineSuppStopReason: combineSuppStopReason,
+    rAsCharacter: rAsCharacter,
+    rAsCharacterSure: rAsCharacterSure,
+    suppNumSure: suppNumSure,
+    strTrim: strTrim,
     codebookRow: codebookRow,
     codebookCsv: codebookCsv,
     CODEBOOK_FIELDS: CODEBOOK_FIELDS,

@@ -15,6 +15,7 @@ save_sideview(
   max_rows = 5000,
   cdisc = "auto",
   view = getOption("sideview.view", "canvas"),
+  code_style = NULL,
   ...
 )
 ```
@@ -62,6 +63,14 @@ save_sideview(
   Starting view when `widget` is table data (see
   [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md)).
   A widget you built yourself keeps its own.
+
+- code_style:
+
+  `NULL` (default) keeps the widget's own style (`"dplyr"` for table
+  data); `"dplyr"` or `"pharmaverse"` sets it (see
+  [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md)).
+  A workspace the widget carries that records a style still wins in the
+  browser.
 
 - ...:
 

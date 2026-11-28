@@ -29,7 +29,9 @@ off) size, not the enlarged one.}
 
 \item{pipeline}{Named list containing \code{code} (character), \code{active_tab}
 (character) and, from version 0.3.0, the pipeline \code{steps} and \code{pipe}
-(\code{"\%>\%"} or \code{"|>"}). Without \code{steps}, \code{code} is restored as one custom step.}
+(\code{"\%>\%"} or \code{"|>"}), and optionally \code{style} (\code{"dplyr"} or \code{"pharmaverse"}, the style
+of the generated code). A state without \code{style} loads as \code{"dplyr"}; a recorded \code{style}
+wins over the \code{code_style} argument. Without \code{steps}, \code{code} is restored as one custom step.}
 }
 \value{
 An object of class \code{c("sideview_state", "list")}.

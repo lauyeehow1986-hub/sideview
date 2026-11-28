@@ -23,7 +23,9 @@
 #' @param connections List of join connection objects (each specifying `from_table`, `from_col`, `to_table`, `to_col`, `join_type`).
 #' @param pipeline Named list containing `code` (character), `active_tab`
 #'   (character) and, from version 0.3.0, the pipeline `steps` and `pipe`
-#'   (`"%>%"` or `"|>"`). Without `steps`, `code` is restored as one custom step.
+#'   (`"%>%"` or `"|>"`), and optionally `style` (`"dplyr"` or `"pharmaverse"`, the style
+#'   of the generated code). A state without `style` loads as `"dplyr"`; a recorded `style`
+#'   wins over the `code_style` argument. Without `steps`, `code` is restored as one custom step.
 #'
 #' @return An object of class `c("sideview_state", "list")`.
 #' @export

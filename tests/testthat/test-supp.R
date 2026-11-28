@@ -222,6 +222,705 @@ test_that("a QNAM with no QLABEL gets an empty label", {
   expect_match(sv_supp_check_json(r), "\"label\":\"\"", fixed = TRUE)
 })
 
+# ---- combine_supp: would metatools::combine_supp() give the dplyr code's result? ----
+
+cs <- function(name, ...) { f <- fx[[name]]; chk(f[[2]], parent = f[[1]], ...)$combine_supp }
+
+test_that("combine_supp field: eligible cases and prep", {
+  expect_true(cs("cs_ok")$ok); expect_null(cs("cs_ok")$reason)
+  expect_true(cs("cs_ok")$prep$idvar_na); expect_false(cs("cs_ok")$prep$rdomain)
+  expect_false(cs("cs_na_idvar")$prep$idvar_na)
+  q <- chk(fx$cs_suppqual[[2]], parent = fx$cs_suppqual[[1]], sn = "suppqual", rdomain = "AE")$combine_supp
+  expect_true(q$ok); expect_true(q$prep$rdomain)
+  for (n in c("cs_qeval", "cs_int", "cs_chr", "cs_1e5_sci", "cs_110000", "cs_orphan",
+              "cs_lab_all_blank", "cs_lab_all_na")) expect_true(cs(n)$ok, info = n)
+  # str_trim() and the integer conversion both drop the spaces; "1.0" finds no record in either
+  for (n in c("cs_key_sp", "cs_key_dec", "cs_na_idvar")) expect_true(cs(n)$ok, info = n)
+  # whitespace-only IDVAR is subject level too, and needs the same prep
+  s <- fx$cs_ok[[2]]
+  s$IDVAR[s$IDVAR == ""] <- " \t"
+  expect_true(chk(s, parent = fx$cs_ok[[1]])$combine_supp$prep$idvar_na)
+})
+
+test_that("combine_supp field: reasons, in rule order", {
+  expect_equal(cs("cs_no_qorig")$reason, "suppae has no QORIG column")
+  expect_equal(cs("cs_extra")$reason, "suppae has extra columns: EXTRA")
+  expect_equal(cs("cs_no_domain")$reason, "ae has no DOMAIN column")
+  expect_equal(cs("cs_no_studyid")$reason, "ae has no STUDYID column")
+  expect_equal(cs("cs_key01")$reason, 'IDVARVAL "01" would not match AESEQ 1 in combine_supp()')
+  expect_equal(cs("cs_1e5")$reason, 'IDVARVAL "100000" would not match AESEQ 1e+05 in combine_supp()')
+  expect_equal(cs("cs_key_nbsp")$reason, 'IDVARVAL "1\u00a0" would match AESEQ 1 in combine_supp()')
+  expect_equal(cs("cs_key_nel")$reason, 'IDVARVAL "1\u0085" would match AESEQ 1 in combine_supp()')
+  # as.character(0.1 + 0.2) is "0.3": the text matches, the number (0.30000000000000004) does not
+  expect_equal(cs("cs_frac")$reason, 'IDVARVAL "0.3" would match AESEQ 0.3 in combine_supp()')
+  # the dplyr code joins a factor key to the text IDVARVAL, so its result has the key as character
+  expect_equal(cs("cs_fac")$reason, "AEGRPID would be a factor in combine_supp(), not text")
+  expect_equal(cs("cs_fac_domain")$reason, "DOMAIN would be text in combine_supp(), not a factor")
+  expect_equal(cs("cs_lab_two")$reason, 'AETRTEM label would be "TE two" in combine_supp(), not "TE one"')
+  expect_equal(cs("cs_lab_blank_last")$reason, 'AETRTEM label would be none in combine_supp(), not "Treatment Emergent"')
+  expect_match(cs("cs_clash")$reason, "^The merge stops: AETRTEM already in ae$")
+  expect_match(cs("cs_repeat")$reason, "^The merge stops: 1 repeated QNAM record$")
+  expect_match(cs("cs_two_level")$reason, "^The merge stops: AETRTEM on two IDVAR levels$")
+  expect_match(cs("cs_domain_lower")$reason, "would not match in combine_supp\\(\\)$")
+  expect_equal(cs("cs_domain_lower")$reason, "SV-001-001 would not match in combine_supp()")
+  for (n in c("cs_no_qorig", "cs_key01", "cs_lab_two", "cs_clash")) expect_false(cs(n)$ok, info = n)
+  # combine_supp() keeps the last of the distinct labels in order of first appearance
+  s <- fx$cs_lab_two[[2]][c(1, 2, 1), ]
+  s$USUBJID <- fx$cs_ok[[1]]$USUBJID
+  s$IDVARVAL <- c("1", "2", "1")
+  expect_equal(chk(s, parent = fx$cs_ok[[1]])$combine_supp$reason,
+               'AETRTEM label would be "TE two" in combine_supp(), not "TE one"')
+  # two parent records for one keyed row: a different record set, not a missing one
+  p <- fx$cs_chr[[1]]
+  p$AEGRPID <- c(" G1", "G1", "G1")
+  s <- fx$cs_chr[[2]][1, ]
+  s$IDVARVAL <- "G1"
+  expect_equal(chk(s, parent = p)$combine_supp$reason,
+               'IDVARVAL "G1" would match a different ae record in combine_supp()')
+  # the stop reason lists every part, in order
+  r <- list(repeats = list(n = 2L), clashes = c("A", "B"), two_level = "C")
+  expect_identical(sv_supp_combine_stop_reason(r, "ae"),
+                   "The merge stops: 2 repeated QNAM records; A, B already in ae; C on two IDVAR levels")
+})
+
+test_that("combine_supp field ignores the session's scipen and restores it", {
+  withr::local_options(scipen = 999)
+  expect_equal(cs("cs_1e5")$reason, 'IDVARVAL "100000" would not match AESEQ 1e+05 in combine_supp()')
+  expect_true(cs("cs_1e5_sci")$ok)
+  expect_equal(getOption("scipen"), 999)
+})
+
+test_that("combine_supp field reads a numeric key column the same under any scipen", {
+  f <- fx$cs_ok
+  ids <- c(100000, 200000)
+  p <- f[[1]]
+  p$USUBJID <- ids[match(p$USUBJID, unique(p$USUBJID))]
+  s <- f[[2]]
+  s$USUBJID <- ids[match(s$USUBJID, unique(f[[1]]$USUBJID))]
+  at0 <- withr::with_options(list(scipen = 0), chk(s, parent = p)$combine_supp)
+  expect_true(at0$ok)
+  expect_identical(withr::with_options(list(scipen = 999), chk(s, parent = p)$combine_supp), at0)
+})
+
+test_that("blank last AE label in a SUPPQUAL counts after the RDOMAIN filter", {
+  f <- fx$cs_suppqual_blank_last
+  want <- 'AETRTEM label would be none in combine_supp(), not "Treatment Emergent"'
+  r <- chk(f[[2]], parent = f[[1]], sn = "suppqual", rdomain = "AE")$combine_supp
+  expect_false(r$ok)
+  expect_true(r$prep$rdomain)
+  expect_equal(r$reason, want)
+  # a CM row after it with the same QNAM and a label is filtered out, so it does not count
+  cm <- f[[2]][f[[2]]$RDOMAIN == "CM", ][1, ]
+  cm$QNAM <- "AETRTEM"
+  cm$QLABEL <- "Treatment Emergent"
+  r2 <- chk(rbind(f[[2]], cm), parent = f[[1]], sn = "suppqual", rdomain = "AE")$combine_supp
+  expect_equal(r2$reason, want)
+})
+
+test_that("sv_str_trim matches stringr::str_trim", {
+  skip_if_not_installed("stringr")
+  x <- paste0(c(" ", "\t", "\u00a0", "\u0085", "\u3000", "\ufeff", "\u2028"), "1", " ")
+  expect_identical(sideview:::sv_str_trim(x), stringr::str_trim(x))
+  # every BMP code point on either side; stringi drops one leading BOM before it trims
+  cps <- c(1:0xD7FF, 0xE000:0xFFFF)
+  ch <- intToUtf8(cps, multiple = TRUE)
+  y <- c(paste0(ch, "1"), paste0("1", ch), paste0("\ufeff\ufeff", ch, "1"), " \ufeff1", NA)
+  expect_identical(sideview:::sv_str_trim(y), stringr::str_trim(y))
+})
+
+test_that("sv_r_chr is as.character() under scipen 0", {
+  withr::local_options(scipen = 999)
+  expect_identical(sideview:::sv_r_chr(c(100000, 110000, 0.1 + 0.2, 1 / 3)),
+                   c("1e+05", "110000", "0.3", "0.333333333333333"))
+  expect_identical(sideview:::sv_r_chr(factor("G1")), "G1")
+  expect_equal(getOption("scipen"), 999)
+})
+
+test_that("print and JSON carry the line and the field", {
+  expect_match(paste(capture.output(print(chk(fx$cs_key01[[2]], parent = fx$cs_key01[[1]]))), collapse = "\n"),
+               'combine_supp\\(\\): no, IDVARVAL "01"')
+  expect_identical(utils::tail(capture.output(print(chk(fx$cs_ok[[2]], parent = fx$cs_ok[[1]]))), 1),
+                   "combine_supp(): yes")
+  expect_identical(utils::tail(capture.output(print(chk(fx$supp_noqnam))), 1),
+                   "combine_supp(): no, Not in suppae: QNAM")
+  j <- jsonlite::fromJSON(sv_supp_check_json(chk(fx$cs_ok[[2]], parent = fx$cs_ok[[1]])), simplifyVector = FALSE)
+  expect_equal(j$combine_supp, list(ok = TRUE, reason = NULL, prep = list(rdomain = FALSE, idvar_na = TRUE)))
+  expect_match(sv_supp_check_json(chk(fx$cs_ok[[2]], parent = fx$cs_ok[[1]])),
+               '"combine_supp":{"ok":true,"reason":null,"prep":{"rdomain":false,"idvar_na":true}}', fixed = TRUE)
+  expect_identical(sideview:::sv_supp_combine_of(list(error = "x")),
+                   list(ok = FALSE, reason = "x", prep = list(rdomain = FALSE, idvar_na = FALSE)))
+})
+
+# The tables a fixture's check and merges need: the parent, the SUPP, the SUPP's name.
+cs_case <- function(name) {
+  f <- fx[[name]]
+  sn <- if (grepl("suppqual", name)) "suppqual" else "suppae"
+  r <- sv_supp_check(f[[1]], f[[2]], parent_name = "ae", supp_name = sn, rdomain = "AE")
+  list(parent = f[[1]], supp = f[[2]], sn = sn, chk = r, field = r$combine_supp)
+}
+
+# metatools::combine_supp() on the SUPP after the field's prep lines; or the error it stops with.
+cs_theirs <- function(k) {
+  s <- k$supp
+  if (k$field$prep$rdomain) s <- dplyr::filter(s, RDOMAIN == "AE")
+  if (k$field$prep$idvar_na) s <- dplyr::mutate(s, IDVAR = dplyr::na_if(trimws(IDVAR), ""))
+  tryCatch(suppressWarnings(metatools::combine_supp(k$parent, s)), error = function(e) e)
+}
+
+# The 0.7.0 dplyr code's result for the fixture.
+cs_ours <- function(k) {
+  code <- supp_compose(sv_supp_check_json(k$chk), supp = k$sn)
+  do.call(supp_run, c(list(code), stats::setNames(list(k$parent, k$supp), c("ae", k$sn))))
+}
+
+cs_names <- function() grep("^cs_", names(fx), value = TRUE)
+
+test_that("not-ok fixtures: the real combine_supp() errors or differs", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  n_seen <- 0L
+  for (nm in cs_names()) {
+    k <- cs_case(nm)
+    if (k$field$ok || startsWith(k$field$reason, "The merge stops: ")) next
+    n_seen <- n_seen + 1L
+    theirs <- cs_theirs(k)
+    if (inherits(theirs, "error")) {
+      succeed()
+      next
+    }
+    expect_false(supp_same_result(theirs, cs_ours(k)), info = nm)
+  }
+  expect_identical(n_seen, 15L)
+})
+
+test_that("ok fixtures: the real combine_supp() gives the dplyr code's result", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  n_seen <- 0L
+  for (nm in cs_names()) {
+    k <- cs_case(nm)
+    if (!k$field$ok) next
+    n_seen <- n_seen + 1L
+    theirs <- cs_theirs(k)
+    expect_false(inherits(theirs, "error"), info = nm)
+    if (!inherits(theirs, "error")) expect_true(supp_same_result(theirs, cs_ours(k)), info = nm)
+  }
+  expect_identical(n_seen, 13L)
+})
+
+# The pharmaverse code for the fixture, from the check's own combine_supp field.
+cs_pharma_code <- function(k, pipe = "%>%") {
+  supp_compose(sv_supp_check_json(k$chk), pipe = pipe, supp = k$sn, style = "pharmaverse",
+               combine = "chk.combine_supp")
+}
+
+cs_run <- function(k, code, parent = k$parent, supp = k$supp) {
+  do.call(supp_run, c(list(code), stats::setNames(list(parent, supp), c("ae", k$sn))))
+}
+
+test_that("pharmaverse code equals the dplyr code on every ok fixture", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  n_seen <- 0L
+  for (nm in cs_names()) {
+    k <- cs_case(nm)
+    if (!k$field$ok) next
+    n_seen <- n_seen + 1L
+    for (pipe in c("%>%", "|>")) {
+      code <- cs_pharma_code(k, pipe)
+      expect_parses(code, nm)
+      expect_match(code, "metatools::combine_supp(", fixed = TRUE, info = nm)
+      expect_no_match(code, "_labels", info = nm)
+      theirs <- tryCatch(suppressWarnings(cs_run(k, code)), error = function(e) e)
+      expect_false(inherits(theirs, "error"), info = paste(nm, pipe))
+      if (!inherits(theirs, "error")) expect_true(supp_same_result(theirs, cs_ours(k)), info = paste(nm, pipe))
+    }
+  }
+  expect_identical(n_seen, 13L)
+})
+
+test_that("rule 6: the steps allowed after the merge give the dplyr code's result, labels included", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  k <- cs_case("cs_ok")
+  ae <- k$parent
+  # a second SUPP for the same parent, with a QNAM and label of its own
+  suppfa <- data.frame(STUDYID = ae$STUDYID[1], RDOMAIN = "AE", USUBJID = ae$USUBJID[c(1, 3)], IDVAR = "AESEQ",
+                       IDVARVAL = c("2", "1"), QNAM = "AEXTRA", QLABEL = "Extra flag", QVAL = c("Y", "N"),
+                       QORIG = "CRF", stringsAsFactors = FALSE)
+  chk2 <- sv_supp_check(ae, suppfa, parent_name = "ae", supp_name = "suppfa", rdomain = "AE")
+  expect_true(chk2$combine_supp$ok)
+  js <- sv_supp_check_json(k$chk)
+  second <- sprintf("const chk2 = %s; const st2 = p.add(P.suppStep('ae', 'suppfa', 'AE', chk2.plan), 'm2');
+                     p.setSuppCheck(st2.key, chk2.combine_supp);", sv_supp_check_json(chk2))
+  afters <- list(
+    filter = "p.add({kind:'filter', table:'ae', conds:['AETRTEM == \"Y\"'], combine:'and'});",
+    arrange = "p.add({kind:'arrange', table:'ae', cols:[{col:'AETERM', dir:'desc'}]});",
+    supp = second,
+    all = paste(second, "p.add({kind:'filter', table:'ae', conds:['!is.na(AEXTRA)'], combine:'and'});",
+                "p.add({kind:'arrange', table:'ae', cols:[{col:'AETERM', dir:'desc'}]});"))
+  for (nm in names(afters)) {
+    for (pipe in c("%>%", "|>")) {
+      info <- paste(nm, pipe)
+      d <- supp_compose(js, pipe = pipe, style = "dplyr", combine = "chk.combine_supp", after = afters[[nm]])
+      ph <- supp_compose(js, pipe = pipe, style = "pharmaverse", combine = "chk.combine_supp", after = afters[[nm]])
+      expect_parses(ph, info)
+      expect_match(ph, "metatools::combine_supp(suppae_q)", fixed = TRUE, info = info)
+      if (nm %in% c("supp", "all")) expect_match(ph, "metatools::combine_supp(suppfa", fixed = TRUE, info = info)
+      expect_no_match(ph, "_labels", info = info)
+      a <- supp_run(d, ae = ae, suppae = k$supp, suppfa = suppfa)
+      b <- tryCatch(suppressWarnings(supp_run(ph, ae = ae, suppae = k$supp, suppfa = suppfa)),
+                    error = function(e) e)
+      expect_false(inherits(b, "error"), info = info)
+      if (!inherits(b, "error")) {
+        expect_true(supp_same_result(a, b), info = info)
+        expect_identical(attr(b$AETRTEM, "label"), "Treatment Emergent", info = info)
+      }
+    }
+  }
+})
+
+test_that("rule 6: a step after the merge that changes labels writes the dplyr code", {
+  skip_if_not_installed("tidyr")
+  k <- cs_case("cs_ok")
+  js <- sv_supp_check_json(k$chk)
+  afters <- c(
+    mutate = "p.add({kind:'mutate', table:'ae', name:'AETRTEM', expr:'dplyr::if_else(AETRTEM == \"Y\", \"yes\", \"no\")'});",
+    rename = "p.add({kind:'rename', table:'ae', from:'AETRTEM', to:'TRTEM'});")
+  for (nm in names(afters)) {
+    d <- supp_compose(js, style = "dplyr", combine = "chk.combine_supp", after = afters[[nm]])
+    ph <- supp_compose(js, style = "pharmaverse", combine = "chk.combine_supp", after = afters[[nm]])
+    expect_identical(ph, d, info = nm)
+    expect_no_match(ph, "combine_supp", fixed = TRUE, info = nm)
+  }
+})
+
+test_that("text-match guard on a later data cut", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  guard <- function(v, k, how) {
+    paste0('IDVARVAL "', v, '" matches AESEQ ', k, " ", how,
+           " in combine_supp(); use the dplyr code style for this merge")
+  }
+  ok <- cs_case("cs_ok")
+  code <- cs_pharma_code(ok)
+  k01 <- cs_case("cs_key01")
+  expect_identical(supp_stop(code, ae = k01$parent, suppae = k01$supp),
+                   'IDVARVAL "01" matches AESEQ 1 as a number but not as text in combine_supp(); use the dplyr code style for this merge')
+  # the mirror: str_trim() takes the no-break space, the numeric conversion does not
+  nb <- cs_case("cs_key_nbsp")
+  expect_identical(supp_stop(code, ae = nb$parent, suppae = nb$supp),
+                   guard("1 ", 1, "as text but not as a number"))
+  # the same cut through |>
+  expect_identical(supp_stop(cs_pharma_code(ok, "|>"), ae = k01$parent, suppae = k01$supp),
+                   guard("01", 1, "as a number but not as text"))
+  # combine_supp() compares as.character() of the key, so the session's scipen decides
+  sci <- cs_case("cs_1e5_sci")
+  code <- cs_pharma_code(sci)
+  local({
+    withr::local_options(scipen = 999)
+    expect_identical(supp_stop(code, ae = sci$parent, suppae = sci$supp),
+                     guard("1e+05", "100000", "as a number but not as text"))
+  })
+  local({
+    withr::local_options(scipen = 0)
+    got <- suppressWarnings(cs_run(sci, code))
+    expect_true(supp_same_result(got, cs_ours(sci)))
+  })
+})
+
+# A case like cs_case() for a parent and SUPP built in the test.
+cs_case_of <- function(parent, supp, sn = "suppae") {
+  r <- sv_supp_check(parent, supp, parent_name = "ae", supp_name = sn, rdomain = "AE")
+  list(parent = parent, supp = supp, sn = sn, chk = r, field = r$combine_supp)
+}
+
+cs_same <- function(k, code) {
+  got <- tryCatch(suppressWarnings(cs_run(k, code)), error = function(e) e)
+  !inherits(got, "error") && supp_same_result(got, cs_ours(k))
+}
+
+test_that("repeat guard keys a text level on the trimmed IDVARVAL (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  k <- cs_case("cs_chr")
+  code <- cs_pharma_code(k)
+  expect_true(cs_same(k, code))
+  # "G2" and "G2 " are one record to combine_supp(): a repeat, not a silent duplicate
+  s2 <- rbind(k$supp, k$supp[1, ])
+  s2$IDVARVAL[3] <- "G2 "
+  s2$QVAL[3] <- "N"
+  expect_identical(supp_stop(code, ae = k$parent, suppae = s2),
+                   "suppae repeats a QNAM for 1 record(s), first: SV-001-001 AEGRPID G2 AETRTEM")
+})
+
+test_that("key guard on a text level: a match only when trimmed stops (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  k <- cs_case("cs_chr")
+  code <- cs_pharma_code(k)
+  expect_true(cs_same(k, code))
+  s2 <- k$supp
+  s2$IDVARVAL[1] <- "G2 "
+  msg <- 'IDVARVAL "G2 " matches AEGRPID G2 only when trimmed, as in combine_supp(); use the dplyr code style for this merge'
+  expect_identical(supp_stop(code, ae = k$parent, suppae = s2), msg)
+  expect_identical(supp_stop(cs_pharma_code(k, "|>"), ae = k$parent, suppae = s2), msg)
+  # the parent key padded instead: the same guard, the parent's text in the copy
+  p2 <- k$parent
+  p2$AEGRPID[2] <- " G2"
+  expect_identical(supp_stop(code, ae = p2, suppae = k$supp),
+                   'IDVARVAL "G2" matches AEGRPID  G2 only when trimmed, as in combine_supp(); use the dplyr code style for this merge')
+})
+
+test_that("an NA IDVARVAL against an NA parent key never differs silently (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  tail <- " in combine_supp(); use the dplyr code style for this merge"
+  # the dplyr code drops an NA key (filter(!is.na())); combine_supp() joins NA to NA
+  k <- cs_case("cs_chr")
+  code <- cs_pharma_code(k)
+  expect_true(cs_same(k, code))
+  p2 <- k$parent
+  p2$AEGRPID[2] <- NA
+  s2 <- k$supp
+  s2$IDVARVAL[1] <- NA
+  expect_identical(supp_stop(code, ae = p2, suppae = s2),
+                   'IDVARVAL "NA" matches AEGRPID NA only when trimmed, as in combine_supp(); use the dplyr code style for this merge')
+  # an NA IDVARVAL with no NA parent key joins nothing either way: it runs and agrees
+  k2 <- k
+  k2$supp <- s2
+  expect_true(cs_same(k2, code))
+  # the integer twin
+  ok <- cs_case("cs_ok")
+  code <- cs_pharma_code(ok)
+  p3 <- ok$parent
+  p3$AESEQ[3] <- NA
+  s3 <- ok$supp
+  s3$IDVARVAL[2] <- NA
+  expect_identical(supp_stop(code, ae = p3, suppae = s3),
+                   paste0('IDVARVAL "NA" matches AESEQ NA as text but not as a number', tail))
+  ok3 <- ok
+  ok3$supp <- s3
+  expect_true(cs_same(ok3, code))
+})
+
+test_that("a QNAM repeated among rows the dplyr code drops stops (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  # combine_supp() pivots NA and unconvertible IDVARVALs too: a repeat there is a list column
+  repeat_of <- function(supp, val) {
+    s <- rbind(supp, supp[1, ])
+    s$IDVARVAL[c(1, nrow(s))] <- val
+    s$QVAL[nrow(s)] <- "N"
+    s
+  }
+  # a character level, two NA IDVARVALs
+  k <- cs_case("cs_chr")
+  code <- cs_pharma_code(k)
+  expect_identical(supp_stop(code, ae = k$parent, suppae = repeat_of(k$supp, NA)),
+                   "suppae repeats a QNAM for 1 record(s), first: SV-001-001 AEGRPID NA AETRTEM")
+  # an integer level, two NA IDVARVALs, and two that do not convert
+  ok <- cs_case("cs_ok")
+  code <- cs_pharma_code(ok)
+  expect_identical(supp_stop(code, ae = ok$parent, suppae = repeat_of(ok$supp, NA)),
+                   "suppae repeats a QNAM for 1 record(s), first: SV-001-001 AESEQ NA AETRTEM")
+  expect_identical(supp_stop(code, ae = ok$parent, suppae = repeat_of(ok$supp, "x")),
+                   "suppae repeats a QNAM for 1 record(s), first: SV-001-001 AESEQ x AETRTEM")
+  expect_identical(supp_stop(cs_pharma_code(ok, "|>"), ae = ok$parent, suppae = repeat_of(ok$supp, "x")),
+                   "suppae repeats a QNAM for 1 record(s), first: SV-001-001 AESEQ x AETRTEM")
+  # one such row, not repeated, joins nothing either way: it runs and agrees
+  for (val in list(NA_character_, "x")) {
+    s1 <- ok$supp
+    s1$IDVARVAL[1] <- val
+    k1 <- ok
+    k1$supp <- s1
+    expect_true(cs_same(k1, code), info = val)
+  }
+  s1 <- k$supp
+  s1$IDVARVAL[1] <- NA
+  k1 <- k
+  k1$supp <- s1
+  expect_true(cs_same(k1, cs_pharma_code(k)))
+})
+
+test_that("DOMAIN guard: a joined parent record whose DOMAIN is not RDOMAIN stops (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  k <- cs_case("cs_ok")
+  code <- cs_pharma_code(k)
+  expect_true(cs_same(k, code))
+  tail <- " in combine_supp(); use the dplyr code style for this merge"
+  # a keyed record
+  p2 <- k$parent
+  p2$DOMAIN[3] <- "XX"
+  expect_identical(supp_stop(code, ae = p2, suppae = k$supp),
+                   paste0('DOMAIN "XX" in ae does not match RDOMAIN "AE"', tail))
+  # subject level: the row joins both records of subject 1
+  p3 <- k$parent
+  p3$DOMAIN[2] <- "XX"
+  expect_identical(supp_stop(code, ae = p3, suppae = k$supp),
+                   paste0('DOMAIN "XX" in ae does not match RDOMAIN "AE"', tail))
+  # an NA DOMAIN never matches, and prints without quotes
+  p4 <- k$parent
+  p4$DOMAIN[3] <- NA
+  expect_identical(supp_stop(code, ae = p4, suppae = k$supp),
+                   paste0('DOMAIN NA in ae does not match RDOMAIN "AE"', tail))
+  expect_identical(supp_stop(cs_pharma_code(k, "|>"), ae = p2, suppae = k$supp),
+                   paste0('DOMAIN "XX" in ae does not match RDOMAIN "AE"', tail))
+  # a record no SUPP row joins may have any DOMAIN
+  p5 <- rbind(k$parent, transform(k$parent[3, ], DOMAIN = "XX", AESEQ = 7L))
+  expect_true(cs_same(cs_case_of(p5, k$supp), code))
+})
+
+test_that("key guards with two numeric levels in one block", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  ok <- cs_case("cs_ok")
+  parent <- ok$parent
+  parent$AEGRPN <- c(10, 20, 10)
+  grpn <- ok$supp[1:2, ]
+  grpn$IDVAR <- "AEGRPN"
+  grpn$IDVARVAL <- c("20", "10")
+  grpn$USUBJID <- parent$USUBJID[2:3]
+  grpn$QNAM <- "AEGRPQ"
+  grpn$QLABEL <- "Group qualifier"
+  grpn$QVAL <- c("A", "B")
+  k <- cs_case_of(parent, rbind(ok$supp, grpn))
+  expect_true(k$field$ok)
+  code <- cs_pharma_code(k)
+  expect_parses(code, "two numeric levels")
+  expect_identical(lengths(regmatches(code, gregexpr("as a number but not as text", code, fixed = TRUE))), 2L)
+  expect_true(cs_same(k, code))
+  tail <- " in combine_supp(); use the dplyr code style for this merge"
+  # the second level stops while the first passes
+  s2 <- k$supp
+  s2$IDVARVAL[s2$IDVAR == "AEGRPN"][1] <- "20.0"
+  expect_identical(supp_stop(code, ae = k$parent, suppae = s2),
+                   paste0('IDVARVAL "20.0" matches AEGRPN 20 as a number but not as text', tail))
+  # and the first level is still checked
+  s3 <- k$supp
+  s3$IDVARVAL[s3$IDVAR == "AESEQ"][1] <- "01"
+  expect_identical(supp_stop(code, ae = k$parent, suppae = s3),
+                   paste0('IDVARVAL "01" matches AESEQ 1 as a number but not as text', tail))
+})
+
+test_that("the overflow line of a double level parses and runs (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  ok <- cs_case("cs_ok")
+  k <- cs_case_of(transform(ok$parent, AESEQ = as.numeric(AESEQ)), ok$supp)
+  expect_true(k$field$ok)
+  code <- cs_pharma_code(k)
+  expect_match(code, "cv[!is.na(cv) & abs(cv) > 1e308] <- NA", fixed = TRUE)
+  expect_parses(code, "overflow")
+  expect_true(cs_same(k, code))
+  # "1e999" is Inf: the dplyr code joins it to nothing, and so does combine_supp()
+  s2 <- k$supp
+  s2$IDVARVAL[1] <- "1e999"
+  k2 <- k
+  k2$supp <- s2
+  expect_warning(got <- supp_stop(code, ae = k$parent, suppae = s2), "not merged")
+  expect_identical(got, "")
+  expect_true(cs_same(k2, code))
+})
+
+# A later cut of a case: its check (and so its code) stays, its tables change.
+cs_cut <- function(k, parent = k$parent, supp = k$supp) {
+  k$parent <- parent
+  k$supp <- supp
+  k
+}
+
+# What the code stops with on the cut ("" when it runs), warnings muffled.
+cs_cut_stop <- function(k, code) {
+  suppressWarnings(do.call(supp_stop, c(list(code), stats::setNames(list(k$parent, k$supp), c("ae", k$sn)))))
+}
+
+# The cut's SUPP with one row like its first, the given columns changed.
+cs_row_like <- function(supp, ...) {
+  r <- supp[1, ]
+  a <- list(...)
+  for (nm in names(a)) r[[nm]] <- a[[nm]]
+  rbind(supp, r)
+}
+
+cs_tail <- "; use the dplyr code style for this merge"
+
+test_that("label guard: combine_supp()'s label must be the plan's (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  ok <- cs_case("cs_ok")
+  codes <- list(cs_pharma_code(ok), cs_pharma_code(ok, "|>"))
+  s <- ok$supp
+  relabel <- function(i, v) { x <- s; x$QLABEL[i] <- v; x }
+  stops <- list(
+    # the last AETRTEM label wins in combine_supp(); the dplyr code keeps the plan's
+    list(relabel(2, "TE two"), 'AETRTEM label would be "TE two" in combine_supp(), not "Treatment Emergent"'),
+    list(relabel(1:2, "TE two"), 'AETRTEM label would be "TE two" in combine_supp(), not "Treatment Emergent"'),
+    list(relabel(2, "Treatment Emergent "),
+         'AETRTEM label would be "Treatment Emergent " in combine_supp(), not "Treatment Emergent"'),
+    list(relabel(2, ""), 'AETRTEM label would be none in combine_supp(), not "Treatment Emergent"'),
+    list(relabel(1:2, NA), 'AETRTEM label would be none in combine_supp(), not "Treatment Emergent"'),
+    list(relabel(3, "Other"), 'AESUBJQ label would be "Other" in combine_supp(), not "Subject qualifier"'),
+    # a new QNAM: the dplyr code has no label for it
+    list(cs_row_like(s, QNAM = "AENEW", QLABEL = "New", QVAL = "A"),
+         'AENEW label would be "New" in combine_supp(), not none'),
+    list(cs_row_like(s[3:1, ], QNAM = "AESUB2", QLABEL = "New", QVAL = "A"),
+         'AESUB2 label would be "New" in combine_supp(), not none'),
+    # factors: combine_supp() labels with the factor, or indexes the columns by its codes
+    list(transform(s, QLABEL = factor(QLABEL)), "suppae QLABEL is a factor, so combine_supp() would set factor labels"),
+    list(transform(s, QNAM = factor(QNAM)), "suppae QNAM is a factor, so combine_supp() would label the wrong columns"))
+  for (x in stops) {
+    for (code in codes) expect_identical(cs_cut_stop(cs_cut(ok, supp = x[[1]]), code), paste0(x[[2]], cs_tail))
+  }
+  # the same label both ways: it runs and agrees
+  same <- list(relabel(1, "TE two"), relabel(1, ""), relabel(1, NA),
+               cs_row_like(s, QNAM = "AENEW", QLABEL = "", QVAL = "A"),
+               cs_row_like(s, QNAM = "AENEW", QLABEL = NA, QVAL = "A"))
+  for (x in same) expect_true(cs_same(cs_cut(ok, supp = x), codes[[1]]))
+  # a SUPPQUAL: the labels combine_supp() sees are those after the RDOMAIN filter
+  sq <- cs_case("cs_suppqual")
+  code <- cs_pharma_code(sq)
+  cm <- sq$supp
+  cm$QLABEL[cm$RDOMAIN == "CM"] <- "zz"
+  expect_true(cs_same(cs_cut(sq, supp = cm), code))
+  ae2 <- sq$supp
+  ae2$QLABEL[2] <- "TE two"
+  expect_identical(cs_cut_stop(cs_cut(sq, supp = ae2), code),
+                   paste0('AETRTEM label would be "TE two" in combine_supp(), not "Treatment Emergent"', cs_tail))
+})
+
+test_that("type guards: a key or DOMAIN whose type a join would change stops (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  ok <- cs_case("cs_ok")
+  code <- cs_pharma_code(ok)
+  p <- ok$parent
+  # combine_supp() joins DOMAIN to RDOMAIN: a factor DOMAIN comes back as text
+  expect_identical(cs_cut_stop(cs_cut(ok, parent = transform(p, DOMAIN = factor(DOMAIN))), code),
+                   paste0("DOMAIN in ae would not keep its type (factor) in combine_supp()", cs_tail))
+  expect_identical(cs_cut_stop(cs_cut(ok, parent = transform(p, DOMAIN = factor(DOMAIN))), cs_pharma_code(ok, "|>")),
+                   paste0("DOMAIN in ae would not keep its type (factor) in combine_supp()", cs_tail))
+  # a factor RDOMAIN with the same levels keeps it a factor: the same both ways
+  expect_true(cs_same(cs_cut(ok, parent = transform(p, DOMAIN = factor(DOMAIN)),
+                             supp = transform(ok$supp, RDOMAIN = factor(RDOMAIN))), code))
+  # a numeric level: the dplyr code joins the key to an integer, combine_supp() as text
+  expect_identical(cs_cut_stop(cs_cut(ok, parent = transform(p, AESEQ = factor(AESEQ))), code),
+                   paste0("AESEQ in ae (factor) cannot be joined to the IDVARVAL values; convert it before the merge"))
+  expect_identical(cs_cut_stop(cs_cut(ok, parent = transform(p, AESEQ = as.character(AESEQ))), code),
+                   paste0("AESEQ in ae (character) cannot be joined to the IDVARVAL values; convert it before the merge"))
+  expect_true(cs_same(cs_cut(ok, parent = transform(p, AESEQ = as.numeric(AESEQ))), code))
+  # checked on a double key, run on an integer one: the dplyr code's join makes it double
+  dk <- cs_case_of(transform(p, AESEQ = as.numeric(AESEQ)), ok$supp)
+  expect_true(dk$field$ok)
+  expect_identical(cs_cut_stop(cs_cut(dk, parent = p), cs_pharma_code(dk)),
+                   paste0("AESEQ in ae would not keep its type (integer) in the dplyr code", cs_tail))
+  # a text level: the dplyr code joins the key to IDVARVAL
+  chr <- cs_case("cs_chr")
+  code <- cs_pharma_code(chr)
+  cp <- chr$parent
+  expect_identical(cs_cut_stop(cs_cut(chr, parent = transform(cp, AEGRPID = factor(AEGRPID))), code),
+                   paste0("AEGRPID in ae would not keep its type (factor) in the dplyr code", cs_tail))
+  expect_identical(cs_cut_stop(cs_cut(chr, parent = transform(cp, AEGRPID = c(1, 2, 1))), code),
+                   paste0("AEGRPID in ae (numeric) cannot be joined to the IDVARVAL values; convert it before the merge"))
+  expect_true(cs_same(cs_cut(chr, parent = transform(cp, AEGRPID = factor(AEGRPID)),
+                             supp = transform(chr$supp, IDVARVAL = factor(IDVARVAL))), code))
+  # STUDYID and USUBJID are joined by both: their type may change
+  for (col in c("STUDYID", "USUBJID")) {
+    p2 <- p
+    p2[[col]] <- factor(p2[[col]])
+    expect_true(cs_same(cs_cut(ok, parent = p2), cs_pharma_code(ok)), info = col)
+  }
+})
+
+test_that("column guard: a QNAM only combine_supp() makes a column of stops (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  ok <- cs_case("cs_ok")
+  code <- cs_pharma_code(ok)
+  s <- ok$supp
+  msg <- paste0("suppae QNAM AENEW would be a column in combine_supp() but not in the dplyr code", cs_tail)
+  # rows the dplyr code drops before it pivots: a key that does not convert, an NA key
+  for (v in list("x", NA_character_)) {
+    expect_identical(cs_cut_stop(cs_cut(ok, supp = cs_row_like(s, QNAM = "AENEW", QLABEL = "", IDVARVAL = v)), code),
+                     msg, info = v)
+  }
+  # rows its RDOMAIN filter drops: no rdomain prep line here, so combine_supp() sees them
+  expect_false(ok$field$prep$rdomain)
+  for (v in list(NA_character_, "ae", "CM")) {
+    expect_identical(cs_cut_stop(cs_cut(ok, supp = cs_row_like(s, QNAM = "AENEW", QLABEL = "", RDOMAIN = v)), code),
+                     msg, info = v)
+    expect_identical(cs_cut_stop(cs_cut(ok, supp = cs_row_like(s, QNAM = "AENEW", QLABEL = "", RDOMAIN = v)),
+                                 cs_pharma_code(ok, "|>")), msg, info = v)
+  }
+  # a foreign row of a known QNAM that joins nothing: the same both ways
+  expect_true(cs_same(cs_cut(ok, supp = cs_row_like(s, RDOMAIN = "CM", USUBJID = "SV-X", IDVARVAL = "5")), code))
+  # a new QNAM on a row both join: the same both ways
+  expect_true(cs_same(cs_cut(ok, supp = cs_row_like(s, QNAM = "AENEW", QLABEL = "", IDVARVAL = "2")), code))
+})
+
+test_that("a foreign subject-level row combine_supp() would join stops (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  ok <- cs_case("cs_ok")
+  code <- cs_pharma_code(ok)
+  p <- ok$parent
+  u <- p$USUBJID[3]
+  p2 <- rbind(p, transform(p[3, ], DOMAIN = "CM", AESEQ = 9L))
+  s2 <- cs_row_like(ok$supp[3:1, ], RDOMAIN = "CM", USUBJID = u)
+  expect_identical(cs_cut_stop(cs_cut(ok, parent = p2, supp = s2), code),
+                   paste0("suppae has a row for USUBJID ", u, " that would match ae in combine_supp() but not in the dplyr code",
+                          cs_tail))
+  # with no CM record to match, the guard lets it through (combine_supp() 0.3.0 itself then fails
+  # on an unmerged subject-level row: a loud stop, not a silent difference)
+  got <- cs_cut_stop(cs_cut(ok, supp = s2), code)
+  expect_match(got, "IDVARVAL", fixed = TRUE)
+  expect_no_match(got, "use the dplyr code style", fixed = TRUE)
+})
+
+test_that("grouped or rowwise inputs stop (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  # with (cs_suppqual) and without (cs_ok, cs_chr) the RDOMAIN prep line
+  expect_true(cs_case("cs_suppqual")$field$prep$rdomain)
+  expect_false(cs_case("cs_ok")$field$prep$rdomain)
+  why <- ", which combine_supp() and the dplyr code treat differently"
+  for (nm in c("cs_ok", "cs_suppqual", "cs_chr")) {
+    k <- cs_case(nm)
+    expect_true(k$field$ok, info = nm)
+    p <- k$parent
+    s <- k$supp
+    for (pipe in c("%>%", "|>")) {
+      code <- cs_pharma_code(k, pipe)
+      expect_parses(code, nm)
+      lab <- paste(nm, pipe)
+      # a grouped parent: the dplyr code's label step loses the labels across groups
+      expect_identical(cs_cut_stop(cs_cut(k, parent = dplyr::group_by(p, USUBJID)), code),
+                       paste0("ae is grouped by USUBJID", why, cs_tail), info = lab)
+      expect_identical(cs_cut_stop(cs_cut(k, parent = dplyr::rowwise(p)), code),
+                       paste0("ae is rowwise", why, cs_tail), info = lab)
+      expect_identical(cs_cut_stop(cs_cut(k, parent = dplyr::rowwise(p, USUBJID)), code),
+                       paste0("ae is rowwise (by USUBJID)", why, cs_tail), info = lab)
+      # a grouped SUPP: the dplyr code keeps the group columns
+      for (g in c("RDOMAIN", "IDVAR", "IDVARVAL")) {
+        expect_identical(cs_cut_stop(cs_cut(k, supp = dplyr::group_by(s, dplyr::across(dplyr::all_of(g)))), code),
+                         paste0(k$sn, " is grouped by ", g, why, cs_tail), info = paste(lab, g))
+        expect_identical(cs_cut_stop(cs_cut(k, supp = dplyr::rowwise(s, dplyr::all_of(g))), code),
+                         paste0(k$sn, " is rowwise (by ", g, ")", why, cs_tail), info = paste(lab, g))
+      }
+      # both grouped: the parent is named first
+      expect_identical(cs_cut_stop(cs_cut(k, parent = dplyr::group_by(p, USUBJID),
+                                          supp = dplyr::group_by(s, USUBJID)), code),
+                       paste0("ae is grouped by USUBJID", why, cs_tail), info = lab)
+    }
+    # the same both ways, and no stop: one group, a rowwise SUPP with no group columns, a tibble
+    code <- cs_pharma_code(k)
+    expect_true(cs_same(cs_cut(k, parent = dplyr::group_by(p, STUDYID)), code), info = nm)
+    expect_true(cs_same(cs_cut(k, supp = dplyr::rowwise(s)), code), info = nm)
+    expect_true(cs_same(cs_cut(k, parent = dplyr::as_tibble(p), supp = dplyr::as_tibble(s)), code), info = nm)
+  }
+})
+
 # ---- JS twin: SideviewPipeline.suppCheck ------------------------------------
 
 test_that("suppKeyType maps col_types", {
@@ -251,26 +950,52 @@ supp_canon <- function(x) {
 }
 
 supp_js <- function(parent, supp, supp_name = "suppae", rdomain = NULL, plan = NULL,
-                    sample_n = 5L, parent_name = "ae") {
+                    sample_n = 5L, parent_name = "ae", extra = list(), wire = "exact") {
   types <- lapply(parent, function(col) class(col)[1])
   opts <- list(parentName = parent_name, suppName = supp_name, parentTypes = types,
+               suppTypes = lapply(supp, function(col) class(col)[1]),
                sampleN = sample_n, parentCols = names(parent), suppCols = names(supp))
   if (!is.null(rdomain)) opts$rdomain <- rdomain
   if (!is.null(plan)) opts$plan <- plan
+  # wire = "widget": rows as the widget payload sends them (htmlwidgets' toJSON2: 16 significant
+  # digits; NA, Inf and NaN as null), with `rounded: true` and each card's `col_inexact` as the
+  # engine passes them
+  if (identical(wire, "widget")) {
+    opts$rounded <- TRUE
+    opts$inexact <- list(parent = I(sv_inexact_cols(parent)), supp = I(sv_inexact_cols(supp)))
+  }
+  opts[names(extra)] <- extra
+  # else 17 significant digits, so the browser gets the very doubles R has (0.1 + 0.2, not 0.3)
   rows <- function(d) {
     rownames(d) <- NULL
-    jsonlite::toJSON(d, dataframe = "rows", na = "null")
+    if (identical(wire, "widget")) {
+      return(jsonlite::toJSON(d, dataframe = "rows", na = "null", null = "null", auto_unbox = TRUE,
+                              digits = 16, use_signif = TRUE))
+    }
+    jsonlite::toJSON(d, dataframe = "rows", na = "null", digits = I(17))
   }
   run_pipeline_js(sprintf(
     "out = P.suppCheck(%s, %s, %s);", rows(parent), rows(supp),
     jsonlite::toJSON(opts, auto_unbox = TRUE, na = "null", null = "null")))
 }
 
-supp_parity <- function(label, parent, supp, supp_name = "suppae", rdomain = NULL, plan = NULL) {
+supp_parity <- function(label, parent, supp, supp_name = "suppae", rdomain = NULL, plan = NULL,
+                        js_reason = NULL) {
   r <- sv_supp_check(parent, supp, parent_name = "ae", supp_name = supp_name, rdomain = rdomain,
                      plan = plan)
   want <- jsonlite::fromJSON(sv_supp_check_json(r), simplifyVector = FALSE)
   got <- supp_js(parent, supp, supp_name, rdomain, plan)
+  # `installed` is the server's (R adds it to the reply; the browser sends null)
+  want$combine_supp$installed <- NULL
+  got$combine_supp$installed <- NULL
+  # the browser's combine_supp may be not ok where R is sure (an IDVARVAL R_strtod may read
+  # otherwise, suppNumSure): then it says so, and the rest still equals R
+  if (!is.null(js_reason)) {
+    expect_false(got$combine_supp$ok, label = label)
+    expect_identical(got$combine_supp$reason, js_reason, label = label)
+    want$combine_supp$ok <- FALSE
+    want$combine_supp$reason <- js_reason
+  }
   expect_equal(supp_canon(got), supp_canon(want), info = label)
   invisible(want)
 }
@@ -326,10 +1051,25 @@ test_that("suppCheck matches sv_supp_check", {
     drift_type = list(f$ae, f$suppae2, "suppae", NULL, p_t),
     drift_fresh = list(f$ae, f$suppae2, "suppae", NULL, base)
   )
+  # every combine_supp() fixture, eligible or not
+  for (nm in cs_names()) {
+    cases[[nm]] <- list(f[[nm]][[1]], f[[nm]][[2]], if (grepl("suppqual", nm)) "suppqual" else "suppae", "AE")
+  }
+  expect_length(cs_names(), 31L)
+  # numeric USUBJID: 1e+05 as R writes it, on both sides
+  ids <- c(100000, 200000)
+  p <- f$cs_ok[[1]]
+  p$USUBJID <- ids[match(p$USUBJID, unique(p$USUBJID))]
+  s <- f$cs_ok[[2]]
+  s$USUBJID <- ids[match(s$USUBJID, unique(f$cs_ok[[1]]$USUBJID))]
+  cases$cs_num_usubjid <- list(p, s)
+  # cs_frac's IDVARVAL "0.3" is not a double exactly, so R_strtod may round it otherwise
+  fail_safe <- c(cs_frac = "IDVARVAL 0.3 is too close to R's rounding to check in the browser")
   for (nm in names(cases)) {
     a <- cases[[nm]]
     supp_parity(nm, a[[1]], a[[2]], if (length(a) > 2) a[[3]] else "suppae",
-                if (length(a) > 3) a[[4]] else NULL, if (length(a) > 4) a[[5]] else NULL)
+                if (length(a) > 3) a[[4]] else NULL, if (length(a) > 4) a[[5]] else NULL,
+                js_reason = if (nm %in% names(fail_safe)) fail_safe[[nm]])
   }
 
   # sample_n truncates samples and the preview alike
@@ -337,10 +1077,456 @@ test_that("suppCheck matches sv_supp_check", {
   s$QNAM <- paste0("Q", 1:8)
   r <- sv_supp_check(f$ae, s, parent_name = "ae", supp_name = "suppae", sample_n = 3L)
   got <- supp_js(f$ae, s, sample_n = 3L)
+  got$combine_supp$installed <- NULL
   expect_equal(supp_canon(got), supp_canon(jsonlite::fromJSON(sv_supp_check_json(r),
                                                                  simplifyVector = FALSE)))
   expect_length(got$orphan_samples, 3L)
   expect_length(got$preview, 3L)
+})
+
+# Doubles as JSON for the JS helpers: 17 digits, and Inf, -Inf, NaN as strings.
+js_dbls <- function(vals) {
+  jsonlite::toJSON(lapply(vals, function(v) {
+    if (is.nan(v)) "NaN" else if (is.infinite(v)) if (v > 0) "Inf" else "-Inf" else v
+  }), digits = I(17), na = "null", auto_unbox = TRUE)
+}
+
+test_that("rAsCharacter matches R's as.character for doubles", {
+  vals <- c(1, 99999, 100000, 110000, 123456, 1e15, 1e15 + 2, 1e16, 123456789012345678, 0.1, 0.1 + 0.2,
+            1/3, 2/3, -1/3, -100000, 1e-4, 1e-5, 0.0001234, 1.5e-300, 1.7976931348623157e308, 5e-324,
+            -0, 3.14159265358979, 1234.5678, 1e5 + 0.1, Inf, -Inf, NaN, NA)
+  want <- local({ op <- options(scipen = 0); on.exit(options(op)); as.character(vals) })
+  got <- run_pipeline_js(sprintf("out = %s.map(P.rAsCharacter);", js_dbls(vals)))
+  expect_identical(vapply(got, function(x) if (is.null(x)) NA_character_ else x, ""), want)
+  # 15-digit ties round to even; fixed form when it is no wider than scientific
+  ties <- c(1000000000000005, 1000000000000015, 1000000000000025, 100000000000000.5, 100000000000001.5,
+            12345678901234.25, 12345678901234.75, 2^-22, 3 * 2^-22, 7 * 2^-22, 0.1000000000000005,
+            0.3000000000000005, 1234.567890123455, 2^53, 2^60, 12345678901234567890, 1e21, 1e22, 1e-15,
+            999999999999999.9, 0.1234567890123456, -2^-1074, 123456.7, 1e100, 1.5e-99, 1e-100)
+  want <- local({ op <- options(scipen = 0); on.exit(options(op)); as.character(ties) })
+  got <- run_pipeline_js(sprintf("out = %s.map(P.rAsCharacter);", js_dbls(ties)))
+  expect_identical(unlist(got), want)
+})
+
+test_that("rAsCharacter agrees with R on a sweep of doubles wherever it is sure", {
+  set.seed(20261122)
+  x <- c(runif(600) * 10^sample(-25:25, 600, TRUE), -runif(100) * 10^sample(-5:20, 100, TRUE),
+         round(runif(300) * 1e6) / 10^sample(0:8, 300, TRUE), round(runif(200) * 2^53),
+         round(runif(100) * 1e19), (0:99) / 7, 1 / (1:100))
+  want <- local({ op <- options(scipen = 999); on.exit(options(op)); sideview:::sv_r_chr(x) })
+  got <- run_pipeline_js(sprintf(
+    "var xs = %s; out = {text: xs.map(P.rAsCharacter), sure: xs.map(P.rAsCharacterSure)};", js_dbls(x)))
+  sure <- unlist(got$sure)
+  expect_gt(mean(sure), 0.95)
+  expect_identical(unlist(got$text)[sure], want[sure])
+  # a 15-digit tie that R rounds through long double arithmetic is not sure
+  got <- run_pipeline_js("out = [2.384185791015625e-7, 1234567890123456.5, 0.3, 1e5].map(P.rAsCharacterSure);")
+  expect_identical(unlist(got), c(FALSE, FALSE, TRUE, TRUE))
+})
+
+test_that("strTrim matches stringr::str_trim", {
+  skip_if_not_installed("stringr")
+  cps <- c(1:0xD7FF, 0xE000:0xFFFF)
+  ch <- intToUtf8(cps, multiple = TRUE)
+  y <- c(paste0(ch, "1"), paste0("1", ch), paste0("\ufeff\ufeff", ch, "1"), " \ufeff1")
+  # code points both ways: U+007F and other controls do not survive the trip through stdout
+  got <- run_pipeline_js(sprintf(paste(
+    "out = %s.map(function (a) {",
+    "  var t = P.strTrim(String.fromCodePoint.apply(null, a));",
+    "  return Array.from(t).map(function (c) { return c.codePointAt(0); });",
+    "});"), jsonlite::toJSON(lapply(y, utf8ToInt))))
+  expect_identical(lapply(got, function(a) as.integer(unlist(a))), lapply(stringr::str_trim(y), utf8ToInt))
+  expect_null(run_pipeline_js("out = P.strTrim(null);"))
+})
+
+test_that("suppCheck: rule 1 before rule 2 (lazy) before rule 3 (preview) before the rest", {
+  k <- fx$cs_key01
+  rd <- function(...) supp_js(k[[1]], k[[2]], extra = list(...))$combine_supp
+  r <- rd(lazy = list(name = "ae", kind = "duckdb"))
+  expect_identical(r$reason, "combine_supp() needs data frames: ae is a duckdb table")
+  expect_false(r$ok)
+  expect_identical(r$prep, list(rdomain = FALSE, idvar_na = FALSE))
+  expect_null(r$installed)
+  expect_identical(rd(lazy = list(name = "suppae", kind = "arrow"), preview = TRUE)$reason,
+                   "combine_supp() needs data frames: suppae is an Arrow table")
+  expect_identical(rd(preview = TRUE)$reason, "Checked on preview rows only")
+  expect_identical(rd(lazy = NULL, preview = FALSE)$reason, 'IDVARVAL "01" would not match AESEQ 1 in combine_supp()')
+  # the merge stops: rule 1 wins over a lazy card
+  cl <- fx$cs_clash
+  expect_identical(supp_js(cl[[1]], cl[[2]], extra = list(lazy = list(name = "ae", kind = "duckdb")))$combine_supp$reason,
+                   "The merge stops: AETRTEM already in ae")
+  # the stop text, as R writes it
+  d <- list(repeats = list(n = 2L), clashes = list("A", "B"), two_level = list("C"))
+  expect_identical(run_pipeline_js(sprintf("out = P.combineSuppStopReason(%s, 'ae');",
+                                           jsonlite::toJSON(d, auto_unbox = TRUE))),
+                   sv_supp_combine_stop_reason(d, "ae"))
+  d1 <- list(repeats = list(n = 1L), clashes = list(), two_level = list())
+  expect_identical(run_pipeline_js(sprintf("out = P.combineSuppStopReason(%s, 'ae');",
+                                           jsonlite::toJSON(d1, auto_unbox = TRUE))),
+                   "The merge stops: 1 repeated QNAM record")
+})
+
+test_that("suppCheck: a key value R may write differently is not ok (rule 7)", {
+  p <- fx$cs_ok[[1]]
+  p$AESEQ <- c(2^-22, 2, 1)
+  s <- fx$cs_ok[[2]]
+  s$IDVARVAL[1] <- "2.38418579101562e-07"
+  r <- supp_js(p, s)$combine_supp
+  expect_false(r$ok)
+  expect_identical(r$reason, "AESEQ 2.38418579101562e-07 is too close to R's rounding to check in the browser")
+})
+
+test_that("sv_inexact_cols() names each double column 16-digit JSON does not carry exactly", {
+  skip_if_not_installed("htmlwidgets")
+  set.seed(20261122)
+  r <- c(runif(150) * 10^sample(-20:20, 150, TRUE), round(runif(50) * 1e6) / 8,
+         1e15 + sample.int(1e6, 50) + 0.25, -2^53, 2^53, 2^53 + 2, 1e300, 5e-324, 0.1)
+  d <- as.data.frame(setNames(lapply(r, function(v) c(v, NA, 1)), sprintf("x%03d", seq_along(r))))
+  d$half <- c(0.5, NA, 1)
+  d$three <- c(2.9999999999999996, 1, 1)
+  d$big_frac <- c(1234567890123456.2, 1, 1)
+  d$frac <- c(0.1 + 0.2, 1, 1)
+  d$inf <- c(Inf, 1, 1)
+  d$ninf <- c(-Inf, 1, 1)
+  d$nan <- c(NaN, 1, 1)
+  d$na_only <- NA_real_
+  d$int <- 1:3
+  d$chr <- c("a", "b", NA)
+  d$lgl <- c(TRUE, NA, FALSE)
+  # 16 digits that R's as.numeric() reads back as x but JSON.parse (and yajl) does not
+  rs <- c(0.47360295429825783, 8.3669512206688525e+37, 5853.6245371215045, 230778.35096046329)
+  for (i in seq_along(rs)) d[[sprintf("strtod%d", i)]] <- c(rs[i], 1, 1)
+  # which numbers R's parser reads one double off depends on the platform: with 80-bit long
+  # double (x86) the premises here hold; macOS arm64 parses in plain double and reads others off
+  x87 <- isTRUE(.Machine$longdouble.digits == 64L)
+  if (x87) expect_true(all(as.numeric(formatC(rs, digits = 16, format = "g")) == rs))
+  bad <- sv_inexact_cols(d)
+  expect_true(all(c("three", "big_frac", "frac", "inf", "ninf", "nan", sprintf("strtod%d", 1:4)) %in% bad))
+  # eighths, whole numbers to 2^53 and past it while 16 digits hold, 1e300, 5e-324 and 0.1 are
+  # exact; 1e15 + k + 0.25 needs 17 digits
+  # (x254 is 1e300, which only x86 R reads as the double 16 digits give back; the round trips
+  # below hold it either way)
+  exact <- sprintf("x%03d", c(151:200, 251:253, 255:256, if (x87) 254))
+  expect_false(any(c("half", "na_only", "int", "chr", "lgl", exact) %in% bad))
+  expect_true(all(sprintf("x%03d", 201:250) %in% bad))
+  rnd <- sprintf("x%03d", 1:150)
+  expect_true(any(rnd %in% bad) && !all(rnd %in% bad))
+  # the real wire: every column not listed comes back as the very doubles R has (null = NA) ...
+  json <- as.character(htmlwidgets:::toJSON(d))
+  back <- jsonlite::parse_json(json)
+  num <- function(v) vapply(v, function(x) if (is.null(x)) NA_real_ else as.numeric(x), numeric(1))
+  dbl <- names(d)[vapply(d, is.double, logical(1))]
+  for (nm in setdiff(dbl, bad)) expect_identical(num(back[[nm]]), d[[nm]], info = nm)
+  # ... and every column listed does not
+  for (nm in bad) expect_false(identical(num(back[[nm]]), d[[nm]]), info = nm)
+  # the same in the browser's JSON.parse, against R's 17-digit text of each value
+  want <- lapply(d[dbl], function(x) ifelse(is.na(x) & !is.nan(x), NA, sprintf("%.17g", x)))
+  got <- run_pipeline_js(sprintf(paste0(
+    "var w = %s, want = %s; out = [];",
+    "Object.keys(want).forEach(function (k) {",
+    "  var ok = w[k].every(function (v, i) {",
+    "    var t = want[k][i]; return t === null ? v === null : v !== null && v === Number(t); });",
+    "  if (!ok) out.push(k); });"), json, jsonlite::toJSON(want, na = "null")))
+  expect_setequal(unlist(got), bad)
+  # the widget's cards carry it as a JSON array, also with one name or none
+  card <- function(w) w$x$cards[[1]]
+  wire <- function(w) as.character(htmlwidgets:::toJSON(card(w)["col_inexact"]))
+  w <- sideview_widget(t = data.frame(a = 0.1 + 0.2, b = 1, c = "x"))
+  expect_identical(card(w)$col_inexact, list("a"))
+  expect_match(wire(w), '"col_inexact":["a"]', fixed = TRUE)
+  w <- sideview_widget(u = data.frame(b = 1))
+  expect_match(wire(w), '"col_inexact":[]', fixed = TRUE)
+  # ... worked out on the rows the widget embeds, after max_rows
+  big <- data.frame(a = c(1, 2, 0.1 + 0.2))
+  expect_identical(card(sideview_widget(big = big))$col_inexact, list("a"))
+  w <- suppressMessages(sideview_widget(big = big, max_rows = 2))
+  expect_identical(nrow(card(w)$data), 2L)
+  expect_identical(card(w)$col_inexact, list())
+  # the gadget and the module check combine_supp in R: their payloads leave it out
+  expect_null(sv_card_payload(sv_normalize(big, name = "big"))$col_inexact)
+  expect_null(sv_card_payload(sv_normalize(big, name = "big"), preview_rows = 2)$col_inexact)
+})
+
+test_that("sv_inexact_cols() lists an integer64 column with a value past 2^53", {
+  skip_if_not_installed("bit64")
+  skip_if_not_installed("htmlwidgets")
+  i64 <- bit64::as.integer64
+  d <- data.frame(id = 1:2)
+  d$small <- i64(c("9007199254740992", NA))
+  d$neg_small <- i64(c("-9007199254740992", "1"))
+  d$big <- i64(c("1", "9007199254740993"))
+  d$neg_big <- i64(c("-9007199254740993", NA))
+  d$na <- i64(c(NA, NA))
+  expect_identical(sv_inexact_cols(d), c("big", "neg_big"))
+  # the browser reads the digits as a double: the unlisted columns arrive exact, the listed do not
+  json <- as.character(htmlwidgets:::toJSON(d))
+  cols <- c("small", "neg_small", "big", "neg_big", "na")
+  want <- lapply(d[cols], function(x) ifelse(is.na(x), NA, as.character(x)))
+  got <- run_pipeline_js(sprintf(paste0(
+    "var w = %s, want = %s; out = [];",
+    "Object.keys(want).forEach(function (k) {",
+    "  var ok = w[k].every(function (v, i) {",
+    "    var t = want[k][i]; return t === null ? v === null : v !== null && BigInt(v) === BigInt(t); });",
+    "  if (!ok) out.push(k); });"), json, jsonlite::toJSON(want, na = "null")))
+  expect_setequal(unlist(got), c("big", "neg_big"))
+  # combine_supp in the widget: an integer64 key past 2^53 is not trusted
+  p <- fx$cs_1e5[[1]]
+  p$AESEQ <- i64(c("1", "2", "9007199254740993"))
+  s <- fx$cs_1e5[[2]]
+  s$IDVARVAL <- c("1", "9007199254740993")
+  r <- supp_js(p, s, wire = "widget")$combine_supp
+  expect_false(r$ok)
+  expect_identical(r$reason, "AESEQ has values the browser cannot read exactly")
+})
+
+test_that("suppCheck: rows rounded to 16 digits (the widget) trust only R's exact double columns", {
+  skip_if_not_installed("htmlwidgets")
+  # the widget's JSON: 0.1 + 0.2 arrives as 0.3, and Inf, NaN and NA all as null
+  expect_identical(as.character(htmlwidgets:::toJSON(data.frame(a = c(0.1 + 0.2, Inf, NaN, NA)))),
+                   '{"a":[0.3,null,null,null]}')
+  expect_identical(as.character(jsonlite::toJSON(data.frame(a = c(0.1 + 0.2, Inf, NaN, NA)),
+                                                 dataframe = "columns", na = "null", digits = 16,
+                                                 use_signif = TRUE)),
+                   '{"a":[0.3,null,null,null]}')
+  r_says <- function(k) sv_supp_check(k[[1]], k[[2]], parent_name = "ae", supp_name = "suppae")$combine_supp
+  # a parent AESEQ x keyed by SUPP IDVARVAL t
+  keyed_dbl <- function(x, t) {
+    p <- fx$cs_1e5[[1]]
+    p$AESEQ <- c(1, 2, x)
+    s <- fx$cs_1e5[[2]]
+    s$IDVARVAL <- c("1", t)
+    list(p, s)
+  }
+  lossy <- "AESEQ has values the browser cannot read exactly"
+  # R lists the column, so the browser does not guess: 2.9999999999999996 arrives as 3,
+  # 1234567890123456.2 as 1234567890123456, 0.1 + 0.2 as 0.3, Inf and NaN as null
+  # 0.47360295429825783 and 8.3669512206688525e+37 come back from 16 digits as x in R's
+  # as.numeric() but not in JSON.parse, so R's parser cannot be the test (R26)
+  cases <- list(three = keyed_dbl(2.9999999999999996, "3"),
+                big_frac = keyed_dbl(1234567890123456.2, "1234567890123456.2"),
+                cs_frac = fx$cs_frac,
+                inf = keyed_dbl(Inf, "Inf"), nan = keyed_dbl(NaN, "NaN"),
+                strtod1 = keyed_dbl(0.47360295429825783, "0.47360295429825783"),
+                strtod2 = keyed_dbl(8.3669512206688525e+37, "8.3669512206688525e+37"))
+  for (nm in names(cases)) {
+    k <- cases[[nm]]
+    expect_identical(sv_inexact_cols(k[[1]]), "AESEQ", info = nm)
+    expect_false(r_says(k)$ok, info = nm)
+    r <- supp_js(k[[1]], k[[2]], wire = "widget")$combine_supp
+    expect_false(r$ok, info = nm)
+    expect_identical(r$reason, lossy, info = nm)
+  }
+  # columns R does not list are exact on the wire (null in them is NA): the same answer as R
+  same <- list(cs_ok = fx$cs_ok, cs_1e5 = fx$cs_1e5, cs_1e5_sci = fx$cs_1e5_sci,
+               cs_110000 = fx$cs_110000, half = keyed_dbl(0.5, "0.5"),
+               two40 = keyed_dbl(2^40, "1099511627776"), na = keyed_dbl(NA, "2"))
+  for (nm in names(same)) {
+    k <- same[[nm]]
+    expect_identical(sv_inexact_cols(k[[1]]), character(0), info = nm)
+    want <- r_says(k)
+    got <- supp_js(k[[1]], k[[2]], wire = "widget")$combine_supp
+    expect_identical(got$ok, want$ok, info = nm)
+    expect_identical(got$reason, want$reason, info = nm)
+  }
+  expect_true(r_says(same$half)$ok)
+  expect_true(supp_js(fx$cs_ok[[1]], fx$cs_ok[[2]], wire = "widget")$combine_supp$ok)
+  # rounded rows with no list from R: no double column can be trusted
+  k <- same$half
+  r <- supp_js(k[[1]], k[[2]], wire = "widget", extra = list(inexact = NULL))$combine_supp
+  expect_false(r$ok)
+  expect_identical(r$reason, lossy)
+  # exact rows (the gadget's 17 digits, no `rounded`) need no list
+  expect_true(supp_js(k[[1]], k[[2]])$combine_supp$ok)
+})
+
+test_that("suppCheck: an IDVARVAL R_strtod may read as another double is not sure (rule 7)", {
+  keyed_dbl <- function(x, t) {
+    p <- fx$cs_1e5[[1]]
+    p$AESEQ <- c(1, 2, x)
+    s <- fx$cs_1e5[[2]]
+    s$IDVARVAL <- c("1", t)
+    list(p, s)
+  }
+  unsure <- function(t) sprintf("IDVARVAL %s is too close to R's rounding to check in the browser", t)
+  # R reads "0.4736029542982578" as 0.47360295429825783, so dplyr matches; Number() reads its
+  # neighbour. Exact 17-digit rows: R is not ok, the browser must not say ok
+  # (x is R's own reading of the text; an R literal goes through R_strtod too, so it is not used)
+  for (a in c("0.4736029542982578", "8.366951220668853e+37")) {
+    x <- as.numeric(a)
+    # the browser reads the text as another double (x's 17 digits read back exactly in JS)
+    js <- run_pipeline_js(sprintf("out = [Number('%s') === Number('%s')];", a, sprintf("%.17g", x)))
+    expect_false(js[[1]], info = a)
+    k <- keyed_dbl(x, a)
+    expect_false(sv_supp_check(k[[1]], k[[2]], parent_name = "ae", supp_name = "suppae")$combine_supp$ok)
+    r <- supp_js(k[[1]], k[[2]])$combine_supp
+    expect_false(r$ok, info = a)
+    expect_identical(r$reason, unsure(a), info = a)
+  }
+  # 16 digits are never sure, even an exact 2^53 (R is ok there; the browser is not)
+  k <- keyed_dbl(2^53, " 9007199254740992 ")
+  expect_true(sv_supp_check(k[[1]], k[[2]], parent_name = "ae", supp_name = "suppae")$combine_supp$ok)
+  expect_identical(supp_js(k[[1]], k[[2]])$combine_supp$reason, unsure("9007199254740992"))
+  got <- run_pipeline_js(paste0("out = ['0.5', '1e5', '100000e-2', '-0', '0.375', '1099511627776', ",
+    "'6.228e-9', '0.3', '0.4736029542982578', '1234567890123456', '1e28', '1' + '0'.repeat(20), ",
+    "'1.5e-30'].map(P.suppNumSure);"))
+  expect_identical(unlist(got), c(rep(TRUE, 6), rep(FALSE, 7)))
+})
+
+test_that("suppCheck: rule 7 checks the sure region on an IDVARVAL the browser marks bad", {
+  keyed_dbl <- function(x, t) {
+    p <- fx$cs_1e5[[1]]
+    p$AESEQ <- c(1, 2, x)
+    s <- fx$cs_1e5[[2]]
+    s$IDVARVAL <- c("1", t)
+    list(p, s)
+  }
+  unsure <- function(t) sprintf("IDVARVAL %s is too close to R's rounding to check in the browser", t)
+  r_says <- function(k) sv_supp_check(k[[1]], k[[2]], parent_name = "ae", supp_name = "suppae")$combine_supp
+  # near the 1e308 cut R_strtod reads this text as 1e308 (kept, so dplyr matches it), where
+  # Number() reads the next double up (past the cut, bad): combine_supp() would not match it
+  a <- "1.0000000000000001108e308"
+  x <- as.numeric(a)
+  # only with 80-bit long double: without it R reads this text past the cut too
+  if (isTRUE(.Machine$longdouble.digits == 64L)) {
+    expect_identical(x, 1e308)
+    js <- run_pipeline_js(sprintf("out = [Number('%s') > 1e308, Number('%s') === 1e308];", a, sprintf("%.17g", x)))
+    expect_identical(unlist(js), c(TRUE, TRUE))
+  }
+  k <- keyed_dbl(x, a)
+  expect_false(r_says(k)$ok)
+  for (w in c("exact", "widget")) {
+    got <- supp_js(k[[1]], k[[2]], wire = w)
+    expect_false(got$combine_supp$ok, info = w)
+    expect_identical(got$combine_supp$reason, unsure(a), info = w)
+    # the main check keeps its counts (the 1e308 twin gap there is not rule 7's)
+    expect_equal(got$bad_idvarval$n, 1, info = w)
+  }
+  # a text both sides read as Inf is bad on both: R says ok, the browser fails safe (not sure)
+  k <- keyed_dbl(3, " 1e999 ")
+  expect_true(r_says(k)$ok)
+  for (w in c("exact", "widget")) {
+    got <- supp_js(k[[1]], k[[2]], wire = w)$combine_supp
+    expect_false(got$ok, info = w)
+    expect_identical(got$reason, unsure("1e999"), info = w)
+  }
+  # no text the browser calls sure is past the cut, so a sure row is never bad for its size
+  got <- run_pipeline_js(paste0("out = ['1e22', '999999999999999e22', ",
+    "'1e308', '2e308', '1e999'].map(function (t) { return [P.suppNumSure(t), Number(t) <= 1e308]; });"))
+  expect_identical(lapply(got, unlist), list(c(TRUE, TRUE), c(FALSE, TRUE), c(FALSE, TRUE),
+                                             c(FALSE, FALSE), c(FALSE, FALSE)))
+})
+
+test_that("suppNumSure(): every text the browser calls sure is the double R reads", {
+  # random decimal texts: 1 to 20 significant digits, exponents across the double range, in
+  # scientific, integer-mantissa, fixed (with and without trailing zeros) and leading-zero forms;
+  # plus the exact texts of dyadic fractions and of integers, which are the sure region
+  set.seed(27)
+  n <- 20000L
+  nsig <- sample(1:20, n, TRUE)
+  digs <- vapply(nsig, function(k) paste0(sample(1:9, 1), paste(sample(0:9, k - 1, TRUE), collapse = "")), "")
+  e <- sample(-330:310, n, TRUE)
+  form <- sample(c("sci", "int_e", "fixed", "fixed_tz", "lead0_e"), n, TRUE)
+  mk <- function(d, k, e, f) {
+    switch(f,
+      sci = paste0(substr(d, 1, 1), if (k > 1) paste0(".", substr(d, 2, k)) else "", "e", e),
+      int_e = paste0(d, "e", e - k + 1),
+      lead0_e = paste0("0.000", d, "e", e + 4),
+      {
+        d2 <- if (f == "fixed_tz") paste0(d, "000") else d
+        k2 <- nchar(d2)
+        if (e >= k2 - 1) paste0(d2, strrep("0", e - k2 + 1))
+        else if (e >= 0) paste0(substr(d2, 1, e + 1), ".", substr(d2, e + 2, k2))
+        else paste0("0.", strrep("0", -e - 1), d2)
+      })
+  }
+  rnd <- mapply(mk, digs, nsig, e, form, USE.NAMES = FALSE)
+  small <- mapply(mk, digs[1:5000], pmin(nsig[1:5000], 15L), sample(-25:25, 5000, TRUE),
+                  form[1:5000], USE.NAMES = FALSE)
+  q <- sample.int(2^20, 5000, TRUE) / 2^sample(0:40, 5000, TRUE)
+  dy <- sub("[.]$", "", sub("0+$", "", sprintf("%.45f", q)))
+  w <- sprintf("%.0f", sample.int(2^31 - 1, 2000, TRUE) * sample(c(1, 10, 1000, 1e6), 2000, TRUE))
+  txt <- c(rnd, small, dy, paste0("-", dy[1:1000]), paste0(dy[1:1000], "e-2"), w,
+           paste0(w, "00e-2"), paste0(w, ".0"), paste0(w, "e3"))
+  x <- as.numeric(txt)
+  hex <- apply(matrix(as.character(writeBin(x, raw(), endian = "big")), nrow = 8), 2, paste, collapse = "")
+  got <- run_pipeline_js(sprintf(paste0(
+    "var t = %s, h = %s, b = Buffer.alloc(8), sure = 0, differ = 0, bad = [];",
+    "t.forEach(function (s, i) {",
+    "  b.writeDoubleBE(Number(s)); var same = b.toString('hex') === h[i];",
+    "  if (!same) differ++;",
+    "  if (P.suppNumSure(s)) { sure++; if (!same) bad.push(s); } });",
+    "out = {sure: sure, differ: differ, bad: bad};"), jsonlite::toJSON(txt), jsonlite::toJSON(hex)))
+  # the sweep has teeth: R and Number() part on some texts, short ones among them ...
+  expect_gt(got$differ, 10)
+  # ... but never on one called sure, and the sure region is not empty
+  expect_identical(unlist(got$bad), NULL)
+  expect_gt(got$sure, 10000)
+})
+
+test_that("suppCheck: combine_supp needs a type for every column rules 7 and 8 read", {
+  k <- fx$cs_ok
+  for (miss in c("parentTypes", "suppTypes")) {
+    extra <- list()
+    extra[miss] <- list(NULL)
+    r <- supp_js(k[[1]], k[[2]], extra = extra)$combine_supp
+    expect_false(r$ok)
+    expect_identical(r$reason, "Column types are not known in the browser", info = miss)
+    # prep as computed (cs_ok has a subject-level row with IDVAR "")
+    expect_identical(r$prep, list(rdomain = FALSE, idvar_na = TRUE), info = miss)
+    # an empty map ({} on the wire)
+    extra[miss] <- list(structure(list(), names = character(0)))
+    r <- supp_js(k[[1]], k[[2]], extra = extra)$combine_supp
+    expect_identical(r$reason, "Column types are not known in the browser", info = paste(miss, "{}"))
+  }
+  expect_identical(as.character(jsonlite::toJSON(list(t = structure(list(), names = character(0))),
+                                                 auto_unbox = TRUE)), '{"t":{}}')
+  # a map without one of the columns read: the parent's keys and IDVAR column, the SUPP's
+  # keys, IDVARVAL, QLABEL and QNAM
+  k <- fx$cs_1e5
+  reads <- list(parentTypes = c("STUDYID", "USUBJID", "DOMAIN", "AESEQ"),
+                suppTypes = c("STUDYID", "USUBJID", "RDOMAIN", "IDVARVAL", "QLABEL", "QNAM"))
+  for (side in names(reads)) {
+    for (col in reads[[side]]) {
+      types <- lapply(k[[if (side == "parentTypes") 1L else 2L]], function(x) class(x)[1])
+      types[[col]] <- NULL
+      r <- supp_js(k[[1]], k[[2]], extra = setNames(list(types), side))$combine_supp
+      expect_false(r$ok)
+      expect_identical(r$reason, "Column types are not known in the browser", info = paste(side, col))
+    }
+  }
+  # a column neither rule reads may be left out
+  types <- lapply(k[[1]], function(x) class(x)[1])
+  other <- setdiff(names(types), reads$parentTypes)
+  expect_true(length(other) > 0L)
+  types[other] <- NULL
+  want <- sv_supp_check(k[[1]], k[[2]], parent_name = "ae", supp_name = "suppae")$combine_supp
+  r <- supp_js(k[[1]], k[[2]], extra = list(parentTypes = types))$combine_supp
+  expect_identical(r$ok, want$ok)
+  expect_identical(r$reason, want$reason)
+  # after rule 5 (the parent's columns), before rule 7
+  r <- supp_js(fx$cs_no_domain[[1]], fx$cs_no_domain[[2]], extra = list(suppTypes = NULL))$combine_supp
+  expect_identical(r$reason, "ae has no DOMAIN column")
+  expect_true(supp_js(fx$cs_ok[[1]], fx$cs_ok[[2]])$combine_supp$ok)
+})
+
+test_that("suppCheck: a blank IDVAR is blank as R's trimws() sees it", {
+  # "\f" and NBSP are not blank to trimws(): R looks for a parent column of that name
+  for (w in c("\f", "\v", "\u00a0", "\u2028", "  ", "\t\r\n")) {
+    s <- fx$cs_ok[[2]]
+    s$IDVAR[3] <- w
+    supp_parity(sprintf("subject IDVAR %s", paste(utf8ToInt(w), collapse = " ")), fx$cs_ok[[1]], s)
+  }
+})
+
+test_that("suppCheck: double STUDYID / USUBJID keys are R's 15-digit text on each side", {
+  # parent 0.1 + 0.2 and SUPP 0.3 are both "0.3" to R, so they match
+  p <- fx$cs_ok[[1]]
+  p$USUBJID <- c(0.1 + 0.2, 0.7)[match(p$USUBJID, unique(p$USUBJID))]
+  s <- fx$cs_ok[[2]]
+  s$USUBJID <- c(0.3, 0.7)[match(s$USUBJID, unique(fx$cs_ok[[1]]$USUBJID))]
+  want <- supp_parity("usubjid 0.1 + 0.2 vs 0.3", p, s)
+  expect_true(want$combine_supp$ok)
+  expect_identical(want$n_matched, 3L)
 })
 
 test_that("suppCheck follows R on NA keys", {
@@ -384,7 +1570,7 @@ test_that("odd numeric IDVARVAL strings are treated alike in R and JS", {
 test_that("only ASCII whitespace around IDVARVAL is trimmed, in R and JS (NBSP, BOM, U+2028, U+3000 are bad)", {
   dbl <- fx$ae
   dbl$AESEQ <- c(1, 2, 3, 4)
-  ws <- c(" 1", "1 ", " 1", "﻿2", "　3", "\t1", "2\n", "\r3\f", "\v4", " 1 ")
+  ws <- c("\u00a01", "1\u00a0", "\u20281", "\ufeff2", "\u30003", "\t1", "2\n", "\r3\f", "\v4", " 1 ")
   s <- fx$suppae[rep(1, length(ws)), ]
   s$IDVARVAL <- ws
   s$QNAM <- paste0("Q", seq_along(ws))
@@ -442,6 +1628,91 @@ test_that("an NA QNAM counts as the text NA in R and JS (as pivot_wider names it
   expect_identical(w2$repeats$samples[[1]]$QNAM, "NA")
 })
 
+test_that("a parent IDVARVAL column: the check says no and the guard stops (later cut)", {
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  why <- "ae has an IDVARVAL column, which combine_supp() would drop"
+  for (nm in c("cs_ok", "cs_chr", "cs_suppqual")) {
+    k <- cs_case(nm)
+    p2 <- k$parent
+    p2$IDVARVAL <- rep_len(c("a", "b", "c"), nrow(p2))
+    for (pipe in c("%>%", "|>")) {
+      expect_identical(cs_cut_stop(cs_cut(k, parent = p2), cs_pharma_code(k, pipe)), paste0(why, cs_tail),
+                       info = paste(nm, pipe))
+    }
+    # checked on that parent: not ok, so the pharmaverse style writes the dplyr code
+    k2 <- cs_case_of(p2, k$supp, k$sn)
+    expect_false(k2$field$ok, info = nm)
+    expect_identical(k2$field$reason, why, info = nm)
+    # combine_supp() does drop it, the dplyr code keeps it
+    expect_false("IDVARVAL" %in% names(cs_theirs(k2)), info = nm)
+    expect_true("IDVARVAL" %in% names(cs_ours(k2)), info = nm)
+    supp_parity(paste(nm, "parent IDVARVAL"), p2, k$supp, supp_name = k$sn, rdomain = "AE")
+  }
+})
+
+test_that("a factor QNAM or QLABEL: the check says no, as the guard stops", {
+  p <- fx$cs_ok[[1]]
+  s <- fx$cs_ok[[2]]
+  qnam <- "suppae QNAM is a factor, so combine_supp() would label the wrong columns"
+  qlabel <- "suppae QLABEL is a factor, so combine_supp() would set factor labels"
+  all_fac <- as.data.frame(lapply(s, function(x) if (is.character(x)) factor(x) else x))
+  cases <- list(
+    list(transform(s, QNAM = factor(QNAM)), qnam),
+    list(transform(s, QLABEL = factor(QLABEL)), qlabel),
+    list(transform(s, QNAM = factor(QNAM), QLABEL = factor(QLABEL)), qnam),
+    # as read.csv(stringsAsFactors = TRUE) gives it
+    list(all_fac, qnam))
+  for (x in cases) {
+    r <- sv_supp_check(p, x[[1]], parent_name = "ae", supp_name = "suppae", rdomain = "AE")
+    expect_false(r$combine_supp$ok)
+    expect_identical(r$combine_supp$reason, x[[2]])
+    supp_parity(x[[2]], p, x[[1]], rdomain = "AE")
+  }
+  # a factor DOMAIN too still says its own reason first
+  r <- sv_supp_check(transform(p, DOMAIN = factor(DOMAIN)), all_fac, "ae", "suppae", rdomain = "AE")
+  expect_identical(r$combine_supp$reason, "DOMAIN would be text in combine_supp(), not a factor")
+  # the browser needs QNAM's type: without it, it does not guess
+  types <- lapply(s, function(x) class(x)[1])
+  types$QNAM <- NULL
+  r <- supp_js(p, s, extra = list(suppTypes = types))$combine_supp
+  expect_identical(r$reason, "Column types are not known in the browser")
+  # factor QVAL, IDVAR or RDOMAIN give the same result both ways: still ok
+  for (col in c("QVAL", "IDVAR", "RDOMAIN")) {
+    s2 <- s
+    s2[[col]] <- factor(s2[[col]])
+    expect_true(sv_supp_check(p, s2, "ae", "suppae", rdomain = "AE")$combine_supp$ok, info = col)
+    supp_parity(paste("factor", col), p, s2, rdomain = "AE")
+  }
+  skip_if_not_installed("metatools", "0.3.0")
+  skip_if_not_installed("tidyr")
+  ok <- cs_case("cs_ok")
+  for (x in cases) {
+    expect_identical(cs_cut_stop(cs_cut(ok, supp = x[[1]]), cs_pharma_code(ok)), paste0(x[[2]], cs_tail))
+  }
+})
+
+test_that("the widget and gadget payloads carry a factor QNAM's type to the browser", {
+  p <- fx$cs_ok[[1]]
+  s <- transform(fx$cs_ok[[2]], QNAM = factor(QNAM), QLABEL = factor(QLABEL))
+  w <- sideview_widget(ae = p, suppae = s)
+  card <- Filter(function(cd) identical(cd$name, "suppae"), w$x$cards)[[1]]
+  types <- as.list(card$col_types)
+  expect_identical(types$QNAM, "factor")
+  expect_identical(types$QLABEL, "factor")
+  # on the wire as the engine reads it (cardData.col_types)
+  j <- jsonlite::fromJSON(as.character(htmlwidgets:::toJSON(w$x)), simplifyVector = FALSE)
+  jc <- Filter(function(cd) identical(cd$name, "suppae"), j$cards)[[1]]
+  expect_identical(jc$col_types$QNAM, "factor")
+  # the browser's check with exactly those types says no
+  r <- supp_js(p, s, extra = list(suppTypes = types, parentTypes = as.list(w$x$cards[[1]]$col_types)))$combine_supp
+  expect_false(r$ok)
+  expect_identical(r$reason, "suppae QNAM is a factor, so combine_supp() would label the wrong columns")
+  # the gadget: the card header carries the type (the gadget's own check runs in R)
+  html <- as.character(sideview_ui(cards = list(sv_normalize(s, name = "suppae"))))
+  expect_match(html, 'data-col-name="QNAM" data-col-type="factor"', fixed = TRUE)
+})
+
 # ---- server, Auto Map rows, join note (Task 6) ----
 
 test_that("server answers supp_check_request", {
@@ -454,6 +1725,15 @@ test_that("server answers supp_check_request", {
     expect_identical(last$message$id, "r1")
     expect_identical(last$message$status, "ok")
     expect_true(length(last$message$plan) > 0)
+    # the combine_supp field, plus whether metatools (0.3.0 or later) is installed here
+    cs <- last$message$combine_supp
+    expect_true(is.logical(cs$ok) && length(cs$ok) == 1L)
+    expect_true(is.logical(cs$installed) && length(cs$installed) == 1L && !is.na(cs$installed))
+    expect_identical(cs$installed, requireNamespace("metatools", quietly = TRUE) &&
+                       utils::packageVersion("metatools") >= "0.3.0")
+    expect_true(is.logical(cs$prep$rdomain) && is.logical(cs$prep$idvar_na))
+    # the installed flag is the server's, not the check's
+    expect_null(sv_supp_check(fx$ae, fx$suppae, "ae", "suppae")$combine_supp$installed)
     # the plan from the reply, as JSON text, gives a drift of "not stale"
     plan_json <- as.character(jsonlite::toJSON(sv_supp_check(fx$ae, fx$suppae, "ae", "suppae")$plan,
                                                auto_unbox = TRUE))
@@ -462,6 +1742,70 @@ test_that("server answers supp_check_request", {
     last <- msgs[[length(msgs)]]
     expect_identical(last$message$id, "r2")
     expect_false(last$message$drift$stale)
+  })
+})
+
+test_that("server says combine_supp() needs data frames for a lazy card, also after a lost link", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("dbplyr")
+  cs_last <- function(session) {
+    msgs <- session$userData$custom_messages
+    msgs[[length(msgs)]]$message
+  }
+  mk <- function(pair, env = parent.frame()) {
+    con <- DBI::dbConnect(duckdb::duckdb())
+    withr::defer(suppressWarnings(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE)), envir = env)
+    DBI::dbWriteTable(con, "p", pair[[1]])
+    DBI::dbWriteTable(con, "s", pair[[2]])
+    list(con = con,
+         cards = list(sv_normalize(dplyr::tbl(con, "p"), name = "ae"),
+                      sv_normalize(dplyr::tbl(con, "s"), name = "suppae")))
+  }
+  ask <- function(session, id) {
+    session$setInputs(supp_check_request = list(id = id, parent = "ae", supp = "suppae", rdomain = "AE"))
+    cs_last(session)
+  }
+  want_rule2 <- "combine_supp() needs data frames: ae is a duckdb table"
+  # the link is alive: the lazy twin answers
+  m <- mk(fx$cs_ok)
+  shiny::testServer(sideview_server(m$cards), {
+    r <- ask(session, "l1")
+    expect_identical(r$status, "ok")
+    expect_false(r$combine_supp$ok)
+    expect_identical(r$combine_supp$reason, want_rule2)
+    expect_identical(r$combine_supp$installed, requireNamespace("metatools", quietly = TRUE) &&
+                       utils::packageVersion("metatools") >= "0.3.0")
+    expect_false(r$combine_supp$prep$rdomain)
+    expect_true(r$combine_supp$prep$idvar_na)   # the subject-level row has IDVAR ""
+  })
+  # the link is lost: the preview answers, and rule 2 still holds for a lazy card
+  m <- mk(fx$cs_ok)
+  shiny::testServer(sideview_server(m$cards), {
+    DBI::dbDisconnect(m$con, shutdown = TRUE)
+    r <- ask(session, "l2")
+    expect_identical(r$status, "ok")
+    expect_false(r$combine_supp$ok)
+    expect_identical(r$combine_supp$reason, want_rule2)
+    expect_true(is.logical(r$combine_supp$installed))
+  })
+  # a lazy SUPP with a plain parent names the SUPP card
+  con <- DBI::dbConnect(duckdb::duckdb())
+  withr::defer(suppressWarnings(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE)))
+  DBI::dbWriteTable(con, "s", fx$cs_ok[[2]])
+  mixed <- list(sv_normalize(fx$cs_ok[[1]], name = "ae"), sv_normalize(dplyr::tbl(con, "s"), name = "suppae"))
+  shiny::testServer(sideview_server(mixed), {
+    DBI::dbDisconnect(con, shutdown = TRUE)
+    r <- ask(session, "l3")
+    expect_identical(r$combine_supp$reason, "combine_supp() needs data frames: suppae is a duckdb table")
+  })
+  # rule 1 comes first: a check that stops says so, lazy or not
+  m <- mk(fx$cs_clash)
+  shiny::testServer(sideview_server(m$cards), {
+    DBI::dbDisconnect(m$con, shutdown = TRUE)
+    r <- ask(session, "l4")
+    expect_identical(r$status, "error")
+    expect_false(r$combine_supp$ok)
+    expect_match(r$combine_supp$reason, "^The merge stops: AETRTEM already in ae$")
   })
 })
 
@@ -481,7 +1825,9 @@ test_that("server takes the step's rdomain hint only where the tags allow it", {
   plain <- sv_cdisc_cards(list(ae = fx$ae, suppqual = fx$suppqual), cdisc = FALSE)
   expect_null(plain[[2]]$cdisc)
   shiny::testServer(sideview_server(plain, cdisc = FALSE), {
-    expect_identical(ask(session, "h1")$error, "suppqual has no rows for QUAL")
+    r1 <- ask(session, "h1")
+    expect_identical(r1$error, "suppqual has no rows for QUAL")
+    expect_null(r1$combine_supp)   # an {error} reply has no combine_supp, as in both twins
     r <- ask(session, "h2", "AE")
     expect_identical(r$id, "h2")
     expect_identical(r$status, "ok")
@@ -543,9 +1889,10 @@ test_that("supp note replaces summarise", {
 })
 
 # ---- class, print and the unchanged browser JSON (Task 6) ----
-# Snapshots of sv_supp_check_json() taken at the base commit, before the class existed.
-snap_supp_ok <- r"({"status":"ok","plan":{"keys":["STUDYID","USUBJID"],"idvars":[{"idvar":"AESEQ","type":"integer"}],"qnams":[{"qnam":"AETRTEM","label":"Treatment Emergent","idvar":"AESEQ"}],"rdomain_col":true},"n_parent":4,"n_supp":4,"n_matched":4,"n_orphan":0,"orphan_samples":[],"n_other_rdomain":0,"repeats":{"n":0,"samples":[]},"clashes":[],"two_level":[],"bad_idvarval":{"n":0,"samples":[]},"columns":[{"name":"AETRTEM","label":"Treatment Emergent"}],"preview":[{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-001","AESEQ":1,"AETERM":"Headache","AEDECOD":"HEADACHE","AESEV":"MILD","AESTDTC":"2024-01-02","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-002","AESEQ":2,"AETERM":"Nausea","AEDECOD":"NAUSEA","AESEV":"MODERATE","AESTDTC":"2024-01-05","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-003","AESEQ":3,"AETERM":"Rash","AEDECOD":"RASH","AESEV":"MILD","AESTDTC":"2024-02-01","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-004","AESEQ":4,"AETERM":"Cough","AEDECOD":"COUGH","AESEV":"SEVERE","AESTDTC":"2024-02-09","AETRTEM":"Y"}],"drift":{"stale":false,"reasons":[]}})"
-snap_supp_orphan <- r"({"status":"warning","plan":{"keys":["STUDYID","USUBJID"],"idvars":[{"idvar":"AESEQ","type":"integer"}],"qnams":[{"qnam":"AETRTEM","label":"Label AETRTEM","idvar":"AESEQ"}],"rdomain_col":true},"n_parent":4,"n_supp":2,"n_matched":1,"n_orphan":1,"orphan_samples":[{"USUBJID":"SV-001-999","IDVAR":"AESEQ","IDVARVAL":"99","QNAM":"AETRTEM"}],"n_other_rdomain":0,"repeats":{"n":0,"samples":[]},"clashes":[],"two_level":[],"bad_idvarval":{"n":0,"samples":[]},"columns":[{"name":"AETRTEM","label":"Label AETRTEM"}],"preview":[{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-001","AESEQ":1,"AETERM":"Headache","AEDECOD":"HEADACHE","AESEV":"MILD","AESTDTC":"2024-01-02","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-002","AESEQ":2,"AETERM":"Nausea","AEDECOD":"NAUSEA","AESEV":"MODERATE","AESTDTC":"2024-01-05","AETRTEM":null},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-003","AESEQ":3,"AETERM":"Rash","AEDECOD":"RASH","AESEV":"MILD","AESTDTC":"2024-02-01","AETRTEM":null},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-004","AESEQ":4,"AETERM":"Cough","AEDECOD":"COUGH","AESEV":"SEVERE","AESTDTC":"2024-02-09","AETRTEM":null}],"drift":{"stale":false,"reasons":[]}})"
+# Snapshots of sv_supp_check_json() taken at the base commit, before the class existed, plus the
+# combine_supp field (E1) at the end.
+snap_supp_ok <- r"({"status":"ok","plan":{"keys":["STUDYID","USUBJID"],"idvars":[{"idvar":"AESEQ","type":"integer"}],"qnams":[{"qnam":"AETRTEM","label":"Treatment Emergent","idvar":"AESEQ"}],"rdomain_col":true},"n_parent":4,"n_supp":4,"n_matched":4,"n_orphan":0,"orphan_samples":[],"n_other_rdomain":0,"repeats":{"n":0,"samples":[]},"clashes":[],"two_level":[],"bad_idvarval":{"n":0,"samples":[]},"columns":[{"name":"AETRTEM","label":"Treatment Emergent"}],"preview":[{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-001","AESEQ":1,"AETERM":"Headache","AEDECOD":"HEADACHE","AESEV":"MILD","AESTDTC":"2024-01-02","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-002","AESEQ":2,"AETERM":"Nausea","AEDECOD":"NAUSEA","AESEV":"MODERATE","AESTDTC":"2024-01-05","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-003","AESEQ":3,"AETERM":"Rash","AEDECOD":"RASH","AESEV":"MILD","AESTDTC":"2024-02-01","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-004","AESEQ":4,"AETERM":"Cough","AEDECOD":"COUGH","AESEV":"SEVERE","AESTDTC":"2024-02-09","AETRTEM":"Y"}],"drift":{"stale":false,"reasons":[]},"combine_supp":{"ok":false,"reason":"suppae has no QORIG column","prep":{"rdomain":false,"idvar_na":false}}})"
+snap_supp_orphan <- r"({"status":"warning","plan":{"keys":["STUDYID","USUBJID"],"idvars":[{"idvar":"AESEQ","type":"integer"}],"qnams":[{"qnam":"AETRTEM","label":"Label AETRTEM","idvar":"AESEQ"}],"rdomain_col":true},"n_parent":4,"n_supp":2,"n_matched":1,"n_orphan":1,"orphan_samples":[{"USUBJID":"SV-001-999","IDVAR":"AESEQ","IDVARVAL":"99","QNAM":"AETRTEM"}],"n_other_rdomain":0,"repeats":{"n":0,"samples":[]},"clashes":[],"two_level":[],"bad_idvarval":{"n":0,"samples":[]},"columns":[{"name":"AETRTEM","label":"Label AETRTEM"}],"preview":[{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-001","AESEQ":1,"AETERM":"Headache","AEDECOD":"HEADACHE","AESEV":"MILD","AESTDTC":"2024-01-02","AETRTEM":"Y"},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-002","AESEQ":2,"AETERM":"Nausea","AEDECOD":"NAUSEA","AESEV":"MODERATE","AESTDTC":"2024-01-05","AETRTEM":null},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-003","AESEQ":3,"AETERM":"Rash","AEDECOD":"RASH","AESEV":"MILD","AESTDTC":"2024-02-01","AETRTEM":null},{"STUDYID":"SV-001","DOMAIN":"AE","USUBJID":"SV-001-004","AESEQ":4,"AETERM":"Cough","AEDECOD":"COUGH","AESEV":"SEVERE","AESTDTC":"2024-02-09","AETRTEM":null}],"drift":{"stale":false,"reasons":[]},"combine_supp":{"ok":false,"reason":"suppae has no QORIG column","prep":{"rdomain":false,"idvar_na":false}}})"
 
 test_that("a SUPP check carries a class, prints as sentences and sends the same JSON", {
   r <- chk(fx$suppae)
@@ -554,7 +1901,8 @@ test_that("a SUPP check carries a class, prints as sentences and sends the same 
   expect_identical(c(r$parent_name, r$supp_name), c("ae", "suppae"))
   expect_output(print(r), "Merging suppae into ae adds")
   expect_identical(capture.output(print(chk(fx$suppae))),
-                   c("Merging suppae into ae adds 1 column: AETRTEM.", "4 of 4 suppae rows match a ae row."))
+                   c("Merging suppae into ae adds 1 column: AETRTEM.", "4 of 4 suppae rows match a ae row.",
+                     "combine_supp(): no, suppae has no QORIG column"))
   expect_output(print(chk(fx$supp_noqnam)), "SUPP check failed: Not in suppae: QNAM.", fixed = TRUE)
   expect_s3_class(chk(fx$supp_noqnam), "sv_supp_check")
   expect_identical(chk(fx$supp_noqnam)$error, "Not in suppae: QNAM")

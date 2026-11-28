@@ -1491,8 +1491,29 @@ sv_lazy_supp_check <- function(parent, supp, parent_name = "parent", supp_name =
     n_parent <- sv_lazy_count(dplyr::collect(dplyr::summarise(parent, n = dplyr::n()))$n)
     pv <- as.data.frame(dplyr::collect(utils::head(parent, sample_n)), stringsAsFactors = FALSE)
   }
-  classify(sv_supp_finish(side, conv, matched, types, keys, parent_names, n_parent, pv, plan, sample_n,
-                          from_name == rdomain))
+  res <- sv_supp_finish(side, conv, matched, types, keys, parent_names, n_parent, pv, plan, sample_n,
+                        from_name == rdomain)
+  # combine_supp (E1): rule 1 (the merge stops) comes before rule 2 (needs data frames). The
+  # SUPP rows are already collected (filtered on RDOMAIN), so prep is read from them as in memory.
+  iv_raw <- as.character(side$supp$IDVAR)
+  prep <- list(rdomain = isTRUE(side$n_other > 0L),
+               idvar_na = any(!is.na(iv_raw) & !nzchar(trimws(iv_raw))))
+  res$combine_supp <- if (identical(res$status, "error")) {
+    list(ok = FALSE, reason = sv_supp_combine_stop_reason(res, parent_name), prep = prep)
+  } else {
+    tbl <- if (is.data.frame(parent)) list(supp_name, supp) else list(parent_name, parent)
+    list(ok = FALSE, reason = sv_lazy_combine_reason(tbl[[1]], sv_lazy_origin(tbl[[2]])), prep = prep)
+  }
+  classify(res)
+}
+
+#' Rule 2: combine_supp() needs data frames
+#' @param name The table's name as the user sees it.
+#' @param origin `"duckdb"` or `"arrow"` (from `sv_lazy_origin()` or a card's `lazy_source`).
+#' @noRd
+sv_lazy_combine_reason <- function(name, origin) {
+  paste0("combine_supp() needs data frames: ", name, " is ",
+         if (identical(origin, "arrow")) "an Arrow table" else "a duckdb table")
 }
 
 #' A double as an exact SQL literal

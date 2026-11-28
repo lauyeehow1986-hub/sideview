@@ -18,6 +18,7 @@ sideview_widget(
   theme = "auto",
   state = NULL,
   cdisc = "auto",
+  code_style = c("dplyr", "pharmaverse"),
   max_rows = 5000,
   view = getOption("sideview.view", "canvas")
 )
@@ -72,6 +73,15 @@ sideview_widget(
   [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)):
   `"auto"` (default), `FALSE`, or a named character vector of domain
   codes.
+
+- code_style:
+
+  Style of the generated code: `"dplyr"` (default) or `"pharmaverse"`
+  (see
+  [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md)).
+  A workspace state, with or without a recorded style, sets the style,
+  and one without a style loads as `"dplyr"`: `code_style` is only the
+  starting style when no `state` is applied.
 
 - max_rows:
 

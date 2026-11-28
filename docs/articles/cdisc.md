@@ -200,6 +200,94 @@ joins. In the widget the check runs in the browser on the embedded rows;
 when a card’s rows were cut (`max_rows`) or the card is lazy, the panel
 says “Preview rows”.
 
+### Pharmaverse code
+
+The step above is written with `dplyr` and `tidyr`. Set
+`code_style = "pharmaverse"` (on
+[`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md),
+[`sideview_ui()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_ui.md),
+[`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md)
+or
+[`sideviewServer()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewUI.md);
+[`save_sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/save_sideview.md)
+takes it too, and its default `NULL` keeps the widget’s style), or pick
+`pharmaverse` in the pipeline bar’s Code select, and an eligible merge
+is written with
+[`metatools::combine_supp()`](https://pharmaverse.github.io/metatools/reference/combine_supp.html)
+instead. Running that code needs `metatools` 0.3.0 or later. Every other
+step stays `dplyr`.
+
+sideview writes `combine_supp()` only when the merge check finds its
+result equal to the `dplyr` code’s. Where it would not be, the step
+stays `dplyr` and the step line says why, for example
+`dplyr: IDVARVAL "01" would not match AESEQ 1 in combine_supp()`. The
+merge panel in the Discrepancy tab shows `combine_supp(): yes` or
+`combine_supp(): no, <reason>` in both styles. `print(chk)` shows the
+same line for the reasons
+[`sv_supp_check()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_check.md)
+finds on data frames: the first row and the rows from
+`<supp> has no <COL> column` to the label row. The other reasons come
+from the lazy check, the browser check or the pipeline, and
+[`print()`](https://rdrr.io/r/base/print.html) does not show them. The
+reasons are:
+
+| Reason | When |
+|:---|:---|
+| `The merge stops: ...` | The merge itself stops: repeated QNAM records, a QNAM already in the parent, or a QNAM on two `IDVAR` levels. The step line reads `stops: ...`. |
+| `combine_supp() needs data frames: <table> is a duckdb table` (or `an Arrow table`) | A card is lazy. |
+| `Checked on preview rows only` | The browser check saw only part of the rows. |
+| `<supp> has no <COL> column` | A column that `combine_supp()` needs is missing from the SUPP table. |
+| `<supp> has extra columns: X, Y` | The SUPP table has columns beyond the SDTM ones. |
+| `<parent> has no <COL> column` | A column that `combine_supp()` joins on is missing from the parent. |
+| `<parent> has an IDVARVAL column, which combine_supp() would drop` | The parent has that column. |
+| `<USUBJID> would not match in combine_supp()` | A subject-level row would join different records. |
+| `IDVARVAL "v" would not match <IDVAR> k in combine_supp()`, `IDVARVAL "v" would match <IDVAR> k in combine_supp()` or `IDVARVAL "v" would match a different <parent> record in combine_supp()` | A keyed row would join different records. `combine_supp()` compares keys as trimmed text; the `dplyr` code converts `IDVARVAL` to the key’s type. |
+| `<IDVAR> would be a factor in combine_supp(), not text` | The parent key is a factor. |
+| `DOMAIN would be text in combine_supp(), not a factor` | The parent `DOMAIN` is a factor. |
+| `<supp> QNAM is a factor, so combine_supp() would label the wrong columns` | `QNAM` is a factor. |
+| `<supp> QLABEL is a factor, so combine_supp() would set factor labels` | `QLABEL` is a factor. |
+| `<QNAM> label would be "x" in combine_supp(), not "y"` (either can be `none`) | The two codes would label the column differently. |
+| `Column types are not known in the browser` | Browser check only. |
+| `<COL> <value> is too close to R's rounding to check in the browser` | Browser check only. |
+| `<COL> has values the browser cannot read exactly` | Browser check only. |
+| `<supp> has steps before the merge` | The SUPP card has an enabled step other than a custom or derived one. |
+| `<parent> has steps before the merge that combine_supp() cannot check` | An earlier enabled step on the parent is not a filter, a sort or a SUPP merge. Those three are allowed. |
+| `<parent> has steps after the merge that combine_supp() cannot check` | A later enabled step on the parent is not a filter, a sort or a SUPP merge. The `dplyr` code sets the QNAM labels where the parent’s chain ends and `combine_supp()` sets them at the merge, so a later step such as a mutate or a rename of a QNAM column could leave the two results with different labels. Those three are allowed. |
+| `Merge needs refreshing` | The data no longer fits the step’s plan. The step line shows this text without the `dplyr:` prefix, and the code stays `dplyr`. |
+| the check’s error | The merge check itself failed (an `{error}` check). `print(chk)` shows `combine_supp(): no, <the error>`; the panel and the step line show `Merge check unavailable`, and the code stays `dplyr`. |
+
+For a `SUPPQUAL` table with rows of other domains, the generated code in
+this example is 130 lines, 125 of them the guard block from `local({` to
+`})`. Most of the block is replaced by a comment below; the code the app
+writes has all of it:
+
+`suppqual_q`` ``<-`` ``suppqual`` ``%>%`` `` ``dplyr``::`[`filter`](https://dplyr.tidyverse.org/reference/filter.html)`(``RDOMAIN`` ``==`` ``"AE"``)`` `[`local`](https://rdrr.io/r/base/eval.html)`(``{`` `` ``p`` ``<-`` ``ae`` `` ``# ... elided here. The elided guards stop when:`` `` ``# - ae is grouped or rowwise with more than one group, or suppqual has grouping columns`` `` ``# - ae has an IDVARVAL column`` `` ``# - suppqual has an IDVAR value this merge does not handle`` `` ``# - suppqual repeats a QNAM for a record`` `` ``# - DOMAIN or AESEQ in ae would not keep its type, or AESEQ would not join`` `` ``# - DOMAIN in ae does not match RDOMAIN in combine_supp()`` `` ``# - an IDVARVAL matches AESEQ as a number but not as text, or as text but not as a number`` `` ``# - a suppqual QNAM would be a column in combine_supp() but not in the dplyr code`` `` ``# - QNAM or QLABEL is a factor`` `` ``# - a QNAM's label in combine_supp() would differ from the merge step's label`` ``}``)`` `` ``ae`` ``%>%`` `` ``metatools``::`[`combine_supp`](https://pharmaverse.github.io/metatools/reference/combine_supp.html)`(``suppqual_q``)`
+
+The guard block checks again when the code runs, and stops with a
+message. It covers the changes in a later data cut that were found and
+tested to make the two results differ or the merge wrong. Besides the
+guards listed in the comment above, other merges can have guards that
+stop for a QNAM on two `IDVAR` levels, for a subject-level row that only
+`combine_supp()` would merge, or for a text key that matches only when
+trimmed. Most messages end “use the dplyr code style for this merge”.
+The message for an unhandled `IDVAR` says “Refresh the merge step.”
+instead, the one for a parent key whose type cannot be joined to the
+`IDVARVAL` values (where both codes would fail) says “convert it before
+the merge”, and those for a repeated QNAM or a QNAM on two levels give
+no advice. Some guards are stricter than needed, and in some of the
+cases they stop, the `dplyr` code fails too. `combine_supp()` also stops
+by itself on some changes, such as a new parent column with the name of
+a QNAM.
+
+The guards are not a proof that no other difference is possible. On a
+new data cut, run the merge check again before you rely on the code. A
+changed `QLABEL` does not by itself make the step need refreshing: the
+step keeps the labels it had when it was added, and the label guard
+compares with those. A new check can therefore still say
+`combine_supp(): yes` while the guard stops the code; add the merge step
+again to take the new labels. Orphan or unconvertible `IDVARVAL` rows
+make `combine_supp()` warn, and the step line says so.
+
 ## Rows behind the counts
 
 A join check or a SUPP check ends in counts: how many rows have no

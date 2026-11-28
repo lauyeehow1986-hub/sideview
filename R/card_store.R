@@ -149,6 +149,38 @@ sv_card_payload <- function(card, preview_rows = NULL) {
   card
 }
 
+#' The double columns that 16-digit JSON does not carry exactly
+#'
+#' htmlwidgets writes doubles with 16 significant digits, and Inf, -Inf and NaN as null. A
+#' column is inexact when it has such a value, or a finite value that does not come back from
+#' that JSON as the same double. The test is the wire itself: jsonlite writes the values as
+#' htmlwidgets does and parses them back (yajl's parse is correctly rounded, as `JSON.parse` is;
+#' R's own `as.numeric()` is not). NA alone is exact (null means NA). An integer64 (bit64)
+#' column goes out as plain digits, which the browser reads as a double: it is inexact when some
+#' value has |x| > 2^53 (not checked without bit64). `sideview_widget()` sends the result as
+#' each card's `col_inexact`, on the rows it embeds; the browser's combine_supp check
+#' (sv-pipeline.js) trusts only the other double columns.
+#' @return A character vector of column names.
+#' @noRd
+sv_inexact_cols <- function(df) {
+  if (!is.data.frame(df) || !ncol(df)) return(character(0))
+  bad <- vapply(df, function(x) {
+    if (inherits(x, "integer64")) {
+      if (!requireNamespace("bit64", quietly = TRUE)) return(FALSE)
+      x <- x[!is.na(x)]
+      return(length(x) > 0L && any(abs(x) > bit64::as.integer64("9007199254740992")))
+    }
+    if (!is.double(x)) return(FALSE)
+    x <- as.numeric(unclass(x))
+    if (any(is.nan(x) | is.infinite(x))) return(TRUE)
+    x <- x[!is.na(x)]
+    if (!length(x)) return(FALSE)
+    back <- jsonlite::fromJSON(jsonlite::toJSON(x, digits = 16, use_signif = TRUE, na = "null"))
+    length(back) != length(x) || !is.numeric(back) || any(is.na(back) | back != x)
+  }, logical(1))
+  names(df)[bad]
+}
+
 #' One private lazy (duckdb / arrow) env per Shiny session
 #'
 #' Created on first call and kept in `session$userData`; one `onSessionEnded`

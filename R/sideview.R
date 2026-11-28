@@ -52,6 +52,8 @@ sv_find_tables <- function(env = parent.frame()) {
 #'   **Save** button or [sv_save_state()]. Card positions and sizes, zoom and
 #'   pan, sorts, filters, joins and the pipeline come back; cards are matched
 #'   to tables by name.
+#' @param code_style Style of the generated code: `"dplyr"` (default) or `"pharmaverse"`,
+#'   which writes `metatools::combine_supp()` for a SUPP-- merge. A workspace state, with or without a recorded style, sets the style, and one without a style loads as `"dplyr"`: `code_style` is only the starting style when no `state` is applied.
 #' @param cdisc CDISC awareness: `"auto"` (default) tags tables that look like
 #'   SDTM, SEND or ADaM datasets; `FALSE` turns it off; a named character vector
 #'   such as `c(my_ae = "AE")` sets a table's domain by name (other tables are
@@ -178,6 +180,7 @@ sideview <- function(...,
                      theme = "auto",
                      state = NULL,
                      cdisc = "auto",
+                     code_style = c("dplyr", "pharmaverse"),
                      view = getOption("sideview.view", "canvas"),
                      access = getOption("sideview.access", FALSE),
                      env = parent.frame(),
@@ -187,6 +190,7 @@ sideview <- function(...,
   access <- sv_check_access(access)
   state <- sv_as_state(state)
   cdisc <- sv_cdisc_check_arg(cdisc)
+  code_style <- match.arg(code_style)
   viewer <- sv_resolve_viewer(viewer, title)
 
   # Capture expressions and evaluate items
@@ -242,7 +246,7 @@ sideview <- function(...,
   # Build Shiny application object
   ui <- sideview_ui(card_list, title = title, gadget = TRUE,
                     theme = sv_resolve_theme(theme, rstudio = TRUE), state = state, view = view,
-                    access = access)
+                    access = access, code_style = code_style)
   server <- sideview_server(card_list, gadget = TRUE, run_env = env, cdisc = cdisc, state = state)
   app <- shiny::shinyApp(ui = ui, server = server)
   

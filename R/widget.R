@@ -55,6 +55,8 @@ sideview_widget_dependencies <- function() {
 #'   `sideview_state` or the path to a saved state file.
 #' @param cdisc CDISC awareness (see [sideview()]): `"auto"` (default), `FALSE`,
 #'   or a named character vector of domain codes.
+#' @param code_style Style of the generated code: `"dplyr"` (default) or `"pharmaverse"`
+#'   (see [sideview()]). A workspace state, with or without a recorded style, sets the style, and one without a style loads as `"dplyr"`: `code_style` is only the starting style when no `state` is applied.
 #' @param max_rows Most rows of each data-frame table to embed in the widget
 #'   (default 5000). A longer table is cut to its first `max_rows` rows, its
 #'   card says "First N of M rows", and one message names the tables cut. The
@@ -80,11 +82,13 @@ sideview_widget <- function(...,
                             theme = "auto",
                             state = NULL,
                             cdisc = "auto",
+                            code_style = c("dplyr", "pharmaverse"),
                             max_rows = 5000,
                             view = getOption("sideview.view", "canvas")) {
   view <- sv_check_view(view)
   max_rows <- sv_check_max_rows(max_rows)
   cdisc <- sv_cdisc_check_arg(cdisc)
+  code_style <- match.arg(code_style)
   state <- sv_as_state(state)
   dots_exprs <- as.list(substitute(list(...))[-1])
   dots_vals <- list(...)
@@ -133,7 +137,11 @@ sideview_widget <- function(...,
   card_list <- sv_cdisc_finalize(card_list, cdisc)
   card_list <- lapply(card_list, function(card) {
     card <- sv_card_payload(card)
-    sv_cap_card_rows(card, max_rows)
+    card <- sv_cap_card_rows(card, max_rows)
+    # the double columns the browser cannot read back exactly, on the rows the widget sends
+    # (always a JSON array); only the widget checks combine_supp in the browser
+    if (is.data.frame(card$data)) card$col_inexact <- as.list(sv_inexact_cols(card$data))
+    card
   })
   sv_announce_row_cap(card_list, max_rows)
   
@@ -150,6 +158,7 @@ sideview_widget <- function(...,
   } else {
     sv_check_access(options$access)
   }
+  options$codeStyle <- code_style
   if (is.null(options$shortcuts)) options$shortcuts <- getOption("sideview.shortcuts", TRUE)
   if (length(theme$vars)) {
     options$themeVars <- stats::setNames(theme$vars, paste0("--sv-", names(theme$vars)))
@@ -236,6 +245,9 @@ sv_announce_row_cap <- function(cards, max_rows) {
 #'   keeps the cap it was built with.
 #' @param cdisc CDISC awareness when `widget` is table data (see
 #'   [sideview_widget()]). A widget you built yourself keeps its own setting.
+#' @param code_style `NULL` (default) keeps the widget's own style (`"dplyr"` for table data); `"dplyr"`
+#'   or `"pharmaverse"` sets it (see [sideview_widget()]). A workspace the widget carries
+#'   that records a style still wins in the browser.
 #' @param view Starting view when `widget` is table data (see [sideview_widget()]).
 #'   A widget you built yourself keeps its own.
 #' @param ... Additional arguments passed to \code{htmlwidgets::saveWidget()}.
@@ -256,10 +268,15 @@ save_sideview <- function(widget,
                           max_rows = 5000,
                           cdisc = "auto",
                           view = getOption("sideview.view", "canvas"),
+                          code_style = NULL,
                           ...) {
   view <- sv_check_view(view)
+  if (!is.null(code_style)) code_style <- match.arg(code_style, c("dplyr", "pharmaverse"))
   if (!inherits(widget, "htmlwidget")) {
-    widget <- sideview_widget(widget, max_rows = max_rows, cdisc = cdisc, view = view)
+    widget <- sideview_widget(widget, max_rows = max_rows, cdisc = cdisc, view = view,
+                              code_style = code_style %||% "dplyr")
+  } else if (!is.null(code_style)) {
+    widget$x$options$codeStyle <- code_style
   }
   
   if (!grepl("\\.html?$", file, ignore.case = TRUE)) {

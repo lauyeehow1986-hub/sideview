@@ -71,8 +71,13 @@ sv_supp_check_json(chk)
 A list with `status` (`"ok"`, `"warning"` or `"error"`), `plan`,
 `n_parent`, `n_supp`, `n_matched`, `n_orphan`, `orphan_samples`,
 `n_other_rdomain`, `repeats`, `clashes`, `two_level`, `bad_idvarval`,
-`columns`, `preview` and `drift`; or just `list(error = )` when the
-check cannot run.
+`columns`, `preview`, `drift` and `combine_supp`; or just
+`list(error = )` when the check cannot run. `combine_supp` says whether
+[`metatools::combine_supp()`](https://pharmaverse.github.io/metatools/reference/combine_supp.html)
+(0.3.0) would give the same result as the generated dplyr code:
+`list(ok, reason, prep = list(rdomain, idvar_na))`, where `reason`
+(`NULL` when `ok`) is the first difference and `prep` the SUPP lines the
+call needs first (an `RDOMAIN` filter; blank `IDVAR` to `NA`).
 
 `sv_supp_key_type()`: `"integer"`, `"double"`, `"character"` or `NA` (a
 factor counts as character, an integer64 as double).

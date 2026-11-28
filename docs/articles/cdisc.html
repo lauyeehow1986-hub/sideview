@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">sideview</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.10.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.11.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -366,6 +366,214 @@ on the embedded rows; when a card’s rows were cut
 (<code>max_rows</code>) or the card is lazy, the panel says “Preview
 rows”.</p>
 </div>
+<div class="section level3">
+<h3 id="pharmaverse-code">Pharmaverse code<a class="anchor" aria-label="anchor" href="#pharmaverse-code"></a>
+</h3>
+<p>The step above is written with <code>dplyr</code> and
+<code>tidyr</code>. Set <code>code_style = "pharmaverse"</code> (on
+<code><a href="../reference/sideview.html">sideview()</a></code>, <code><a href="../reference/sideview_ui.html">sideview_ui()</a></code>,
+<code><a href="../reference/sideview_widget.html">sideview_widget()</a></code> or <code><a href="../reference/sideviewUI.html">sideviewServer()</a></code>;
+<code><a href="../reference/save_sideview.html">save_sideview()</a></code> takes it too, and its default
+<code>NULL</code> keeps the widget’s style), or pick
+<code>pharmaverse</code> in the pipeline bar’s Code select, and an
+eligible merge is written with <code><a href="https://pharmaverse.github.io/metatools/reference/combine_supp.html" class="external-link">metatools::combine_supp()</a></code>
+instead. Running that code needs <code>metatools</code> 0.3.0 or later.
+Every other step stays <code>dplyr</code>.</p>
+<p>sideview writes <code>combine_supp()</code> only when the merge check
+finds its result equal to the <code>dplyr</code> code’s. Where it would
+not be, the step stays <code>dplyr</code> and the step line says why,
+for example
+<code>dplyr: IDVARVAL "01" would not match AESEQ 1 in combine_supp()</code>.
+The merge panel in the Discrepancy tab shows
+<code>combine_supp(): yes</code> or
+<code>combine_supp(): no, &lt;reason&gt;</code> in both styles.
+<code>print(chk)</code> shows the same line for the reasons
+<code><a href="../reference/sv_supp_check.html">sv_supp_check()</a></code> finds on data frames: the first row and the
+rows from <code>&lt;supp&gt; has no &lt;COL&gt; column</code> to the
+label row. The other reasons come from the lazy check, the browser check
+or the pipeline, and <code><a href="https://rdrr.io/r/base/print.html" class="external-link">print()</a></code> does not show them. The
+reasons are:</p>
+<table class="table">
+<colgroup>
+<col width="50%">
+<col width="50%">
+</colgroup>
+<thead><tr class="header">
+<th align="left">Reason</th>
+<th align="left">When</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left"><code>The merge stops: ...</code></td>
+<td align="left">The merge itself stops: repeated QNAM records, a QNAM
+already in the parent, or a QNAM on two <code>IDVAR</code> levels. The
+step line reads <code>stops: ...</code>.</td>
+</tr>
+<tr class="even">
+<td align="left">
+<code>combine_supp() needs data frames: &lt;table&gt; is a duckdb table</code>
+(or <code>an Arrow table</code>)</td>
+<td align="left">A card is lazy.</td>
+</tr>
+<tr class="odd">
+<td align="left"><code>Checked on preview rows only</code></td>
+<td align="left">The browser check saw only part of the rows.</td>
+</tr>
+<tr class="even">
+<td align="left"><code>&lt;supp&gt; has no &lt;COL&gt; column</code></td>
+<td align="left">A column that <code>combine_supp()</code> needs is
+missing from the SUPP table.</td>
+</tr>
+<tr class="odd">
+<td align="left"><code>&lt;supp&gt; has extra columns: X, Y</code></td>
+<td align="left">The SUPP table has columns beyond the SDTM ones.</td>
+</tr>
+<tr class="even">
+<td align="left"><code>&lt;parent&gt; has no &lt;COL&gt; column</code></td>
+<td align="left">A column that <code>combine_supp()</code> joins on is
+missing from the parent.</td>
+</tr>
+<tr class="odd">
+<td align="left"><code>&lt;parent&gt; has an IDVARVAL column, which combine_supp() would drop</code></td>
+<td align="left">The parent has that column.</td>
+</tr>
+<tr class="even">
+<td align="left"><code>&lt;USUBJID&gt; would not match in combine_supp()</code></td>
+<td align="left">A subject-level row would join different records.</td>
+</tr>
+<tr class="odd">
+<td align="left">
+<code>IDVARVAL "v" would not match &lt;IDVAR&gt; k in combine_supp()</code>,
+<code>IDVARVAL "v" would match &lt;IDVAR&gt; k in combine_supp()</code>
+or
+<code>IDVARVAL "v" would match a different &lt;parent&gt; record in combine_supp()</code>
+</td>
+<td align="left">A keyed row would join different records.
+<code>combine_supp()</code> compares keys as trimmed text; the
+<code>dplyr</code> code converts <code>IDVARVAL</code> to the key’s
+type.</td>
+</tr>
+<tr class="even">
+<td align="left"><code>&lt;IDVAR&gt; would be a factor in combine_supp(), not text</code></td>
+<td align="left">The parent key is a factor.</td>
+</tr>
+<tr class="odd">
+<td align="left"><code>DOMAIN would be text in combine_supp(), not a factor</code></td>
+<td align="left">The parent <code>DOMAIN</code> is a factor.</td>
+</tr>
+<tr class="even">
+<td align="left"><code>&lt;supp&gt; QNAM is a factor, so combine_supp() would label the wrong columns</code></td>
+<td align="left">
+<code>QNAM</code> is a factor.</td>
+</tr>
+<tr class="odd">
+<td align="left"><code>&lt;supp&gt; QLABEL is a factor, so combine_supp() would set factor labels</code></td>
+<td align="left">
+<code>QLABEL</code> is a factor.</td>
+</tr>
+<tr class="even">
+<td align="left">
+<code>&lt;QNAM&gt; label would be "x" in combine_supp(), not "y"</code>
+(either can be <code>none</code>)</td>
+<td align="left">The two codes would label the column differently.</td>
+</tr>
+<tr class="odd">
+<td align="left"><code>Column types are not known in the browser</code></td>
+<td align="left">Browser check only.</td>
+</tr>
+<tr class="even">
+<td align="left"><code>&lt;COL&gt; &lt;value&gt; is too close to R's rounding to check in the browser</code></td>
+<td align="left">Browser check only.</td>
+</tr>
+<tr class="odd">
+<td align="left"><code>&lt;COL&gt; has values the browser cannot read exactly</code></td>
+<td align="left">Browser check only.</td>
+</tr>
+<tr class="even">
+<td align="left"><code>&lt;supp&gt; has steps before the merge</code></td>
+<td align="left">The SUPP card has an enabled step other than a custom
+or derived one.</td>
+</tr>
+<tr class="odd">
+<td align="left"><code>&lt;parent&gt; has steps before the merge that combine_supp() cannot check</code></td>
+<td align="left">An earlier enabled step on the parent is not a filter,
+a sort or a SUPP merge. Those three are allowed.</td>
+</tr>
+<tr class="even">
+<td align="left"><code>&lt;parent&gt; has steps after the merge that combine_supp() cannot check</code></td>
+<td align="left">A later enabled step on the parent is not a filter, a
+sort or a SUPP merge. The <code>dplyr</code> code sets the QNAM labels
+where the parent’s chain ends and <code>combine_supp()</code> sets them
+at the merge, so a later step such as a mutate or a rename of a QNAM
+column could leave the two results with different labels. Those three
+are allowed.</td>
+</tr>
+<tr class="odd">
+<td align="left"><code>Merge needs refreshing</code></td>
+<td align="left">The data no longer fits the step’s plan. The step line
+shows this text without the <code>dplyr:</code> prefix, and the code
+stays <code>dplyr</code>.</td>
+</tr>
+<tr class="even">
+<td align="left">the check’s error</td>
+<td align="left">The merge check itself failed (an <code>{error}</code>
+check). <code>print(chk)</code> shows
+<code>combine_supp(): no, &lt;the error&gt;</code>; the panel and the
+step line show <code>Merge check unavailable</code>, and the code stays
+<code>dplyr</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>For a <code>SUPPQUAL</code> table with rows of other domains, the
+generated code in this example is 130 lines, 125 of them the guard block
+from <code>local({</code> to <code>})</code>. Most of the block is
+replaced by a comment below; the code the app writes has all of it:</p>
+<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">suppqual_q</span> <span class="op">&lt;-</span> <span class="va">suppqual</span> <span class="op">%&gt;%</span></span>
+<span>  <span class="fu">dplyr</span><span class="fu">::</span><span class="fu"><a href="https://dplyr.tidyverse.org/reference/filter.html" class="external-link">filter</a></span><span class="op">(</span><span class="va">RDOMAIN</span> <span class="op">==</span> <span class="st">"AE"</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/eval.html" class="external-link">local</a></span><span class="op">(</span><span class="op">{</span></span>
+<span>  <span class="va">p</span> <span class="op">&lt;-</span> <span class="va">ae</span></span>
+<span>  <span class="co"># ... elided here. The elided guards stop when:</span></span>
+<span>  <span class="co">#   - ae is grouped or rowwise with more than one group, or suppqual has grouping columns</span></span>
+<span>  <span class="co">#   - ae has an IDVARVAL column</span></span>
+<span>  <span class="co">#   - suppqual has an IDVAR value this merge does not handle</span></span>
+<span>  <span class="co">#   - suppqual repeats a QNAM for a record</span></span>
+<span>  <span class="co">#   - DOMAIN or AESEQ in ae would not keep its type, or AESEQ would not join</span></span>
+<span>  <span class="co">#   - DOMAIN in ae does not match RDOMAIN in combine_supp()</span></span>
+<span>  <span class="co">#   - an IDVARVAL matches AESEQ as a number but not as text, or as text but not as a number</span></span>
+<span>  <span class="co">#   - a suppqual QNAM would be a column in combine_supp() but not in the dplyr code</span></span>
+<span>  <span class="co">#   - QNAM or QLABEL is a factor</span></span>
+<span>  <span class="co">#   - a QNAM's label in combine_supp() would differ from the merge step's label</span></span>
+<span><span class="op">}</span><span class="op">)</span></span>
+<span></span>
+<span><span class="va">ae</span> <span class="op">%&gt;%</span></span>
+<span>  <span class="fu">metatools</span><span class="fu">::</span><span class="fu"><a href="https://pharmaverse.github.io/metatools/reference/combine_supp.html" class="external-link">combine_supp</a></span><span class="op">(</span><span class="va">suppqual_q</span><span class="op">)</span></span></code></pre></div>
+<p>The guard block checks again when the code runs, and stops with a
+message. It covers the changes in a later data cut that were found and
+tested to make the two results differ or the merge wrong. Besides the
+guards listed in the comment above, other merges can have guards that
+stop for a QNAM on two <code>IDVAR</code> levels, for a subject-level
+row that only <code>combine_supp()</code> would merge, or for a text key
+that matches only when trimmed. Most messages end “use the dplyr code
+style for this merge”. The message for an unhandled <code>IDVAR</code>
+says “Refresh the merge step.” instead, the one for a parent key whose
+type cannot be joined to the <code>IDVARVAL</code> values (where both
+codes would fail) says “convert it before the merge”, and those for a
+repeated QNAM or a QNAM on two levels give no advice. Some guards are
+stricter than needed, and in some of the cases they stop, the
+<code>dplyr</code> code fails too. <code>combine_supp()</code> also
+stops by itself on some changes, such as a new parent column with the
+name of a QNAM.</p>
+<p>The guards are not a proof that no other difference is possible. On a
+new data cut, run the merge check again before you rely on the code. A
+changed <code>QLABEL</code> does not by itself make the step need
+refreshing: the step keeps the labels it had when it was added, and the
+label guard compares with those. A new check can therefore still say
+<code>combine_supp(): yes</code> while the guard stops the code; add the
+merge step again to take the new labels. Orphan or unconvertible
+<code>IDVARVAL</code> rows make <code>combine_supp()</code> warn, and
+the step line says so.</p>
+</div>
 </div>
 <div class="section level2">
 <h2 id="rows-behind-the-counts">Rows behind the counts<a class="anchor" aria-label="anchor" href="#rows-behind-the-counts"></a>
@@ -382,7 +590,7 @@ view the same offers are plain buttons.</p>
 <p>The console gives the same rows. A synthetic adverse event table with
 one subject that is not in <code>dm</code>, and a <code>SUPP--</code>
 table with one orphan and one bad <code>IDVARVAL</code>:</p>
-<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">ae2</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/cbind.html" class="external-link">rbind</a></span><span class="op">(</span><span class="va">ae</span>, <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>STUDYID <span class="op">=</span> <span class="va">sid</span>, DOMAIN <span class="op">=</span> <span class="st">"AE"</span>, USUBJID <span class="op">=</span> <span class="st">"SV-001-999"</span>, AESEQ <span class="op">=</span> <span class="fl">1L</span>,</span>
 <span>                            AETERM <span class="op">=</span> <span class="st">"Dizziness"</span>, AESEV <span class="op">=</span> <span class="st">"MILD"</span>, stringsAsFactors <span class="op">=</span> <span class="cn">FALSE</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="fu"><a href="../reference/sv_unmatched.html">sv_unmatched</a></span><span class="op">(</span><span class="va">ae2</span>, <span class="va">dm</span>, <span class="st">"USUBJID"</span><span class="op">)</span></span>
@@ -425,7 +633,7 @@ column is spelt <code>Age</code> in one table and <code>AGE</code> in
 another. <code><a href="../reference/sv_stack_check.html">sv_stack_check()</a></code> compares the columns of 2 to 8
 tables and says, for each column, its type in every table, its label,
 and what a stack would do with it. A synthetic two-wave example:</p>
-<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">wave1</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>USUBJID <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"S-01"</span>, <span class="st">"S-02"</span><span class="op">)</span>, AGE <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">34</span>, <span class="fl">51</span><span class="op">)</span>, SEX <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"F"</span>, <span class="st">"M"</span><span class="op">)</span>,</span>
 <span>                    stringsAsFactors <span class="op">=</span> <span class="cn">FALSE</span><span class="op">)</span></span>
 <span><span class="va">wave2</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>USUBJID <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"S-03"</span>, <span class="st">"S-04"</span><span class="op">)</span>, Age <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"29"</span>, <span class="st">"40"</span><span class="op">)</span>, SEX <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"M"</span>, <span class="st">"M"</span><span class="op">)</span>,</span>
@@ -446,7 +654,7 @@ differs is cast to the type the check shows (or the one you choose), a
 value that cannot be cast becomes <code>NA</code> and is counted, and
 the stacked table has exactly the sum of the rows. A <code>source</code>
 column holds each row’s table name.</p>
-<div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb13"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">chk</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/sv_stack_check.html">sv_stack_check</a></span><span class="op">(</span><span class="va">wave1</span>, <span class="va">wave2</span>, rename <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>Age <span class="op">=</span> <span class="st">"AGE"</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="fu"><a href="../reference/sv_stack.html">sv_stack</a></span><span class="op">(</span><span class="va">wave1</span>, <span class="va">wave2</span>, check <span class="op">=</span> <span class="va">chk</span><span class="op">)</span></span>
 <span><span class="co">#&gt;   source USUBJID AGE SEX</span></span>

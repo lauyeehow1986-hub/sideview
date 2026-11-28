@@ -67,6 +67,11 @@ Or install the development version from GitHub:
   Auto Map suggests CDISC join keys, and a **Merge into AE** button
   folds a `SUPPAE` (or `SUPPQUAL`) table into its parent with a merge
   check. It is for awareness, not conformance checking.
+- **Pharmaverse Code**: `code_style = "pharmaverse"` (or the Code select
+  in the pipeline bar) writes a SUPP– merge with
+  [`metatools::combine_supp()`](https://pharmaverse.github.io/metatools/reference/combine_supp.html)
+  when its result equals the `dplyr` code’s, and says why when it does
+  not. Running that code needs `metatools` 0.3.0 or later.
 - **Date-Window Joins**: Click the calendar on a join step to join on a
   date rule (a window of days, between, nearest before or after,
   overlaps). The join check shows the rows the rule dropped, and

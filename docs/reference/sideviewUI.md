@@ -24,7 +24,14 @@ sideviewUI(
   access = getOption("sideview.access", FALSE)
 )
 
-sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto")
+sideviewServer(
+  id,
+  cards = list(),
+  state = NULL,
+  llm_fn = NULL,
+  cdisc = "auto",
+  code_style = c("dplyr", "pharmaverse")
+)
 ```
 
 ## Arguments
@@ -91,6 +98,15 @@ sideviewServer(id, cards = list(), state = NULL, llm_fn = NULL, cdisc = "auto")
   [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md):
   `"auto"`, `FALSE`, or a named character vector of domain codes. Tags
   are kept current as cards come and go.
+
+- code_style:
+
+  `"dplyr"` (default) or `"pharmaverse"`: the starting style of the
+  generated code, sent to the canvas before `state`. A workspace state,
+  with or without a recorded style, sets the style, and one without a
+  style loads as `"dplyr"`: `code_style` is only the starting style when
+  no `state` is applied. It changes the code the browser composes,
+  nothing R evaluates.
 
 ## Value
 

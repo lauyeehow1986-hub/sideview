@@ -1851,6 +1851,274 @@ function runAllScenarios() {
   s14_pw.destroy();
   results.scenario14 = s14_r;
 
+  // SCENARIO 15: the code style (dplyr / pharmaverse): init order, state precedence, module message
+  const s15_r = {};
+  const s15_make = function (opts, attr) {
+    const el = new MockElement('DIV');
+    el.className = 'sideview-container';
+    if (attr) el.setAttribute('data-sv-code-style', attr);
+    document.body.appendChild(el);
+    return global.Sideview.init(el, Object.assign({ mode: 'embedded', cards: [] }, opts));
+  };
+  const s15_state = function (pipeline) {
+    return JSON.stringify({ version: '0.3.0', canvas: { zoom: 1, pan_x: 0, pan_y: 0 }, cards: [], connections: [], pipeline: pipeline });
+  };
+  const s15_a = s15_make({});
+  s15_r.default_is_dplyr = s15_a.pipeline.style === 'dplyr';
+  s15_a.destroy();
+  const s15_b = s15_make({}, 'pharmaverse');
+  s15_r.data_attribute_sets_style = s15_b.pipeline.style === 'pharmaverse';
+  s15_b.destroy();
+  const s15_c = s15_make({ codeStyle: 'pharmaverse' }, 'dplyr');
+  s15_r.option_beats_attribute = s15_c.pipeline.style === 'pharmaverse';
+  s15_c.destroy();
+  const s15_d = s15_make({ codeStyle: 'dplyr',
+    state: s15_state({ code: '', active_tab: 'pipeline', steps: [], pipe: '%>%', style: 'pharmaverse' }) });
+  s15_r.state_style_wins = s15_d.pipeline.style === 'pharmaverse';
+  s15_r.get_state_carries_style = s15_d.getState().pipeline.style === 'pharmaverse';
+  s15_d.destroy();
+  const s15_e = s15_make({ codeStyle: 'pharmaverse',
+    state: s15_state({ code: '', active_tab: 'pipeline', steps: [], pipe: '%>%' }) });
+  s15_r.styleless_state_is_dplyr = s15_e.pipeline.style === 'dplyr';
+  s15_e.destroy();
+  const s15_f = s15_make({ codeStyle: 'pharmaverse', pipeline: { steps: [], pipe: '%>%' } });
+  s15_r.styleless_options_pipeline_keeps_style = s15_f.pipeline.style === 'pharmaverse';
+  s15_f.destroy();
+  const s15_g = s15_make({ codeStyle: 'dplyr', pipeline: { steps: [], pipe: '%>%', style: 'pharmaverse' } });
+  s15_r.options_pipeline_style_used = s15_g.pipeline.style === 'pharmaverse';
+  s15_g.destroy();
+  // Open on a running engine: a saved style is kept, a code-only 0.2.0 state is dplyr
+  const s15_h = s15_make({ codeStyle: 'pharmaverse' });
+  s15_h.applyState(JSON.parse(s15_state({ code: '', active_tab: 'pipeline', steps: [], pipe: '%>%', style: 'pharmaverse' })));
+  s15_r.open_keeps_saved_style = s15_h.pipeline.style === 'pharmaverse';
+  s15_h.applyState(JSON.parse(s15_state({ code: 'x <- 1', active_tab: 'pipeline' })));
+  s15_r.open_code_only_is_dplyr = s15_h.pipeline.style === 'dplyr';
+  s15_h.destroy();
+  // module: the message sets the style (routed by ns), and a bad value becomes dplyr
+  const s15_m = s11_make('cs-', []);
+  shinyHandlers.sideview_code_style({ ns: 'cs-', style: 'pharmaverse' });
+  s15_r.message_sets_style = s15_m.engine.pipeline.style === 'pharmaverse';
+  shinyHandlers.sideview_code_style({ ns: 'cs-', style: 'base' });
+  s15_r.message_bad_value_is_dplyr = s15_m.engine.pipeline.style === 'dplyr';
+  s15_m.engine.destroy();
+  results.scenario15 = s15_r;
+
+  // SCENARIO 16: the Code select, the combine_supp() step line and the merge panel line (E1)
+  const s16_r = {};
+  const s16_P = global.SideviewPipeline;
+  const s16_ch = ['STUDYID', 'RDOMAIN', 'USUBJID', 'IDVAR', 'IDVARVAL', 'QNAM', 'QLABEL', 'QVAL', 'QORIG'];
+  const s16_sr = function (u, v, q, val) {
+    return { STUDYID: 'S1', RDOMAIN: 'AE', USUBJID: u, IDVAR: 'AESEQ', IDVARVAL: v, QNAM: q, QLABEL: q + ' label', QVAL: val, QORIG: 'CRF' };
+  };
+  const s16_rows = [s16_sr('P1', '1', 'AETRTEM', 'Y'), s16_sr('P1', '2', 'AETRTEM', 'N'), s16_sr('P2', '1', 'AETRTEM', 'Y')];
+  const s16_col = function (rows, cols) {
+    const out = {};
+    cols.forEach(function (c) { out[c] = rows.map(function (r) { return r[c]; }); });
+    return out;
+  };
+  const s16_aeRows = [
+    { STUDYID: 'S1', DOMAIN: 'AE', USUBJID: 'P1', AESEQ: 1, AETERM: 'HEAD' },
+    { STUDYID: 'S1', DOMAIN: 'AE', USUBJID: 'P1', AESEQ: 2, AETERM: 'NAUS' },
+    { STUDYID: 'S1', DOMAIN: 'AE', USUBJID: 'P2', AESEQ: 1, AETERM: 'RASH' }];
+  const s16_aeCols = ['STUDYID', 'DOMAIN', 'USUBJID', 'AESEQ', 'AETERM'];
+  const s16_chr = function (cols, extra) {
+    const t = {};
+    cols.forEach(function (c) { t[c] = 'character'; });
+    return Object.assign(t, extra || {});
+  };
+  const s16_aeCard = function () {
+    return { id: 'card_ae', name: 'ae', type: 'grid', x: 10, y: 10, dims: [3, 5], data: s16_col(s16_aeRows, s16_aeCols),
+      col_types: s16_chr(s16_aeCols, { AESEQ: 'integer' }), col_inexact: [] };
+  };
+  const s16_suppCard = function (name, rows, extra) {
+    return Object.assign({ id: 'card_' + name, name: name, type: 'grid', x: 400, y: 10, dims: [rows.length, s16_ch.length],
+      data: s16_col(rows, s16_ch), col_types: s16_chr(s16_ch), col_inexact: [] }, extra || {});
+  };
+  const s16_make = function (cards) {
+    const el = new MockElement('DIV');
+    el.className = 'sideview-container';
+    document.body.appendChild(el);
+    const engine = global.Sideview.init(el, { cards: cards });
+    // the widget path: the browser answers the merge check itself
+    engine.hasR = function () { return false; };
+    return { el: el, engine: engine };
+  };
+  const s16_fire = function (el, type) {
+    const ev = new MockEvent(type, { bubbles: true });
+    el.dispatchEvent(ev);
+  };
+  const s16_a = s16_make([s16_aeCard(), s16_suppCard('suppae', s16_rows)]);
+  const s16_e = s16_a.engine;
+  const s16_key = JSON.stringify(['supp', 'ae', 'suppae']);
+  const s16_sel = s16_a.el.querySelector('.sideview-code-select');
+  const s16_lab = s16_a.el.querySelector('.sideview-code-choice');
+  s16_r.select_exists = !!s16_sel && !!s16_lab && s16_sel.getAttribute('aria-label') === 'Code style' &&
+    s16_sel.querySelectorAll('option').map(function (o) { return o.getAttribute('value'); }).join() === 'dplyr,pharmaverse' &&
+    s16_sel.value === 'dplyr';
+  s16_e.requestSuppCheck('ae', 'suppae', null, { mode: 'add', rdomain: 'AE' });
+  const s16_step = s16_e.pipeline.steps[0];
+  s16_r.step_added = s16_e.pipeline.steps.length === 1 && !!s16_step && s16_step.kind === 'supp' &&
+    !!s16_e.suppChecks[s16_key] && s16_e.suppChecks[s16_key].combine_supp.ok === true;
+  s16_r.field_reaches_pipeline = !!s16_e.pipeline.suppCombine[s16_key] && s16_e.pipeline.suppCombine[s16_key].ok === true;
+  const s16_line = 'merge SUPPAE (1 QNAMs on AESEQ) · 3 of 3 SUPP rows matched';
+  s16_r.dplyr_line_unchanged = s16_e.suppLineText(s16_step) === s16_line;
+  s16_r.dplyr_code = s16_e.generatedCode.indexOf('metatools::combine_supp(') < 0;
+  // the panel line shows in both styles
+  // the mock page has no report box: give it one, as scenario 9 does
+  if (!s16_a.el.querySelector('.sideview-joincheck')) {
+    const s16_panel = new MockElement('DIV');
+    s16_panel.className = 'sideview-joincheck';
+    s16_a.el.appendChild(s16_panel);
+  }
+  const s16_box = s16_a.el.querySelector('.sideview-joincheck');
+  s16_e.activateDrawerTab('discrepancy');
+  s16_e.showSuppCheck(s16_step.id);
+  const s16_pl = function () { const p = s16_box.querySelector('.sideview-suppcheck-combine'); return p ? p.textContent : null; };
+  s16_r.panel_line_dplyr = s16_pl() === 'combine_supp(): yes';
+  // the select: setStyle, no undo entry, the drawer code
+  const s16_undo0 = s16_e.pipeline.undoStack.length;
+  s16_sel.value = 'pharmaverse';
+  s16_fire(s16_sel, 'change');
+  s16_r.change_sets_style = s16_e.pipeline.style === 'pharmaverse';
+  s16_r.change_no_undo = s16_e.pipeline.undoStack.length === s16_undo0;
+  s16_r.drawer_shows_combine_supp = s16_a.el.querySelector('.sideview-code-text').textContent.indexOf('metatools::combine_supp(') >= 0 &&
+    s16_e.generatedCode.indexOf('metatools::combine_supp(') >= 0;
+  s16_r.panel_line_pharmaverse = (s16_e.renderJoinCheck(), s16_pl()) === 'combine_supp(): yes';
+  s16_r.step_line_ok = s16_e.suppLineText(s16_step) === s16_line + ' · combine_supp()';
+  s16_r.step_line_in_list = (function () {
+    const b = s16_a.el.querySelector('.sideview-step-diag[data-step-action="supp-diag"]');
+    return !!b && b.textContent === '3 of 3 SUPP rows matched · combine_supp()';
+  })();
+  // R says metatools is too old: the field is ok, the suffix says what is needed
+  s16_e.suppChecks[s16_key].combine_supp.installed = false;
+  s16_r.step_line_not_installed = s16_e.suppLineText(s16_step) === s16_line + ' · needs metatools 0.3.0 or later to run';
+  s16_e.suppChecks[s16_key].combine_supp.installed = true;
+  // orphans: the warning text takes the warns suffix
+  s16_e.suppChecks[s16_key].n_orphan = 1;
+  s16_r.step_line_orphans_warn = s16_e.suppLineText(s16_step) ===
+    'merge SUPPAE (1 QNAMs on AESEQ) · 3 of 3 SUPP rows matched · 1 orphan SUPP row (combine_supp() warns) · combine_supp()';
+  s16_e.suppChecks[s16_key].n_orphan = 0;
+  s16_e.suppChecks[s16_key].bad_idvarval.n = 2;
+  s16_r.step_line_bad_idvarval_warn = s16_e.suppLineText(s16_step).indexOf('2 bad IDVARVALs (combine_supp() warns) · combine_supp()') > 0;
+  s16_e.suppChecks[s16_key].bad_idvarval.n = 0;
+  // Review Focus 2: a re-check reply with ok false recomposes to dplyr in that render, with the new reason
+  // the mock keeps entities as written; a browser decodes them
+  const s16_un = function (t) { return String(t).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'); };
+  const s16_reply = function (e, key, step, d) {
+    e.suppPending.t16 = { key: key, parent: step.table, supp: step.supp, rdomain: step.rdomain, mode: 'check', quiet: false };
+    e.suppReq[key] = 't16';
+    e.onSuppCheck(Object.assign({}, d, { id: 't16' }));
+  };
+  const s16_good = JSON.parse(JSON.stringify(s16_e.suppChecks[s16_key]));
+  const s16_bad = JSON.parse(JSON.stringify(s16_good));
+  s16_bad.combine_supp = { ok: false, reason: 'suppae has extra columns: <b>X</b>', prep: { rdomain: false, idvar_na: false }, installed: true };
+  s16_reply(s16_e, s16_key, s16_step, s16_bad);
+  s16_r.recheck_not_ok_recomposes = s16_e.generatedCode.indexOf('metatools::combine_supp(') < 0 &&
+    s16_a.el.querySelector('.sideview-code-text').textContent.indexOf('metatools::combine_supp(') < 0;
+  s16_r.step_line_not_ok = s16_un(s16_e.suppLineText(s16_step)) === s16_line + ' · dplyr: suppae has extra columns: <b>X</b>';
+  s16_r.step_line_not_ok_in_list = (function () {
+    const b = s16_a.el.querySelector('.sideview-step-diag[data-step-action="supp-diag"]');
+    return !!b && !b.querySelector('b') && s16_un(b.textContent) === '3 of 3 SUPP rows matched · dplyr: suppae has extra columns: <b>X</b>';
+  })();
+  s16_e.renderJoinCheck();
+  s16_r.panel_line_no_reason = s16_un(s16_pl()) === 'combine_supp(): no, suppae has extra columns: <b>X</b>' &&
+    !s16_box.querySelector('.sideview-suppcheck-combine b');
+  // the dplyr style: the step line does not change, the panel line still says no
+  s16_sel.value = 'dplyr';
+  s16_fire(s16_sel, 'change');
+  s16_r.dplyr_style_line_plain = s16_e.suppLineText(s16_step) === s16_line &&
+    s16_un((s16_e.renderJoinCheck(), s16_pl())) === 'combine_supp(): no, suppae has extra columns: <b>X</b>';
+  s16_sel.value = 'pharmaverse';
+  s16_fire(s16_sel, 'change');
+  // a good reply brings combine_supp() back
+  s16_reply(s16_e, s16_key, s16_step, s16_good);
+  s16_r.recheck_ok_recomposes = s16_e.generatedCode.indexOf('metatools::combine_supp(') >= 0;
+  // drift: a stale check is not ok (R7), Refresh makes the field ok again
+  const s16_stale = JSON.parse(JSON.stringify(s16_good));
+  s16_stale.drift = { stale: true, reasons: ['New QNAM: AEOUT'] };
+  s16_reply(s16_e, s16_key, s16_step, s16_stale);
+  s16_r.drift_is_not_ok = s16_e.pipeline.suppCombine[s16_key].ok === false &&
+    s16_e.pipeline.suppCombine[s16_key].reason === 'Merge needs refreshing' &&
+    s16_e.generatedCode.indexOf('metatools::combine_supp(') < 0 &&
+    s16_e.suppLineText(s16_step).indexOf(' · Merge needs refreshing') > 0 &&
+    s16_e.suppLineText(s16_step).indexOf('combine_supp()') < 0;
+  s16_e.refreshSuppStep(s16_step.id);
+  s16_r.refresh_restores_ok = s16_e.pipeline.suppCombine[s16_key].ok === true &&
+    s16_e.generatedCode.indexOf('metatools::combine_supp(') >= 0;
+  // rule 6 after the merge: a mutate on the parent turns the step line, the panel line and the code to dplyr;
+  // disabled or removed, combine_supp() is back. A sort after the merge keeps it.
+  const s16_after = 'ae has steps after the merge that combine_supp() cannot check';
+  const s16_isPh = function () {
+    return s16_e.generatedCode.indexOf('metatools::combine_supp(') >= 0 &&
+      s16_a.el.querySelector('.sideview-code-text').textContent.indexOf('metatools::combine_supp(') >= 0;
+  };
+  const s16_mut = s16_e.pipeline.add({ kind: 'mutate', table: 'ae', name: 'AETRTEM', expr: 'tolower(AETRTEM)' });
+  s16_r.after_mutate_is_dplyr = !s16_isPh() && s16_e.generatedCode.indexOf('suppae_labels') >= 0 &&
+    s16_e.suppLineText(s16_step) === s16_line + ' · dplyr: ' + s16_after &&
+    s16_un((s16_e.renderJoinCheck(), s16_pl())) === 'combine_supp(): no, ' + s16_after;
+  s16_r.after_mutate_in_list = (function () {
+    const b = s16_a.el.querySelector('.sideview-step-diag[data-step-action="supp-diag"]');
+    return !!b && b.textContent === '3 of 3 SUPP rows matched · dplyr: ' + s16_after;
+  })();
+  s16_e.pipeline.toggle(s16_mut.id);
+  s16_r.after_disabled_is_pharmaverse = s16_isPh() && s16_e.suppLineText(s16_step) === s16_line + ' · combine_supp()' &&
+    (s16_e.renderJoinCheck(), s16_pl()) === 'combine_supp(): yes';
+  s16_e.pipeline.toggle(s16_mut.id);
+  s16_r.after_enabled_again_is_dplyr = !s16_isPh();
+  s16_e.pipeline.remove(s16_mut.id);
+  s16_r.after_removed_is_pharmaverse = s16_isPh() && s16_e.suppLineText(s16_step) === s16_line + ' · combine_supp()';
+  const s16_arr = s16_e.pipeline.add({ kind: 'arrange', table: 'ae', cols: [{ col: 'AETERM', dir: 'asc' }] });
+  s16_r.after_arrange_is_pharmaverse = s16_isPh() && s16_e.suppLineText(s16_step) === s16_line + ' · combine_supp()';
+  s16_e.pipeline.remove(s16_arr.id);
+  // an {error} reply is not ok, with its text (R34)
+  s16_reply(s16_e, s16_key, s16_step, { error: 'The R session is not connected.' });
+  s16_r.error_reply_not_ok = s16_e.pipeline.suppCombine[s16_key].ok === false &&
+    s16_e.pipeline.suppCombine[s16_key].reason === 'The R session is not connected.' &&
+    s16_e.generatedCode.indexOf('metatools::combine_supp(') < 0;
+  // a forgotten check (a card replaced, undo) forgets the field; a disabled step asks for no new one
+  s16_e.pipeline.update(s16_step.id, { enabled: false });
+  s16_e.forgetSuppChecks(null);
+  s16_r.forget_drops_field = !s16_e.pipeline.suppCombine[s16_key] && !s16_e.suppChecks[s16_key];
+  s16_e.destroy();
+
+  // Review Focus 1: a clash the browser adds (an earlier merge's QNAM) turns the field and the code back to dplyr
+  const s16_b = s16_make([s16_aeCard(), s16_suppCard('suppae', s16_rows), s16_suppCard('suppqual', s16_rows, { x: 800 })]);
+  const s16_be = s16_b.engine;
+  s16_be.pipeline.setStyle('pharmaverse');
+  s16_be.requestSuppCheck('ae', 'suppae', null, { mode: 'add', rdomain: 'AE' });
+  s16_be.requestSuppCheck('ae', 'suppqual', null, { mode: 'add', rdomain: 'AE' });
+  const s16_k2 = JSON.stringify(['supp', 'ae', 'suppqual']);
+  const s16_c2 = s16_be.suppChecks[s16_k2];
+  s16_r.clash_added_flips_field = !!s16_c2 && s16_c2.status === 'error' && s16_c2.clashes.indexOf('AETRTEM') >= 0 &&
+    s16_c2.combine_supp.ok === false && s16_c2.combine_supp.reason === 'The merge stops: AETRTEM already in ae' &&
+    s16_be.pipeline.suppCombine[s16_k2].ok === false && s16_be.pipeline.suppCombine[s16_key].ok === true;
+  s16_r.clash_code_is_dplyr_for_it = /combine_supp\(suppae/.test(s16_be.generatedCode) &&
+    !/combine_supp\(suppqual/.test(s16_be.generatedCode);
+  s16_be.destroy();
+
+  // the widget path: types, rounding, the inexact lists, preview and lazy reach the check
+  const s16_seen = [];
+  const s16_orig = s16_P.suppCheck;
+  s16_P.suppCheck = function (p, s, o) { s16_seen.push(o); return s16_orig.apply(this, arguments); };
+  const s16_c = s16_make([s16_aeCard(), s16_suppCard('suppae', s16_rows, { col_inexact: ['QVAL'] })]);
+  s16_c.engine.requestSuppCheck('ae', 'suppae', null, { mode: 'add', rdomain: 'AE' });
+  const s16_o = s16_seen[s16_seen.length - 1] || {};
+  s16_r.widget_passes_types_and_rounding = !!s16_o.suppTypes && s16_o.suppTypes.QNAM === 'character' &&
+    s16_o.parentTypes.AESEQ === 'integer' && s16_o.rounded === true &&
+    JSON.stringify(s16_o.inexact) === JSON.stringify({ parent: [], supp: ['QVAL'] }) &&
+    s16_o.preview === false && !s16_o.lazy;
+  s16_c.engine.destroy();
+  const s16_d = s16_make([s16_aeCard(), s16_suppCard('suppae', s16_rows, { lazy: 'arrow', totalRows: 3000 })]);
+  s16_d.engine.requestSuppCheck('ae', 'suppae', null, { mode: 'add', rdomain: 'AE' });
+  const s16_o2 = s16_seen[s16_seen.length - 1] || {};
+  const s16_f2 = s16_d.engine.suppChecks[s16_key];
+  s16_r.widget_passes_lazy_and_preview = !!s16_o2.lazy && s16_o2.lazy.name === 'suppae' && s16_o2.lazy.kind === 'arrow' &&
+    s16_o2.preview === true && !!s16_f2 && s16_f2.combine_supp.ok === false &&
+    s16_f2.combine_supp.reason === 'combine_supp() needs data frames: suppae is an Arrow table';
+  s16_d.engine.destroy();
+  s16_P.suppCheck = s16_orig;
+  results.scenario16 = s16_r;
+
   // snapshots wait for the debounce, so they finish after the synchronous scenarios
   results.__later = function () {
     const sleep = function (ms) { return new Promise(function (res) { setTimeout(res, ms); }); };

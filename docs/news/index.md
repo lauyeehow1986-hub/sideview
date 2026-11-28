@@ -1,12 +1,75 @@
 # Changelog
 
+## sideview 0.11.0 (development)
+
+Pharmaverse code (E1): a SUPP– merge can be written with
+[`metatools::combine_supp()`](https://pharmaverse.github.io/metatools/reference/combine_supp.html).
+Development version; the release number is decided at merge time.
+Checked with unit tests and real-browser tests (headless Chrome); not
+yet checked by hand in RStudio.
+
+### Pharmaverse code style
+
+- `code_style = c("dplyr", "pharmaverse")` on
+  [`sideview()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview.md),
+  [`sideview_ui()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_ui.md),
+  [`sideview_widget()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideview_widget.md)
+  and
+  [`sideviewServer()`](https://lauyeehow1986-hub.github.io/sideview/reference/sideviewUI.md);
+  `save_sideview(code_style = NULL)` keeps the widget’s style. It is the
+  starting style: an applied workspace state sets the style (a state
+  without one loads as `"dplyr"`). The pipeline bar has a **Code**
+  select to change it, and the style is saved in the pipeline state.
+- In the pharmaverse style an eligible SUPP– merge is written as
+  `<parent chain> %>% metatools::combine_supp(<supp>)`. The argument is
+  `<supp>_q` when the code needs a prep line (a
+  `dplyr::filter(RDOMAIN == ...)`, or `IDVAR` blanks set to `NA`) or the
+  SUPP table has a step chain. A guard block comes before the pipeline.
+  Every other step stays `dplyr`.
+- sideview writes `combine_supp()` only when the merge check finds its
+  result equal to the `dplyr` code’s. Otherwise the merge stays `dplyr`
+  and the step line says why (for example
+  `dplyr: IDVARVAL "01" would not match AESEQ 1 in combine_supp()`). A
+  merge that needs refreshing also stays `dplyr`, and so does a merge
+  whose SUPP card has steps of its own or whose parent has an enabled
+  step before or after the merge other than a filter, a sort or another
+  SUPP merge
+  (`dplyr: ae has steps after the merge that combine_supp() cannot check`):
+  the `dplyr` code sets the QNAM labels where the parent’s chain ends,
+  `combine_supp()` at the merge, so a later mutate or rename could
+  change them.
+- When the code runs, the guard block stops it for the later-data-cut
+  changes that were found and tested: grouped or rowwise inputs, a
+  parent `IDVARVAL` column, `IDVAR` values the merge does not handle, a
+  QNAM on two levels or repeated for a record, a `DOMAIN` or key column
+  that would not keep its type, `DOMAIN`/`RDOMAIN` and key matching that
+  differs, a QNAM column the `dplyr` code would not make, factor `QNAM`
+  or `QLABEL`, and changed labels. This does not prove that no other
+  difference is possible, so run the merge check again on a new data
+  cut. Not every message gives the same advice (see the CDISC article).
+  `combine_supp()` also stops by itself on some changes.
+- The SUPP check has a `combine_supp` field, `{ok, reason, prep}`, from
+  the R checks:
+  [`sv_supp_check()`](https://lauyeehow1986-hub.github.io/sideview/reference/sv_supp_check.md)
+  for data frames, and the internal lazy check that the gadget and
+  module use for a lazy card (never ok:
+  `combine_supp() needs data frames`). The browser check returns the
+  same with `installed: null`, and only the gadget and module server
+  sets `installed` to `TRUE` or `FALSE`. The Discrepancy merge panel and
+  [`print()`](https://rdrr.io/r/base/print.html) of the check show
+  `combine_supp(): yes` or `combine_supp(): no, <reason>` in both
+  styles. `metatools` (0.3.0 or later) stays in `Suggests`. In the
+  gadget or a module, in the pharmaverse style, the step line of an
+  eligible merge says when it is not installed; the widget cannot know.
+- New message `sideview_code_style` (see CLAUDE.md).
+
 ## sideview 0.10.0 (development)
 
 Derived cards: the rows behind a check count become a card of their own
 (D1), tables stack with a check (D2), and two cuts of a table compare by
 key (D3). Development version; the release number is decided at merge
-time. Checked with real-browser tests (headless Chrome) and unit tests;
-the D3 manual RStudio pass is still to do.
+time. Checked with real-browser tests (headless Chrome) and unit tests,
+and by hand in RStudio (dialog, Viewer pane, external browser).
 
 ### Open the rows behind a count
 
@@ -39,8 +102,8 @@ the D3 manual RStudio pass is still to do.
 ### Stack tables
 
 Derived cards, second part (D2): stack tables. Checked with real-browser
-tests (headless Chrome) and unit tests; the manual RStudio pass is still
-to do.
+tests (headless Chrome) and unit tests; also checked by hand in RStudio
+(dialog, Viewer pane, external browser).
 
 - `sv_stack_check(..., cast, rename)` lines up the columns of 2 to 8
   tables and reports, per column, its type in each table, its label, and
@@ -89,8 +152,8 @@ to do.
 ### Compare data cuts
 
 Derived cards, third part (D3): compare two cuts of a table by key.
-Checked with real-browser tests (headless Chrome) and unit tests; the
-manual RStudio pass is still to do.
+Checked with real-browser tests (headless Chrome) and unit tests, and by
+hand in RStudio (dialog, Viewer pane, external browser).
 
 - `sv_compare(old, new, by)` matches the rows of two tables on a key (1
   to 20 columns) and counts the rows added (key only in `new`), removed
